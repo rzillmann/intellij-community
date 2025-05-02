@@ -42,8 +42,6 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.util.*;
 
-// Android team doesn't want to use new mockito for now, so, class cannot be final
-@ApiStatus.NonExtendable
 public final class UndoManagerImpl extends UndoManager {
   private static final Logger LOG = Logger.getInstance(UndoManagerImpl.class);
 
@@ -580,7 +578,7 @@ public final class UndoManagerImpl extends UndoManager {
   }
 
   boolean isUndoOrRedoAvailable(@Nullable FileEditor editor, boolean undo) {
-    ApplicationManager.getApplication().assertWriteIntentLockAcquired();
+    ApplicationManager.getApplication().assertReadAccessAllowed();
 
     Collection<DocumentReference> refs = getDocRefs(editor);
     return refs != null && isUndoOrRedoAvailable(getClientState(editor), refs, undo);

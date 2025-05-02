@@ -38,7 +38,7 @@ internal class GitBranchesTreePopup(
 ) : GitBranchesTreePopupBase<GitBranchesTreePopupStep>(project, step, parent, parentValue, DIMENSION_SERVICE_KEY) {
   init {
     installGeneralShortcutActions()
-    if (!isChild()) {
+    if (!isNestedPopup()) {
       warnThatBranchesDivergedIfNeeded()
     }
   }
@@ -117,7 +117,7 @@ internal class GitBranchesTreePopup(
     return DvcsBranchesDivergedBanner.create("reference.VersionControl.Git.SynchronousBranchControl", text)
   }
 
-  override fun getShortcutActionPlace(): String = if (isChild()) SINGLE_REPOSITORY_ACTION_PLACE else TOP_LEVEL_ACTION_PLACE
+  override fun getShortcutActionPlace(): String = if (isNestedPopup()) SINGLE_REPOSITORY_ACTION_PLACE else TOP_LEVEL_ACTION_PLACE
 
   companion object {
     private const val DIMENSION_SERVICE_KEY = "Git.Branch.Popup"
@@ -140,6 +140,7 @@ internal class GitBranchesTreePopup(
     @JvmStatic
     fun create(project: Project, selectedRepository: GitRepository?): JBPopup {
       return GitBranchesTreePopup(project, createBranchesTreePopupStep(project, selectedRepository))
+        .apply { setIsMovable(true) }
     }
 
     @VisibleForTesting

@@ -127,6 +127,10 @@ jvm_library(
     "//java/codeserver/core:java-codeserver-core",
     "//platform/testFramework/junit5/projectStructure:testFramework-junit5-projectStructure",
     "//platform/testFramework/junit5/projectStructure:testFramework-junit5-projectStructure_test_lib",
+    "//platform/syntax/syntax-psi:psi",
+    "@lib//:maven-resolver-provider",
+    "//java/java-syntax:syntax",
+    "//platform/lang-impl",
   ],
   runtime_deps = [
     ":tests_test_resources",

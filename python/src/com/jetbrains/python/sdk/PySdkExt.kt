@@ -36,7 +36,6 @@ import com.jetbrains.python.failure
 import com.jetbrains.python.packaging.ui.PyPackageManagementService
 import com.jetbrains.python.psi.LanguageLevel
 import com.jetbrains.python.remote.PyRemoteSdkAdditionalData
-import com.jetbrains.python.remote.PyRemoteSdkAdditionalDataBase
 import com.jetbrains.python.run.PythonInterpreterTargetEnvironmentFactory
 import com.jetbrains.python.sdk.add.v1.createDetectedSdk
 import com.jetbrains.python.sdk.flavors.PyFlavorAndData
@@ -44,9 +43,9 @@ import com.jetbrains.python.sdk.flavors.PythonSdkFlavor
 import com.jetbrains.python.sdk.flavors.VirtualEnvSdkFlavor
 import com.jetbrains.python.sdk.flavors.conda.CondaEnvSdkFlavor
 import com.jetbrains.python.target.PyTargetAwareAdditionalData
+import com.jetbrains.python.ui.pyMayBeModalBlocking
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.annotations.ApiStatus.Internal
 import java.nio.file.Files
 import java.nio.file.Path
@@ -87,7 +86,7 @@ fun filterSystemWideSdks(existingSdks: List<Sdk>): List<Sdk> {
   return existingSdks.filter { it.sdkType is PythonSdkType && it.isSystemWide }
 }
 
-@ApiStatus.Internal
+@Internal
 fun configurePythonSdk(project: Project, module: Module, sdk: Sdk) {
   // in case module contains root of the project we consider it as a project wide interpreter
   if (project.basePath == module.basePath) {
@@ -240,36 +239,9 @@ fun showSdkExecutionException(sdk: Sdk?, e: ExecutionException, @NlsContexts.Dia
   }
 }
 
-@Deprecated("It doesn't persist changes", ReplaceWith("setAssociationToModule"))
-fun Sdk.associateWithModule(module: Module?, newProjectPath: String?) {
-  getOrCreateAdditionalData().apply {
-    when {
-      newProjectPath != null -> associateWithModulePath(newProjectPath)
-      module != null -> associateWithModule(module)
-    }
-  }
-}
-
+@Deprecated(replaceWith = ReplaceWith("setAssociationToModule"), message = "Use suspend version")
 fun Sdk.setAssociationToModule(module: Module) {
-  setAssociationToPath(module.basePath)
-}
-
-fun Sdk.setAssociationToPath(path: String?) {
-  val data = getOrCreateAdditionalData().also {
-    when {
-      path != null -> it.associateWithModulePath(path)
-      else -> it.associatedModulePath = null
-    }
-  }
-
-  val modificator = sdkModificator
-  modificator.sdkAdditionalData = data
-
-  runInEdt {
-    ApplicationManager.getApplication().runWriteAction {
-      modificator.commitChanges()
-    }
-  }
+  pyMayBeModalBlocking { setAssociationToModuleAsync(module) }
 }
 
 fun Sdk.isAssociatedWithModule(module: Module?): Boolean {
@@ -336,7 +308,7 @@ fun PyDetectedSdk.setupAssociated(existingSdks: List<Sdk>, associatedModulePath:
   } ?: PythonSdkAdditionalData()
 
   if (doAssociate && associatedModulePath != null) {
-    data.associateWithModulePath(associatedModulePath)
+    data.associatedModulePath = associatedModulePath
   }
 
   val sdk = SdkConfigurationUtil.setupSdk(
@@ -449,9 +421,6 @@ private val Sdk.sitePackagesDirectory: VirtualFile?
   get() = PythonSdkUtil.getSitePackagesDirectory(this)
 
 val Sdk.sdkFlavor: PythonSdkFlavor<*> get() = getOrCreateAdditionalData().flavor
-
-val Sdk.remoteSdkAdditionalData: PyRemoteSdkAdditionalDataBase?
-  get() = sdkAdditionalData as? PyRemoteSdkAdditionalDataBase
 
 fun Sdk.isLocatedInsideModule(module: Module?): Boolean {
   val moduleDir = module?.baseDir

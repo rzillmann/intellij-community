@@ -34,6 +34,9 @@ class SePopupVm(val coroutineScope: CoroutineScope,
     SeTabVm(project, coroutineScope, it, searchPattern)
   }
 
+  //val tabVmsFlow: StateFlow<List<SeTabVm>>
+
+
   val usageLogger: SeUsageEventsLogger = SeUsageEventsLogger()
 
   var shouldLoadMore: Boolean
@@ -68,6 +71,12 @@ class SePopupVm(val coroutineScope: CoroutineScope,
   fun selectPreviousTab() {
     currentTabIndex.value = (currentTabIndex.value - 1).coerceIn(tabVms.indices)
     usageLogger.tabSwitched()
+  }
+
+  fun showTab(tabId: String) {
+    tabVms.indexOfFirst { it.tabId == tabId }.takeIf { it >= 0 }?.let {
+      currentTabIndex.value = it
+    }
   }
 
   private fun logItemSelected() {

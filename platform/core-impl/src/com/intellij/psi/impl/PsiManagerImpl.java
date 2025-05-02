@@ -22,6 +22,7 @@ import com.intellij.openapi.vfs.VirtualFileFilter;
 import com.intellij.openapi.wm.ex.ProgressIndicatorEx;
 import com.intellij.psi.*;
 import com.intellij.psi.impl.file.impl.FileManager;
+import com.intellij.psi.impl.file.impl.FileManagerEx;
 import com.intellij.psi.impl.file.impl.FileManagerImpl;
 import com.intellij.psi.util.PsiModificationTracker;
 import com.intellij.util.concurrency.annotations.RequiresEdt;
@@ -42,7 +43,7 @@ public final class PsiManagerImpl extends PsiManagerEx implements Disposable {
   private final NotNullLazyValue<? extends FileIndexFacade> myFileIndex;
   private final PsiModificationTracker myModificationTracker;
 
-  private final FileManagerImpl myFileManager;
+  private final FileManagerEx myFileManager;
 
   private final List<PsiTreeChangePreprocessor> myTreeChangePreprocessors = ContainerUtil.createLockFreeCopyOnWriteList();
   private final List<PsiTreeChangeListener> myTreeChangeListeners = ContainerUtil.createLockFreeCopyOnWriteList();
@@ -139,6 +140,12 @@ public final class PsiManagerImpl extends PsiManagerEx implements Disposable {
 
   @Override
   public @NotNull FileManager getFileManager() {
+    return myFileManager;
+  }
+
+  @ApiStatus.Internal
+  @Override
+  public @NotNull FileManagerEx getFileManagerEx() {
     return myFileManager;
   }
 
@@ -242,6 +249,7 @@ public final class PsiManagerImpl extends PsiManagerEx implements Disposable {
     fireEvent(event);
   }
 
+  @Override
   public void beforeChildrenChange(@NotNull PsiTreeChangeEventImpl event) {
     beforeChange(true);
     event.setCode(PsiTreeChangeEventImpl.PsiEventType.BEFORE_CHILDREN_CHANGE);
@@ -251,6 +259,7 @@ public final class PsiManagerImpl extends PsiManagerEx implements Disposable {
     fireEvent(event);
   }
 
+  @Override
   public void beforeChildMovement(@NotNull PsiTreeChangeEventImpl event) {
     beforeChange(true);
     event.setCode(PsiTreeChangeEventImpl.PsiEventType.BEFORE_CHILD_MOVEMENT);
@@ -260,6 +269,7 @@ public final class PsiManagerImpl extends PsiManagerEx implements Disposable {
     fireEvent(event);
   }
 
+  @Override
   public void beforePropertyChange(@NotNull PsiTreeChangeEventImpl event) {
     beforeChange(true);
     event.setCode(PsiTreeChangeEventImpl.PsiEventType.BEFORE_PROPERTY_CHANGE);
@@ -274,6 +284,7 @@ public final class PsiManagerImpl extends PsiManagerEx implements Disposable {
     return value instanceof Object[] ? Arrays.deepToString((Object[])value) : value;
   }
 
+  @Override
   public void childAdded(@NotNull PsiTreeChangeEventImpl event) {
     event.setCode(PsiTreeChangeEventImpl.PsiEventType.CHILD_ADDED);
     if (LOG.isDebugEnabled()) {
@@ -283,6 +294,7 @@ public final class PsiManagerImpl extends PsiManagerEx implements Disposable {
     afterChange(true);
   }
 
+  @Override
   public void childRemoved(@NotNull PsiTreeChangeEventImpl event) {
     event.setCode(PsiTreeChangeEventImpl.PsiEventType.CHILD_REMOVED);
     if (LOG.isDebugEnabled()) {
@@ -292,6 +304,7 @@ public final class PsiManagerImpl extends PsiManagerEx implements Disposable {
     afterChange(true);
   }
 
+  @Override
   public void childReplaced(@NotNull PsiTreeChangeEventImpl event) {
     event.setCode(PsiTreeChangeEventImpl.PsiEventType.CHILD_REPLACED);
     if (LOG.isDebugEnabled()) {
@@ -301,6 +314,7 @@ public final class PsiManagerImpl extends PsiManagerEx implements Disposable {
     afterChange(true);
   }
 
+  @Override
   public void childMoved(@NotNull PsiTreeChangeEventImpl event) {
     event.setCode(PsiTreeChangeEventImpl.PsiEventType.CHILD_MOVED);
     if (LOG.isDebugEnabled()) {
@@ -310,6 +324,7 @@ public final class PsiManagerImpl extends PsiManagerEx implements Disposable {
     afterChange(true);
   }
 
+  @Override
   public void childrenChanged(@NotNull PsiTreeChangeEventImpl event) {
     event.setCode(PsiTreeChangeEventImpl.PsiEventType.CHILDREN_CHANGED);
     if (LOG.isDebugEnabled()) {
@@ -319,6 +334,7 @@ public final class PsiManagerImpl extends PsiManagerEx implements Disposable {
     afterChange(true);
   }
 
+  @Override
   public void propertyChanged(@NotNull PsiTreeChangeEventImpl event) {
     event.setCode(PsiTreeChangeEventImpl.PsiEventType.PROPERTY_CHANGED);
     if (LOG.isDebugEnabled()) {
@@ -333,10 +349,12 @@ public final class PsiManagerImpl extends PsiManagerEx implements Disposable {
     afterChange(true);
   }
 
+  @Override
   public void addTreeChangePreprocessor(@NotNull PsiTreeChangePreprocessor preprocessor) {
     myTreeChangePreprocessors.add(preprocessor);
   }
-
+  
+  @Override
   public void removeTreeChangePreprocessor(@NotNull PsiTreeChangePreprocessor preprocessor) {
     myTreeChangePreprocessors.remove(preprocessor);
   }
@@ -484,12 +502,14 @@ public final class PsiManagerImpl extends PsiManagerEx implements Disposable {
   }
 
   @TestOnly
+  @Override
   public void cleanupForNextTest() {
     assert ApplicationManager.getApplication().isUnitTestMode();
     myFileManager.cleanupForNextTest();
     dropPsiCaches();
   }
 
+  @Override
   public void dropResolveCacheRegularly(@NotNull ProgressIndicator indicator) {
     indicator = ProgressWrapper.unwrap(indicator);
     if (indicator instanceof ProgressIndicatorEx) {

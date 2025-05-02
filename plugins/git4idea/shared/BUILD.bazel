@@ -21,6 +21,9 @@ jvm_library(
     "//platform/kernel/shared:kernel",
     "//platform/platform-impl/rpc:ide-rpc",
     "//platform/project/shared:project",
+    "//platform/platform-impl:ide-impl",
+    "//platform/dvcs-impl/shared:vcs-dvcs-impl-shared",
+    "//platform/core-ui",
   ],
   runtime_deps = [":vcs-git-shared_resources"]
 )

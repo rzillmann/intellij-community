@@ -20,6 +20,7 @@ import com.intellij.openapi.application.EDT
 import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.application.impl.InternalUICustomization
 import com.intellij.openapi.application.impl.LaterInvocator
+import com.intellij.openapi.components.ComponentManagerEx
 import com.intellij.openapi.components.serviceAsync
 import com.intellij.openapi.components.serviceIfCreated
 import com.intellij.openapi.diagnostic.Logger
@@ -43,7 +44,6 @@ import com.intellij.openapi.wm.impl.customFrameDecorations.header.CustomWindowHe
 import com.intellij.openapi.wm.impl.status.IdeStatusBarImpl
 import com.intellij.platform.ide.menu.installAppMenuIfNeeded
 import com.intellij.platform.util.coroutines.childScope
-import com.intellij.serviceContainer.ComponentManagerImpl
 import com.intellij.ui.*
 import com.intellij.util.application
 import com.intellij.util.concurrency.annotations.RequiresEdt
@@ -171,6 +171,8 @@ abstract class ProjectFrameHelper internal constructor(
       frame.background = JBColor.PanelBackground
       balloonLayout.queueRelayout()
     })
+
+    if (frame.isVisible) notifyProjectActivation() // the frame was reused from an older project and is already activated
   }
 
   internal open fun CoroutineScope.createFrameHeaderHelper(frame: JFrame, frameDecorator: IdeFrameDecorator?, rootPane: IdeRootPane): ProjectFrameCustomHeaderHelper =
@@ -602,7 +604,7 @@ private object WindowCloseListener : WindowAdapter() {
     if (app != null && !app.isDisposed) {
       // Project closing process is also subject to cancellation checks.
       // Here we run the closing process in the scope of applicaiton, so that the user gets the chance to abort project closing process.
-      installThreadContext((app as ComponentManagerImpl).getCoroutineScope().coroutineContext).use {
+      installThreadContext((app as ComponentManagerEx).getCoroutineScope().coroutineContext).use {
         frameHelper.windowClosing(project)
       }
     }

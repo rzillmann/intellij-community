@@ -106,12 +106,12 @@ jvm_library(
     "//platform/platform-impl/internal:ide-internal",
     "//platform/util/concurrency",
     "//platform/platform-impl/ui:ide-ui",
-    "//platform/eel-impl",
     "//platform/eel-provider",
     "//platform/foldings",
     "//platform/syntax/syntax-api:syntax",
     "//platform/syntax/syntax-util:util",
     "//platform/syntax/syntax-psi:psi",
+    "//platform/experiment",
   ],
   exports = [
     "//platform/lang-api:lang",

@@ -39,7 +39,6 @@ import java.nio.file.Path
 import java.nio.file.attribute.FileTime
 import java.time.LocalDate
 import java.time.ZoneId
-import java.util.*
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentMap
 import java.util.concurrent.atomic.AtomicInteger
@@ -68,7 +67,7 @@ internal data class JbProductInfo(
 
   val nonDefaultName: Boolean = !JbImportServiceImpl.IDE_NAME_PATTERN.matcher(configDir.name).matches()
 
-  internal fun prefetchData(coroutineScope: CoroutineScope, context: DescriptorListLoadingContext) {
+  internal fun prefetchData(coroutineScope: CoroutineScope, context: PluginDescriptorLoadingContext) {
     prefetchPluginDescriptors(coroutineScope, context)
     prefetchKeymap(coroutineScope)
   }
@@ -91,7 +90,7 @@ internal data class JbProductInfo(
   }
 
   @OptIn(ExperimentalCoroutinesApi::class)
-  private fun prefetchPluginDescriptors(coroutineScope: CoroutineScope, context: DescriptorListLoadingContext) {
+  private fun prefetchPluginDescriptors(coroutineScope: CoroutineScope, context: PluginDescriptorLoadingContext) {
     logger.debug("Prefetching plugin descriptors from $pluginDir")
     val descriptorDeferreds = loadCustomDescriptorsFromDirForImportSettings(scope = coroutineScope, dir = pluginDir, context = context)
     descriptors2ProcessCnt.set(descriptorDeferreds.size)
@@ -111,9 +110,9 @@ internal data class JbProductInfo(
         }
         if (descriptors2ProcessCnt.decrementAndGet() == 0) {
           // checking for plugins compatibility:
-          for (entry in descriptorsMap) {
-            if (!isCompatible(entry.value)) {
-              descriptorsMap.remove(entry.key)
+          for ((id, descriptor) in descriptorsMap) {
+            if (!isCompatible(descriptor)) {
+              descriptorsMap.remove(id)
             }
           }
         }
@@ -128,7 +127,7 @@ internal data class JbProductInfo(
     }
 
     // check for incompatibilities
-    for (ic in descriptor.incompatibilities) {
+    for (ic in descriptor.incompatiblePlugins) {
       if (PluginManagerCore.getPluginSet().isPluginEnabled(ic)) {
         logger.info("Plugin \"${descriptor.name}\" from \"$name\" could not be migrated to \"${IDEData.getSelf()?.fullName}\", " +
                                      "because it is incompatible with ${ic}")
@@ -137,7 +136,7 @@ internal data class JbProductInfo(
     }
 
     // check for missing dependencies
-    for (dependency in descriptor.pluginDependencies) {
+    for (dependency in descriptor.dependencies) {
       if (dependency.isOptional)
         continue
       if (!(PluginManagerCore.getPluginSet().isPluginEnabled(dependency.pluginId) || descriptorsMap.containsKey(dependency.pluginId))) {
@@ -146,6 +145,7 @@ internal data class JbProductInfo(
         return false
       }
     }
+    // FIXME v2 plugin dependencies are not checked
     return true
   }
 
@@ -273,9 +273,7 @@ class JbImportServiceImpl(private val coroutineScope: CoroutineScope) : JbServic
       PathManager.getConfigDir().parent,
       PathManager.getConfigDir().fileSystem.getPath(PathManager.getDefaultConfigPathFor("X")).parent
     )
-    val context = DescriptorListLoadingContext(customDisabledPlugins = Collections.emptySet(),
-                                               customBrokenPluginVersions = emptyMap(),
-                                               productBuildNumber = { PluginManagerCore.buildNumber })
+    val context = PluginDescriptorLoadingContext(getBuildNumberForDefaultDescriptorVersion = { PluginManagerCore.buildNumber })
     for (parentDir in parentDirs) {
       if (!parentDir.exists() || !parentDir.isDirectory()) {
         logger.info("Parent dir $parentDir doesn't exist or not a directory. Skipping it")
@@ -350,9 +348,9 @@ class JbImportServiceImpl(private val coroutineScope: CoroutineScope) : JbServic
     val productInfo = products[itemId] ?: error("Can't find product")
     val plugins = arrayListOf<ChildSetting>()
     val pluginNames = arrayListOf<String>()
-    for (entry in productInfo.getPluginsDescriptors()) {
-      plugins.add(JbChildSetting(entry.key.idString, entry.value.name))
-      pluginNames.add(entry.value.name)
+    for ((id, descriptor) in productInfo.getPluginsDescriptors()) {
+      plugins.add(JbChildSetting(id.idString, descriptor.name))
+      pluginNames.add(descriptor.name)
     }
     logger.info("Found ${pluginNames.size} custom plugins: ${pluginNames.joinToString()}")
     val pluginsCategory = JbSettingsCategoryConfigurable(SettingsCategory.PLUGINS, StartupImportIcons.Icons.Plugin,

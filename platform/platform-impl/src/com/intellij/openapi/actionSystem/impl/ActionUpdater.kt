@@ -21,7 +21,7 @@ import com.intellij.openapi.actionSystem.ex.CustomComponentAction
 import com.intellij.openapi.actionSystem.ex.InlineActionsHolder
 import com.intellij.openapi.application.Application
 import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.application.writeIntentReadAction
+import com.intellij.openapi.application.runReadAction
 import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.progress.CeProcessCanceledException
@@ -265,7 +265,7 @@ internal class ActionUpdater @JvmOverloads constructor(
         // don't process invisible groups
         return@withContext emptyList()
       }
-      val hideDisabled = hideDisabled || group is CompactActionGroup || presentation.getClientProperty(HIDE_DISABLED_CHILDREN) == true
+      val hideDisabled = hideDisabled || presentation.getClientProperty(HIDE_DISABLED_CHILDREN) == true
       val children = getGroupChildren(group)
       // parallel update execution can break some existing caching
       // the preferred way to do caching now is `updateSession.sharedData`
@@ -357,8 +357,7 @@ internal class ActionUpdater @JvmOverloads constructor(
     if (presentation == null || !presentation.isVisible) {
       return emptyList()
     }
-    val alwaysVisible = child is ActionGroup && (
-      child is AlwaysVisibleActionGroup || presentation.getClientProperty(ALWAYS_VISIBLE_GROUP) == true)
+    val alwaysVisible = child is ActionGroup && presentation.getClientProperty(ALWAYS_VISIBLE_GROUP) == true
     if (hideDisabledBase && !presentation.isEnabled && !alwaysVisible) {
       return emptyList()
     }
@@ -396,7 +395,7 @@ internal class ActionUpdater @JvmOverloads constructor(
         presentation.setEnabled(false)
       }
     }
-    val isCompactGroup = child is CompactActionGroup || presentation.getClientProperty(HIDE_DISABLED_CHILDREN) == true
+    val isCompactGroup = presentation.getClientProperty(HIDE_DISABLED_CHILDREN) == true
     val hideDisabledChildren = (hideDisabledBase || isCompactGroup) && !alwaysVisible
     return when {
       !hasEnabled && hideDisabled || !hasVisible && hideEmpty -> when {
@@ -434,7 +433,7 @@ internal class ActionUpdater @JvmOverloads constructor(
     val deferred = scope.async(
       currentCoroutineContext().minusKey(Job) +
       CoroutineName("computeOnEdt ($place)") + edtDispatcher) {
-      writeIntentReadAction {
+      runReadAction { // will immediately succeed because lock is parallelized here
         supplier()
       }
     }

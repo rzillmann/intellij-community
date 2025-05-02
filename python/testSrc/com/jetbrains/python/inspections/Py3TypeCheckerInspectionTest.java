@@ -623,6 +623,11 @@ public class Py3TypeCheckerInspectionTest extends PyInspectionTestCase {
     );
   }
 
+  // PY-80195
+  public void testMultiValueEnum() {
+    doMultiFileTest();
+  }
+
   // PY-42418
   public void testParametrizedBuiltinCollectionsAndTheirTypingAliasesAreEquivalent() {
     doTest();
@@ -858,7 +863,7 @@ public class Py3TypeCheckerInspectionTest extends PyInspectionTestCase {
                    from typing import Type
                    def foo(x: Type[int | str]):
                        pass
-                   foo(<warning descr="Expected type 'Type[int | str]', got 'UnionType' instead">int | str</warning>)""");
+                   foo(<warning descr="Expected type 'type[int | str]', got 'UnionType' instead">int | str</warning>)""");
   }
 
   // PY-44974
@@ -1911,21 +1916,19 @@ public class Py3TypeCheckerInspectionTest extends PyInspectionTestCase {
                    """);
   }
 
-  // PY-53105
+  // PY-53105, PY-76865
   public void testVariadicGenericStarArgsOfVariadicGeneric() {
     doTestByText("""
                    from typing import Tuple, TypeVarTuple
 
                    Ts = TypeVarTuple('Ts')
 
-
                    def foo(*args: Tuple[*Ts]): ...
-
 
                    foo((0,), (1,))
                    foo((0,), <warning descr="Expected type 'tuple[int]' (matched generic type 'tuple[*Ts]'), got 'tuple[int, int]' instead">(1, 2)</warning>)
-                   # *tuple[int | str] is inferred for *Ts
-                   foo((0,), ('1',))
+                   # Should fail according to https://typing.python.org/en/latest/spec/generics.html#type-variable-tuple-equality
+                   foo((0,), <warning descr="Expected type 'tuple[int]' (matched generic type 'tuple[*Ts]'), got 'tuple[str]' instead">('1',)</warning>)
                    """);
   }
 
@@ -2479,7 +2482,7 @@ def foo(param: str | int) -> TypeGuard[str]:
                    t = Test()
                    t.member = "str"
                    t.member = <warning descr="Expected type 'str' (from '__set__'), got 'int' instead">123</warning>
-                   t.member = <warning descr="Expected type 'str' (from '__set__'), got 'Type[list]' instead">list</warning>
+                   t.member = <warning descr="Expected type 'str' (from '__set__'), got 'type[list]' instead">list</warning>
                    """);
   }
 
@@ -2497,7 +2500,7 @@ def foo(param: str | int) -> TypeGuard[str]:
                    t = Test()
                    t.member = "str"
                    t.member = <warning descr="Expected type 'str' (from '__set__'), got 'int' instead">123</warning>
-                   t.member = <warning descr="Expected type 'str' (from '__set__'), got 'Type[list]' instead">list</warning>
+                   t.member = <warning descr="Expected type 'str' (from '__set__'), got 'type[list]' instead">list</warning>
                    """);
   }
 
@@ -2659,6 +2662,92 @@ def foo(param: str | int) -> TypeGuard[str]:
                    def expects_list(l: list[int]): ...
                    
                    expects_list(v)
+                   """);
+  }
+
+  public void testExplicitlyParameterizedGenericConstructorCall() {
+    doTestByText("""
+                   class A[T]:
+                       def __init__(self, v: T) -> None: ...
+
+                   A[int](<warning descr="Expected type 'int' (matched generic type 'T'), got 'str' instead">""</warning>)
+                   """);
+  }
+
+  public void testGenericInstanceAttribute() {
+    doTestByText("""
+                   from typing import Self
+                   
+                   class Node[T]:
+                       x: T
+
+                   Node[int].<warning descr="Access to generic instance variables via class is ambiguous">x</warning> = 1
+                   Node[int].<warning descr="Access to generic instance variables via class is ambiguous">x</warning>
+                   Node.<warning descr="Access to generic instance variables via class is ambiguous">x</warning> = 1
+                   Node.<warning descr="Access to generic instance variables via class is ambiguous">x</warning>
+
+                   p = Node[int]()
+                   type(p).<warning descr="Access to generic instance variables via class is ambiguous">x</warning>
+                   i: int = p.x
+                   j: int = Node[int]().x
+                   p.x = 1
+                   
+                   class A:
+                       attr1: list[int]
+                       attr2: list[Self]
+                       attr3: Self
+                   
+                   A.attr1
+                   A.attr2
+                   A.attr3
+                   """);
+  }
+
+  public void testGenericInstanceAttribute2() {
+    doTestByText("""
+                   class Node[T]:
+                       m: map[str, list[T]]
+                   
+                   Node[int].<warning descr="Access to generic instance variables via class is ambiguous">m</warning> = {}
+                   Node[int].<warning descr="Access to generic instance variables via class is ambiguous">m</warning>
+                   Node.<warning descr="Access to generic instance variables via class is ambiguous">m</warning> # TODO = {}
+                   Node.<warning descr="Access to generic instance variables via class is ambiguous">m</warning>
+                   """);
+  }
+
+  // PY-79733
+  public void testLiteralTypeInferredForComprehensions() {
+    doTestByText("""
+                   from typing import Literal
+                   
+                   
+                   def func(strings: list[str]):
+                       l1: list[Literal[1]] = [1 for x in strings]
+                       l2: list[Literal[1]] = <warning descr="Expected type 'list[Literal[1]]', got 'list[Literal[2]]' instead">[2 for x in strings]</warning>
+                       s1: set[Literal[1]] = {1 for x in strings}
+                       s2: set[Literal[1]] = <warning descr="Expected type 'set[Literal[1]]', got 'set[Literal[2]]' instead">{2 for x in strings}</warning>
+                       d1: dict[str, Literal[1]] = {x: 1 for x in strings}
+                       d2: dict[str, Literal[1]] = <warning descr="Expected type 'dict[str, Literal[1]]', got 'dict[str, Literal[2]]' instead">{x: 2 for x in strings}</warning>
+                   """);
+  }
+
+  // PY-79733
+  public void testTypedDictTypeInferredForComprehensions() {
+    doTestByText("""
+                   from typing import TypedDict
+                   
+                   
+                   class Foo(TypedDict):
+                       foo: str
+                   
+                   
+                   foo: Foo = {"foo": "bar"}
+                   foo_list1: list[Foo] = [{"foo": bar} for bar in ["bar"]]
+                   foo_list2: list[Foo] = <warning descr="Expected type 'list[Foo]', got 'list[dict[str, str]]' instead">[{"foo": bar, "buz": "qux"} for bar in ["bar"]]</warning>
+                   foo_set1: set[Foo] = {{"foo": bar} for bar in ["bar"]}
+                   foo_set2: set[Foo] = <warning descr="Expected type 'set[Foo]', got 'set[dict[str, str]]' instead">{{"foo": bar, "buz": "qux"} for bar in ["bar"]}</warning>
+                   foo_dict1: dict[str, Foo] = {bar: {"foo": bar} for bar in ["bar"]}
+                   foo_dict2: dict[str, Foo] = <warning descr="Expected type 'dict[str, Foo]', got 'dict[str, dict[str, str]]' instead">{bar: {"foo": bar, "buz": "qux"} for bar in ["bar"]}</warning>
                    """);
   }
 }

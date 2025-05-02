@@ -117,7 +117,6 @@ import com.intellij.platform.testFramework.core.FileComparisonFailedError;
 import com.intellij.profile.codeInspection.ProjectInspectionProfileManager;
 import com.intellij.psi.*;
 import com.intellij.psi.impl.PsiManagerEx;
-import com.intellij.psi.impl.PsiManagerImpl;
 import com.intellij.psi.impl.source.PsiFileImpl;
 import com.intellij.psi.impl.source.tree.FileElement;
 import com.intellij.psi.impl.source.tree.injected.InjectedLanguageEditorUtil;
@@ -190,7 +189,7 @@ public class CodeInsightTestFixtureImpl extends BaseFixture implements CodeInsig
 
   private final IdeaProjectTestFixture myProjectFixture;
   private final TempDirTestFixture myTempDirFixture;
-  private PsiManagerImpl myPsiManager;
+  private PsiManagerEx myPsiManager;
   private VirtualFile myFile;
 
   // Strong references to PSI files configured by the test (to avoid tree access assertions after PSI has been GC'ed)
@@ -1373,7 +1372,7 @@ public class CodeInsightTestFixtureImpl extends BaseFixture implements CodeInsig
       assertNotNull(tempDir);
       HeavyPlatformTestCase.synchronizeTempDirVfs(tempDir);
 
-      myPsiManager = (PsiManagerImpl)PsiManager.getInstance(getProject());
+      myPsiManager = PsiManagerEx.getInstanceEx(getProject());
       InspectionsKt.configureInspections(LocalInspectionTool.EMPTY_ARRAY, getProject(), myProjectFixture.getTestRootDisposable());
 
       DaemonCodeAnalyzerImpl daemonCodeAnalyzer = (DaemonCodeAnalyzerImpl)DaemonCodeAnalyzer.getInstance(getProject());
@@ -2198,6 +2197,38 @@ public class CodeInsightTestFixtureImpl extends BaseFixture implements CodeInsig
   @Override
   public @NotNull @Unmodifiable List<Crumb> getBreadcrumbsAtCaret() {
     return myEditorTestFixture.getBreadcrumbsAtCaret();
+  }
+
+  @Override
+  public @Nullable String getParameterInfoAtCaret() {
+    var disposable = Disposer.newDisposable();
+    var hintFixture = new EditorHintFixture(disposable);
+    try {
+      performEditorAction(IdeActions.ACTION_EDITOR_SHOW_PARAMETER_INFO);
+      for (int i = 0; i < 10; i++) {
+        UIUtil.dispatchAllInvocationEvents();
+        NonBlockingReadActionImpl.waitForAsyncTaskCompletion();
+      }
+      var hintText = hintFixture.getCurrentHintText();
+      if (hintText == null) return null;
+      hintText = hintText
+        .replaceAll("<style>[^<]*</style>\\s*", "")
+        .replaceAll("</?span[^>]*>|</?html>", "")
+        .replaceAll("&#32;|&nbsp;", " ");
+
+      var lines = new ArrayList<>(StringUtil.split(hintText, "\n-\n"));
+      lines.sort(Comparator.comparing(line -> {
+        if (line.startsWith("["))
+          return "!" + line;
+        else if (line.startsWith("<mismatched>"))
+          return "~" + line;
+        else
+          return line;
+      }));
+      return StringUtil.join(lines, "\n-\n");
+    } finally {
+      Disposer.dispose(disposable);
+    }
   }
 
   private SearchEverywhereContributor<Object> createMockClassSearchEverywhereContributor(boolean everywhere) {

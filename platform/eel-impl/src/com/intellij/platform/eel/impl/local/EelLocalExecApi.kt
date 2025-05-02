@@ -1,11 +1,14 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.platform.eel.impl.local
 
+import com.intellij.execution.CommandLineUtil
+import com.intellij.execution.Platform
 import com.intellij.execution.configurations.PathEnvironmentVariableUtil
 import com.intellij.execution.configurations.PathEnvironmentVariableUtil.getPathDirs
+import com.intellij.execution.process.LocalProcessService
+import com.intellij.execution.process.LocalPtyOptions
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.util.SystemInfo
-import com.intellij.openapi.util.registry.Registry
 import com.intellij.platform.eel.EelDescriptor
 import com.intellij.platform.eel.EelExecApi
 import com.intellij.platform.eel.EelProcess
@@ -14,7 +17,7 @@ import com.intellij.platform.eel.impl.fs.EelProcessResultImpl
 import com.intellij.platform.eel.path.EelPath
 import com.intellij.platform.eel.provider.LocalEelDescriptor
 import com.intellij.util.EnvironmentUtil
-import com.pty4j.PtyProcessBuilder
+import com.pty4j.PtyProcess
 import org.jetbrains.annotations.ApiStatus
 import java.io.File
 import java.io.IOException
@@ -36,7 +39,6 @@ class EelLocalExecApi : EelExecApi {
     get() = LocalEelDescriptor
 
   override suspend fun execute(builder: EelExecApi.ExecuteProcessOptions): EelResult<EelProcess, EelExecApi.ExecuteProcessError> {
-    val args = builder.args.toTypedArray()
     val pty = builder.ptyOrStdErrSettings
 
     val process: LocalEelProcess =
@@ -44,23 +46,26 @@ class EelLocalExecApi : EelExecApi {
         // Inherit env vars because lack of `PATH` might break things
         val environment = System.getenv().toMutableMap()
         environment.putAll(builder.env)
+        val escapedCommandLine = CommandLineUtil.toCommandLine(builder.exe, builder.args, Platform.current())
         when (val p = pty) {
           is EelExecApi.Pty -> {
             if ("TERM" !in environment) {
               environment.getOrPut("TERM") { "xterm" }
             }
-            LocalEelProcess(PtyProcessBuilder()
-                              .setConsole(!p.echo)
-                              .setCommand(arrayOf(builder.exe) + args)
-                              .setEnvironment(environment)
-                              .setDirectory(builder.workingDirectory?.toString())
-                              .setInitialColumns(p.columns)
-                              .setInitialRows(p.rows)
-                              .setSpawnProcessUsingJdkOnMacIntel(Registry.`is`("run.processes.using.pty.helper.on.mac.intel", true))
-                              .start())
+            LocalEelProcess(LocalProcessService.getInstance().startPtyProcess(
+              escapedCommandLine,
+              builder.workingDirectory?.toString(),
+              environment,
+              LocalPtyOptions.defaults().builder().also {
+                it.consoleMode(!p.echo)
+                it.initialColumns(p.columns)
+                it.initialRows(p.rows)
+              }.build(),
+              false,
+            ) as PtyProcess)
           }
           EelExecApi.RedirectStdErr, null -> {
-            LocalEelProcess(ProcessBuilder(builder.exe, *args).apply {
+            LocalEelProcess(ProcessBuilder(escapedCommandLine).apply {
               environment().putAll(environment)
               redirectErrorStream(p != null)
               builder.workingDirectory?.let {

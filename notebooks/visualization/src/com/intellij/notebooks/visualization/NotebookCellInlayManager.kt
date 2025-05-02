@@ -2,39 +2,38 @@ package com.intellij.notebooks.visualization
 
 import com.intellij.ide.ui.LafManagerListener
 import com.intellij.notebooks.ui.bind
-import com.intellij.notebooks.ui.visualization.NotebookUtil.notebookAppearance
-import com.intellij.notebooks.visualization.context.NotebookDataContext.NOTEBOOK_CELL_LINES_INTERVAL
 import com.intellij.notebooks.visualization.ui.*
 import com.intellij.notebooks.visualization.ui.EditorCellEventListener.*
 import com.intellij.notebooks.visualization.ui.EditorCellViewEventListener.CellViewCreated
 import com.intellij.notebooks.visualization.ui.EditorCellViewEventListener.CellViewRemoved
+import com.intellij.notebooks.visualization.ui.endInlay.EditorNotebookEndInlay
+import com.intellij.notebooks.visualization.ui.endInlay.EditorNotebookEndInlayProvider
 import com.intellij.openapi.Disposable
-import com.intellij.openapi.actionSystem.UiDataProvider
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.runInEdt
 import com.intellij.openapi.diagnostic.thisLogger
-import com.intellij.openapi.editor.*
+import com.intellij.openapi.editor.Editor
+import com.intellij.openapi.editor.FoldRegion
 import com.intellij.openapi.editor.colors.EditorColorsListener
 import com.intellij.openapi.editor.colors.EditorColorsManager
 import com.intellij.openapi.editor.event.CaretEvent
 import com.intellij.openapi.editor.event.CaretListener
 import com.intellij.openapi.editor.ex.EditorEx
 import com.intellij.openapi.editor.ex.FoldingListener
-import com.intellij.openapi.editor.ex.FoldingModelEx
 import com.intellij.openapi.editor.impl.EditorEmbeddedComponentManager
 import com.intellij.openapi.editor.impl.EditorImpl
-import com.intellij.openapi.editor.impl.FoldingModelImpl
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.Key
 import com.intellij.openapi.util.removeUserData
 import com.intellij.util.EventDispatcher
 import com.intellij.util.SmartList
 import com.intellij.util.concurrency.ThreadingAssertions
+import java.awt.Point
 
 class NotebookCellInlayManager private constructor(
   val editor: EditorImpl,
   private val shouldCheckInlayOffsets: Boolean,
-  private val notebook: EditorNotebook,
+  val notebook: EditorNotebook,
 ) : Disposable, NotebookIntervalPointerFactory.ChangeListener {
 
   private val notebookCellLines = NotebookCellLines.get(editor)
@@ -43,10 +42,9 @@ class NotebookCellInlayManager private constructor(
 
   val cells: List<EditorCell> get() = notebook.cells
 
-  internal val views: MutableMap<EditorCell, EditorCellView> = mutableMapOf<EditorCell, EditorCellView>()
+  val endNotebookInlays: List<EditorNotebookEndInlay> = EditorNotebookEndInlayProvider.create(this)
 
-  val belowLastCellPanel: NotebookBelowLastCellPanel = NotebookBelowLastCellPanel(editor)
-  private var belowLastCellInlay: Inlay<*>? = null
+  internal val views: MutableMap<EditorCell, EditorCellView> = mutableMapOf()
 
   private val cellViewEventListeners = EventDispatcher.create(EditorCellViewEventListener::class.java)
 
@@ -55,6 +53,7 @@ class NotebookCellInlayManager private constructor(
   }
 
   override fun dispose() {
+    views.clear()
     editor.removeUserData(CELL_INLAY_MANAGER_KEY)
   }
 
@@ -110,7 +109,7 @@ class NotebookCellInlayManager private constructor(
     }
   }
 
-  private fun initialize() {
+  fun initialize() {
     editor.putUserData(CELL_INLAY_MANAGER_KEY, this)
 
     val connection = ApplicationManager.getApplication().messageBus.connect(editor.disposable)
@@ -127,7 +126,7 @@ class NotebookCellInlayManager private constructor(
 
     setupFoldingListener()
     setupSelectionUI()
-    addBelowLastCellInlay()
+
 
     notebook.addCellEventsListener(this, object : EditorCellEventListener {
       override fun onEditorCellEvents(events: List<EditorCellEvent>) {
@@ -138,13 +137,19 @@ class NotebookCellInlayManager private constructor(
     handleRefreshedDocument()
   }
 
+  fun getCellByPoint(point: Point): EditorCell? {
+    val visualLine = editor.xyToLogicalPosition(point)
+    val cur = cells.firstOrNull { it.interval.lines.contains(visualLine.line) }
+    return cur
+
+  }
   private fun updateUI(events: List<EditorCellEvent>) {
     update {
       for (event in events) {
         when (event) {
           is CellCreated -> {
             val cell = event.cell
-            cell.visible.bind(cell) { visible ->
+            cell.isUnfolded.bind(cell) { visible ->
               updateCellVisibility(cell, visible)
             }
           }
@@ -201,30 +206,14 @@ class NotebookCellInlayManager private constructor(
     val selectionModel = editor.cellSelectionModel ?: error("The selection model is supposed to be installed")
     val selectedCells = selectionModel.selectedCells.map { it.ordinal }
     for (cell in cells) {
-      cell.selected.set(cell.intervalPointer.get()?.ordinal in selectedCells)
+      cell.isSelected.set(cell.intervalPointer.get()?.ordinal in selectedCells)
 
-      if (cell.selected.get()) {
+      if (cell.isSelected.get()) {
         editor.project?.messageBus?.syncPublisher(JupyterCellSelectionNotifier.TOPIC)?.cellSelected(cell.interval, editor)
       }
     }
   }
 
-  private fun addBelowLastCellInlay() {  // PY-77218
-    belowLastCellInlay = editor.addComponentInlay(
-      UiDataProvider.wrapComponent(belowLastCellPanel) { sink ->
-        sink[NOTEBOOK_CELL_LINES_INTERVAL] = editor.notebook?.cells?.lastOrNull()?.interval
-      },
-      isRelatedToPrecedingText = true,
-      showAbove = false,
-      priority = editor.notebookAppearance.jupyterBelowLastCellInlayPriority,
-      offset = editor.document.getLineEndOffset((editor.document.lineCount - 1).coerceAtLeast(0))
-    )
-  }
-
-  fun removeBelowLastCellInlay() {
-    belowLastCellInlay?.let { Disposer.dispose(it) }
-    belowLastCellInlay = null
-  }
 
   private fun setupFoldingListener() {
     val foldingModel = editor.foldingModel
@@ -255,12 +244,12 @@ class NotebookCellInlayManager private constructor(
         update { ctx ->
           changedRegions.forEach { region ->
             editorCells(region).forEach {
-              it.visible.set(region.isExpanded)
+              it.isUnfolded.set(region.isExpanded)
             }
           }
           removedRegions.forEach { region ->
             editorCells(region).forEach {
-              it.visible.set(true)
+              it.isUnfolded.set(true)
             }
           }
         }
@@ -313,7 +302,7 @@ class NotebookCellInlayManager private constructor(
         shouldCheckInlayOffsets,
         notebook
       ).also { Disposer.register(editor.disposable, it) }
-      notebookCellInlayManager.initialize()
+
       NotebookIntervalPointerFactory.get(editor).changeListeners.addListener(notebookCellInlayManager, notebookCellInlayManager)
       return notebookCellInlayManager
     }
@@ -462,59 +451,5 @@ class NotebookCellInlayManager private constructor(
 
   internal fun getInputFactories(): Sequence<NotebookCellInlayController.InputFactory> {
     return NotebookCellInlayController.InputFactory.EP_NAME.extensionList.asSequence()
-  }
-}
-
-class UpdateContext(val force: Boolean = false) {
-
-  private val foldingOperations = mutableListOf<(FoldingModelEx) -> Unit>()
-
-  private val inlayOperations = mutableListOf<(InlayModel) -> Unit>()
-
-  fun addFoldingOperation(block: (FoldingModelEx) -> Unit) {
-    foldingOperations.add(block)
-  }
-
-  fun addInlayOperation(block: (InlayModel) -> Unit) {
-    inlayOperations.add(block)
-  }
-
-  fun applyUpdates(editor: Editor) {
-    if (!editor.isDisposed) {
-      if (foldingOperations.isNotEmpty()) {
-        val foldingModel = RemovalTrackingFoldingModel(editor.foldingModel as FoldingModelImpl)
-        foldingModel.runBatchFoldingOperation {
-          foldingOperations.forEach { it(foldingModel) }
-        }
-      }
-      if (inlayOperations.isNotEmpty()) {
-        val inlayModel = editor.inlayModel
-        inlayModel.execute(true) {
-          inlayOperations.forEach { it(inlayModel) }
-        }
-      }
-    }
-  }
-
-  /**
-   * [FoldingModelEx] implementation tracking fold region removal and clearing offsets cache before custom folding creation.
-   * Else there will be an exception because of an invalid folding region.
-   */
-  class RemovalTrackingFoldingModel(private val model: FoldingModelImpl) : FoldingModelEx by model {
-
-    private var resetCache = false
-
-    override fun removeFoldRegion(region: FoldRegion) {
-      resetCache = true
-      model.removeFoldRegion(region)
-    }
-
-    override fun addCustomLinesFolding(startLine: Int, endLine: Int, renderer: CustomFoldRegionRenderer): CustomFoldRegion? {
-      if (resetCache) {
-        model.updateCachedOffsets()
-        resetCache = false
-      }
-      return model.addCustomLinesFolding(startLine, endLine, renderer)
-    }
   }
 }

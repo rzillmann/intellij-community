@@ -694,6 +694,16 @@ public abstract class K2JsBasicCompletionLegacyStdlibTestGenerated extends Abstr
                 KotlinTestUtils.runTest(this::doTest, this, testDataFilePath);
             }
 
+            @TestMetadata("AnnotationLiteralFirst.kt")
+            public void testAnnotationLiteralFirst() throws Exception {
+                runTest("../../completion/testData/basic/common/enums/AnnotationLiteralFirst.kt");
+            }
+
+            @TestMetadata("AnnotationLiteralSecond.kt")
+            public void testAnnotationLiteralSecond() throws Exception {
+                runTest("../../completion/testData/basic/common/enums/AnnotationLiteralSecond.kt");
+            }
+
             @TestMetadata("EnumEntryCompletion.kt")
             public void testEnumEntryCompletion() throws Exception {
                 runTest("../../completion/testData/basic/common/enums/EnumEntryCompletion.kt");
@@ -709,9 +719,44 @@ public abstract class K2JsBasicCompletionLegacyStdlibTestGenerated extends Abstr
                 runTest("../../completion/testData/basic/common/enums/EnumEntryEmptyCompletion.kt");
             }
 
+            @TestMetadata("EnumEntryExpectedPreferred.kt")
+            public void testEnumEntryExpectedPreferred() throws Exception {
+                runTest("../../completion/testData/basic/common/enums/EnumEntryExpectedPreferred.kt");
+            }
+
+            @TestMetadata("EnumEntryExpectedPreferred2.kt")
+            public void testEnumEntryExpectedPreferred2() throws Exception {
+                runTest("../../completion/testData/basic/common/enums/EnumEntryExpectedPreferred2.kt");
+            }
+
             @TestMetadata("ExpectedEnumEntryCompletion.kt")
             public void testExpectedEnumEntryCompletion() throws Exception {
                 runTest("../../completion/testData/basic/common/enums/ExpectedEnumEntryCompletion.kt");
+            }
+
+            @TestMetadata("ExpectedEnumEntryCompletion2.kt")
+            public void testExpectedEnumEntryCompletion2() throws Exception {
+                runTest("../../completion/testData/basic/common/enums/ExpectedEnumEntryCompletion2.kt");
+            }
+
+            @TestMetadata("ExpectedEnumEntryCompletion3.kt")
+            public void testExpectedEnumEntryCompletion3() throws Exception {
+                runTest("../../completion/testData/basic/common/enums/ExpectedEnumEntryCompletion3.kt");
+            }
+
+            @TestMetadata("ExpectedEnumEntryCompletion4.kt")
+            public void testExpectedEnumEntryCompletion4() throws Exception {
+                runTest("../../completion/testData/basic/common/enums/ExpectedEnumEntryCompletion4.kt");
+            }
+
+            @TestMetadata("ExpectedEnumEntryCompletion5.kt")
+            public void testExpectedEnumEntryCompletion5() throws Exception {
+                runTest("../../completion/testData/basic/common/enums/ExpectedEnumEntryCompletion5.kt");
+            }
+
+            @TestMetadata("ExpectedEnumEntryCompletion6.kt")
+            public void testExpectedEnumEntryCompletion6() throws Exception {
+                runTest("../../completion/testData/basic/common/enums/ExpectedEnumEntryCompletion6.kt");
             }
 
             @TestMetadata("InvisibleEnumEntryCompletion.kt")
@@ -1689,6 +1734,11 @@ public abstract class K2JsBasicCompletionLegacyStdlibTestGenerated extends Abstr
                 runTest("../../completion/testData/basic/common/namedArguments/ArgumentWithDefaultNotExpected3.kt");
             }
 
+            @TestMetadata("BaseClassConstructor.kt")
+            public void testBaseClassConstructor() throws Exception {
+                runTest("../../completion/testData/basic/common/namedArguments/BaseClassConstructor.kt");
+            }
+
             @TestMetadata("BooleanArgumentExpected.kt")
             public void testBooleanArgumentExpected() throws Exception {
                 runTest("../../completion/testData/basic/common/namedArguments/BooleanArgumentExpected.kt");
@@ -1973,6 +2023,11 @@ public abstract class K2JsBasicCompletionLegacyStdlibTestGenerated extends Abstr
             @TestMetadata("ContextReceiver.kt")
             public void testContextReceiver() throws Exception {
                 runTest("../../completion/testData/basic/common/override/ContextReceiver.kt");
+            }
+
+            @TestMetadata("EnumMethodNameMatch.kt")
+            public void testEnumMethodNameMatch() throws Exception {
+                runTest("../../completion/testData/basic/common/override/EnumMethodNameMatch.kt");
             }
 
             @TestMetadata("Generics.kt")
@@ -2470,6 +2525,40 @@ public abstract class K2JsBasicCompletionLegacyStdlibTestGenerated extends Abstr
             @TestMetadata("twoReceivers.kt")
             public void testTwoReceivers() throws Exception {
                 runTest("../../completion/testData/basic/common/primitiveCompletion/twoReceivers.kt");
+            }
+        }
+
+        @RunWith(JUnit3RunnerWithInners.class)
+        @TestMetadata("../../completion/testData/basic/common/sealedHierarchy")
+        public static class SealedHierarchy extends AbstractK2JsBasicCompletionLegacyStdlibTest {
+            @java.lang.Override
+            @org.jetbrains.annotations.NotNull
+            public final KotlinPluginMode getPluginMode() {
+                return KotlinPluginMode.K2;
+            }
+
+            private void runTest(String testDataFilePath) throws Exception {
+                KotlinTestUtils.runTest(this::doTest, this, testDataFilePath);
+            }
+
+            @TestMetadata("PreferSealedHierarchyInAs.kt")
+            public void testPreferSealedHierarchyInAs() throws Exception {
+                runTest("../../completion/testData/basic/common/sealedHierarchy/PreferSealedHierarchyInAs.kt");
+            }
+
+            @TestMetadata("PreferSealedHierarchyInIs.kt")
+            public void testPreferSealedHierarchyInIs() throws Exception {
+                runTest("../../completion/testData/basic/common/sealedHierarchy/PreferSealedHierarchyInIs.kt");
+            }
+
+            @TestMetadata("PreferSealedHierarchyInSafeAs.kt")
+            public void testPreferSealedHierarchyInSafeAs() throws Exception {
+                runTest("../../completion/testData/basic/common/sealedHierarchy/PreferSealedHierarchyInSafeAs.kt");
+            }
+
+            @TestMetadata("PreferSealedHierarchyNested.kt")
+            public void testPreferSealedHierarchyNested() throws Exception {
+                runTest("../../completion/testData/basic/common/sealedHierarchy/PreferSealedHierarchyNested.kt");
             }
         }
 
@@ -3057,6 +3146,11 @@ public abstract class K2JsBasicCompletionLegacyStdlibTestGenerated extends Abstr
             @TestMetadata("DoWhile.kt")
             public void testDoWhile() throws Exception {
                 runTest("../../completion/testData/basic/common/DoWhile.kt");
+            }
+
+            @TestMetadata("DontPreferNothingType.kt")
+            public void testDontPreferNothingType() throws Exception {
+                runTest("../../completion/testData/basic/common/DontPreferNothingType.kt");
             }
 
             @TestMetadata("EnumEntriesInsideAbsentWhenFeatureDisabled.kt")
@@ -3652,6 +3746,11 @@ public abstract class K2JsBasicCompletionLegacyStdlibTestGenerated extends Abstr
             @TestMetadata("parameterDefaultValueInFunction.kt")
             public void testParameterDefaultValueInFunction() throws Exception {
                 runTest("../../completion/testData/basic/common/parameterDefaultValueInFunction.kt");
+            }
+
+            @TestMetadata("PreferConstructorInReturn.kt")
+            public void testPreferConstructorInReturn() throws Exception {
+                runTest("../../completion/testData/basic/common/PreferConstructorInReturn.kt");
             }
 
             @TestMetadata("PreferLessParameters.kt")

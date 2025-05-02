@@ -10,16 +10,16 @@ import com.intellij.execution.RunnerAndConfigurationSettings
 import com.intellij.execution.configurations.RunConfiguration
 import com.intellij.execution.dashboard.RunDashboardManager
 import com.intellij.execution.executors.DefaultRunExecutor
-import com.intellij.execution.process.ProcessAdapter
+import com.intellij.execution.process.BaseProcessHandler
 import com.intellij.execution.process.ProcessEvent
 import com.intellij.execution.process.ProcessHandler
+import com.intellij.execution.process.ProcessListener
 import com.intellij.execution.runners.ExecutionEnvironment
 import com.intellij.execution.runners.ExecutionUtil
 import com.intellij.execution.ui.layout.impl.DockableGridContainerFactory
 import com.intellij.ide.plugins.DynamicPluginListener
 import com.intellij.ide.plugins.IdeaPluginDescriptor
 import com.intellij.openapi.Disposable
-import com.intellij.openapi.actionSystem.EdtNoGetDataProvider
 import com.intellij.openapi.actionSystem.PlatformCoreDataKeys
 import com.intellij.openapi.application.AppUIExecutor
 import com.intellij.openapi.application.ApplicationManager
@@ -156,9 +156,9 @@ class RunContentManagerImpl(private val project: Project) : RunContentManager {
       toolWindow.component.putClientProperty(ToolWindowContentUi.ALLOW_DND_FOR_TABS, true)
     }
     val contentManager = toolWindow.contentManager
-    contentManager.addDataProvider(EdtNoGetDataProvider { sink ->
+    contentManager.addUiDataProvider { sink ->
       sink[PlatformCoreDataKeys.HELP_ID] = executor.helpId
-    })
+    }
     initToolWindow(executor, toolWindowId, executor.toolWindowIcon, contentManager)
     return contentManager
   }
@@ -279,8 +279,9 @@ class RunContentManagerImpl(private val project: Project) : RunContentManager {
     val toolWindow = getToolWindowManager().getToolWindow(toolWindowId)
     val processHandler = descriptor.processHandler
     if (processHandler != null) {
-      val processAdapter = object : ProcessAdapter() {
+      val processAdapter = object : ProcessListener {
         override fun startNotified(event: ProcessEvent) {
+          val pid = getPid(processHandler)
           UIUtil.invokeLaterIfNeeded {
             content.icon = getLiveIndicator(descriptor.icon)
             var toolWindowIcon = toolWindowIdToBaseIcon[toolWindowId]
@@ -288,6 +289,9 @@ class RunContentManagerImpl(private val project: Project) : RunContentManager {
               toolWindowIcon = loadIconCustomVersionOrScale(icon = toolWindowIcon, size = 20)
             }
             toolWindow!!.setIcon(getLiveIndicator(toolWindowIcon))
+            if (pid != null) {
+              content.description = ExecutionBundle.message("process.id.tooltip", pid)
+            }
           }
           descriptor.iconProperty.afterChange(descriptor) {
             UIUtil.invokeLaterIfNeeded {
@@ -304,6 +308,7 @@ class RunContentManagerImpl(private val project: Project) : RunContentManager {
             // Since it's a terminated state, it's okay to stick with the last available one
             val icon = descriptor.icon
             content.icon = if (icon == null) executor.disabledIcon else IconLoader.getTransparentIcon(icon)
+            content.description = null
           }
         }
       }
@@ -601,6 +606,15 @@ class RunContentManagerImpl(private val project: Project) : RunContentManager {
       }
       return askUserAndWait(processHandler, sessionName, task)
     }
+  }
+}
+
+private fun getPid(processHandler: ProcessHandler): Long? {
+  try {
+    return (processHandler as? BaseProcessHandler<*>)?.process?.pid()
+  }
+  catch (_: UnsupportedOperationException) {
+    return null
   }
 }
 

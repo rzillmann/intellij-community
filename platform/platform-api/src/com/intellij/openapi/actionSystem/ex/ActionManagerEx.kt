@@ -55,13 +55,13 @@ abstract class ActionManagerEx : ActionManager() {
     }
   }
 
-  abstract fun performWithActionCallbacks(action: AnAction, event: AnActionEvent, runnable: Runnable)
+  abstract fun performWithActionCallbacks(action: AnAction, event: AnActionEvent, runnable: Runnable): AnActionResult
 
   abstract fun createActionToolbar(place: String, group: ActionGroup, horizontal: Boolean, decorateButtons: Boolean): ActionToolbar
 
   abstract fun createActionToolbar(place: String, group: ActionGroup, horizontal: Boolean, decorateButtons: Boolean, customizable: Boolean): ActionToolbar
 
-  abstract fun createActionToolbar(place: String, group: ActionGroup, horizontal: Boolean, separatorCreator: Function<in String, out Component>): ActionToolbar
+  abstract fun createActionToolbar(place: String, group: ActionGroup, horizontal: Boolean, separatorCreator: Function<in String?, out Component>): ActionToolbar
 
   @Deprecated("Use [ActionUtil.performActionDumbAwareWithCallbacks] instead",
               ReplaceWith("ActionUtil.performActionDumbAwareWithCallbacks"),

@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.jetbrains.python.sdk.pipenv
 
 import com.intellij.execution.configurations.PathEnvironmentVariableUtil
@@ -10,11 +10,11 @@ import com.intellij.openapi.projectRoots.Sdk
 import com.intellij.openapi.util.SystemInfo
 import com.intellij.platform.ide.progress.withBackgroundProgress
 import com.jetbrains.python.PyBundle
-import com.jetbrains.python.venvReader.VirtualEnvReader
+import com.jetbrains.python.errorProcessing.asKotlinResult
 import com.jetbrains.python.sdk.basePath
 import com.jetbrains.python.sdk.createSdk
 import com.jetbrains.python.sdk.runExecutable
-import com.jetbrains.python.sdk.setAssociationToPath
+import com.jetbrains.python.venvReader.VirtualEnvReader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.jetbrains.annotations.ApiStatus.Internal
@@ -25,7 +25,7 @@ import java.nio.file.Path
 @Internal
 suspend fun runPipEnv(dirPath: Path?, vararg args: String): Result<String> {
   val executable = getPipEnvExecutable().getOrElse { return Result.failure(it) }
-  return runExecutable(executable, dirPath, *args)
+  return runExecutable(executable, dirPath, *args).asKotlinResult()
 }
 
 /**
@@ -98,10 +98,7 @@ suspend fun setupPipEnvSdkUnderProgress(
     setUpPipEnv(projectPath, python, installPackages)
   }.getOrElse { return Result.failure(it) }
 
-  return createSdk(pythonExecutablePath, existingSdks, projectPath, suggestedSdkName(projectPath), PyPipEnvSdkAdditionalData()).onSuccess { sdk ->
-    // FIXME: multi module project support - associate with module path
-    sdk.setAssociationToPath(projectPath)
-  }
+  return createSdk(pythonExecutablePath, existingSdks, projectPath, suggestedSdkName(projectPath),PyPipEnvSdkAdditionalData())
 }
 
 /**

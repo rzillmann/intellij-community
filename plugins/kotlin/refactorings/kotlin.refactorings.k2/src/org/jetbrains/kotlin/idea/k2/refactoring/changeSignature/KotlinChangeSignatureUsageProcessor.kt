@@ -48,6 +48,7 @@ import org.jetbrains.kotlin.lexer.KtModifierKeywordToken
 import org.jetbrains.kotlin.lexer.KtTokens
 import org.jetbrains.kotlin.name.Name
 import org.jetbrains.kotlin.psi.*
+import org.jetbrains.kotlin.psi.addRemoveModifier.setModifierList
 import org.jetbrains.kotlin.psi.psiUtil.getElementTextWithContext
 import org.jetbrains.kotlin.psi.psiUtil.hasActualModifier
 import org.jetbrains.kotlin.psi.psiUtil.isExpectDeclaration
@@ -136,15 +137,10 @@ class KotlinChangeSignatureUsageProcessor : ChangeSignatureUsageProcessor {
             true
         }
 
-        result.sortWith { u1, u2 ->
-            if (u1.javaClass == u2.javaClass) {
-                PsiUtilCore.compareElementsByPosition(u1.element, u2.element)
-            } else {
-                result.indexOf(u1) - result.indexOf(u2)
-            }
-        }
-
-        return result.toTypedArray()
+        return result.groupBy { it.javaClass }
+            .values
+            .flatMap { it.sortedWith { u1, u2 -> PsiUtilCore.compareElementsByPosition(u1.element, u2.element) } }
+            .toTypedArray()
     }
 
     private fun findUsages(
@@ -418,9 +414,14 @@ class KotlinChangeSignatureUsageProcessor : ChangeSignatureUsageProcessor {
         isCaller: Boolean
     ) {
         var parameterList = originalParameterList
-        val parametersCount = changeInfo.newParameters.count { it != changeInfo.receiverParameterInfo }
+        val parametersCount = changeInfo.newParameters.count { it != changeInfo.receiverParameterInfo && !it.isContextParameter }
         val isLambda = element is KtFunctionLiteral
         var canReplaceEntireList = false
+
+        if (!isCaller && !isLambda) {
+            val contextParams = changeInfo.newParameters.filter { it.isContextParameter }
+            updateContextParametersList(contextParams, element, baseFunction, isInherited, psiFactory)
+        }
 
         var newParameterList: KtParameterList? = null
         if (isLambda) {
@@ -488,6 +489,34 @@ class KotlinChangeSignatureUsageProcessor : ChangeSignatureUsageProcessor {
         }
 
         shortenReferences(newParameterList)
+    }
+
+    private fun updateContextParametersList(
+        contextParams: List<KotlinParameterInfo>,
+        element: KtDeclaration,
+        baseFunction: PsiElement,
+        isInherited: Boolean,
+        psiFactory: KtPsiFactory
+    ) {
+        if (contextParams.isNotEmpty()) {
+            val list = contextParams.joinToString { it.getDeclarationSignature(element, baseFunction, isInherited).text }
+            val newModifierList = psiFactory.createFunction("context($list) fun test() {}").modifierList!!
+            val modifierList = element.modifierList
+            if (modifierList != null) {
+                val contextReceiverList = modifierList.contextReceiverList
+                val contextReceivers = if (contextReceiverList == null) {
+                    modifierList.addBefore(newModifierList.contextReceiverList!!, modifierList.firstChild)
+                } else {
+                    contextReceiverList.replace(newModifierList.contextReceiverList!!)
+                }
+                shortenReferences(contextReceivers as KtElement)
+            } else {
+                element.setModifierList(newModifierList)
+                shortenReferences(element.modifierList!!)
+            }
+        } else {
+            (element as? KtTypeParameterListOwnerStub<*>)?.contextReceiverList?.delete()
+        }
     }
 
     private fun isReturnTypeRequired(element: KtNamedDeclaration): Boolean {

@@ -16,6 +16,7 @@ import com.intellij.openapi.util.registry.Registry;
 import com.intellij.psi.PsiFile;
 import com.intellij.testFramework.TestModeFlags;
 import com.intellij.util.concurrency.ThreadingAssertions;
+import com.intellij.util.concurrency.annotations.RequiresEdt;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
@@ -25,14 +26,14 @@ public final class IdentifierHighlighterPassFactory {
   public IdentifierHighlighterPass createHighlightingPass(@NotNull PsiFile file,
                                                           @NotNull Editor editor,
                                                           @NotNull TextRange visibleRange) {
-    if (editor.isOneLineMode() && ((EditorEx)editor).isEmbeddedIntoDialogWrapper()) return null;
-    if (!CodeInsightSettings.getInstance().HIGHLIGHT_IDENTIFIER_UNDER_CARET ||
-        !checkDumbMode(file) ||
-        !isEnabled() ||
-        (!file.isPhysical() && !file.getOriginalFile().isPhysical())) {
-      return null;
+    if (CodeInsightSettings.getInstance().HIGHLIGHT_IDENTIFIER_UNDER_CARET &&
+        (!editor.isOneLineMode() || !((EditorEx)editor).isEmbeddedIntoDialogWrapper()) &&
+        checkDumbMode(file) &&
+        isEnabled() &&
+        (file.isPhysical() || file.getOriginalFile().isPhysical())) {
+      return new IdentifierHighlighterPass(file, editor, visibleRange);
     }
-    return new IdentifierHighlighterPass(file, editor, visibleRange);
+    return null;
   }
 
   private static boolean checkDumbMode(@NotNull PsiFile file) {
@@ -44,16 +45,15 @@ public final class IdentifierHighlighterPassFactory {
   }
 
   @TestOnly
+  @RequiresEdt
   public static void doWithHighlightingEnabled(@NotNull Project project, @NotNull Disposable parentDisposable, @NotNull Runnable r) {
     ThreadingAssertions.assertEventDispatchThread();
     BackgroundHighlighter.Companion.enableListenersInTest(project, parentDisposable);
-    TestModeFlags.set(ourTestingIdentifierHighlighting, true);
     try {
-      r.run();
+      TestModeFlags.runWithFlag(ourTestingIdentifierHighlighting, true, r);
     }
     finally {
       waitForIdentifierHighlighting();
-      TestModeFlags.reset(ourTestingIdentifierHighlighting);
     }
   }
 

@@ -19,10 +19,10 @@ public abstract class KeymapsTestCase extends KeymapsTestCaseBase {
       {"BACK_SPACE",               "EditorBackSpace", "FileChooser.GoToParent"},
       {"C",                        "Uml.CollapseNodes", "JupyterNotebookCopyCellCommandModeAction"},
       {"DELETE",                   "$Delete", "DatabaseView.DropAction", "JupyterNotebookDeleteCellCommandModeAction"},
-      {"DOWN",                     "EditorDown", "Terminal.SelectBlockBelow"},
+      {"DOWN",                     "EditorDown", "Terminal.SelectBlockBelow", "Terminal.DownCommandCompletion"},
       {"ENTER",                    "Console.Execute", "Console.TableResult.EditValue", "DirDiffMenu.SynchronizeDiff", "EditorChooseLookupItem",
                                    "EditorEnter", "NextTemplateVariable", "Git.Log.Branches.Change.Branch.Filter", "SplitChooser.Split",
-                                   "JupyterMarkdownDestroyControllerAction", "Console.TableResult.GotoReferencedResult"},
+                                   "JupyterMarkdownDestroyControllerAction", "Console.TableResult.GotoReferencedResult", "Terminal.EnterCommandCompletion"},
       {"ESCAPE",                   "CloseGotItTooltip", "EditorEscape", "FocusEditor", "Terminal.SwitchFocusToEditor", "CloseDiffEditor"},
       {"F1",                       "ContextHelp", "org.jetbrains.r.actions.REditorHelpAction"},
       {"F2",                       "GotoNextError", "GuiDesigner.EditComponent", "GuiDesigner.EditGroup", "Console.TableResult.EditValue",
@@ -40,7 +40,7 @@ public abstract class KeymapsTestCase extends KeymapsTestCaseBase {
                                    "EditorTab", "ExpandLiveTemplateByTab", "BraceOrQuoteOut", "SplitChooser.NextWindow", "InsertInlineCompletionAction",
                                    "Terminal.CommandCompletion", "CodeFloatingToolbar.GotoNextMenu", "AIAssistant.Editor.AcceptOneLineCompletion", 
                                    "InlinePromptGenerateCodeAction", "InsertNextEditAction"},
-      {"UP",                       "EditorUp", "Terminal.SelectBlockAbove"},
+      {"UP",                       "EditorUp", "Terminal.SelectBlockAbove", "Terminal.UpCommandCompletion"},
       {"alt DOWN",                 "MethodDown", "ShowContent", "ShowSearchHistory", "JupyterNotebookMoveCellDownCommandModeAction", "NotebookMoveCellDownAction"},
       {"alt ENTER",                "ShowIntentionActions", "Console.TableResult.EditValue", "JupyterNotebookRunCellInsertBelowCommandModeAction",
                                    "Console.TableResult.GotoReferencedResult"},
@@ -128,8 +128,8 @@ public abstract class KeymapsTestCase extends KeymapsTestCaseBase {
                                    "CodeFloatingToolbar.GotoPrevMenu"},
       {"shift UP",                 "EditorUpWithSelection", "JupyterExpandSelectionToCellAboveCommandModeAction"},
       {"shift V",                  "Graph.DistributeNodes.Vertically", "JupyterNotebookPasteCellAboveCommandModeAction"},
-      {"shift alt A",              "NotebookInsertCellAboveAction", "VcsHistory.ShowAllAffected"},
-      {"shift alt B",              "NotebookInsertCellBelowAction", "tasks.open.in.browser", "sql.SelectInDatabaseView"},
+      {"shift alt A", "NotebookInsertCodeCellAboveAction", "VcsHistory.ShowAllAffected"},
+      {"shift alt B", "NotebookInsertCodeCellAction", "tasks.open.in.browser", "sql.SelectInDatabaseView"},
       {"shift alt ENTER",          "AIAssistant.Editor.AcceptMultiLineCompletion", "Console.TableResult.EditValueMaximized", "JupyterDebugAction", "SplitChooser"},
       {"shift alt F7",             "ForceStepInto", "StepIntoMyCode"},
       {"shift alt G",              "EditorAddCaretPerSelectedLine", "hg4idea.QGotoFromPatches"},
@@ -596,7 +596,6 @@ public abstract class KeymapsTestCase extends KeymapsTestCaseBase {
       {"meta alt RIGHT",           "AIAssistant.Editor.AcceptOneLineCompletion", "NextTab"},
       {"shift alt SEMICOLON",      "ForceStepInto", SECOND_STROKE},
       {"shift meta T",             "ReopenClosedTab", "ServiceView.ShowServices"},
-      {"shift meta alt BACK_SLASH","AIAssistant.Chat.AIPopupChat", "ToggleTemporaryLineBreakpoint"}
     })
   );
   // @formatter:on

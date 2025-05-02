@@ -6,6 +6,7 @@ import com.intellij.ide.*
 import com.intellij.ide.impl.ProjectUtilCore
 import com.intellij.ide.plugins.newui.ListPluginComponent
 import com.intellij.openapi.actionSystem.*
+import com.intellij.openapi.actionSystem.ex.ActionUtil
 import com.intellij.openapi.components.service
 import com.intellij.openapi.project.DumbAware
 import com.intellij.openapi.project.Project
@@ -17,9 +18,9 @@ import com.intellij.openapi.util.NlsSafe
 import com.intellij.openapi.util.io.FileUtil
 import com.intellij.openapi.wm.impl.ExpandableComboAction
 import com.intellij.openapi.wm.impl.ToolbarComboButton
-import com.intellij.ui.ClientProperty
-import com.intellij.ui.GroupHeaderSeparator
-import com.intellij.ui.IdeUICustomization
+import com.intellij.openapi.wm.impl.ToolbarComboButtonModel
+import com.intellij.ui.*
+import com.intellij.ui.AnimatedIcon
 import com.intellij.ui.components.panels.NonOpaquePanel
 import com.intellij.ui.dsl.builder.AlignY
 import com.intellij.ui.dsl.builder.EmptySpacingConfiguration
@@ -34,6 +35,7 @@ import com.intellij.util.ui.*
 import com.intellij.util.ui.accessibility.AccessibleContextUtil
 import kotlinx.coroutines.awaitCancellation
 import java.awt.BorderLayout
+import java.awt.Color
 import java.awt.Component
 import java.awt.event.ComponentAdapter
 import java.awt.event.ComponentEvent
@@ -56,6 +58,9 @@ internal class DefaultOpenProjectSelectionPredicateSupplier : OpenProjectSelecti
 }
 
 class ProjectToolbarWidgetAction : ExpandableComboAction(), DumbAware {
+
+  private val lefIconsKey = Key<List<Icon>>("leftIcons")
+
   override fun createPopup(event: AnActionEvent): JBPopup? {
     val widget = event.getData(PlatformCoreDataKeys.CONTEXT_COMPONENT) as? ToolbarComboButton?
     val step = createStep(createActionGroup(event), event.dataContext, widget)
@@ -66,7 +71,7 @@ class ProjectToolbarWidgetAction : ExpandableComboAction(), DumbAware {
 
   override fun createCustomComponent(presentation: Presentation, place: String): JComponent {
     return super.createCustomComponent(presentation, place).apply {
-      maximumWidth = 500
+      maximumWidth = JBUI.scale(500)
       val widget = this as ToolbarComboButton
       launchOnShow("ProjectWidget") {
         val positionListeners = WidgetPositionListeners(widget, presentation)
@@ -77,6 +82,18 @@ class ProjectToolbarWidgetAction : ExpandableComboAction(), DumbAware {
         finally {
           positionListeners.dispose()
         }
+      }
+    }
+  }
+
+  override fun createToolbarComboButton(model: ToolbarComboButtonModel): ToolbarComboButton {
+    return object : ToolbarComboButton(model) {
+      override fun updateFromPresentation(presentation: Presentation) {
+        text = presentation.text
+        toolTipText = presentation.description
+        leftIcons = presentation.getClientProperty(lefIconsKey) ?: emptyList()
+        rightIcons = listOfNotNull(presentation.getClientProperty(ActionUtil.SECONDARY_ICON))
+        betweenIconsGap = 9
       }
     }
   }
@@ -95,10 +112,15 @@ class ProjectToolbarWidgetAction : ExpandableComboAction(), DumbAware {
     e.presentation.setText(projectName, false)
     e.presentation.description = FileUtil.getLocationRelativeToUserHome(project?.guessProjectDir()?.path) ?: projectName
     e.presentation.putClientProperty(projectKey, project)
-    val customizer = ProjectWindowCustomizerService.getInstance()
-    if (project != null && customizer.isAvailable()) {
-      e.presentation.icon = customizer.getProjectIcon(project)
+    val icons = buildList {
+      UpdatesInfoProviderManager.getInstance().getUpdateIcons().let { addAll(it) }
+
+      val customizer = ProjectWindowCustomizerService.getInstance()
+      if (project != null && customizer.isAvailable()) {
+        add(customizer.getProjectIcon(project))
+      }
     }
+    e.presentation.putClientProperty(lefIconsKey, icons)
   }
 
   private fun createPopup(it: Project, step: ListPopupStep<Any>): ListPopup {
@@ -127,6 +149,14 @@ class ProjectToolbarWidgetAction : ExpandableComboAction(), DumbAware {
   private fun createActionGroup(initEvent: AnActionEvent): ActionGroup {
     val result = DefaultActionGroup()
 
+    UpdatesInfoProviderManager.getInstance()
+      .getUpdateActions()
+      .takeIf { it.isNotEmpty() }
+      ?.let {
+        result.addAll(it)
+        result.addSeparator()
+      }
+
     val group = ActionManager.getInstance().getAction("ProjectWidget.Actions") as ActionGroup
     result.addAll(group.getChildren(initEvent).asList())
     val openProjectsPredicate = OpenProjectSelectionPredicateSupplier.getInstance().getPredicate()
@@ -149,7 +179,7 @@ class ProjectToolbarWidgetAction : ExpandableComboAction(), DumbAware {
   }
 
   private fun createStep(actionGroup: ActionGroup, context: DataContext, widget: JComponent?): ListPopupStep<Any> {
-    return JBPopupFactory.getInstance().createActionsStep(actionGroup, context, ActionPlaces.PROJECT_WIDGET_POPUP, false, false,
+    return JBPopupFactory.getInstance().createActionsStep(actionGroup, context, ActionPlaces.PROJECT_WIDGET_POPUP, false, true,
                                                           null, widget, false, 0, false)
   }
 }
@@ -223,11 +253,13 @@ private class WidgetPositionListeners(private val widget: ToolbarComboButton, pr
 }
 
 private class ProjectWidgetRenderer : ListCellRenderer<PopupFactoryImpl.ActionItem> {
-  override fun getListCellRendererComponent(list: JList<out PopupFactoryImpl.ActionItem>?,
-                                            value: PopupFactoryImpl.ActionItem?,
-                                            index: Int,
-                                            isSelected: Boolean,
-                                            cellHasFocus: Boolean): Component {
+  override fun getListCellRendererComponent(
+    list: JList<out PopupFactoryImpl.ActionItem>?,
+    value: PopupFactoryImpl.ActionItem?,
+    index: Int,
+    isSelected: Boolean,
+    cellHasFocus: Boolean,
+  ): Component {
     return createRecentProjectPane(value as PopupFactoryImpl.ActionItem, isSelected, getSeparator(list, value), index == 0)
   }
 
@@ -265,10 +297,13 @@ private class ProjectWidgetRenderer : ListCellRenderer<PopupFactoryImpl.ActionIt
             val providerPath = action.providerPathToDisplay
             if (providerPath != null) {
               row {
+                icon(action.providerIcon ?: AllIcons.Nodes.Console)
+                  .align(AlignY.CENTER)
+                  .customize(customGaps = UnscaledGaps(right = 5))
                 providerPathLbl = label(providerPath)
                   .customize(textGaps)
+                  .align(AlignY.CENTER)
                   .applyToComponent {
-                    icon = AllIcons.Nodes.Console
                     font = JBFont.smallOrNewUiMedium()
                     foreground = UIUtil.getLabelInfoForeground()
                   }.component
@@ -350,5 +385,6 @@ interface ProjectToolbarWidgetPresentable {
   val projectPathToDisplay: @NlsSafe String?
   val branchName: @NlsSafe String?
   val projectIcon: Icon
+  val providerIcon: Icon?
   val activationTimestamp: Long?
 }

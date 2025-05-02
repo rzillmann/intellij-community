@@ -88,7 +88,10 @@ public final class SearchEverywhereManagerImpl implements SearchEverywhereManage
     SearchEverywhereSpellingCorrector spellingCorrector = SearchEverywhereSpellingCorrector.getInstance(project);
     mySearchEverywhereUI = createView(myProject, contributors, spellingCorrector, SearchFieldStatisticsCollector.getStartMoment(initEvent));
     contributors.forEach(c -> Disposer.register(mySearchEverywhereUI, c));
-    mySearchEverywhereUI.switchToTab(tabID);
+
+    // Handle SE on the Welcome Screen
+    if (project == null && ALL_CONTRIBUTORS_GROUP_ID.equals(tabID)) mySearchEverywhereUI.switchToTabOrFirst(tabID);
+    else mySearchEverywhereUI.switchToTab(tabID);
 
     myHistoryIterator = myHistoryList.getIterator(tabID);
     //history could be suppressed by user for some reasons (creating promo video, conference demo etc.)
@@ -270,6 +273,11 @@ public final class SearchEverywhereManagerImpl implements SearchEverywhereManage
 
   public void setEverywhere(boolean everywhere) {
     myEverywhere = everywhere;
+  }
+
+  @Override
+  public SearchEverywherePopupInstance getCurrentlyShownPopupInstance() {
+    return getCurrentlyShownUI();
   }
 
   private SearchEverywhereUI createView(Project project, List<SearchEverywhereContributor<?>> contributors,

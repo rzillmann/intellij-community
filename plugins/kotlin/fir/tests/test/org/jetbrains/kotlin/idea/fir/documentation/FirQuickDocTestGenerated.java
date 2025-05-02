@@ -127,6 +127,11 @@ public abstract class FirQuickDocTestGenerated extends AbstractFirQuickDocTest {
             runTest("../../idea/tests/testData/editor/quickDoc/ConstructorVarVarargParameter.kt");
         }
 
+        @TestMetadata("ContextParameter.kt")
+        public void testContextParameter() throws Exception {
+            runTest("../../idea/tests/testData/editor/quickDoc/ContextParameter.kt");
+        }
+
         @TestMetadata("DataClass.kt")
         public void testDataClass() throws Exception {
             runTest("../../idea/tests/testData/editor/quickDoc/DataClass.kt");
@@ -235,6 +240,11 @@ public abstract class FirQuickDocTestGenerated extends AbstractFirQuickDocTest {
         @TestMetadata("KotlinClassUsedFromJava.java")
         public void testKotlinClassUsedFromJava() throws Exception {
             runTest("../../idea/tests/testData/editor/quickDoc/KotlinClassUsedFromJava.java");
+        }
+
+        @TestMetadata("KotlinEnumEntriesUsedFromJava.java")
+        public void testKotlinEnumEntriesUsedFromJava() throws Exception {
+            runTest("../../idea/tests/testData/editor/quickDoc/KotlinEnumEntriesUsedFromJava.java");
         }
 
         @TestMetadata("KotlinPackageClassUsedFromJava.java")
