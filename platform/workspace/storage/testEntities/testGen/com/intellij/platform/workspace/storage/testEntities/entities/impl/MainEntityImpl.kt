@@ -1,16 +1,14 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.platform.workspace.storage.testEntities.entities.impl
 
-import com.intellij.platform.workspace.storage.*
 import com.intellij.platform.workspace.storage.ConnectionId
 import com.intellij.platform.workspace.storage.EntitySource
-import com.intellij.platform.workspace.storage.EntityType
 import com.intellij.platform.workspace.storage.GeneratedCodeApiVersion
 import com.intellij.platform.workspace.storage.GeneratedCodeImplVersion
+import com.intellij.platform.workspace.storage.WorkspaceEntityBuilder
 import com.intellij.platform.workspace.storage.MutableEntityStorage
 import com.intellij.platform.workspace.storage.WorkspaceEntity
 import com.intellij.platform.workspace.storage.WorkspaceEntityInternalApi
-import com.intellij.platform.workspace.storage.annotations.Child
 import com.intellij.platform.workspace.storage.impl.ModifiableWorkspaceEntityBase
 import com.intellij.platform.workspace.storage.impl.WorkspaceEntityBase
 import com.intellij.platform.workspace.storage.impl.WorkspaceEntityData
@@ -18,9 +16,10 @@ import com.intellij.platform.workspace.storage.instrumentation.EntityStorageInst
 import com.intellij.platform.workspace.storage.instrumentation.EntityStorageInstrumentationApi
 import com.intellij.platform.workspace.storage.metadata.model.EntityMetadata
 import com.intellij.platform.workspace.storage.testEntities.entities.MainEntity
+import com.intellij.platform.workspace.storage.testEntities.entities.MainEntityBuilder
 
 @GeneratedCodeApiVersion(3)
-@GeneratedCodeImplVersion(6)
+@GeneratedCodeImplVersion(7)
 @OptIn(WorkspaceEntityInternalApi::class)
 internal class MainEntityImpl(private val dataSource: MainEntityData) : MainEntity, WorkspaceEntityBase(dataSource) {
 
@@ -49,7 +48,7 @@ internal class MainEntityImpl(private val dataSource: MainEntityData) : MainEnti
   }
 
 
-  internal class Builder(result: MainEntityData?) : ModifiableWorkspaceEntityBase<MainEntity, MainEntityData>(result), MainEntity.Builder {
+  internal class Builder(result: MainEntityData?) : ModifiableWorkspaceEntityBase<MainEntity, MainEntityData>(result), MainEntityBuilder {
     internal constructor() : this(MainEntityData())
 
     override fun applyToBuilder(builder: MutableEntityStorage) {
@@ -125,7 +124,7 @@ internal class MainEntityData : WorkspaceEntityData<MainEntity>() {
 
   internal fun isXInitialized(): Boolean = ::x.isInitialized
 
-  override fun wrapAsModifiable(diff: MutableEntityStorage): WorkspaceEntity.Builder<MainEntity> {
+  override fun wrapAsModifiable(diff: MutableEntityStorage): WorkspaceEntityBuilder<MainEntity> {
     val modifiable = MainEntityImpl.Builder(null)
     modifiable.diff = diff
     modifiable.id = createEntityId()
@@ -152,7 +151,7 @@ internal class MainEntityData : WorkspaceEntityData<MainEntity>() {
     return MainEntity::class.java
   }
 
-  override fun createDetachedEntity(parents: List<WorkspaceEntity.Builder<*>>): WorkspaceEntity.Builder<*> {
+  override fun createDetachedEntity(parents: List<WorkspaceEntityBuilder<*>>): WorkspaceEntityBuilder<*> {
     return MainEntity(x, entitySource) {
     }
   }

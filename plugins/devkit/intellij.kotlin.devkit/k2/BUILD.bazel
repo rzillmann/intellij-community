@@ -1,10 +1,11 @@
 ### auto-generated section `build intellij.kotlin.devkit.k2` start
 load("//build:compiler-options.bzl", "create_kotlinc_options")
-load("@rules_jvm//:jvm.bzl", "jvm_library", "jvm_resources")
+load("@rules_jvm//:jvm.bzl", "jvm_library", "resourcegroup")
 
 create_kotlinc_options(
-  name = "custom",
+  name = "custom_k2",
   opt_in = [
+    "com.intellij.openapi.util.IntellijInternalApi",
     "org.jetbrains.kotlin.utils.addToStdlib.UnsafeCastFunction",
     "org.jetbrains.kotlin.analysis.api.KaIdeApi",
     "org.jetbrains.kotlin.analysis.api.KaNonPublicApi",
@@ -12,30 +13,35 @@ create_kotlinc_options(
   ]
 )
 
-jvm_resources(
-  name = "kotlin-devkit-k2_resources",
-  files = glob(["resources/**/*"]),
+resourcegroup(
+  name = "k2_resources",
+  srcs = glob(["resources/**/*"]),
   strip_prefix = "resources"
 )
 
 jvm_library(
-  name = "kotlin-devkit-k2",
+  name = "k2",
   module_name = "intellij.kotlin.devkit.k2",
   visibility = ["//visibility:public"],
-  srcs = glob(["src/**/*.kt", "src/**/*.java"], allow_empty = True),
-  kotlinc_opts = ":custom",
+  srcs = glob(["src/**/*.kt", "src/**/*.java", "src/**/*.form"], allow_empty = True),
+  resources = [":k2_resources"],
+  kotlinc_opts = ":custom_k2",
   deps = [
     "@lib//:kotlin-stdlib",
     "@lib//:kotlinc-kotlin-compiler-common-provided",
     "@lib//:kotlinc-analysis-api-provided",
+    "//platform/analysis-api:analysis",
+    "//platform/core-api:core",
+    "//platform/editor-ui-api:editor-ui",
     "//platform/refactoring",
     "//platform/lang-impl",
+    "//java/java-psi-api:psi",
     "//plugins/devkit/intellij.kotlin.devkit:kotlin-devkit",
     "//plugins/kotlin/refactorings/kotlin.refactorings.common:kotlin-refactorings-common",
-    "//plugins/kotlin/refactorings/kotlin.refactorings.move.k2:kotlin-refactorings-move-k2",
+    "//plugins/kotlin/refactorings/kotlin.refactorings.move.k2:kotlin-refactorings-move",
+    "//platform/core-impl",
     "//plugins/devkit/devkit-core:core",
-    "//plugins/kotlin/code-insight/intentions-k2:kotlin-code-insight-intentions-k2",
-  ],
-  runtime_deps = [":kotlin-devkit-k2_resources"]
+    "//plugins/kotlin/code-insight/intentions-k2:kotlin-codeInsight-intentions",
+  ]
 )
 ### auto-generated section `build intellij.kotlin.devkit.k2` end

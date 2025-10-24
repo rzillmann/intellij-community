@@ -12,6 +12,7 @@ import com.intellij.ui.scroll.LatchingScroll;
 import com.intellij.ui.scroll.MouseWheelSmoothScroll;
 import com.intellij.ui.scroll.TouchScroll;
 import com.intellij.ui.scroll.TouchScrollUtil;
+import com.intellij.ui.tabs.impl.IslandsPainterProvider;
 import com.intellij.util.ArrayUtil;
 import com.intellij.util.ReflectionUtil;
 import com.intellij.util.ui.JBInsets;
@@ -898,8 +899,17 @@ public class JBScrollPane extends JScrollPane {
       if (preferredSize == null) preferredSize = new Dimension();
       Dimension maximumSize = component.getMaximumSize();
       if (maximumSize != null) {
-        preferredSize.width = Math.min(maximumSize.width, preferredSize.width);
-        preferredSize.height = Math.min(maximumSize.height, preferredSize.height);
+        // IJPL-190373
+        // For some reason, the default maximum size for a control is Short.MAX_VALUE.
+        // It turns out that if Short.MAX_VALUE is returned as a preferred width,
+        // it can mess with the layout logic, causing lay outing problems.
+        // Don't replace preferredSize values in such cases.
+        if (maximumSize.width != Short.MAX_VALUE && maximumSize.width != Integer.MAX_VALUE) {
+          preferredSize.width = Math.min(maximumSize.width, preferredSize.width);
+        }
+        if (maximumSize.height != Short.MAX_VALUE && maximumSize.height != Integer.MAX_VALUE) {
+          preferredSize.height = Math.min(maximumSize.height, preferredSize.height);
+        }
       }
       return preferredSize;
     }
@@ -1030,6 +1040,7 @@ public class JBScrollPane extends JScrollPane {
 
   @ApiStatus.Internal
   public static RegionPainter<Float> getThumbPainter(@NotNull Supplier<? extends Component> supplier, @NotNull CoroutineScope coroutineScope) {
-    return new ScrollBarPainter.Thumb(supplier, SystemInfoRt.isMac, coroutineScope);
+    IslandsPainterProvider provider = IslandsPainterProvider.getInstance();
+    return new ScrollBarPainter.Thumb(supplier, SystemInfoRt.isMac || (provider != null && provider.useMacScrollBar()), coroutineScope);
   }
 }

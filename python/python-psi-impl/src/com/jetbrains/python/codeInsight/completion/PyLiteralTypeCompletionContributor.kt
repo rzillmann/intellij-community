@@ -10,14 +10,32 @@ import com.intellij.ui.IconManager
 import com.intellij.ui.PlatformIcons
 import com.intellij.util.ProcessingContext
 import com.jetbrains.python.psi.*
-import com.jetbrains.python.psi.impl.PyCallExpressionHelper
 import com.jetbrains.python.psi.impl.PyPsiUtils
+import com.jetbrains.python.psi.impl.getMappedParameters
 import com.jetbrains.python.psi.resolve.PyResolveContext
 import com.jetbrains.python.psi.types.PyLiteralType
 import com.jetbrains.python.psi.types.PyType
 import com.jetbrains.python.psi.types.PyTypeUtil
 import com.jetbrains.python.psi.types.TypeEvalContext
 
+/**
+ * Provides literal type variants in the following cases:
+ * ```python
+ * x: Literal["foo", "bar"]
+ * x = <caret>
+ * x = fo<caret>
+ * x = "fo<caret>"
+ * ```
+ *
+ * or
+ *
+ * ```python
+ * def f(x: Literal["foo", "bar"]): ...
+ * f(<caret>)
+ * f(fo<caret>)
+ * f("fo<caret>")
+ * ```
+ */
 class PyLiteralTypeCompletionContributor : CompletionContributor() {
   init {
     extend(CompletionType.BASIC, psiElement(), PyLiteralTypeCompletionProvider())
@@ -27,9 +45,10 @@ class PyLiteralTypeCompletionContributor : CompletionContributor() {
 private class PyLiteralTypeCompletionProvider : CompletionProvider<CompletionParameters?>() {
   override fun addCompletions(parameters: CompletionParameters, context: ProcessingContext, result: CompletionResultSet) {
     val position = parameters.position.parent as? PyExpression ?: return
+    if (!(position is PyStringLiteralExpression || position is PyReferenceExpression && !position.isQualified)) return
     val typeEvalContext = TypeEvalContext.codeCompletion(position.project, position.containingFile)
 
-    val mappedParameters = PyCallExpressionHelper.getMappedParameters(position, PyResolveContext.defaultContext(typeEvalContext))
+    val mappedParameters = position.getMappedParameters(PyResolveContext.defaultContext(typeEvalContext))
     if (mappedParameters != null) {
       val types = mappedParameters.mapNotNull { it.getArgumentType(typeEvalContext) }
       addToResult(position, types, result)

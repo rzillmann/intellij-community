@@ -1,4 +1,4 @@
-// Copyright 2000-2022 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 
 package com.intellij.tasks.impl;
 
@@ -40,6 +40,7 @@ public class LocalTaskImpl extends LocalTask {
   private TaskType myType = TaskType.OTHER;
   private @NlsContexts.Label String myPresentableName;
   private String myCustomIcon = null;
+  private Icon myCachedIcon = null;
 
   private String myProject = null;
   private String myNumber = "";
@@ -148,6 +149,7 @@ public class LocalTaskImpl extends LocalTask {
     myCustomIcon = issue.getCustomIcon();
     myIssueUrl = issue.getIssueUrl();
     myRepository = issue.getRepository();
+    myCachedIcon = issue.getIcon();
 
     myProject = issue.getProject();
     myNumber = issue.getNumber();
@@ -278,6 +280,9 @@ public class LocalTaskImpl extends LocalTask {
       // Fallback to the platform icons if the repository wasn't found.
       return IconLoader.getIcon(customIcon, myRepository.getClass().getClassLoader());
     }
+    if (myCachedIcon != null) {
+      return myCachedIcon;
+    }
     return getIconFromType(myType, isIssue());
   }
 
@@ -286,7 +291,7 @@ public class LocalTaskImpl extends LocalTask {
       case BUG -> TasksIcons.Bug;
       case EXCEPTION -> TasksIcons.Exception;
       case FEATURE -> AllIcons.Nodes.Favorite;
-      case OTHER -> issue ? AllIcons.FileTypes.Any_type : EmptyIcon.ICON_0;
+      case OTHER -> issue ? AllIcons.FileTypes.Any_type : EmptyIcon.ICON_16;
     };
   }
 

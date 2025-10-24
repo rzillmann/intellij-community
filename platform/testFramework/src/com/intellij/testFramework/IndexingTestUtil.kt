@@ -5,12 +5,13 @@ import com.intellij.diagnostic.ThreadDumper
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationListener
 import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.application.impl.getGlobalThreadingSupport
+import com.intellij.openapi.application.impl.TestOnlyThreading
 import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.progress.runBlockingMaybeCancellable
 import com.intellij.openapi.project.*
 import com.intellij.openapi.util.Disposer
 import com.intellij.util.indexing.UnindexedFilesScannerExecutorImpl
+import com.intellij.util.ui.EDT
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
@@ -28,6 +29,7 @@ class IndexingTestUtil private constructor() {
     @JvmStatic
     @JvmOverloads
     fun waitUntilIndexesAreReadyInAllOpenedProjects(indexWaitingTimeout: Duration = DEFAULT_TIMEOUT) {
+      if (forceSkipWaiting) return
       for (project in ProjectManager.getInstance().openProjects) {
         IndexWaiter(project).waitUntilFinished(indexWaitingTimeout)
       }
@@ -36,12 +38,18 @@ class IndexingTestUtil private constructor() {
     @JvmStatic
     @JvmOverloads
     fun waitUntilIndexesAreReady(project: Project, indexWaitingTimeout: Duration = DEFAULT_TIMEOUT) {
+      if (forceSkipWaiting) return
       IndexWaiter(project).waitUntilFinished(indexWaitingTimeout)
     }
 
     suspend fun suspendUntilIndexesAreReady(project: Project, indexWaitingTimeout: kotlin.time.Duration = DEFAULT_TIMEOUT.toKotlinDuration()) {
+      if (forceSkipWaiting) return
       IndexWaiter(project).suspendUntilIndexesAreReady(indexWaitingTimeout.toJavaDuration())
     }
+
+    var forceSkipWaiting: Boolean
+      get() = System.getProperty("IndexingTestUtil.force.skip.waiting", "false").toBoolean()
+      set(v) { System.setProperty("IndexingTestUtil.force.skip.waiting", v.toString()) }
   }
 }
 
@@ -60,11 +68,17 @@ private class IndexWaiter(private val project: Project) {
       private var nested: Int = 1 // 1 because at least one write action is currently happenings
 
       override fun beforeWriteActionStart(action: Any) {
+        if (!EDT.isCurrentThreadEdt()) {
+          return
+        }
         nested++
       }
 
       // invoked after all the write actions are finished (write lock is released)
       override fun afterWriteActionFinished(action: Any) {
+        if (!EDT.isCurrentThreadEdt()) {
+          return
+        }
         nested--
         assert(nested >= 0) { "We counted more finished write actions than started." }
         if (nested <= 0) { // may not be negative, but let's stay on the safe side
@@ -87,11 +101,12 @@ private class IndexWaiter(private val project: Project) {
       thisLogger().debug("waitNow will be waiting, thread=${Thread.currentThread()}")
     }
 
-    if (ApplicationManager.getApplication().isDispatchThread) {
+    val application = ApplicationManager.getApplication()
+
+    if (application.isDispatchThread) {
       do {
-        val threadingSupport = getGlobalThreadingSupport()
-        threadingSupport.releaseTheAcquiredWriteIntentLockThenExecuteActionAndTakeWriteIntentLockBack {
-          PlatformTestUtil.waitWithEventsDispatching("Indexing timeout", { !shouldWait() }, 600)
+        TestOnlyThreading.releaseTheAcquiredWriteIntentLockThenExecuteActionAndTakeWriteIntentLockBack {
+          PlatformTestUtil.waitWithEventsDispatching("Indexing timeout", { !shouldWait() }, indexWaitingTimeout.seconds.toInt())
         }
       }
       while (dispatchAllEventsInIdeEventQueue()) // make sure that all the scheduled write actions are executed

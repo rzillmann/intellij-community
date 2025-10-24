@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.jetbrains.python.testing.tox;
 
 import com.intellij.execution.Executor;
@@ -21,8 +21,10 @@ import com.jetbrains.python.serialization.AnnotationSerializationFilter;
 import com.jetbrains.python.serialization.CompoundFilter;
 import com.jetbrains.python.testing.AbstractPythonTestRunConfiguration;
 import org.jdom.Element;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.VisibleForTesting;
 
 import java.util.List;
 
@@ -51,11 +53,12 @@ public final class PyToxConfiguration extends AbstractPythonTestRunConfiguration
     return true;
   }
 
-  String @NotNull [] getRunOnlyEnvs() {
+  @ApiStatus.Internal
+  public String @NotNull [] getRunOnlyEnvs() {
     return (myRunOnlyEnvs == null ? ArrayUtilRt.EMPTY_STRING_ARRAY : myRunOnlyEnvs.clone());
   }
 
-  void setRunOnlyEnvs(final String @NotNull ... tests) {
+  public void setRunOnlyEnvs(final String @NotNull ... tests) {
     myRunOnlyEnvs = tests.clone();
   }
 
@@ -63,7 +66,8 @@ public final class PyToxConfiguration extends AbstractPythonTestRunConfiguration
     return (myArguments == null ? ArrayUtilRt.EMPTY_STRING_ARRAY : myArguments.clone());
   }
 
-  void setArguments(final String @NotNull ... arguments) {
+  @VisibleForTesting
+  public void setArguments(final String @NotNull ... arguments) {
     myArguments = arguments.clone();
   }
 

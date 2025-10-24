@@ -1,6 +1,7 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.vcs.log.ui.render
 
+import com.intellij.openapi.application.impl.InternalUICustomization
 import com.intellij.openapi.util.registry.Registry.Companion.`is`
 import com.intellij.openapi.util.text.StringUtil
 import com.intellij.openapi.vcs.changes.issueLinks.IssueLinkRenderer
@@ -10,15 +11,15 @@ import com.intellij.ui.JBColor
 import com.intellij.ui.SimpleColoredRenderer
 import com.intellij.ui.SimpleTextAttributes
 import com.intellij.ui.TableCellState
-import com.intellij.ui.components.JBTextField
+import com.intellij.ui.hover.TableHoverListener
 import com.intellij.ui.render.RenderingUtil
 import com.intellij.ui.scale.JBUIScale.scale
 import com.intellij.ui.speedSearch.SpeedSearchUtil
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.StartupUiUtil
-import com.intellij.util.ui.UIUtil
 import com.intellij.vcs.log.VcsLogBundle
 import com.intellij.vcs.log.VcsLogFilterCollection
+import com.intellij.vcs.log.VcsLogHighlighter.VcsCommitStyle
 import com.intellij.vcs.log.data.VcsLogData
 import com.intellij.vcs.log.graph.PrintElement
 import com.intellij.vcs.log.paint.GraphCellPainter
@@ -161,6 +162,7 @@ class GraphCommitCellRenderer(
     val referencePainter: VcsLogLabelPainter = VcsLogLabelPainter(data, table, iconCache)
 
     private var printElements: Collection<PrintElement> = emptyList()
+    private var commitStyle: VcsCommitStyle = VcsCommitStyle.DEFAULT
     private var fontInner: Font
     private var heightInner: Int
     var graphWidth = 0
@@ -182,9 +184,9 @@ class GraphCommitCellRenderer(
     }
 
     public override fun paintComponent(g: Graphics) {
-      super.paintComponent(g)
+      val g2d = (InternalUICustomization.getInstance()?.preserveGraphics(g) ?: g) as Graphics2D
+      super.paintComponent(g2d)
 
-      val g2d = g as Graphics2D
       if (!referencePainter.isLeftAligned) {
         val start = max(graphWidth.toDouble(), (width - referencePainter.getSize().width).toDouble()).toInt()
         referencePainter.paint(g2d, start, 0, height)
@@ -192,7 +194,7 @@ class GraphCommitCellRenderer(
       else {
         referencePainter.paint(g2d, graphWidth, 0, height)
       }
-      painter.paint(g2d, printElements)
+      painter.paint(g2d, commitStyle, printElements)
     }
 
     fun customize(cell: GraphCommitCell.RealCommit, isSelected: Boolean, hasFocus: Boolean, row: Int, column: Int) {
@@ -202,6 +204,7 @@ class GraphCommitCellRenderer(
       cellState.updateRenderer(this)
 
       printElements = cell.printElements
+      commitStyle = table.getStyle(row, column, hasFocus, isSelected, row == TableHoverListener.getHoveredRow(table))
       graphWidth = GraphCommitCellUtil.getGraphWidth(table, printElements)
 
       val style = table.applyHighlighters(this, row, column, hasFocus, isSelected)
@@ -313,44 +316,33 @@ class GraphCommitCellRenderer(
   }
 
   private class WipCommitRendererComponent(
-    private val graphTable: VcsLogGraphTable,
+    private val table: VcsLogGraphTable,
     private val painter: GraphCellPainter,
-  ) : JComponent() {
+  ) : SimpleColoredRenderer() {
     private var printElements: Collection<PrintElement> = emptyList()
-
-    private val commitTextField = JBTextField("").apply {
-      emptyText.text = VcsLogBundle.message("vcs.log.wip.label")
-      foreground = UIUtil.getContextHelpForeground()
-    }
+    private var commitStyle: VcsCommitStyle = VcsCommitStyle.DEFAULT
 
     init {
-      add(commitTextField)
+      cellState = VcsLogTableCellState()
     }
 
-    fun customize(value: GraphCommitCell.NewCommit, isSelected: Boolean, hasFocus: Boolean, row: Int, column: Int) {
-      commitTextField.text = value.text.takeIf { it.isNotEmpty() } ?: VcsLogBundle.message("vcs.log.wip.label")
-      printElements = value.printElements
-      graphTable.applyHighlighters(this, row, column, hasFocus, isSelected)
+    fun customize(cell: GraphCommitCell.NewCommit, isSelected: Boolean, hasFocus: Boolean, row: Int, column: Int) {
+      clear()
+
+      printElements = cell.printElements
+      commitStyle = table.getStyle(row, column, hasFocus, isSelected, row == TableHoverListener.getHoveredRow(table))
+      val graphWidth = GraphCommitCellUtil.getGraphWidth(table, printElements)
+
+      val style = table.applyHighlighters(this, row, column, hasFocus, isSelected)
+      append("")
+      appendTextPadding(graphWidth)
+      append(VcsLogBundle.message("vcs.log.wip.label"), style)
     }
 
     override fun paintComponent(g: Graphics) {
-      val g2d = g as Graphics2D
-      painter.paint(g2d, printElements)
-    }
-
-    override fun doLayout() {
-      positionTextField()
-    }
-
-    private fun positionTextField() {
-      val graphWidth = GraphCommitCellUtil.getGraphWidth(graphTable, printElements)
-      val leftHorizontalBorder = maxOf(DEFAULT_HORIZONTAL_BORDER, graphWidth)
-      commitTextField.setBounds(leftHorizontalBorder, VERTICAL_BORDER, bounds.width - leftHorizontalBorder - DEFAULT_HORIZONTAL_BORDER, bounds.height - 2 * VERTICAL_BORDER)
-    }
-
-    companion object {
-      const val DEFAULT_HORIZONTAL_BORDER = 4
-      const val VERTICAL_BORDER = 2
+      val g2d = (InternalUICustomization.getInstance()?.preserveGraphics(g) ?: g) as Graphics2D
+      super.paintComponent(g)
+      painter.paint(g2d, commitStyle, printElements)
     }
   }
 

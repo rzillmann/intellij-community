@@ -5,9 +5,10 @@ jvm_library(
   name = "compatibility",
   module_name = "intellij.tasks.compatibility",
   visibility = ["//visibility:public"],
-  srcs = glob(["src/**/*.kt", "src/**/*.java"], allow_empty = True),
+  srcs = glob(["src/**/*.kt", "src/**/*.java", "src/**/*.form"], allow_empty = True),
   deps = [
     "//platform/platform-api:ide",
+    "//platform/projectModel-api:projectModel",
     "//plugins/tasks/tasks-api:tasks",
     "@lib//:commons-httpclient-3-1-patched",
   ],

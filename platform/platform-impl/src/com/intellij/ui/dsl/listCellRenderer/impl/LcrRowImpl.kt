@@ -65,6 +65,8 @@ open class LcrRowImpl<T>(private val renderer: LcrRow<T>.() -> Unit) : LcrRow<T>
   override var background: Color? = null
   override var selectionColor: Color? = null
   override var toolTipText: @NlsContexts.Tooltip String? = null
+  override var rowHeight: Int? = JBUI.CurrentTheme.List.rowHeight()
+  override var rowWidth: Int? = null
 
   private var foreground: Color = JBUI.CurrentTheme.List.FOREGROUND
 
@@ -150,12 +152,22 @@ open class LcrRowImpl<T>(private val renderer: LcrRow<T>.() -> Unit) : LcrRow<T>
     result.listSeparator = if (separator == null) null else ListSeparator(separator!!.text)
 
     @Suppress("UNCHECKED_CAST")
-    val model = list.model as? ListPopupModel<T>
-    val listSeparator = when {
-      model == null -> if (renderingType == RenderingType.COLLAPSED_SELECTED_COMBO_BOX_ITEM || separator == null) null
+    val model = list.model
+    val listSeparator = if (model is ListPopupModel<T>) {
+      if (model.isSeparatorAboveOf(value)) ListSeparator(model.getCaptionAboveOf(value)) else null
+    } else {
+      if (renderingType == RenderingType.COLLAPSED_SELECTED_COMBO_BOX_ITEM || separator == null) null
       else ListSeparator(separator!!.text)
-      else -> if (model.isSeparatorAboveOf(value)) ListSeparator(model.getCaptionAboveOf(value)) else null
     }
+    val selectionModel = list.selectionModel
+    val roundSelectionTop = selectionModel == null ||
+                            listSeparator != null ||
+                            index <= 0 ||
+                            !selectionModel.isSelectedIndex(index - 1)
+    val roundSelectionBottom = selectionModel == null ||
+                               model == null || index >= model.size - 1 ||
+                               !selectionModel.isSelectedIndex(index + 1)
+
     result.applySeparator(listSeparator, index == 0, list)
     result.setToolTipText(toolTipText)
 
@@ -165,29 +177,34 @@ open class LcrRowImpl<T>(private val renderer: LcrRow<T>.() -> Unit) : LcrRow<T>
       val component = result.applyCellConstraints(i, cell, if (i == 0) 0 else getGapValue(cell.beforeGap))
       cell.apply(component, enabled, list, isSelected)
 
-      val cellMinHeight = when (cell) {
-        is LcrIconImpl -> cell.icon.iconHeight
-        is LcrSimpleColoredTextImpl -> {
-          val font = cell.initParams.font
-          if (font == null) 0 else component.getFontMetrics(font).height
+      if (rowHeight == null) {
+        val cellMinHeight = when (cell) {
+          is LcrIconImpl -> cell.icon.iconHeight
+          is LcrSimpleColoredTextImpl -> {
+            val font = cell.initParams.font
+            if (font == null) 0 else component.getFontMetrics(font).height
+          }
+          is LcrSwitchImpl -> component.minimumHeight
         }
-        is LcrSwitchImpl -> component.minimumHeight
+        minHeight = max(minHeight, cellMinHeight)
       }
-      minHeight = max(minHeight, cellMinHeight)
     }
 
-    applyRowStyle(result, renderingType, minHeight)
+    applyRowStyle(result, renderingType, rowHeight ?: (minHeight + JBUIScale.scale(2)), rowWidth, roundSelectionTop, roundSelectionBottom)
 
     return result
   }
 
-  private fun applyRowStyle(rendererPanel: RendererPanel, renderingType: RenderingType, minHeight: Int) {
+  private fun applyRowStyle(rendererPanel: RendererPanel, renderingType: RenderingType, rowHeight: Int, rowWidth: Int?,
+                            roundSelectionTop: Boolean, roundSelectionBottom: Boolean) {
     if (ExperimentalUI.isNewUI()) {
       if (renderingType == RenderingType.COLLAPSED_SELECTED_COMBO_BOX_ITEM) {
         rendererPanel.initCollapsedComboBoxItem()
       }
       else {
-        rendererPanel.initItem(background, if (selected) selectionColor else null, minHeight)
+        rendererPanel.initItem(background, if (selected) selectionColor else null,
+                               rowHeight, rowWidth,
+                               roundSelectionTop, roundSelectionBottom)
       }
     }
     else {
@@ -418,7 +435,8 @@ private class RendererPanel(key: RowKey) : JPanel(BorderLayout()), KotlinUIDslRe
     }
   }
 
-  fun initItem(background: Color?, selectionColor: Color?, minHeight: Int) {
+  fun initItem(background: Color?, selectionColor: Color?, rowHeight: Int, rowWidth: Int?,
+               roundSelectionTop: Boolean, roundSelectionBottom: Boolean) {
     val leftRightInset = JBUI.CurrentTheme.Popup.Selection.LEFT_RIGHT_INSET.get()
     val innerInsets = JBUI.CurrentTheme.Popup.Selection.innerInsets()
 
@@ -428,7 +446,14 @@ private class RendererPanel(key: RowKey) : JPanel(BorderLayout()), KotlinUIDslRe
       selectionArc = JBUI.CurrentTheme.Popup.Selection.ARC.get()
       selectionInsets = JBInsets.create(0, leftRightInset)
       border = JBUI.Borders.empty(0, innerInsets.left + leftRightInset, 0, innerInsets.right + leftRightInset)
-      preferredHeight = max(JBUI.CurrentTheme.List.rowHeight(), minHeight + JBUIScale.scale(2))
+      preferredHeight = rowHeight
+      preferredWidth = rowWidth
+      selectionArcCorners = when {
+        roundSelectionTop && roundSelectionBottom -> SelectablePanel.SelectionArcCorners.ALL
+        roundSelectionTop -> SelectablePanel.SelectionArcCorners.TOP
+        roundSelectionBottom -> SelectablePanel.SelectionArcCorners.BOTTOM
+        else -> SelectablePanel.SelectionArcCorners.NONE
+      }
       this.background = background
       this.selectionColor = selectionColor
     }

@@ -1,19 +1,27 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.uast.test.kotlin
 
 import com.intellij.core.CoreApplicationEnvironment
+import com.intellij.lang.LanguageExtensionPoint
 import com.intellij.mock.MockComponentManager
 import com.intellij.mock.MockProject
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.runWriteActionAndWait
+import com.intellij.openapi.extensions.DefaultPluginDescriptor
 import com.intellij.openapi.extensions.Extensions
+import com.intellij.openapi.extensions.PluginId
+import com.intellij.openapi.extensions.impl.ExtensionsAreaImpl
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.vfs.VirtualFileManager
+import com.intellij.platform.syntax.psi.CommonElementTypeConverterFactory
+import com.intellij.platform.syntax.psi.ElementTypeConverterFactory
+import com.intellij.platform.syntax.psi.ElementTypeConverters
 import com.intellij.psi.PsiManager
 import com.intellij.psi.PsiNameHelper
 import com.intellij.psi.impl.PsiNameHelperImpl
+import com.intellij.testFramework.ExtensionTestUtil
 import com.intellij.testFramework.LightProjectDescriptor
 import com.intellij.util.io.URLUtil
 import junit.framework.TestCase
@@ -31,7 +39,7 @@ import org.jetbrains.kotlin.config.CompilerConfiguration
 import org.jetbrains.kotlin.config.JVMConfigurationKeys
 import org.jetbrains.kotlin.config.messageCollector
 import org.jetbrains.kotlin.idea.base.plugin.KotlinPluginMode
-import org.jetbrains.kotlin.idea.base.plugin.artifacts.TestKotlinArtifacts
+import org.jetbrains.kotlin.idea.artifacts.TestKotlinArtifacts
 import org.jetbrains.kotlin.idea.base.plugin.useK2Plugin
 import org.jetbrains.kotlin.idea.base.test.KotlinRoot
 import org.jetbrains.kotlin.idea.test.ConfigurationKind
@@ -54,6 +62,7 @@ import org.jetbrains.uast.kotlin.evaluation.KotlinEvaluatorExtension
 import org.jetbrains.uast.kotlin.internal.CliKotlinUastResolveProviderService
 import org.jetbrains.uast.kotlin.internal.UastAnalysisHandlerExtension
 import java.io.File
+import kotlin.io.path.absolutePathString
 
 abstract class AbstractKotlinUastTest : TestCase(),
                                         ExpectedPluginModeProvider {
@@ -124,6 +133,13 @@ abstract class AbstractKotlinUastTest : TestCase(),
     }
 
     private fun initializeCoreEnvironment() {
+        val extensionArea = ApplicationManager.getApplication().extensionArea as ExtensionsAreaImpl
+
+        val pluginDescriptor = DefaultPluginDescriptor(
+            PluginId.getId(javaClass.getName() + "." + name),
+            this::class.java.classLoader,
+        )
+
         CoreApplicationEnvironment.registerApplicationExtensionPoint(
             UastLanguagePlugin.EP,
             UastLanguagePlugin::class.java,
@@ -136,16 +152,26 @@ abstract class AbstractKotlinUastTest : TestCase(),
 
         project.registerService(
             PsiNameHelper::class.java,
-            PsiNameHelperImpl(project),
+            PsiNameHelperImpl::class.java,
         )
         project.registerService(UastContext::class.java)
 
-        Extensions.getRootArea().getExtensionPoint(UastLanguagePlugin.EP)
+        extensionArea.getExtensionPoint(UastLanguagePlugin.EP)
             .registerExtension(JavaUastLanguagePlugin())
 
         AnalysisHandlerExtension.registerExtension(
             project,
             UastAnalysisHandlerExtension(),
+        )
+
+        extensionArea.registerFakeBeanPoint<ElementTypeConverterFactory>(ElementTypeConverters.instance.name, pluginDescriptor)
+        val languagePlugin: LanguageExtensionPoint<ElementTypeConverterFactory> =
+            LanguageExtensionPoint("any", CommonElementTypeConverterFactory())
+        languagePlugin.pluginDescriptor = pluginDescriptor
+        ExtensionTestUtil.addExtension(
+            extensionArea,
+            ElementTypeConverters.instance,
+            languagePlugin
         )
     }
 
@@ -170,7 +196,7 @@ abstract class AbstractKotlinUastTest : TestCase(),
     private fun createEnvironment(source: File) {
         compilerConfiguration = createKotlinCompilerConfiguration(source)
         compilerConfiguration.put(JVMConfigurationKeys.USE_PSI_CLASS_FILES_READING, true)
-        compilerConfiguration.put(CLIConfigurationKeys.PATH_TO_KOTLIN_COMPILER_JAR, TestKotlinArtifacts.kotlinCompiler)
+        compilerConfiguration.put(CLIConfigurationKeys.PATH_TO_KOTLIN_COMPILER_JAR, TestKotlinArtifacts.kotlinCompiler.toFile())
 
         kotlinCoreEnvironment = KotlinCoreEnvironment.createForTests(
             parentDisposable = testRootDisposable,
@@ -225,5 +251,5 @@ private fun loadScriptingPlugin(configuration: CompilerConfiguration, parentDisp
         TestKotlinArtifacts.kotlinScriptingJvm
     )
 
-    PluginCliParser.loadPluginsSafe(pluginClasspath.map { it.absolutePath }, emptyList(), emptyList(), configuration, parentDisposable)
+    PluginCliParser.loadPluginsSafe(pluginClasspath.map { it.absolutePathString() }, emptyList(), emptyList(), configuration, parentDisposable)
 }

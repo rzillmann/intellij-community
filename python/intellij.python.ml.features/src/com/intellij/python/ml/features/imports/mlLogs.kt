@@ -3,23 +3,22 @@ package com.intellij.python.ml.features.imports
 
 import com.intellij.internal.statistic.eventLog.EventLogGroup
 import com.intellij.internal.statistic.service.fus.collectors.CounterUsagesCollector
-import com.intellij.platform.ml.impl.fus.IntelliJFusEventRegister
-import com.intellij.platform.ml.impl.logs.MLEventLoggerProvider.Companion.ML_RECORDER_ID
+import com.intellij.platform.ml.logs.IntelliJFusEventRegister
+import com.intellij.python.ml.features.imports.features.FeaturesRegistry
 import com.intellij.util.application
-import com.jetbrains.ml.tools.logs.MLTreeLoggers.withOneEvent
-import com.jetbrains.ml.tools.logs.extractEventFields
+import com.jetbrains.mlapi.logs.MLTreeLogger
 import kotlin.random.Random
 
 
 internal object PyCharmImportsRankingLogs : CounterUsagesCollector() {
-  private val GROUP = EventLogGroup("pycharm.quickfix.imports", 7, ML_RECORDER_ID)
-  val mlLogger = withOneEvent(
-    fusEventName = "pycharm_import_statements_ranking",
-    fusEventRegister = IntelliJFusEventRegister(GROUP),
+  private val GROUP = EventLogGroup("pycharm.quickfix.imports", 8, "ML")
+  val mlLogger = MLTreeLogger.withOneEvent(
+    eventName = "pycharm_import_statements_ranking",
+    logsEventRegister = IntelliJFusEventRegister(GROUP),
     treeFeatures = FeaturesRegistry.declarations,
     treeAnalysis = listOf(
-      extractEventFields(ContextAnalysis),
-      extractEventFields(CandidateAnalysis)
+      ContextAnalysis.extractFeatureDeclarations(),
+      CandidateAnalysis.extractFeatureDeclarations()
     )
   )
 

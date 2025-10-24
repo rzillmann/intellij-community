@@ -138,7 +138,7 @@ class InlineCompletionTextRenderManager private constructor(
 
   private inner class UpdateOnResizeListener : VisibleAreaListener {
     override fun visibleAreaChanged(e: VisibleAreaEvent) {
-      if (e.oldRectangle.width != e.newRectangle.width && renderer.isSoftWrappingEnabled()) {
+      if (e.oldRectangle?.width != e.newRectangle.width && renderer.isSoftWrappingEnabled()) {
         rerender()
       }
     }
@@ -316,6 +316,10 @@ class InlineCompletionTextRenderManager private constructor(
     }
 
     private fun Editor.forceLeanLeft() {
+      if (caretModel.currentCaret.isAtRtlLocation) {
+        // IDEA-373460: otherwise, we may move the caret which invalidates the current inline completion session
+        return
+      }
       val visualPosition = caretModel.visualPosition
       if (visualPosition.leansRight) {
         val leftLeaningPosition = VisualPosition(visualPosition.line, visualPosition.column, false)

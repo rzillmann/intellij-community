@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.codeInspection;
 
 import com.intellij.modcommand.ModPsiUpdater;
@@ -66,16 +66,13 @@ public final class DeconstructionCanBeUsedInspection extends AbstractBaseJavaLoc
         continue;
       }
       PsiRecordComponent component = getComponent(reference);
-      if (component == null) continue;
+      if (component == null) return Collections.emptyList();
       if (!used.add(component) && !shouldFindAll) continue;
       PsiElementFactory factory = PsiElementFactory.getInstance(reference.getProject());
       PsiExpression call = factory.createExpressionFromText(reference.getText() + "." + component.getName() + "()", reference);
       if (SideEffectChecker.mayHaveSideEffects(call)) return Collections.emptyList();
       int index = ArrayUtil.indexOf(components, component);
       result.get(index).add((PsiReferenceExpression)PsiUtil.skipParenthesizedExprUp(reference.getParent()));
-      if (!shouldFindAll && used.size() == components.length) {
-        return result;
-      }
     }
     return used.size() == components.length ? result : Collections.emptyList();
   }
@@ -115,24 +112,36 @@ public final class DeconstructionCanBeUsedInspection extends AbstractBaseJavaLoc
       if (instanceOf == null) return;
       List<List<PsiReferenceExpression>> collect = collect(instanceOf, patternVariable, true);
       StringJoiner deconstructionList = new StringJoiner(", ", "(", ")");
+      List<String> usedNames = new ArrayList<>();
       for (List<PsiReferenceExpression> expressions : collect) {
-        PsiReferenceExpression firstRef = expressions.get(0);
+        PsiReferenceExpression firstRef = expressions.getFirst();
         PsiType type = firstRef.getType();
-        String s = StringUtil.substringAfter(firstRef.getText(), ".");
-        VariableNameGenerator generator = new VariableNameGenerator(patternVariable, VariableKind.PARAMETER).byName(s);
-        s = generator.generate(false);
-        deconstructionList.add((type != null ? type.getCanonicalText() : "var") + " " + s);
+        String deconstructionName = getDeconstructionName(expressions, usedNames, patternVariable);
+        String stringType;
+        if (type != null) {
+          //example: if (obj instanceof Example<?> example)
+          if (type instanceof PsiCapturedWildcardType || type instanceof PsiWildcardType) {
+            stringType = "Object";
+          }
+          else {
+            stringType = type.getCanonicalText();
+          }
+        }
+        else {
+          stringType = "var";
+        }
+        deconstructionList.add(stringType + " " + deconstructionName);
         for (PsiReferenceExpression expression : expressions) {
           PsiLocalVariable variable = getVariableFromInitializer(expression);
           if (variable != null) {
             var references = VariableAccessUtils.getVariableReferences(variable);
             for (PsiReferenceExpression ref : references) {
-              ExpressionUtils.bindReferenceTo(ref, s);
+              ExpressionUtils.bindReferenceTo(ref, deconstructionName);
             }
             new CommentTracker().deleteAndRestoreComments(variable);
           }
           else {
-            new CommentTracker().replace(expression.getParent() instanceof PsiMethodCallExpression call ? call : expression, s);
+            new CommentTracker().replace(expression.getParent() instanceof PsiMethodCallExpression call ? call : expression, deconstructionName);
           }
         }
       }
@@ -149,6 +158,34 @@ public final class DeconstructionCanBeUsedInspection extends AbstractBaseJavaLoc
                                               " instanceof " +
                                               element.getText() + deconstructionList);
       }
+    }
+
+    @NotNull
+    private static String getDeconstructionName(@NotNull List<PsiReferenceExpression> expressions,
+                                                @NotNull List<String> usedNames,
+                                                @NotNull PsiPatternVariable patternVariable) {
+      PsiReferenceExpression firstRef = expressions.getFirst();
+      PsiVariable firstVariable = null;
+      for (PsiReferenceExpression expression : expressions) {
+        PsiLocalVariable variable = getVariableFromInitializer(expression);
+        if (variable != null) {
+          firstVariable = variable;
+          break;
+        }
+      }
+      String deconstructionName = StringUtil.substringAfter(firstRef.getText(), ".");
+      if (firstVariable != null && firstVariable.getNameIdentifier() != null) {
+        deconstructionName = firstVariable.getNameIdentifier().getText();
+        usedNames.add(deconstructionName);
+      }
+      else {
+        VariableNameGenerator generator = new VariableNameGenerator(patternVariable, VariableKind.PARAMETER)
+          .skipNames(usedNames)
+          .byName(deconstructionName);
+        deconstructionName = generator.generate(true);
+        usedNames.add(deconstructionName);
+      }
+      return deconstructionName;
     }
 
     private static @Nullable PsiLocalVariable getVariableFromInitializer(PsiReferenceExpression ref) {

@@ -1,26 +1,28 @@
-### auto-generated section `build kotlin.i18n` start
-load("@rules_jvm//:jvm.bzl", "jvm_library", "jvm_resources")
+### auto-generated section `build intellij.kotlin.i18n` start
+load("@rules_jvm//:jvm.bzl", "jvm_library", "resourcegroup")
 
-jvm_resources(
+resourcegroup(
   name = "i18n_resources",
-  files = glob(["resources/**/*"]),
+  srcs = glob(["resources/**/*"]),
   strip_prefix = "resources"
 )
 
 jvm_library(
   name = "i18n",
-  module_name = "kotlin.i18n",
+  module_name = "intellij.kotlin.i18n",
   visibility = ["//visibility:public"],
-  srcs = glob(["src/**/*.kt", "src/**/*.java"], allow_empty = True),
+  srcs = glob(["src/**/*.kt", "src/**/*.java", "src/**/*.form"], allow_empty = True),
+  resources = [":i18n_resources"],
   deps = [
     "@lib//:kotlin-stdlib",
     "@lib//:kotlinc-kotlin-compiler-common",
-    "//plugins/kotlin/frontend-independent:fir-frontend-independent",
+    "//platform/analysis-api:analysis",
+    "//platform/core-api:core",
+    "//plugins/kotlin/frontend-independent",
     "//plugins/java-i18n",
     "//plugins/properties/properties-psi-impl:backend-psi",
-    "//plugins/kotlin/code-insight/api:kotlin-code-insight-api",
+    "//plugins/kotlin/code-insight/api",
     "@lib//:kotlinc-analysis-api",
-  ],
-  runtime_deps = [":i18n_resources"]
+  ]
 )
-### auto-generated section `build kotlin.i18n` end
+### auto-generated section `build intellij.kotlin.i18n` end

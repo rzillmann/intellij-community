@@ -5,7 +5,6 @@ import com.intellij.CacheSwitcher;
 import com.intellij.concurrency.ConcurrentCollectionFactory;
 import com.intellij.concurrency.Job;
 import com.intellij.concurrency.JobLauncher;
-import com.intellij.idea.IJIgnore;
 import com.intellij.mock.MockVirtualFile;
 import com.intellij.openapi.Disposable;
 import com.intellij.openapi.application.ApplicationManager;
@@ -186,7 +185,6 @@ public class VirtualFilePointerTest extends BareTestFixtureTestCase {
     assertTrue(pointerToFileToReCreateAnotherCase.isValid());
   }
 
-  @IJIgnore(issue = "IJPL-149673")
   @Test
   public void testSwitchingVfs() {
     final var file = tempDir.newFile("myfile.txt");
@@ -249,7 +247,7 @@ public class VirtualFilePointerTest extends BareTestFixtureTestCase {
     connection.subscribe(VirtualFileManager.VFS_CHANGES, new BulkFileListener() {
       @Override
       public void after(@NotNull List<? extends @NotNull VFileEvent> events) {
-        Object url = ((VirtualFilePointerImpl)pointer).getNode().getFileOrUrl();
+        Object url = ((VirtualFilePointerImpl)pointer).getNodeForTesting().getFileOrUrl();
         assertTrue(url.toString(), url instanceof String);
         assertFalse(pointer.isValid());
       }
@@ -802,7 +800,7 @@ public class VirtualFilePointerTest extends BareTestFixtureTestCase {
         try {
           ready.countDown();
           while (run.get()) {
-            bb.getNode().update(((VirtualFilePointerImpl)fileToCreatePointer).getNode(), fakeRoot, "test", null);
+            bb.getNodeForTesting().update(((VirtualFilePointerImpl)fileToCreatePointer).getNodeForTesting(), fakeRoot, "test", null);
           }
         }
         catch (Throwable e) {
@@ -983,7 +981,7 @@ public class VirtualFilePointerTest extends BareTestFixtureTestCase {
       assertNotNull(pointer.getFile());
 
       assertEquals("[before:false, after:true]", listener.log.toString());
-    });
+    }, false);
   }
 
   @Test
@@ -1306,8 +1304,7 @@ public class VirtualFilePointerTest extends BareTestFixtureTestCase {
     UsefulTestCase.assertSameElements(myVirtualFilePointerManager.getPointersUnder(b, "p2"), p2);
   }
 
-  @NotNull
-  private static VirtualFileSystemEntry createChildDirectory(VirtualFile root, String childName) {
+  private static @NotNull VirtualFileSystemEntry createChildDirectory(VirtualFile root, String childName) {
     return (VirtualFileSystemEntry)HeavyPlatformTestCase.createChildDirectory(root, childName);
   }
 
@@ -1315,16 +1312,15 @@ public class VirtualFilePointerTest extends BareTestFixtureTestCase {
     UsefulTestCase.assertSameElements(myVirtualFilePointerManager.getPointersUnder(file, childName), pointers);
   }
 
-  @NotNull
-  private VirtualFilePointer createPointer(@NotNull String relativePath) {
+  private @NotNull VirtualFilePointer createPointer(@NotNull String relativePath) {
     return myVirtualFilePointerManager.create(myDir().getUrl()+"/"+relativePath, disposable, null);
   }
 
-  @NotNull
-  private VirtualFilePointer createRecursivePointer(@NotNull String relativePath) {
+  private @NotNull VirtualFilePointer createRecursivePointer(@NotNull String relativePath) {
     return myVirtualFilePointerManager.createDirectoryPointer(myDir().getUrl()+"/"+relativePath, true, disposable, new VirtualFilePointerListener() {
     });
   }
+
   private VirtualFile myDir() {
     return tempDir.getVirtualFileRoot();
   }
@@ -1336,6 +1332,7 @@ public class VirtualFilePointerTest extends BareTestFixtureTestCase {
     assertTrue(pointer.getUrl(), pointer.getUrl().endsWith(path));
     assertEquals("allopen-compiler-plugin.jar", pointer.getFileName());
   }
+
   @Test
   public void testJarUrlContainingInvalidExclamationInTheMiddleMustNotCrashAnything() {
     File root = tempDir.getRoot();
@@ -1359,7 +1356,7 @@ public class VirtualFilePointerTest extends BareTestFixtureTestCase {
     assertEquals(expectedPointerRelativeUrl, StringUtil.trimStart(pointer.getUrl(), "jar://" + tempRoot + "/" + abc));
     String expectedPointerFileNameToCheck = expectedPointerFileName == null ? abc : expectedPointerFileName;
     assertEquals(expectedPointerFileNameToCheck, pointer.getFileName());
-    assertEquals(JarFileSystem.getInstance(), ((VirtualFilePointerImpl)pointer).getNode().fs);
+    assertEquals(JarFileSystem.getInstance(), ((VirtualFilePointerImpl)pointer).getFileSystemForTesting());
     assertFalse(pointer.isValid());
 
     File jar = IoTestUtil.createTestJar(new File(tempRoot+"/"+abc), List.of(Pair.create(expectedPathInsideJar, new byte[]{' ', ' '})));
@@ -1375,7 +1372,7 @@ public class VirtualFilePointerTest extends BareTestFixtureTestCase {
     VirtualFilePointer pointer = VirtualFilePointerManager.getInstance().create(sourceUrl, disposable, null);
     assertEquals(expectedPointerUrl, pointer.getUrl());
     assertEquals(expectedPointerFileName, pointer.getFileName());
-    assertEquals(JarFileSystem.getInstance(), ((VirtualFilePointerImpl)pointer).getNode().fs);
+    assertEquals(JarFileSystem.getInstance(), ((VirtualFilePointerImpl)pointer).getFileSystemForTesting());
     assertFalse(pointer.isValid());
   }
 }

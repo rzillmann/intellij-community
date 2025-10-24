@@ -18,7 +18,6 @@ import com.intellij.refactoring.JavaRefactoringFactory;
 import com.intellij.refactoring.changeSignature.ParameterInfoImpl;
 import com.siyeh.ig.BaseInspection;
 import com.siyeh.ig.BaseInspectionVisitor;
-import com.siyeh.ig.InspectionGadgetsFix;
 import com.siyeh.ig.psiutils.TestUtils;
 import org.jetbrains.annotations.NotNull;
 
@@ -52,7 +51,7 @@ public final class ParameterizedParametersStaticCollectionInspection extends Bas
         }
       };
     }
-    return new InspectionGadgetsFix() {
+    return new LocalQuickFix() {
 
       @Override
       public boolean startInWriteAction() {
@@ -60,8 +59,10 @@ public final class ParameterizedParametersStaticCollectionInspection extends Bas
       }
 
       @Override
-      protected void doFix(final @NotNull Project project, @NotNull ProblemDescriptor descriptor) {
-        final PsiElement element = descriptor.getPsiElement().getParent();
+      public void applyFix(final @NotNull Project project, @NotNull ProblemDescriptor descriptor) {
+        final PsiElement problemElement = descriptor.getPsiElement();
+        if (problemElement == null || !problemElement.isValid()) return;
+        final PsiElement element = problemElement.getParent();
         if (!(element instanceof PsiMethod method)) {
           return;
         }
@@ -102,7 +103,7 @@ public final class ParameterizedParametersStaticCollectionInspection extends Bas
   }
 
   @Override
-  public BaseInspectionVisitor buildVisitor() {
+  public @NotNull BaseInspectionVisitor buildVisitor() {
     return new BaseInspectionVisitor() {
       @Override
       public void visitClass(@NotNull PsiClass aClass) {

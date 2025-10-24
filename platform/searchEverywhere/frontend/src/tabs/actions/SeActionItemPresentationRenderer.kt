@@ -9,14 +9,18 @@ import com.intellij.openapi.updateSettings.impl.pluginsAdvertisement.FeatureProm
 import com.intellij.openapi.util.NlsActions
 import com.intellij.openapi.util.NlsSafe
 import com.intellij.openapi.util.TextRange
+import com.intellij.openapi.util.registry.Registry
 import com.intellij.openapi.util.text.StringUtil
 import com.intellij.platform.searchEverywhere.SeActionItemPresentation
+import com.intellij.platform.searchEverywhere.SeItemDataKeys
 import com.intellij.platform.searchEverywhere.SeOptionActionItemPresentation
 import com.intellij.platform.searchEverywhere.SeRunnableActionItemPresentation
 import com.intellij.platform.searchEverywhere.frontend.ui.SeResultListItemRow
 import com.intellij.platform.searchEverywhere.frontend.ui.SeResultListRow
+import com.intellij.platform.searchEverywhere.frontend.ui.weightTextIfEnabled
 import com.intellij.ui.ColorUtil
 import com.intellij.ui.HtmlToSimpleColoredComponentConverter
+import com.intellij.ui.JBColor
 import com.intellij.ui.SimpleColoredComponent
 import com.intellij.ui.SimpleTextAttributes
 import com.intellij.ui.dsl.listCellRenderer.LcrInitParams
@@ -82,6 +86,7 @@ class SeActionItemPresentationRenderer(private val resultsList: JList<SeResultLi
         text(name) {
           font = listFont
           foreground = GotoActionModel.defaultActionForeground(selected, hasFocus, presentation.isEnabled)
+          accessibleName = presentation.shortcut?.takeIf { it.isNotEmpty() }?.let { "$name $it" } ?: name
 
           // TODO: Should we handle HTML? (see: appendWithColoredMatches(nameComponent, presentation.text, pattern, fg, selected))
           speedSearchRange(name, pattern, selected)?.let {
@@ -91,8 +96,11 @@ class SeActionItemPresentationRenderer(private val resultsList: JList<SeResultLi
           }
         }
 
+        weightTextIfEnabled(value)
+
         if (UISettings.getInstance().showInplaceCommentsInternal && actionId != null) {
           text(actionId) {
+            accessibleName = null
             attributes = SimpleTextAttributes.GRAYED_ATTRIBUTES
           }
         }
@@ -100,13 +108,14 @@ class SeActionItemPresentationRenderer(private val resultsList: JList<SeResultLi
         presentation.shortcut?.let { shortcutText ->
           @Suppress("HardCodedStringLiteral")
           text(shortcutText) {
+            accessibleName = null
             attributes = SimpleTextAttributes(SimpleTextAttributes.STYLE_SMALLER or SimpleTextAttributes.STYLE_BOLD, groupForeground)
           }
         }
       }
 
       is SeOptionActionItemPresentation -> {
-        if (!selected && !presentation.isBooleanOption) {
+        if (!presentation.isBooleanOption && switcherState == null) {
           val descriptorBg = if (isUnderDarcula) {
             ColorUtil.brighter(UIUtil.getListBackground(), 1)
           }
@@ -131,6 +140,8 @@ class SeActionItemPresentationRenderer(private val resultsList: JList<SeResultLi
             }
           }
         }
+
+        weightTextIfEnabled(value)
       }
     }
 
@@ -143,11 +154,18 @@ class SeActionItemPresentationRenderer(private val resultsList: JList<SeResultLi
     else presentation.commonData.location?.let { location ->
       val groupLabel = JLabel(location)
       groupLabel.border = eastBorder
-      groupLabel.foreground = groupForeground
 
       text(location) {
+        accessibleName = null
         align = LcrInitParams.Align.RIGHT
+        foreground = if (selected) NamedColorUtil.getListSelectionForeground(true)
+        else NamedColorUtil.getInactiveTextColor()
       }
+    }
+
+    val isSemantic = (value as SeResultListItemRow).item.additionalInfo[SeItemDataKeys.IS_SEMANTIC].toBoolean()
+    if (isSemantic && Registry.`is`("search.everywhere.ml.semantic.highlight.items", false)) {
+      background = JBColor.GREEN.darker().darker()
     }
   }
 

@@ -10,6 +10,7 @@ import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.openapi.vfs.VirtualFileSystem;
 import com.intellij.util.ArrayUtilRt;
 import com.intellij.vcsUtil.VcsUtil;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -32,7 +33,7 @@ public class VcsVirtualFile extends AbstractVcsVirtualFile {
   /**
    * @deprecated {@link VcsFileSystem} cannot be overwritten
    */
-  @Deprecated
+  @Deprecated(forRemoval = true)
   public VcsVirtualFile(@NotNull String path,
                         @Nullable VcsFileRevision revision,
                         @NotNull VirtualFileSystem ignored) {
@@ -48,7 +49,7 @@ public class VcsVirtualFile extends AbstractVcsVirtualFile {
   /**
    * @deprecated {@link VcsFileSystem} cannot be overwritten
    */
-  @Deprecated
+  @Deprecated(forRemoval = true)
   public VcsVirtualFile(@NotNull VirtualFile parent, @NotNull String name, @Nullable VcsFileRevision revision, VirtualFileSystem ignored) {
     this(parent, name, revision);
   }
@@ -71,7 +72,7 @@ public class VcsVirtualFile extends AbstractVcsVirtualFile {
   /**
    * @deprecated {@link VcsFileSystem} cannot be overwritten
    */
-  @Deprecated
+  @Deprecated(forRemoval = true)
   public VcsVirtualFile(@NotNull String path,
                         byte @NotNull [] content,
                         @Nullable String revision,
@@ -98,7 +99,13 @@ public class VcsVirtualFile extends AbstractVcsVirtualFile {
     return myContent;
   }
 
-  private void loadContent() throws IOException {
+  /**
+   * Note that {@link com.intellij.openapi.vcs.vfs.VcsVirtualFile#contentsToByteArray()} can be called from any thread, while
+   * loading content is performed from the disc.
+   * To prevent slow operations on EDT, this method should be called preemptively from a background thread.
+   */
+  @ApiStatus.Internal
+  public void loadContent() throws IOException {
     assert myFileRevision != null;
     if (myContent != null) return;
 

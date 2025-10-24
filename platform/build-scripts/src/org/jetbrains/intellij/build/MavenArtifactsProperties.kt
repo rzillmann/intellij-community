@@ -6,6 +6,7 @@ import kotlinx.collections.immutable.persistentListOf
 import org.apache.maven.model.Model
 import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.intellij.build.impl.maven.GeneratedMavenArtifacts
+import org.jetbrains.intellij.build.impl.maven.MavenArtifactDependency
 import org.jetbrains.intellij.build.impl.maven.MavenCoordinates
 import org.jetbrains.jps.model.module.JpsModule
 import org.jetbrains.jps.util.JpsPathUtil
@@ -52,8 +53,17 @@ class MavenArtifactsProperties {
     module.contentRootsList.urls.all { Path.of(JpsPathUtil.urlToPath(it)).startsWith(context.paths.communityHomeDir) }
   }
 
+  /**
+   * A predicate which returns `true` for modules which Maven artifacts should be validated according to https://central.sonatype.org/publish/requirements
+   */
+  @ApiStatus.Internal
+  var validateForMavenCentralPublication: (JpsModule) -> Boolean = { false }
+
   @ApiStatus.Internal
   var patchCoordinates: (JpsModule, MavenCoordinates) -> MavenCoordinates = { _, coordinates -> coordinates }
+
+  @ApiStatus.Internal
+  var patchDependencies: (JpsModule, List<MavenArtifactDependency>) -> List<MavenArtifactDependency> = { _, dependencies -> dependencies }
 
   @ApiStatus.Internal
   var addPomMetadata: (JpsModule, Model) -> Unit = { _, _ -> }
@@ -62,5 +72,5 @@ class MavenArtifactsProperties {
   var isJavadocJarRequired: (JpsModule) -> Boolean = { false }
 
   @ApiStatus.Internal
-  var validate: (BuildContext, Collection<GeneratedMavenArtifacts>) -> Unit = { _, _ -> }
+  var validate: suspend (BuildContext, Collection<GeneratedMavenArtifacts>) -> Unit = { _, _ -> }
 }

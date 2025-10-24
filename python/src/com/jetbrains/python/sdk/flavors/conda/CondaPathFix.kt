@@ -1,4 +1,4 @@
-// Copyright 2000-2022 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.jetbrains.python.sdk.flavors.conda
 
 import com.intellij.execution.Platform
@@ -6,9 +6,10 @@ import com.intellij.execution.target.FullPathOnTarget
 import com.intellij.execution.target.TargetedCommandLineBuilder
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.projectRoots.Sdk
-import com.intellij.util.EnvReader
+import com.intellij.util.ShellEnvironmentReader
 import com.jetbrains.python.sdk.PySdkUtil
 import com.jetbrains.python.sdk.getOrCreateAdditionalData
+import org.jetbrains.annotations.ApiStatus
 import java.io.IOException
 import java.nio.file.Path
 import kotlin.io.path.exists
@@ -24,7 +25,7 @@ private val LOG = Logger.getInstance("CondaLogger")
  *
  * Non-conda, non-local and non-windows command lines are silently ignored
  * */
-
+@ApiStatus.Internal
 fun TargetedCommandLineBuilder.fixCondaPathEnvIfNeeded(sdk: Sdk) {
   if (!localOnWindows) return
   val condaData = (sdk.getOrCreateAdditionalData().flavorAndData.data as? PyCondaFlavorData) ?: return
@@ -35,6 +36,8 @@ fun TargetedCommandLineBuilder.fixCondaPathEnvIfNeeded(sdk: Sdk) {
   }
   addEnvVars(PySdkUtil.activateVirtualEnv(sdk), condaData.env.fullCondaPathOnTarget)
 }
+
+@ApiStatus.Internal
 
 fun TargetedCommandLineBuilder.fixCondaPathEnvIfNeeded(condaPathOnTarget: FullPathOnTarget) {
   if (!localOnWindows) return
@@ -49,7 +52,8 @@ fun TargetedCommandLineBuilder.fixCondaPathEnvIfNeeded(condaPathOnTarget: FullPa
     return
   }
   try {
-    val envs = EnvReader().readBatEnv(activateBat, emptyList())
+    val command = ShellEnvironmentReader.winShellCommand(activateBat, null)
+    val envs = ShellEnvironmentReader.readEnvironment(command, 0).first
     addEnvVars(envs, condaPathOnTarget)
   }
   catch (e: IOException) {

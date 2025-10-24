@@ -5,10 +5,11 @@ jvm_library(
   name = "dev",
   module_name = "intellij.platform.bootstrap.dev",
   visibility = ["//visibility:public"],
-  srcs = glob(["src/**/*.kt", "src/**/*.java"], allow_empty = True),
+  srcs = glob(["src/**/*.kt", "src/**/*.java", "src/**/*.form"], allow_empty = True),
   deps = [
-    "//platform/build-scripts/dev-server:buildScripts-devBuildServer",
+    "@lib//:jetbrains-annotations",
     "//platform/boot",
+    "//platform/build-scripts/dev-server:buildScripts-devBuildServer",
     "//platform/util-class-loader:util-classLoader",
   ]
 )

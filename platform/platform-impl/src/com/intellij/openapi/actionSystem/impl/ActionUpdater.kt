@@ -1,4 +1,4 @@
-// Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 @file:JvmName("ActionUpdaterKt")
 @file:OptIn(IntellijInternalApi::class)
 
@@ -18,7 +18,6 @@ import com.intellij.openapi.actionSystem.ex.ActionUtil.ALWAYS_VISIBLE_GROUP
 import com.intellij.openapi.actionSystem.ex.ActionUtil.HIDE_DISABLED_CHILDREN
 import com.intellij.openapi.actionSystem.ex.ActionUtil.SUPPRESS_SUBMENU
 import com.intellij.openapi.actionSystem.ex.CustomComponentAction
-import com.intellij.openapi.actionSystem.ex.InlineActionsHolder
 import com.intellij.openapi.application.Application
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.runReadAction
@@ -26,7 +25,6 @@ import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.progress.CeProcessCanceledException
 import com.intellij.openapi.progress.ProcessCanceledException
-import com.intellij.openapi.progress.blockingContext
 import com.intellij.openapi.project.IndexNotReadyException
 import com.intellij.openapi.util.IntellijInternalApi
 import com.intellij.openapi.util.Key
@@ -37,6 +35,7 @@ import com.intellij.platform.diagnostic.telemetry.helpers.useWithScope
 import com.intellij.platform.ide.CoreUiCoroutineScopeHolder
 import com.intellij.platform.util.coroutines.childScope
 import com.intellij.util.*
+import com.intellij.util.concurrency.ThreadingAssertions
 import com.intellij.util.concurrency.annotations.RequiresBackgroundThread
 import com.intellij.util.concurrency.annotations.RequiresEdt
 import com.intellij.util.containers.FList
@@ -123,9 +122,11 @@ internal class ActionUpdater @JvmOverloads constructor(
     }
   }
 
-  private suspend fun <T> callAction(opElement: OpElement,
-                                     updateThreadOrig: ActionUpdateThread,
-                                     call: () -> T): T {
+  private suspend fun <T> callAction(
+    opElement: OpElement,
+    updateThreadOrig: ActionUpdateThread,
+    call: () -> T,
+  ): T {
     val operationName = opElement.operationName
     val forcedUpdateThread = opElement.all().mapNotNull { it.forcedUpdateThread }.firstOrNull()
     val updateThread: ActionUpdateThread = forcedUpdateThread ?: updateThreadOrig
@@ -160,7 +161,11 @@ internal class ActionUpdater @JvmOverloads constructor(
     }
   }
 
-  private suspend fun <T> computeOnEdt(opElement: OpElement, noRulesInEDT: Boolean, call: () -> T): T {
+  private suspend fun <T> computeOnEdt(
+    opElement: OpElement,
+    noRulesInEDT: Boolean,
+    call: () -> T,
+  ): T {
     val operationName = opElement.operationName
     var currentEDTPerformMillis = 0L
     var currentEDTWaitMillis = 0L
@@ -172,13 +177,16 @@ internal class ActionUpdater @JvmOverloads constructor(
         edtCallsCount++
         edtWaitNanos += start - start0
         currentEDTWaitMillis = TimeUnit.NANOSECONDS.toMillis(start - start0)
-        Utils.getTracer(true).spanBuilder(operationName).use { span: Span ->
+        Utils.getTracer(true).spanBuilder(operationName).use { _: Span ->
           val prevStack = ourInEDTActionOperationStack
           val prevNoRules = isNoRulesInEDTSection
           var traceCookie: ThreadDumpService.Cookie? = null
           try {
             Triple({ ProhibitAWTEvents.start(operationName) },
-                   { IdeEventQueue.getInstance().threadingSupport.prohibitWriteActionsInside() },
+                   {
+                     val result = IdeEventQueue.getInstance().threadingSupport.prohibitWriteActionsInside()
+                     AutoCloseable { result() }
+                   },
                    { threadDumpService.start(100, 50, 5, Thread.currentThread()) }).use { _, _, cookie ->
               traceCookie = cookie
               ourInEDTActionOperationStack = prevStack.prepend(operationName)
@@ -208,18 +216,20 @@ internal class ActionUpdater @JvmOverloads constructor(
     }
   }
 
-  suspend fun <R : Any?> runUpdateSession(coroutineContext: CoroutineContext, block: suspend CoroutineScope.() -> R): R =
-    withContext(coroutineContext) {
-      val childScope = childScope("ActionUpdater.runUpdateSession")
-      bgtScope = childScope
-      try {
-        block()
-      }
-      finally {
-        childScope.cancel()
-        bgtScope = null
-      }
+  suspend fun <R : Any?> runUpdateSession(
+    coroutineContext: CoroutineContext,
+    block: suspend CoroutineScope.() -> R,
+  ): R = withContext(coroutineContext) {
+    val childScope = childScope("ActionUpdater.runUpdateSession")
+    bgtScope = childScope
+    try {
+      block()
     }
+    finally {
+      childScope.cancel()
+      bgtScope = null
+    }
+  }
 
   /**
    * Returns actions from the given and nested non-popup groups that are visible after updating
@@ -254,7 +264,10 @@ internal class ActionUpdater @JvmOverloads constructor(
     }
   }
 
-  private suspend fun doExpandActionGroup(group: ActionGroup, hideDisabled: Boolean): List<AnAction> {
+  private suspend fun doExpandActionGroup(
+    group: ActionGroup,
+    hideDisabled: Boolean,
+  ): List<AnAction> {
     if (group is ActionGroupStub) {
       throw IllegalStateException("ActionGroupStub cannot be expanded")
     }
@@ -281,7 +294,6 @@ internal class ActionUpdater @JvmOverloads constructor(
       result
         .mapNotNull {
           updatedPresentations[it]?.getClientProperty(ActionUtil.INLINE_ACTIONS)
-          ?: (it as? InlineActionsHolder)?.inlineActions
         }
         .flatten()
         .map {
@@ -295,7 +307,10 @@ internal class ActionUpdater @JvmOverloads constructor(
     }
   }
 
-  private suspend fun postProcessGroupChildren(group: ActionGroup, result: List<AnAction>): List<AnAction> {
+  private suspend fun postProcessGroupChildren(
+    group: ActionGroup,
+    result: List<AnAction>
+  ): List<AnAction> {
     if (isDefaultImplementationRecursively(OP_groupPostProcess, group)) {
       return result
     }
@@ -303,11 +318,9 @@ internal class ActionUpdater @JvmOverloads constructor(
     val event = createActionEvent(opElement, updatedPresentations[group] ?: initialBgtPresentation(group))
     return try {
       retryOnAwaitSharedData(opElement, maxAwaitSharedDataRetries) {
-        blockingContext { // no data-context hence no RA, just blockingContext
-          val spanBuilder = Utils.getTracer(true).spanBuilder(opElement.operationName)
-          spanBuilder.use {
-            group.postProcessVisibleChildren(event, result)
-          }
+        val spanBuilder = Utils.getTracer(true).spanBuilder(opElement.operationName)
+        spanBuilder.useWithScope {
+          group.postProcessVisibleChildren(event, result)
         }
       }
     }
@@ -334,12 +347,12 @@ internal class ActionUpdater @JvmOverloads constructor(
       retryOnAwaitSharedData(opElement, maxAwaitSharedDataRetries) {
         ActionUpdaterInterceptor.getGroupChildren(group, event) {
           callAction(opElement, group.actionUpdateThread) {
-            group.getChildren(event)
-          }.let {
-            ensureNotNullChildren(opElement, it)
+            group.getChildren(event).apply {
+              ensureNotNullChildren(opElement, this as Array<AnAction?>)
+            }.asList()
           }
         }
-      }.asList()
+      }
     }
     catch (_: IndexNotReadyException) {
       event.presentation.isEnabledAndVisible = false
@@ -349,7 +362,7 @@ internal class ActionUpdater @JvmOverloads constructor(
       handleException(opElement, event.presentation, actionManager, ex)
       return emptyList()
     }
-    return groupChildren.getOrPut(group) { children }
+    return groupChildren.computeIfAbsent(group) { children }
   }
 
   private suspend fun expandGroupChild(child: AnAction, hideDisabledBase: Boolean): List<AnAction> {
@@ -375,6 +388,7 @@ internal class ActionUpdater @JvmOverloads constructor(
     var hasEnabled = false
     var hasVisible = false
     if (checkChildren) {
+      @Suppress("VariableNeverRead")
       var last: AnAction? = null // for debug
       val childrenFlow = iterateGroupChildren(child)
       childrenFlow.take(100).filter { it !is Separator }.takeWhile { action ->
@@ -383,6 +397,7 @@ internal class ActionUpdater @JvmOverloads constructor(
         hasEnabled = hasEnabled or (p?.isEnabled == true)
         // stop early if all the required flags are collected
         val result = !(hasVisible && (hasEnabled || !hideDisabled))
+        @Suppress("AssignedValueIsNeverRead")
         last = action
         result
       }
@@ -433,6 +448,7 @@ internal class ActionUpdater @JvmOverloads constructor(
     val deferred = scope.async(
       currentCoroutineContext().minusKey(Job) +
       CoroutineName("computeOnEdt ($place)") + edtDispatcher) {
+      // we downgrade access to read to not allow accidental clients that rely on write-intent
       runReadAction { // will immediately succeed because lock is parallelized here
         supplier()
       }
@@ -497,39 +513,45 @@ internal class ActionUpdater @JvmOverloads constructor(
     }
     val opElement = OpElement.next(action, OP_actionPresentation, place, null)
     val event = createActionEvent(opElement, presentation)
-    val success = try {
+    val result = try {
       retryOnAwaitSharedData(opElement, maxAwaitSharedDataRetries) {
         ActionUpdaterInterceptor.updateAction(action, event) {
           // reset enabled/visible flags (actions are encouraged to always set them in `update`)
           presentation.setEnabledAndVisible(true)
-          if (isDefaultImplementationRecursively(OP_actionPresentation, action)) {
-            action.applyTextOverride(event)
-            return@updateAction true
-          }
-          callAction(opElement, action.actionUpdateThread) {
-            !ActionUtil.performDumbAwareUpdate(action, event, false)
+          when {
+            isDefaultImplementationRecursively(OP_actionPresentation, action) -> {
+              action.applyTextOverride(event)
+              AnActionResult.PERFORMED
+            }
+            else -> {
+              callAction(opElement, action.actionUpdateThread) {
+                ActionUtil.updateAction(action, event)
+              }
+            }
           }
         }
       }
     }
     catch (_: IndexNotReadyException) {
       presentation.isEnabledAndVisible = false
-      true
+      AnActionResult.PERFORMED
     }
     catch (ex: Throwable) {
       handleException(opElement, event.presentation, actionManager, ex)
-      return null
+      AnActionResult.failed(ex)
     }
-    if (success) {
-      return updatedPresentations.getOrPut(action) { presentation }
+    if (result.isPerformed) {
+      return updatedPresentations.computeIfAbsent(action) { presentation }
     }
     return null
   }
 
   @Suppress("UNCHECKED_CAST")
-  private fun <T : Any?> getSessionDataDeferred(opElement: OpElement?,
-                                                key: SessionKey,
-                                                supplier: suspend () -> T): Deferred<T> {
+  private fun <T : Any?> getSessionDataDeferred(
+    opElement: OpElement?,
+    key: SessionKey,
+    supplier: suspend () -> T,
+  ): Deferred<T> {
     val opNext = OpElement.next(opElement, opElement?.action, OP_sessionData, place, key)
     val existing = sessionData[key]
     if (existing != null) {
@@ -600,7 +622,7 @@ internal class ActionUpdater @JvmOverloads constructor(
     }
   }
 
-  private class UpdateSessionImpl(val updater: ActionUpdater) : SuspendingUpdateSession {
+  private class UpdateSessionImpl(val updater: ActionUpdater) : SuspendingUpdateSessionInternal {
     override fun expandedChildren(actionGroup: ActionGroup): Iterable<AnAction> {
       val sessionKey = SessionKey(OP_groupExpandedChildren, actionGroup)
       return updater.computeSessionDataOrThrow(sessionKey) {
@@ -646,19 +668,19 @@ internal class ActionUpdater @JvmOverloads constructor(
       }
     }
 
-    override suspend fun presentationSuspend(action: AnAction): Presentation {
+    override suspend fun presentationEx(action: AnAction): Presentation {
       return updater.updateAction(action) ?: updater.initialBgtPresentation(action)
     }
 
-    override suspend fun childrenSuspend(actionGroup: ActionGroup): List<AnAction> {
-      return updater.getGroupChildren(actionGroup)
+    override suspend fun childrenEx(group: ActionGroup): List<AnAction> {
+      return updater.getGroupChildren(group)
     }
 
-    override suspend fun expandSuspend(group: ActionGroup): List<AnAction> {
+    override suspend fun expandedChildrenEx(group: ActionGroup): List<AnAction> {
       return updater.expandActionGroup(group)
     }
 
-    override fun <T: Any?> sharedDataSuspend(key: Key<T>, supplier: suspend () -> T): T {
+    override fun <T: Any?> sharedDataSuspendSupplier(key: Key<T>, supplier: suspend () -> T): T {
       val sessionKey = SessionKey(key.toString(), key)
       return updater.computeSessionDataOrThrow(sessionKey) {
         supplier()
@@ -667,9 +689,9 @@ internal class ActionUpdater @JvmOverloads constructor(
 
     @OptIn(ExperimentalCoroutinesApi::class)
     override fun visitCaches(visitor: (AnAction, String, Any) -> Unit) {
-      updater.updatedPresentations.forEach { action, presentation -> visitor(action, OP_actionPresentation, presentation) }
-      updater.groupChildren.forEach { action, children -> visitor(action, OP_groupChildren, children) }
-      updater.sessionData.forEach { pair, deferred ->
+      updater.updatedPresentations.forEach { (action, presentation) -> visitor(action, OP_actionPresentation, presentation) }
+      updater.groupChildren.forEach { (action, children) -> visitor(action, OP_groupChildren, children) }
+      updater.sessionData.forEach { (pair, deferred) ->
         if (pair.opName == OP_groupExpandedChildren) visitor(pair.source as ActionGroup, pair.opName, deferred.getCompleted()!!) }
     }
 
@@ -693,15 +715,15 @@ internal class ActionUpdater @JvmOverloads constructor(
   }
 }
 
-private fun reportSlowEdtOperation(action: Any,
-                                   operationName: String,
-                                   currentEDTPerformMillis: Long,
-                                   edtTraces: List<Throwable>?) {
+private fun reportSlowEdtOperation(
+  action: Any,
+  operationName: String,
+  currentEDTPerformMillis: Long,
+  edtTraces: List<Throwable>?,
+) {
   if (application.isUnitTestMode) return
-  var edtTraces1 = edtTraces
   val throwable: Throwable = PluginException.createByClass(
     elapsedReport(currentEDTPerformMillis, true, operationName) + REVISE_AUT_MSG_SUFFIX, null, action.javaClass)
-  val edtTraces = edtTraces1
   // do not report pauses without EDT traces (e.g., due to debugging)
   if (edtTraces != null && !edtTraces.isEmpty() && edtTraces[0].stackTrace.isNotEmpty()) {
     for (trace in edtTraces) {
@@ -749,7 +771,12 @@ private fun elapsedReport(elapsed: Long, isEDT: Boolean, operationName: String):
   return elapsed.toString() + (if (isEDT) " ms to call on EDT " else " ms to call on BGT ") + operationName
 }
 
-private fun handleException(opElement: OpElement, presentation: Presentation, actionManager: ActionManager, ex: Throwable) {
+private fun handleException(
+  opElement: OpElement,
+  presentation: Presentation,
+  actionManager: ActionManager,
+  ex: Throwable,
+) {
   if (ex is CancellationException) throw ex
   if (ex is AwaitSharedData) throw ex
   if (ex is SkipOperation) {
@@ -829,9 +856,11 @@ private fun checkRecursiveUpdateSession() {
   }
 }
 
-private suspend inline fun <R> retryOnAwaitSharedData(opElement: OpElement,
-                                                      maxRetries: Int,
-                                                      crossinline block: suspend () -> R): R = withContext(opElement) {
+private suspend inline fun <R> retryOnAwaitSharedData(
+  opElement: OpElement,
+  maxRetries: Int,
+  crossinline block: suspend () -> R,
+): R = withContext(opElement) {
   repeat(maxRetries) {
     try {
       return@withContext block()

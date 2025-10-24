@@ -7,7 +7,6 @@ import com.intellij.ide.plugins.IdeaPluginDescriptor
 import com.intellij.ide.trustedProjects.TrustedProjects
 import com.intellij.ide.trustedProjects.TrustedProjectsListener
 import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.progress.blockingContext
 import com.intellij.openapi.progress.runBlockingMaybeCancellable
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.projectRoots.Sdk
@@ -15,8 +14,6 @@ import com.intellij.openapi.projectRoots.impl.JavaAwareProjectJdkTableImpl
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.io.FileUtil
 import com.intellij.openapi.util.registry.Registry
-import com.intellij.platform.ide.progress.TaskCancellation
-import com.intellij.platform.ide.progress.withBackgroundProgress
 import com.intellij.util.ObjectUtils
 import com.intellij.util.PathUtil
 import com.intellij.util.net.NetUtils
@@ -24,7 +21,6 @@ import org.apache.commons.lang3.SystemUtils
 import org.jetbrains.annotations.SystemIndependent
 import org.jetbrains.annotations.TestOnly
 import org.jetbrains.idea.maven.MavenDisposable
-import org.jetbrains.idea.maven.execution.SyncBundle
 import org.jetbrains.idea.maven.indices.MavenIndices
 import org.jetbrains.idea.maven.indices.MavenSystemIndicesManager.Companion.getInstance
 import org.jetbrains.idea.maven.project.*
@@ -43,7 +39,6 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.function.Consumer
 import java.util.function.Predicate
 import kotlin.io.path.exists
-import kotlin.io.path.isDirectory
 
 internal class MavenServerManagerImpl : MavenServerManager {
   private val myMultimoduleDirToConnectorMap: MutableMap<String, MavenServerConnector> = HashMap()
@@ -77,14 +72,14 @@ internal class MavenServerManagerImpl : MavenServerManager {
       override fun onProjectTrusted(project: Project) {
         val manager = MavenProjectsManager.getInstance(project)
         if (manager.isMavenizedProject) {
-          MavenUtil.restartMavenConnectors(project, true, Predicate { it.isDummy() })
+          MavenUtil.shutdownMavenConnectors(project, Predicate { it.isDummy() })
         }
       }
 
       override fun onProjectUntrusted(project: Project) {
         val manager = MavenProjectsManager.getInstance(project)
         if (manager.isMavenizedProject) {
-          MavenUtil.restartMavenConnectors(project, true) { it.isDummy() }
+          MavenUtil.shutdownMavenConnectors(project) { it.isDummy() }
         }
       }
 
@@ -109,7 +104,7 @@ internal class MavenServerManagerImpl : MavenServerManager {
     return set
   }
 
-  override fun restartMavenConnectors(project: Project, wait: Boolean, condition: Predicate<MavenServerConnector>) {
+  override fun shutdownMavenConnectors(project: Project, condition: Predicate<MavenServerConnector>) {
     val connectorsToShutDown: MutableList<MavenServerConnector> = ArrayList()
     synchronized(myMultimoduleDirToConnectorMap) {
       getAllConnectors().forEach(
@@ -123,16 +118,11 @@ internal class MavenServerManagerImpl : MavenServerManager {
         })
     }
     MavenProjectsManager.getInstance(project).embeddersManager.reset()
-    stopConnectors(project, wait, connectorsToShutDown)
+    stopConnectors(project, connectorsToShutDown)
   }
 
-  private fun stopConnectors(project: Project, wait: Boolean, connectors: List<MavenServerConnector>) {
-    runBlockingMaybeCancellable{
-      val taskCancellation = TaskCancellation.nonCancellable()
-      withBackgroundProgress(project, SyncBundle.message("maven.sync.restarting"), taskCancellation) {
-        connectors.forEach(Consumer { it: MavenServerConnector -> it.stop(wait) })
-      }
-    }
+  private fun stopConnectors(project: Project, connectors: List<MavenServerConnector>) {
+    connectors.forEach(Consumer { it: MavenServerConnector -> it.stop(false) })
   }
 
   private fun doGetConnector(project: Project, workingDirectory: String, jdk: Sdk): MavenServerConnector {
@@ -164,14 +154,10 @@ internal class MavenServerManagerImpl : MavenServerManager {
   }
 
   override suspend fun getConnector(project: Project, workingDirectory: String, jdk: Sdk): MavenServerConnector {
-    var connector = blockingContext {
-      doGetConnector(project, workingDirectory, jdk)
-    }
+    var connector = doGetConnector(project, workingDirectory, jdk)
     if (!connector.ping()) {
       shutdownConnector(connector, true)
-      connector = blockingContext {
-        doGetConnector(project, workingDirectory, jdk)
-      }
+      connector = doGetConnector(project, workingDirectory, jdk)
     }
     return connector
   }
@@ -298,9 +284,7 @@ internal class MavenServerManagerImpl : MavenServerManager {
     if (eventListenerJar != null) {
       return eventListenerJar
     }
-    val pluginFileOrDir = Path.of(PathUtil.getJarPathForClass(MavenServerManager::class.java))
-    val root = pluginFileOrDir.parent
-    if (pluginFileOrDir.isDirectory()) {
+    if (MavenUtil.isRunningFromSources()) {
       eventListenerJar = eventSpyPathForLocalBuild
       if (!eventListenerJar!!.exists()) {
         MavenLog.LOG.warn("""
@@ -311,6 +295,8 @@ internal class MavenServerManagerImpl : MavenServerManager {
       }
     }
     else {
+      val pluginFileOrDir = Path.of(PathUtil.getJarPathForClass(MavenServerManager::class.java))
+      val root = pluginFileOrDir.parent
       eventListenerJar = root.resolve("maven-event-listener.jar")
       if (!eventListenerJar!!.exists()) {
         MavenLog.LOG.warn("Event listener does not exist at " + eventListenerJar +
@@ -322,15 +308,6 @@ internal class MavenServerManagerImpl : MavenServerManager {
 
   override fun createIndexer(): MavenIndexerWrapper {
     return createDedicatedIndexer()!!
-  }
-
-  override fun createIndexer(project: Project): MavenIndexerWrapper {
-    return if (Registry.`is`("maven.dedicated.indexer")) {
-      createDedicatedIndexer()!!
-    }
-    else {
-      createLegacyIndexer(project)
-    }
   }
 
   private fun createDedicatedIndexer(): MavenIndexerWrapper? {
@@ -454,7 +431,10 @@ internal class MavenServerManagerImpl : MavenServerManager {
   companion object {
     private val freeDebugPort: Int?
       get() {
-        if (Registry.`is`("maven.server.debug")) {
+        val strVal = Registry.get("maven.server.debug").asString()
+        val explicitPort = strVal.toIntOrNull()
+        if (explicitPort != null) return explicitPort
+        if (strVal.toBoolean()) {
           try {
             return NetUtils.findAvailableSocketPort()
           }
@@ -467,8 +447,7 @@ internal class MavenServerManagerImpl : MavenServerManager {
 
     private val eventSpyPathForLocalBuild: Path
       get() {
-        val root = Path.of(PathUtil.getJarPathForClass(MavenServerManager::class.java))
-        return root.parent.resolve("intellij.maven.server.eventListener")
+        return MavenUtil.locateModuleOutput("intellij.maven.server.eventListener")!!
       }
   }
 }

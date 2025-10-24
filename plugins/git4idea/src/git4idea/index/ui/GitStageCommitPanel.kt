@@ -8,10 +8,10 @@ import com.intellij.openapi.vcs.FilePath
 import com.intellij.openapi.vcs.VcsBundle
 import com.intellij.openapi.vcs.changes.Change
 import com.intellij.openapi.vfs.VirtualFile
+import com.intellij.platform.vcs.impl.shared.commit.EditedCommitPresentation
 import com.intellij.util.containers.DisposableWrapperList
 import com.intellij.util.ui.JBUI.Borders.empty
 import com.intellij.vcs.commit.CommitProgressPanel
-import com.intellij.vcs.commit.EditedCommitPresentation
 import com.intellij.vcs.commit.NonModalCommitPanel
 import git4idea.i18n.GitBundle
 import git4idea.index.ContentVersion
@@ -39,7 +39,7 @@ private fun GitStageTracker.RootState.getTrackedChanges(project: Project): List<
   getChanged().mapNotNull { createChange(project, root, it, ContentVersion.HEAD, ContentVersion.LOCAL) }
 
 class GitStageCommitPanel(project: Project, private val settings: GitStageUiSettings) : NonModalCommitPanel(project) {
-  private val progressPanel = GitStageCommitProgressPanel()
+  private val progressPanel = GitStageCommitProgressPanel(project)
   override val commitProgressUi: GitStageCommitProgressPanel get() = progressPanel
 
   @Volatile
@@ -60,11 +60,9 @@ class GitStageCommitPanel(project: Project, private val settings: GitStageUiSett
     Disposer.register(this, commitMessage)
 
     commitMessage.setChangesSupplier { state.changesToCommit }
-    progressPanel.setup(this, commitMessage.editorField, empty(6))
+    progressPanel.setup(this, commitMessage.editorField, empty())
 
-    bottomPanel.add(progressPanel.component)
-    bottomPanel.add(commitAuthorComponent.apply { border = empty(0, 5, 4, 0) })
-    bottomPanel.add(commitActionsPanel)
+    setProgressComponent(progressPanel)
 
     settings.addListener(object : GitStageUiSettingsListener {
       override fun settingsChanged() {
@@ -138,7 +136,7 @@ class GitStageCommitPanel(project: Project, private val settings: GitStageUiSett
   }
 }
 
-class GitStageCommitProgressPanel : CommitProgressPanel() {
+class GitStageCommitProgressPanel(project: Project) : CommitProgressPanel(project) {
   var isEmptyRoots by stateFlag()
   var isUnmerged by stateFlag()
   var isCommitAll by stateFlag()

@@ -22,21 +22,22 @@ import com.intellij.openapi.project.ProjectBundle
 import com.intellij.openapi.projectRoots.JdkUtil
 import com.intellij.openapi.projectRoots.impl.jdkDownloader.JdkInstallerEel.unpackJdkOnEel
 import com.intellij.openapi.projectRoots.impl.jdkDownloader.JdkInstallerWSL.unpackJdkOnWsl
-import com.intellij.openapi.util.SystemInfo
 import com.intellij.openapi.util.io.FileUtil
+import com.intellij.openapi.util.io.OSAgnosticPathUtil
 import com.intellij.openapi.util.registry.Registry
 import com.intellij.platform.eel.*
 import com.intellij.platform.eel.path.EelPath
 import com.intellij.platform.eel.provider.asEelPath
 import com.intellij.platform.eel.provider.asNioPath
 import com.intellij.platform.eel.provider.getEelDescriptor
-import com.intellij.platform.eel.provider.upgradeBlocking
+import com.intellij.platform.eel.provider.toEelApiBlocking
 import com.intellij.platform.eel.provider.utils.awaitProcessResult
 import com.intellij.platform.eel.provider.utils.stderrString
 import com.intellij.platform.eel.provider.utils.stdoutString
 import com.intellij.util.Urls
 import com.intellij.util.io.HttpRequests
 import com.intellij.util.io.delete
+import com.intellij.util.system.OS
 import com.intellij.util.xmlb.annotations.Tag
 import com.intellij.util.xmlb.annotations.XCollection
 import kotlinx.coroutines.TimeoutCancellationException
@@ -46,7 +47,6 @@ import org.jetbrains.annotations.Nls
 import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.Path
-import java.nio.file.Paths
 import java.util.concurrent.*
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.locks.ReentrantLock
@@ -113,7 +113,7 @@ class JdkInstaller : JdkInstallerBase() {
   public override fun eelFromPath(targetDir: Path): OsAbstractionForJdkInstaller.Eel? =
     if (Registry.`is`("java.home.finder.use.eel"))
       EelForJdkInstallerImpl(runBlockingMaybeCancellable {
-        targetDir.getEelDescriptor().upgrade()
+        targetDir.getEelDescriptor().toEelApi()
       })
     else
       null
@@ -133,17 +133,21 @@ class JdkInstaller : JdkInstallerBase() {
       path.asEelPath().toString()
 
     override fun execute(command: List<String>, dir: String, timeout: Int): ProcessOutput = runBlockingCancellable {
-      val builder = eel.exec.execute(command.first())
+      val builder = eel.exec.spawnProcess(command.first())
         .args(command.drop(1))
         .workingDirectory(EelPath.parse(dir, eel.descriptor))
-      val process = builder.getOrThrow()
+      val process = builder.eelIt()
       try {
         withTimeout(timeout.milliseconds) {
           process.awaitProcessResult().let { ProcessOutput(it.stdoutString, it.stderrString, it.exitCode, false, false) }
         }
       }
       catch (_: TimeoutCancellationException) {
-        process.terminate()  // TODO Originally there was a much more difficult logic of termination.
+        // TODO Originally there was a much more difficult logic of termination.
+        when (process) {
+          is EelPosixProcess -> process.terminate()
+          is EelWindowsProcess -> process.kill()
+        }
         ProcessOutput("", "", -1, true, false)
       }
     }
@@ -170,7 +174,7 @@ class JdkInstaller : JdkInstallerBase() {
     if (eel is LocalEelApi) {
       val explicitHome = System.getProperty("jdk.downloader.home")
       if (explicitHome != null) {
-        return Paths.get(explicitHome)
+        return Path.of(explicitHome)
       }
     }
 
@@ -188,7 +192,7 @@ class JdkInstaller : JdkInstallerBase() {
   private fun defaultInstallDir(wslDistribution: WSLDistribution?) : Path {
     wslDistribution?.let { dist ->
       dist.userHome?.let { home ->
-        return Paths.get(dist.getWindowsPath("$home/.jdks"))
+        return Path.of(dist.getWindowsPath("$home/.jdks"))
       }
     }
 
@@ -198,16 +202,15 @@ class JdkInstaller : JdkInstallerBase() {
   private fun defaultInstallDirForLocalOs(): Path {
     val explicitHome = System.getProperty("jdk.downloader.home")
     if (explicitHome != null) {
-      return Paths.get(explicitHome)
+      return Path.of(explicitHome)
     }
 
-    val home = Paths.get(FileUtil.toCanonicalPath(System.getProperty("user.home") ?: "."))
-    return when {
-      SystemInfo.isLinux   -> home.resolve(".jdks")
-      //see https://youtrack.jetbrains.com/issue/IDEA-206163#focus=streamItem-27-3270022.0-0
-      SystemInfo.isMac     -> home.resolve("Library/Java/JavaVirtualMachines")
-      SystemInfo.isWindows -> home.resolve(".jdks")
-      else -> error("Unsupported OS: ${SystemInfo.getOsNameAndVersion()}")
+    val home = Path.of(System.getProperty("user.home") ?: ".")
+    return when (OS.CURRENT) {
+      OS.Windows -> home.resolve(".jdks")
+      OS.macOS -> home.resolve("Library/Java/JavaVirtualMachines")
+      OS.Linux -> home.resolve(".jdks")
+      else -> error("Unsupported OS: ${OS.CURRENT}")
     }
   }
 
@@ -257,7 +260,7 @@ abstract class JdkInstallerBase {
       return null to ProjectBundle.message("dialog.message.error.target.path.empty")
     }
 
-    val targetDir = runCatching { Paths.get(FileUtil.expandUserHome(selectedPath)) }.getOrElse { t ->
+    val targetDir = runCatching { Path.of(OSAgnosticPathUtil.expandUserHome(selectedPath)) }.getOrElse { t ->
       LOG.warn("Failed to resolve user path: $selectedPath. ${t.message}", t)
       return null to ProjectBundle.message("dialog.message.error.resolving.path")
     }
@@ -330,7 +333,7 @@ abstract class JdkInstallerBase {
 
     indicator?.text2 = ProjectBundle.message("progress.text2.downloading.jdk")
     // TODO Sanitize `archiveFileName` in a way that it doesn't replace `.` with `_`. `FileUtil.sanitizeFileName` can't be applied here.
-    val downloadFile = Paths.get(PathManager.getTempPath(), "jdk-${System.nanoTime()}-${item.archiveFileName}")
+    val downloadFile = Path.of(PathManager.getTempPath(), "jdk-${System.nanoTime()}-${item.archiveFileName}")
     try {
       try {
         HttpRequests.request(item.url)
@@ -412,7 +415,7 @@ abstract class JdkInstallerBase {
   }
 
   private val myLock = ReentrantLock()
-  private val myPendingDownloads = HashMap<JdkItem, PendingJdkRequest>()
+  private val myPendingDownloads = HashMap<JdkItemByEnvironmentKey, PendingJdkRequest>()
 
   /**
    * Checks if we already have the requested JDK or the download is already running.
@@ -435,7 +438,7 @@ abstract class JdkInstallerBase {
 
     if (Registry.`is`("jdk.downloader.reuse.downloading")) {
       return myLock.withLock {
-        myPendingDownloads.computeIfAbsent(jdkItem) { prepareJdkInstallationImpl(jdkItem, targetPath) }
+        myPendingDownloads.computeIfAbsent(jdkItem on targetPath.getEelDescriptor()) { prepareJdkInstallationImpl(jdkItem, targetPath) }
       }
     } else {
       return prepareJdkInstallationDirect(jdkItem, targetPath)
@@ -481,7 +484,7 @@ abstract class JdkInstallerBase {
   fun findJdkItemForInstalledJdk(jdkHome: String?): JdkItem? {
     try {
       if (jdkHome == null) return null
-      val jdkPath = Paths.get(jdkHome)
+      val jdkPath = Path.of(jdkHome)
       return findJdkItemForInstalledJdk(jdkPath)
     }
     catch (t: Throwable) {
@@ -494,7 +497,7 @@ abstract class JdkInstallerBase {
       if (jdkPath == null) return null
       if (!jdkPath.isDirectory()) return null
       val predicate = when {
-        Registry.`is`("java.home.finder.use.eel") -> JdkPredicate.forEel(jdkPath.getEelDescriptor().upgradeBlocking())
+        Registry.`is`("java.home.finder.use.eel") -> JdkPredicate.forEel(jdkPath.getEelDescriptor().toEelApiBlocking())
         WslPath.isWslUncPath(jdkPath.toString()) -> JdkPredicate.forWSL()
         else -> JdkPredicate.default()
       }
@@ -552,6 +555,12 @@ abstract class JdkInstallerBase {
   protected open fun findHistoryRoots(feedItem: JdkItem): List<Path> = listOf()
   protected open fun wslDistributionFromPath(targetDir: Path) : OsAbstractionForJdkInstaller.Wsl? = null
   protected open fun eelFromPath(targetDir: Path): OsAbstractionForJdkInstaller.Eel? = null
+
+  private data class JdkItemByEnvironmentKey(val jdkItem: JdkItem, val eelDescriptor: EelDescriptor)
+
+  companion object {
+    private infix fun JdkItem.on(eelDescriptor: EelDescriptor) = JdkItemByEnvironmentKey(this, eelDescriptor)
+  }
 }
 
 private data class PendingJdkRequest(
@@ -662,8 +671,8 @@ class JdkInstallerStateEntry : BaseState() {
     javaHomeDir = item.resolveJavaHome(targetPath).toAbsolutePath().toString()
   }
 
-  val installPath: Path? get() = installDir?.let { Paths.get(it) }
-  val javaHomePath: Path? get() = javaHomeDir?.let { Paths.get(it) }
+  val installPath: Path? get() = installDir?.let { Path.of(it) }
+  val javaHomePath: Path? get() = javaHomeDir?.let { Path.of(it) }
 
   fun matches(item: JdkItem) : Boolean {
     if (fullText != item.fullPresentationText) return false

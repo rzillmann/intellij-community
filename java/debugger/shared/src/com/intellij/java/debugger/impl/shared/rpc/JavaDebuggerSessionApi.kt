@@ -3,10 +3,13 @@ package com.intellij.java.debugger.impl.shared.rpc
 
 import com.intellij.execution.filters.Filter
 import com.intellij.ide.ui.icons.IconId
+import com.intellij.java.debugger.impl.shared.engine.NodeRendererId
 import com.intellij.openapi.util.NlsSafe
+import com.intellij.platform.debugger.impl.rpc.SerializableSimpleTextAttributes
 import com.intellij.platform.rpc.RemoteApiProviderService
-import com.intellij.xdebugger.impl.rpc.SerializableSimpleTextAttributes
 import com.intellij.xdebugger.impl.rpc.XDebugSessionId
+import com.intellij.xdebugger.impl.rpc.XExecutionStackId
+import com.intellij.xdebugger.impl.rpc.XValueId
 import fleet.rpc.RemoteApi
 import fleet.rpc.Rpc
 import fleet.rpc.core.ReceiveChannelSerializer
@@ -15,12 +18,27 @@ import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
 import org.jetbrains.annotations.ApiStatus
+import org.jetbrains.annotations.Nls
 
 @ApiStatus.Internal
 @Rpc
 interface JavaDebuggerSessionApi : RemoteApi<Unit> {
 
   suspend fun dumpThreads(sessionId: XDebugSessionId, maxItems: Int = Int.MAX_VALUE, onlyPlatformThreads: Boolean): JavaThreadDumpResponseDto?
+
+  suspend fun setAsyncStacksEnabled(sessionId: XDebugSessionId, state: Boolean)
+
+  suspend fun resumeThread(executionStackId: XExecutionStackId)
+
+  suspend fun freezeThread(executionStackId: XExecutionStackId)
+
+  suspend fun interruptThread(executionStackId: XExecutionStackId)
+
+  suspend fun stepOutOfCodeBlock(sessionId: XDebugSessionId)
+
+  suspend fun setRenderer(rendererId: NodeRendererId?, xValueIds: List<XValueId>)
+
+  suspend fun muteRenderers(sessionId: XDebugSessionId, state: Boolean)
 
   companion object {
     @JvmStatic
@@ -52,6 +70,7 @@ data class ThreadDumpWithAwaitingDependencies(
   val attributes: List<SerializableSimpleTextAttributes>,
   val stackTraces: List<@NlsSafe String>,
   val stateDescriptions: List<@NlsSafe String>,
+  val iconToolTips: List<@Nls String?>,
   val awaitingDependencies: Map<Int, IntArray>,
   val truncatedItemsNumber: Int,
 )
@@ -63,6 +82,7 @@ data class JavaThreadDumpItemDto(
   val firstLine: @NlsSafe String,
   val stateDescriptionIndex: Int,
   val stackTraceIndex: Int,
+  val iconToolTipIndex: Byte,
   val interestLevel: Int,
   val iconIndex: Byte,
   val attributesIndex: Byte,

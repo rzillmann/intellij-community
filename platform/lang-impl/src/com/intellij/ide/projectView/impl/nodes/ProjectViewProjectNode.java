@@ -5,15 +5,13 @@ import com.intellij.ide.projectView.ViewSettings;
 import com.intellij.ide.projectView.impl.ModuleGroup;
 import com.intellij.ide.projectView.impl.ProjectRootsUtil;
 import com.intellij.ide.util.treeView.AbstractTreeNode;
-import com.intellij.openapi.module.Module;
 import com.intellij.openapi.module.*;
+import com.intellij.openapi.module.Module;
 import com.intellij.openapi.module.impl.LoadedModuleDescriptionImpl;
 import com.intellij.openapi.project.Project;
-import com.intellij.openapi.roots.ProjectFileIndex;
-import com.intellij.openapi.vfs.LocalFileSystem;
+import com.intellij.openapi.vfs.VfsUtilCore;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.psi.PsiDirectory;
-import com.intellij.psi.PsiFile;
 import com.intellij.psi.PsiManager;
 import com.intellij.util.containers.ContainerUtil;
 import org.jetbrains.annotations.NotNull;
@@ -43,10 +41,17 @@ public class ProjectViewProjectNode extends AbstractProjectNode {
       return Collections.emptyList();
     }
 
-    List<VirtualFile> topLevelContentRoots = ProjectViewDirectoryHelper.getInstance(project).getTopLevelRoots();
+    ProjectViewDirectoryHelper projectViewHelper = ProjectViewDirectoryHelper.getInstance(project);
 
-    Set<ModuleDescription> modules = new LinkedHashSet<>(topLevelContentRoots.size());
-    for (VirtualFile root : topLevelContentRoots) {
+    // All project roots except those that are under module content roots
+    List<VirtualFile> projectRoots = ProjectRootUtilsKt.getProjectRoots(project);
+
+    // top level roots but not under project roots
+    List<VirtualFile> topLevelRootsOutsideOfProjectRoots = ContainerUtil
+      .filter(projectViewHelper.getTopLevelRoots(), topLevelRoot -> !VfsUtilCore.isUnderFiles(topLevelRoot, projectRoots));
+
+    Set<ModuleDescription> modules = new LinkedHashSet<>(topLevelRootsOutsideOfProjectRoots.size());
+    for (VirtualFile root : topLevelRootsOutsideOfProjectRoots) {
       Module module = ModuleUtilCore.findModuleForFile(root, project);
       if (module != null) {
         modules.add(new LoadedModuleDescriptionImpl(module));
@@ -59,26 +64,16 @@ public class ProjectViewProjectNode extends AbstractProjectNode {
       }
     }
 
-
     List<AbstractTreeNode<?>> nodes = new ArrayList<>(modulesAndGroups(modules));
-
-    String baseDirPath = project.getBasePath();
-    VirtualFile baseDir = baseDirPath == null ? null : LocalFileSystem.getInstance().findFileByPath(baseDirPath);
-    if (baseDir != null) {
-      PsiManager psiManager = PsiManager.getInstance(project);
-      VirtualFile[] files = baseDir.getChildren();
-      ProjectFileIndex projectFileIndex = null;
-      for (VirtualFile file : files) {
-        if (!file.isDirectory()) {
-          if (projectFileIndex == null) {
-            projectFileIndex = ProjectFileIndex.getInstance(getProject());
-          }
-          if (projectFileIndex.getModuleForFile(file, false) == null) {
-            PsiFile psiFile = psiManager.findFile(file);
-            if (psiFile != null) {
-              nodes.add(new PsiFileNode(getProject(), psiFile, getSettings()));
-            }
-          }
+    PsiManager psiManager = PsiManager.getInstance(project);
+    for (var projectRoot : projectRoots) {
+      var psiDirectory = psiManager.findDirectory(projectRoot);
+      if (psiDirectory != null) {
+        nodes.add(new PsiDirectoryNode(myProject, psiDirectory, getSettings()));
+      } else {
+        var psiFile = psiManager.findFile(projectRoot);
+        if (psiFile != null) {
+          nodes.add(new PsiFileNode(myProject, psiFile, getSettings()));
         }
       }
     }

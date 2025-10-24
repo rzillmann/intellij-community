@@ -1,32 +1,33 @@
 ### auto-generated section `build intellij.platform.scriptDebugger.backend` start
-load("@rules_jvm//:jvm.bzl", "jvm_library", "jvm_resources")
+load("@rules_jvm//:jvm.bzl", "jvm_library", "resourcegroup")
 
-jvm_resources(
-  name = "scriptDebugger-backend_resources",
-  files = glob(["resources/**/*"]),
+resourcegroup(
+  name = "backend_resources",
+  srcs = glob(["resources/**/*"]),
   strip_prefix = "resources"
 )
 
 jvm_library(
-  name = "scriptDebugger-backend",
+  name = "backend",
   module_name = "intellij.platform.scriptDebugger.backend",
   visibility = ["//visibility:public"],
-  srcs = glob(["src/**/*.kt", "src/**/*.java"], allow_empty = True),
+  srcs = glob(["src/**/*.kt", "src/**/*.java", "src/**/*.form"], allow_empty = True),
+  resources = [":backend_resources"],
   deps = [
     "@lib//:kotlin-stdlib",
     "//platform/core-api:core",
-    "//platform/script-debugger/protocol/protocol-reader-runtime:scriptDebugger-protocolReaderRuntime",
+    "//platform/script-debugger/protocol/protocol-reader-runtime",
     "//platform/platform-api:ide",
     "//platform/platform-impl:ide-impl",
     "@lib//:netty-codec-http",
-    "@lib//:fastutil-min",
+    "//libraries/fastutil",
     "@lib//:netty-buffer",
     "//platform/platform-util-io:ide-util-io",
     "//platform/util/concurrency",
     "//platform/platform-util-netty:ide-util-netty",
     "//platform/ide-core-impl",
+    "//libraries/gson",
     "//platform/util-ex",
-  ],
-  runtime_deps = [":scriptDebugger-backend_resources"]
+  ]
 )
 ### auto-generated section `build intellij.platform.scriptDebugger.backend` end

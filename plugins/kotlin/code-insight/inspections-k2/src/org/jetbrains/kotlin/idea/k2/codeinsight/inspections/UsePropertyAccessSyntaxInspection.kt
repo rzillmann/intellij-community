@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.kotlin.idea.k2.codeinsight.inspections
 
 import com.intellij.codeInspection.CleanupLocalInspectionTool
@@ -25,7 +25,11 @@ import org.jdom.Element
 import org.jetbrains.kotlin.analysis.api.KaExperimentalApi
 import org.jetbrains.kotlin.analysis.api.KaSession
 import org.jetbrains.kotlin.analysis.api.analyze
-import org.jetbrains.kotlin.analysis.api.resolution.*
+import org.jetbrains.kotlin.analysis.api.components.*
+import org.jetbrains.kotlin.analysis.api.resolution.KaErrorCallInfo
+import org.jetbrains.kotlin.analysis.api.resolution.successfulFunctionCallOrNull
+import org.jetbrains.kotlin.analysis.api.resolution.successfulVariableAccessCall
+import org.jetbrains.kotlin.analysis.api.resolution.symbol
 import org.jetbrains.kotlin.analysis.api.symbols.KaCallableSymbol
 import org.jetbrains.kotlin.analysis.api.symbols.KaJavaFieldSymbol
 import org.jetbrains.kotlin.analysis.api.symbols.KaSymbolVisibility
@@ -267,8 +271,7 @@ class UsePropertyAccessSyntaxInspection : LocalInspectionTool(), CleanupLocalIns
         private val propertyName: Name,
         private val convertExpressionToBlockBodyData: ConvertExpressionToBlockBodyData?
     ) : PsiUpdateModCommandQuickFix() {
-        override fun getName() = KotlinBundle.message("use.property.access.syntax")
-        override fun getFamilyName() = name
+        override fun getFamilyName(): String = KotlinBundle.message("use.property.access.syntax")
 
         override fun applyFix(project: Project, element: PsiElement, updater: ModPsiUpdater) {
             when (val ktExpression = element as? KtExpression) {
@@ -400,7 +403,7 @@ class UsePropertyAccessSyntaxInspection : LocalInspectionTool(), CleanupLocalIns
     /**
      * Several checks.
      */
-    context(KaSession)
+    context(_: KaSession)
     private fun canConvert(
         symbol: KaCallableSymbol,
         callExpression: KtExpression,
@@ -428,7 +431,7 @@ class UsePropertyAccessSyntaxInspection : LocalInspectionTool(), CleanupLocalIns
     /**
      * Fixes the case from KTIJ-21051
      */
-    context(KaSession)
+    context(_: KaSession)
     @OptIn(KaExperimentalApi::class)
     private fun receiverOrItsAncestorsContainVisibleFieldWithSameName(receiverType: KaType, propertyName: String): Boolean {
         val fieldWithSameName = receiverType.scope?.declarationScope?.callables(Name.identifier(propertyName))
@@ -438,7 +441,7 @@ class UsePropertyAccessSyntaxInspection : LocalInspectionTool(), CleanupLocalIns
         return fieldWithSameName != null
     }
 
-    context(KaSession)
+    context(_: KaSession)
     @OptIn(KaExperimentalApi::class)
     private fun getSyntheticProperty(
         propertyNames: List<String>,
@@ -470,7 +473,7 @@ class UsePropertyAccessSyntaxInspection : LocalInspectionTool(), CleanupLocalIns
         return null
     }
 
-    context(KaSession)
+    context(_: KaSession)
     private fun syntheticPropertyTypeEqualsToExpected(
         syntheticProperty: KaSyntheticJavaPropertySymbol,
         callReturnType: KaType,
@@ -486,7 +489,8 @@ class UsePropertyAccessSyntaxInspection : LocalInspectionTool(), CleanupLocalIns
         return syntheticPropertyReturnType.semanticallyEquals(propertyExpectedType)
     }
 
-    context(KaSession)
+    context(_: KaSession)
+    @OptIn(KaExperimentalApi::class)
     private fun propertyResolvesToSyntheticProperty(
         callExpression: KtExpression,
         propertyAccessorKind: PropertyAccessorKind,
@@ -524,45 +528,33 @@ class UsePropertyAccessSyntaxInspection : LocalInspectionTool(), CleanupLocalIns
             }
         }
 
-        // This check is needed only for references because a synthetic property with reference might occasionally be hidden
-        // by some variable or argument in the same scope
-        if (qualifiedExpressionForSelector == null) {
-            return receiverTypeOfNewExpressionEqualsToExpectedReceiverType(
-                callExpression,
-                newExpression,
-                receiverType
-            )
-        } else {
-            // Check that the call resolves without errors, for example, that we don't do `a?.stringProperty = 1`
-            // After KTIJ-29110 is fixed, will be covered with tests propertyTypeIsMoreSpecific1 and propertyTypeIsMoreSpecific2
-            val resolvedCall = getSuccessfullyResolvedCall(qualifiedExpressionForSelector, newExpression)?.successfulVariableAccessCall() ?: return false
-            return resolvedCall.symbol is KaSyntheticJavaPropertySymbol
-        }
-    }
+        val codeFragment = KtPsiFactory(callExpression.project).createExpressionCodeFragment(newExpression.text, callExpression)
+        val newExpressionFromCodeFragment = codeFragment.getContentElement() ?: return false
+        val receiverTypePointer = receiverType.createPointer()
+        analyze(newExpressionFromCodeFragment) {
+            val receiverType = receiverTypePointer.restore() ?: return false
+            val resolvedCall = newExpressionFromCodeFragment.resolveToCall() ?: return false
+            if (resolvedCall is KaErrorCallInfo) {
+                return false
+            }
 
-    context(KaSession)
-    private fun getSuccessfullyResolvedCall(callExpression: KtExpression, newExpression: KtExpression): KaCallInfo? {
-        val codeFragment =
-            KtPsiFactory(callExpression.project).createExpressionCodeFragment(newExpression.text, callExpression)
-        val contentElement = codeFragment.getContentElement() ?: return null
-        val resolvedCall = contentElement.resolveToCall() ?: return null
-        if (resolvedCall is KaErrorCallInfo) {
-            return null
-        }
-        return resolvedCall
-    }
+            // This check is needed only for references because a synthetic property with reference might occasionally be hidden
+            // by some variable or argument in the same scope
+            if (qualifiedExpressionForSelector == null) {
+                val replacementReceiverType = resolvedCall.successfulVariableAccessCall()
+                    ?.partiallyAppliedSymbol
+                    ?.dispatchReceiver
+                    ?.type
+                    ?.lowerBoundIfFlexible()
+                        ?: return false
 
-    context(KaSession)
-    private fun receiverTypeOfNewExpressionEqualsToExpectedReceiverType(
-        callExpression: KtExpression,
-        newExpression: KtExpression,
-        expectedReceiverType: KaType
-    ): Boolean {
-        val resolvedCall = getSuccessfullyResolvedCall(callExpression, newExpression) ?: return false
-        val replacementReceiverType =
-            resolvedCall.successfulVariableAccessCall()?.partiallyAppliedSymbol?.dispatchReceiver?.type?.lowerBoundIfFlexible()
-                ?: return false
-        return replacementReceiverType.semanticallyEquals(expectedReceiverType)
+                return replacementReceiverType.semanticallyEquals(receiverType)
+            } else {
+                // Check that the call resolves without errors, for example, that we don't do `a?.stringProperty = 1`
+                // After KTIJ-29110 is fixed, will be covered with tests propertyTypeIsMoreSpecific1 and propertyTypeIsMoreSpecific2
+                return resolvedCall.successfulVariableAccessCall()?.symbol is KaSyntheticJavaPropertySymbol
+            }
+        }
     }
 
     private fun functionOrItsAncestorIsInNotPropertiesList(
@@ -579,7 +571,7 @@ class UsePropertyAccessSyntaxInspection : LocalInspectionTool(), CleanupLocalIns
         return false
     }
 
-    context(KaSession)
+    context(_: KaSession)
     private fun functionOriginateFromJava(allOverriddenSymbols: List<KaCallableSymbol>): Boolean {
         // Calling `.reversed()` – small optimization because the last Java symbol in the list more probable doesn't have overrides
         val javaSymbols = allOverriddenSymbols.filter { it.origin.isJavaSourceOrLibrary() }.reversed()
@@ -702,21 +694,10 @@ class NotPropertiesServiceImpl(private val project: Project) : NotPropertiesServ
         val profile = InspectionProjectProfileManager.getInstance(project).currentProfile
         val tool = profile.getUnwrappedTool(USE_PROPERTY_ACCESS_INSPECTION, element)
         val notProperties = (tool?.propertiesNotToReplace ?: NotPropertiesService.DEFAULT.map(::FqNameUnsafe)).toSet()
-        return notProperties + K2_EXTRA_NOT_PROPERTIES
+        return notProperties
     }
 
     companion object {
         val USE_PROPERTY_ACCESS_INSPECTION: Key<UsePropertyAccessSyntaxInspection> = Key.create("UsePropertyAccessSyntax")
-
-        /**
-         * Properties excluded due to different problems in K2 Mode.
-         *
-         * Intentionally not saved into [UsePropertyAccessSyntaxInspection.propertiesNotToReplace],
-         * because they are not supposed to be possible to disable or modify.
-         */
-        val K2_EXTRA_NOT_PROPERTIES: List<FqNameUnsafe> = listOf(
-            "java.util.AbstractCollection.isEmpty", // KTIJ-31157, KT-72305
-            "java.util.AbstractMap.isEmpty",        // KTIJ-31157, KT-72305
-        ).map(::FqNameUnsafe)
     }
 }

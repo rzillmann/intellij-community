@@ -1,4 +1,4 @@
-// Copyright 2000-2022 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 
 package org.jetbrains.kotlin.idea.goto
 
@@ -73,9 +73,22 @@ abstract class AbstractKotlinGotoSymbolContributor<T : NavigatablePsiElement>(
 
 
 @ApiStatus.Internal
-class KotlinGotoClassContributor : AbstractKotlinGotoSymbolContributor<KtClassOrObject>(KotlinClassShortNameIndex) {
+abstract class KotlinAbstractGotoClassContributor(private val acceptEnums: Boolean) : AbstractKotlinGotoSymbolContributor<KtClassOrObject>(KotlinClassShortNameIndex) {
     override fun getQualifiedName(item: NavigationItem): String? = (item as? KtClassOrObject)?.fqName?.asString()
+
+    override fun processOriginalElement(
+        processor: Processor<in NavigationItem>,
+        element: KtClassOrObject
+    ): Boolean {
+        if (!acceptEnums && element is KtEnumEntry) return true
+        return super.processOriginalElement(processor, element)
+    }
 }
+@ApiStatus.Internal
+class KotlinGotoClassContributor: KotlinAbstractGotoClassContributor(acceptEnums = false)
+
+@ApiStatus.Internal
+class KotlinGotoClassSymbolContributor: KotlinAbstractGotoClassContributor(acceptEnums = true)
 
 @ApiStatus.Internal
 class KotlinGotoTypeAliasContributor : AbstractKotlinGotoSymbolContributor<KtTypeAlias>(KotlinTypeAliasShortNameIndex) {
@@ -107,9 +120,9 @@ class KotlinGotoFunctionSymbolContributor : AbstractKotlinGotoSymbolContributor<
     }
 
     private class FacadeFunction(override val target: KtNamedFunction) : FacadeCallable() {
-        override fun getPresentation(): ItemPresentation? {
+        override fun getPresentation(): ItemPresentation {
             return object : KotlinFunctionPresentation(target) {
-                override fun getLocationString(): String? {
+                override fun getLocationString(): String {
                     return getPresentationInContainer(target.containingKtFile.javaFileFacadeFqName.asString())
                 }
             }
@@ -136,9 +149,9 @@ class KotlinGotoPropertySymbolContributor : AbstractKotlinGotoSymbolContributor<
     }
 
     private class FacadeProperty(override val target: KtProperty) : FacadeCallable() {
-        override fun getPresentation(): ItemPresentation? {
+        override fun getPresentation(): ItemPresentation {
             return object : KotlinDefaultNamedDeclarationPresentation(target) {
-                override fun getLocationString(): String? {
+                override fun getLocationString(): String {
                     return getPresentationInContainer(target.containingKtFile.javaFileFacadeFqName.asString())
                 }
             }

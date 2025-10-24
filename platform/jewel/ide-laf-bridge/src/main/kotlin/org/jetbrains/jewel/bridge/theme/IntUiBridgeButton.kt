@@ -11,10 +11,11 @@ import com.intellij.ide.ui.laf.darcula.DarculaUIUtil
 import com.intellij.util.ui.JBUI
 import org.jetbrains.jewel.bridge.createVerticalBrush
 import org.jetbrains.jewel.bridge.dp
-import org.jetbrains.jewel.bridge.retrieveArcAsCornerSizeWithFallbacks
+import org.jetbrains.jewel.bridge.retrieveArcAsNonNegativeCornerSizeOrDefault
 import org.jetbrains.jewel.bridge.retrieveColorOrUnspecified
+import org.jetbrains.jewel.bridge.safeValue
 import org.jetbrains.jewel.bridge.toComposeColor
-import org.jetbrains.jewel.bridge.toDpSize
+import org.jetbrains.jewel.bridge.toNonNegativeDpSize
 import org.jetbrains.jewel.foundation.Stroke
 import org.jetbrains.jewel.ui.component.styling.ButtonColors
 import org.jetbrains.jewel.ui.component.styling.ButtonMetrics
@@ -56,12 +57,12 @@ internal fun readDefaultButtonStyle(): ButtonStyle {
             borderHovered = normalBorder,
         )
 
-    val minimumSize = JBUI.CurrentTheme.Button.minimumSize().toDpSize()
+    val minimumSize = JBUI.CurrentTheme.Button.minimumSize().toNonNegativeDpSize()
     return ButtonStyle(
         colors = colors,
         metrics =
             ButtonMetrics(
-                cornerSize = retrieveArcAsCornerSizeWithFallbacks("Button.default.arc", "Button.arc"),
+                cornerSize = retrieveArcAsNonNegativeCornerSizeOrDefault("Button.default.arc", buttonCornerSize()),
                 padding = PaddingValues(horizontal = 14.dp), // see DarculaButtonUI.HORIZONTAL_PADDING
                 minSize = DpSize(minimumSize.width, minimumSize.height),
                 borderWidth = 1.dp,
@@ -107,17 +108,19 @@ internal fun readOutlinedButtonStyle(): ButtonStyle {
             borderHovered = normalBorder,
         )
 
-    val minimumSize = JBUI.CurrentTheme.Button.minimumSize().toDpSize()
+    val minimumSize = JBUI.CurrentTheme.Button.minimumSize().toNonNegativeDpSize()
     return ButtonStyle(
         colors = colors,
         metrics =
             ButtonMetrics(
-                cornerSize = CornerSize(DarculaUIUtil.BUTTON_ARC.dp / 2),
+                cornerSize = buttonCornerSize(),
                 padding = PaddingValues(horizontal = 14.dp), // see DarculaButtonUI.HORIZONTAL_PADDING
                 minSize = DpSize(minimumSize.width, minimumSize.height),
-                borderWidth = DarculaUIUtil.LW.dp,
+                borderWidth = borderWidth,
                 focusOutlineExpand = Dp.Unspecified,
             ),
         focusOutlineAlignment = Stroke.Alignment.Center,
     )
 }
+
+private fun buttonCornerSize(): CornerSize = CornerSize(DarculaUIUtil.BUTTON_ARC.dp.safeValue() / 2)

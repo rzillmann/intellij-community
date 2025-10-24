@@ -8,6 +8,7 @@ import com.intellij.openapi.editor.Document
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.EditorFactory
 import com.intellij.openapi.extensions.ExtensionPointName
+import com.intellij.openapi.project.Project
 import fleet.util.UID
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -35,7 +36,7 @@ fun Document.bindToBackend(
     val builder = BackendDocumentBindBuilder().apply(builder)
     val backendDocumentIdProvider = builder.backendDocumentIdProvider
     if (backendDocumentIdProvider != null) {
-      bindToBackend(backendDocumentIdProvider)
+      bindToBackend(backendDocumentIdProvider, builder.onBindingDispose)
     }
 
     if (builder.bindEditors) {
@@ -50,15 +51,18 @@ fun Document.bindToBackend(
 /**
  * Binds the [Document] created on the backend side with the [Document] created on the frontend where [bindToBackend] was called.
  *
+ * Optional [project] parameter is a context project for the document. For example, if a document comes from an editor,
+ * it should be `editor.project`. If the document has some language support, you should also pass the project it is bound to.
+ *
  * Please note that this binding happens asynchronously, so you shouldn't expect that it will happen immediately after the method call.
  */
 @ApiStatus.Internal
-suspend fun Document.bindToFrontend(frontendDocumentId: FrontendDocumentId): BackendDocumentId {
+suspend fun Document.bindToFrontend(frontendDocumentId: FrontendDocumentId, project: Project? = null): BackendDocumentId {
   val backendDocument = this@bindToFrontend
   val id = BackendDocumentId(UID.random())
   withContext(Dispatchers.EDT) {
     val binder = BackendDocumentBinder.EP_NAME.extensionList.firstOrNull()
-    binder?.bindDocument(frontendDocumentId, backendDocument)
+    binder?.bindDocument(frontendDocumentId, backendDocument, project)
   }
   return id
 }
@@ -80,11 +84,14 @@ private fun Document.bindCurrentEditors() {
  *   3. [bindToFrontend] starts RD synchronization through [BackendDocumentHost].
  *   4. Frontend handles this synchronization and substitute stored [Document] there through [FrontendDocumentHost].
  */
-private suspend fun Document.bindToBackend(backendDocumentIdProvider: suspend (FrontendDocumentId) -> BackendDocumentId?) {
+private suspend fun Document.bindToBackend(
+  backendDocumentIdProvider: suspend (FrontendDocumentId) -> BackendDocumentId?,
+  onBindingDispose: (() -> Unit)?,
+) {
   val frontendDocument = this
   val frontendDocumentId = FrontendDocumentId(UID.random())
   val registry = FrontendDocumentIdRegistry.EP_NAME.extensionList.firstOrNull()
-  registry?.registerFrontendDocumentId(frontendDocumentId, frontendDocument)
+  registry?.registerFrontendDocumentId(frontendDocumentId, frontendDocument, onBindingDispose)
   var backendDocumentId: BackendDocumentId? = null
   try {
     backendDocumentId = backendDocumentIdProvider(frontendDocumentId)
@@ -116,6 +123,11 @@ class BackendDocumentBindBuilder {
    * which is created by the platform using given [Document] (e.g. [EditorTextField]).
    */
   var bindEditors: Boolean = false
+
+  /**
+   * This callback will be called when the binding is disposed.
+   */
+  var onBindingDispose: (() -> Unit)? = null
 }
 
 @ApiStatus.Internal
@@ -148,7 +160,7 @@ interface FrontendDocumentIdRegistry {
 
   // TODO: should we deal with session here,
   //  so that it will be registered for session not not app level?
-  fun registerFrontendDocumentId(frontendDocumentId: FrontendDocumentId, frontendDocument: Document)
+  fun registerFrontendDocumentId(frontendDocumentId: FrontendDocumentId, frontendDocument: Document, onBindingDispose: (() -> Unit)?)
 
   fun unregisterFrontendDocumentId(frontendDocumentId: FrontendDocumentId)
 }
@@ -170,7 +182,7 @@ interface BackendDocumentBinder {
       ExtensionPointName<BackendDocumentBinder>("com.intellij.backendDocumentBinder")
   }
 
-  fun bindDocument(frontendDocumentId: FrontendDocumentId, baseDocument: Document)
+  fun bindDocument(frontendDocumentId: FrontendDocumentId, baseDocument: Document, project: Project?)
 }
 
 

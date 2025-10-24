@@ -2,6 +2,7 @@ package com.intellij.searchEverywhereMl.ranking.core.features
 
 import com.intellij.ide.actions.searcheverywhere.FileSearchEverywhereContributor
 import com.intellij.ide.actions.searcheverywhere.RecentFilesSEContributor
+import com.intellij.ide.actions.searcheverywhere.SearchEverywhereSpellCheckResult
 import com.intellij.internal.statistic.eventLog.events.EventField
 import com.intellij.internal.statistic.eventLog.events.EventFields
 import com.intellij.internal.statistic.eventLog.events.EventPair
@@ -9,7 +10,7 @@ import com.intellij.psi.PsiFileSystemItem
 import com.intellij.searchEverywhereMl.ranking.core.features.SearchEverywhereFileGroupFeatureProvider.Fields.FILE_GROUP
 import com.intellij.util.asSafely
 
-internal class SearchEverywhereFileGroupFeatureProvider : SearchEverywhereElementFeaturesProvider(
+class SearchEverywhereFileGroupFeatureProvider : SearchEverywhereElementFeaturesProvider(
   FileSearchEverywhereContributor::class.java,
   RecentFilesSEContributor::class.java) {
 
@@ -23,8 +24,9 @@ internal class SearchEverywhereFileGroupFeatureProvider : SearchEverywhereElemen
                                   currentTime: Long,
                                   searchQuery: String,
                                   elementPriority: Int,
-                                  cache: FeaturesProviderCache?): List<EventPair<*>> {
-    return SearchEverywherePsiElementFeaturesProviderUtils.getPsiElement(element)
+                                  cache: FeaturesProviderCache?,
+                                  correction: SearchEverywhereSpellCheckResult): List<EventPair<*>> {
+    return SearchEverywherePsiElementFeaturesProviderUtils.getPsiElementOrNull(element)
       .asSafely<PsiFileSystemItem>()
       ?.name
       ?.let { FileGroup.findGroup(it) }

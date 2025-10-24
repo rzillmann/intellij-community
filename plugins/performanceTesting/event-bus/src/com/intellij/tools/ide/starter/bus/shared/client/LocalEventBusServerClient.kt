@@ -29,16 +29,13 @@ class LocalEventBusServerClient(val server: LocalEventBusServer) : EventBusServe
     return sendRequest("POST", endpoint, requestBody)
   }
 
-  private fun get(endpoint: String, requestBody: String? = null): String {
-    return sendRequest("GET", endpoint, requestBody)
-  }
-
   private fun sendRequest(method: String, endpoint: String, requestBody: String?, retriesOnTheSamePort: Int = 0): String {
     val url = URL("http://localhost:${server.port}/$endpoint")
     val connection = url.openConnection() as HttpURLConnection
     return try {
       connection.requestMethod = method
       connection.connectTimeout = 1000 // 1 seconds
+      connection.readTimeout = 5000
       requestBody?.also { body ->
         connection.doOutput = true
         connection.setRequestProperty("Content-Type", "application/json")
@@ -60,7 +57,8 @@ class LocalEventBusServerClient(val server: LocalEventBusServer) : EventBusServe
     catch (e: ConnectException) {
       if (retriesOnTheSamePort < 3) {
         sendRequest(method, endpoint, requestBody, retriesOnTheSamePort + 1)
-      } else {
+      }
+      else {
         if (!server.updatePort()) throw e
         sendRequest(method, endpoint, requestBody, 0)
       }
@@ -93,7 +91,7 @@ class LocalEventBusServerClient(val server: LocalEventBusServer) : EventBusServe
   override fun getEvents(): Map<String, List<Pair<String, Event>>?> {
     val eventType = object : TypeReference<HashMap<String, MutableList<SharedEventDto>>>() {}
     return objectMapper
-      .readValue(get("getEvents", PROCESS_ID), eventType)
+      .readValue(post("getEvents", PROCESS_ID), eventType)
       .entries.associateBy({ it.key },
                            { entry ->
                              eventClassesLock.readLock().withLock { eventClasses[entry.key] }?.let { className ->

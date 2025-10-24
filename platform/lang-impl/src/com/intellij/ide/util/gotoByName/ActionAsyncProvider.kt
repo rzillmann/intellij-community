@@ -36,7 +36,6 @@ import org.jetbrains.annotations.ApiStatus
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.PriorityBlockingQueue
 import kotlin.coroutines.CoroutineContext
-import kotlin.coroutines.coroutineContext
 
 private val LOG = logger<ActionAsyncProvider>()
 
@@ -79,26 +78,34 @@ class ActionAsyncProvider(private val model: GotoActionModel) {
   }
 
   suspend fun filterElementsSuspend(
-    scope: CoroutineScope,
     presentationProvider: suspend (AnAction) -> Presentation,
     pattern: String,
     consumer: suspend (MatchedValue) -> Boolean,
   ) {
-    if (pattern.isEmpty()) return
+    return filterElementsSuspend(presentationProvider, pattern, false, consumer)
+  }
+
+  suspend fun filterElementsSuspend(
+    presentationProvider: suspend (AnAction) -> Presentation,
+    pattern: String,
+    allowEmpty: Boolean,
+    consumer: suspend (MatchedValue) -> Boolean,
+  ) {
+    if (!allowEmpty && pattern.isEmpty()) return
 
     LOG.debug { "Start actions searching ($pattern) from suspend function" }
 
     val actionIds = (actionManager as ActionManagerImpl).actionIds
 
-    scope.runFilterJobs(presentationProvider, pattern, consumer, actionIds).forEach { it.join() }
+    runFilterJobs(presentationProvider, pattern, consumer, actionIds)
   }
 
-  private fun CoroutineScope.runFilterJobs(
+  private suspend fun runFilterJobs(
     presentationProvider: suspend (AnAction) -> Presentation,
     pattern: String,
     consumer: suspend (MatchedValue) -> Boolean,
     actionIds: Set<String>
-  ): List<Job> {
+  ) = coroutineScope {
     val abbreviationsJob = processAbbreviations(pattern, presentationProvider, consumer)
 
     val nonMatchedIdsChannel = Channel<String>(capacity = Channel.UNLIMITED)
@@ -107,8 +114,7 @@ class ActionAsyncProvider(private val model: GotoActionModel) {
 
     val topHitsJob = processTopHits(pattern, presentationProvider, consumer, unmatchedStubsJob)
     val intentionsJob = processIntentions(pattern, presentationProvider, consumer, topHitsJob)
-    val processOptionsJob = processOptions(pattern, presentationProvider, consumer, intentionsJob)
-    return listOf(abbreviationsJob, matchedStubsJob, unmatchedStubsJob, topHitsJob, intentionsJob, processOptionsJob)
+    processOptions(pattern, presentationProvider, consumer, intentionsJob)
   }
 
   private fun CoroutineScope.processAbbreviations(pattern: String,
@@ -124,7 +130,9 @@ class ActionAsyncProvider(private val model: GotoActionModel) {
       val wrapper = wrapAnAction(action, presentationProvider)
       val degree = matcher.matchingDegree(pattern)
       val matchedValue = abbreviationMatchedValue(wrapper, pattern, degree)
-      if (!consumer(matchedValue)) cancel()
+      if (!consumer(matchedValue)) {
+        cancel()
+      }
     }
   }
 
@@ -155,7 +163,9 @@ class ActionAsyncProvider(private val model: GotoActionModel) {
 
         return@forEachConcurrentOrdered matchedValue
     }, { matchedValue ->
-      if (!consumer(matchedValue)) cancel()
+      if (!consumer(matchedValue)) {
+        cancel()
+      }
     })
   }
 
@@ -384,7 +394,7 @@ class ActionAsyncProvider(private val model: GotoActionModel) {
       res
     }
 
-    var registrarDescriptionsPromise: Deferred<Collection<OptionDescription>?> = async {
+    val registrarDescriptionsPromise: Deferred<Collection<OptionDescription>?> = async {
       val registrar = serviceAsync<SearchableOptionsRegistrar>() as SearchableOptionsRegistrarImpl
       val words = registrar.getProcessedWords(pattern)
       val filterOutInspections = Registry.`is`("go.to.action.filter.out.inspections", true)
@@ -444,7 +454,7 @@ class ActionAsyncProvider(private val model: GotoActionModel) {
   }
 
   private suspend fun loadAction(id: String): AnAction? {
-    return withContext(coroutineContext) {
+    return withContext(currentCoroutineContext()) {
       actionManager.getAction(id)
     }
   }

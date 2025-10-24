@@ -1,7 +1,11 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+@file:Suppress("ReplacePutWithAssignment")
+
 package com.intellij.configurationStore
 
+import com.intellij.concurrency.currentTemporaryThreadContextOrNull
 import com.intellij.configurationStore.schemeManager.ROOT_CONFIG
+import com.intellij.diagnostic.PluginException
 import com.intellij.ide.plugins.PluginManagerCore
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.*
@@ -19,7 +23,7 @@ import com.intellij.util.xmlb.XmlSerializerUtil
 import com.intellij.util.xmlb.annotations.Attribute
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
-import org.assertj.core.api.Assertions.assertThatThrownBy
+import kotlinx.coroutines.withContext
 import org.assertj.core.data.MapEntry
 import org.intellij.lang.annotations.Language
 import org.junit.Assert.*
@@ -32,6 +36,8 @@ import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.nio.file.Path
 import java.util.*
+import java.util.concurrent.CancellationException
+import kotlin.coroutines.CoroutineContext
 import kotlin.io.path.*
 import kotlin.properties.Delegates
 
@@ -69,13 +75,13 @@ class ApplicationStoreTest {
   }
 
   @Test
-  fun `load from stream provider`() {
+  fun `load from stream provider`(): Unit = runBlocking(Dispatchers.Default) {
     val component = SeveralStoragesConfigured()
 
     val streamProvider = MyStreamProvider()
     val map = HashMap<String, String>()
     val fileSpec = "new.xml"
-    map[fileSpec] = "<application>\n  <component name=\"A\" foo=\"newValue\" />\n</application>"
+    map.put(fileSpec, "<application>\n  <component name=\"A\" foo=\"newValue\" />\n</application>")
     streamProvider.data.put(RoamingType.DEFAULT, map)
 
     val storageManager = componentStore.storageManager
@@ -141,15 +147,13 @@ class ApplicationStoreTest {
   }
 
   @Test
-  fun `import settings`() {
+  fun `import settings`() = runBlocking<Unit>(Dispatchers.Default) {
     val component = A()
     componentStore.initComponent(component, null, PluginManagerCore.CORE_ID)
 
     component.options.foo = "new"
 
-    runBlocking {
-      componentStore.save()
-    }
+    componentStore.save()
 
     val storageManager = componentStore.storageManager
 
@@ -232,7 +236,7 @@ class ApplicationStoreTest {
   private fun createComponentData(fooValue: String, componentName: String = "A") = """<component name="$componentName" foo="$fooValue" />"""
 
   @Test
-  fun `remove data from deprecated storage if another component data exists`() = runBlocking<Unit> {
+  fun `remove data from deprecated storage if another component data exists`() = runBlocking<Unit>(Dispatchers.Default) {
     val data = createComponentData("new")
     val oldFile = writeConfig("old.xml", """<application>
     <component name="OtherComponent" foo="old" />
@@ -254,7 +258,7 @@ class ApplicationStoreTest {
   }
 
   @Test
-  fun `don't save if only format is changed`() = runBlocking<Unit> {
+  fun `don't save if only format is changed`() = runBlocking<Unit>(Dispatchers.Default) {
     val oldContent = """<application><component name="A" foo="old" deprecated="old"/></application>"""
     val file = writeConfig("a.xml", oldContent)
     val oldModificationTime = file.getLastModifiedTime()
@@ -280,20 +284,57 @@ class ApplicationStoreTest {
   }
 
   @Test
-  fun `loadState failed with exception it won't be called next time`() {
+  fun `loadState failed with exception it won't be called next time`() = runBlocking<Unit>(Dispatchers.Default) {
     writeConfig("a.xml", """<application><component name="A" foo="old" deprecated="old"/></application>""")
     testAppConfig.refreshVfs()
 
     val component = A()
-    component.isThrowErrorOnLoadState = true
-    assertThatThrownBy {
+    component.loadStateCallback = {
+      throw ProcessCanceledException()
+    }
+    try {
       componentStore.initComponent(component, null, PluginManagerCore.CORE_ID)
-    }.isInstanceOf(ProcessCanceledException::class.java)
+    }
+    catch (e: Throwable) {
+      assertThat(e).isInstanceOf(ProcessCanceledException::class.java)
+    }
     assertThat(component.options).isEqualTo(TestState())
 
-    component.isThrowErrorOnLoadState = false
+    component.loadStateCallback = null
     componentStore.initComponent(component, null, PluginManagerCore.CORE_ID)
     assertThat(component.options).isEqualTo(TestState("old"))
+  }
+
+  private class MyElement(val id: String) : CoroutineContext.Element {
+    object Key : CoroutineContext.Key<MyElement>
+
+    override val key: CoroutineContext.Key<*>
+      get() = Key
+  }
+
+  @Test
+  fun `parent scope is used if passed`() = runBlocking<Unit>(Dispatchers.Default) {    // 2. Define the element
+    writeConfig("a.xml", """<application><component name="A" foo="old" deprecated="old"/></application>""")
+    testAppConfig.refreshVfs()
+
+    val component = A()
+    try {
+      withContext(MyElement("p")) {
+        val parentScope = this@withContext
+        withContext(MyElement("child")) {
+          component.loadStateCallback = {
+            val currentTemporaryThreadContextOrNull = currentTemporaryThreadContextOrNull()
+            assertThat(currentTemporaryThreadContextOrNull).isNotNull()
+            assertThat(currentTemporaryThreadContextOrNull!![MyElement.Key]?.id).isNull()
+          }
+          componentStore.initComponent(component = component, serviceDescriptor = null, pluginId = PluginManagerCore.CORE_ID, parentScope = parentScope)
+        }
+      }
+    }
+    catch (_: CancellationException) {
+    }
+    assertThat(component.options).isEqualTo(TestState(foo="old"))
+    component.loadStateCallback = null
   }
 
   @Test
@@ -420,7 +461,7 @@ class ApplicationStoreTest {
   }
 
   @Test
-  fun `survive on error`() {
+  fun `survive on error`() = runBlocking<Unit>(Dispatchers.Default) {
     @State(name = "Bad", storages = [Storage(value = "foo.xml")])
     class MyComponent : PersistentStateComponent<Foo> {
       override fun loadState(state: Foo) {
@@ -437,16 +478,17 @@ class ApplicationStoreTest {
     }
 
     val component = MyComponent()
-    rethrowLoggedErrorsIn {
-      assertThatThrownBy {
-        componentStore.initComponent(component, null, PluginManagerCore.CORE_ID)
-      }.hasMessage("Cannot init component state (componentName=Bad, componentClass=MyComponent) [Plugin: com.intellij]")
+    try {
+      componentStore.initComponent(component, null, PluginManagerCore.CORE_ID)
+    }
+    catch (e: Throwable) {
+      assertThat(e.message).contains("Cannot init component state (componentName=Bad, componentClass=MyComponent) [Plugin: com.intellij]")
     }
     assertThat(componentStore.getComponents()).doesNotContainKey("Bad")
   }
 
   @Test
-  fun `test per-os components are stored in subfolder`() = runBlocking {
+  fun `test per-os components are stored in subfolder`() = runBlocking(Dispatchers.Default) {
     val component = PerOsComponent()
     componentStore.initComponent(component, null, PluginManagerCore.CORE_ID)
     component.foo = "bar"
@@ -478,7 +520,7 @@ class ApplicationStoreTest {
   }
 
   @Test
-  fun `per-os setting is preferred from os subfolder`() {
+  fun `per-os setting is preferred from os subfolder`() = runBlocking<Unit>(Dispatchers.Default) {
     val osCode = getPerOsSettingsStorageFolderName()
     writeConfig("per-os.xml", "<application>${createComponentData("old")}</application>")
     writeConfig("${osCode}/per-os.xml", "<application>${createComponentData("new")}</application>")
@@ -514,7 +556,7 @@ class ApplicationStoreTest {
   }
 
   @Test
-  fun `reload components`() {
+  fun `reload components`() = runBlocking(Dispatchers.Default) {
     @State(name = "A", storages = [Storage(value = "a.xml")])
     class Component : FooComponent()
 
@@ -646,7 +688,6 @@ class ApplicationStoreTest {
       get() = ApplicationManager.getApplication() as ComponentManagerEx
 
     override val storageManager = ApplicationStateStorageManager(pathMacroManager = null, service<SettingsController>())
-    override val isStoreInitialized: Boolean = true
 
     init {
       setPath(testAppConfigPath)
@@ -655,6 +696,10 @@ class ApplicationStoreTest {
     override fun setPath(path: Path) {
       // yes, in tests APP_CONFIG equals to ROOT_CONFIG (as ICS does)
       storageManager.setMacros(listOf(Macro(APP_CONFIG, path), Macro(ROOT_CONFIG, path), Macro(StoragePathMacros.CACHE_FILE, path)))
+    }
+
+    override fun error(error: PluginException) {
+      throw error
     }
   }
 
@@ -690,16 +735,16 @@ internal data class TestState(@JvmField @Attribute var foo: String = "", @JvmFie
 
 @State(name = "A", storages = [(Storage("a.xml"))], additionalExportDirectory = "foo")
 internal open class A : PersistentStateComponent<TestState> {
+  @JvmField
   var options = TestState()
 
-  var isThrowErrorOnLoadState = false
+  @JvmField
+  var loadStateCallback: ((TestState) -> Unit)? = null
 
   override fun getState() = options
 
   override fun loadState(state: TestState) {
-    if (isThrowErrorOnLoadState) {
-      throw ProcessCanceledException()
-    }
+    loadStateCallback?.invoke(state)
     this.options = state
   }
 }

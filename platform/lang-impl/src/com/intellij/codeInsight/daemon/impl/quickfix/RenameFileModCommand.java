@@ -9,6 +9,8 @@ import com.intellij.psi.PsiFile;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import static com.intellij.codeInsight.completion.command.CommandCompletionServiceKt.COMMAND_COMPLETION_COPY;
+
 /**
  * A command to rename file; available only if target file does not exist
  */
@@ -35,10 +37,16 @@ public class RenameFileModCommand implements ModCommandAction {
 
   @Override
   public @Nullable Presentation getPresentation(@NotNull ActionContext context) {
-    PsiFile file = context.file();
-    VirtualFile vFile = file.getVirtualFile();
+    PsiFile psiFile = context.file();
+    VirtualFile vFile = psiFile.getVirtualFile();
     if (vFile == null) return null;
     VirtualFile parent = vFile.getParent();
+    if (parent == null && psiFile.getUserData(COMMAND_COMPLETION_COPY) == Boolean.TRUE) {
+      psiFile = psiFile.getOriginalFile();
+      vFile = psiFile.getVirtualFile();
+      if (vFile == null) return null;
+      parent = vFile.getParent();
+    }
     if (parent == null) return null;
     VirtualFile newVFile = parent.findChild(myNewFileName);
     return newVFile == null || newVFile.equals(vFile) ? Presentation.of(getFamilyName()) : null;

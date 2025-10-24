@@ -1,49 +1,52 @@
 // Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.platform.debugger.impl.frontend
 
+import com.intellij.ide.ui.colors.color
+import com.intellij.ide.ui.colors.rpcId
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
 import com.intellij.platform.debugger.impl.frontend.evaluate.quick.FrontendXValue
-import com.intellij.ui.JBColor
+import com.intellij.platform.debugger.impl.rpc.XDebuggerValueMarkupApi
+import com.intellij.platform.debugger.impl.rpc.XValueMarkerDto
 import com.intellij.xdebugger.frame.XValue
+import com.intellij.xdebugger.impl.frame.XDebugManagerProxy
+import com.intellij.xdebugger.impl.frame.XDebugSessionProxy
 import com.intellij.xdebugger.impl.frame.XValueMarkers
-import com.intellij.xdebugger.impl.rpc.XDebuggerValueMarkupApi
-import com.intellij.xdebugger.impl.rpc.XValueMarkerDto
 import com.intellij.xdebugger.impl.ui.tree.ValueMarkup
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.future.asCompletableFuture
+import kotlinx.coroutines.launch
 import org.jetbrains.concurrency.Promise
 import org.jetbrains.concurrency.asPromise
 
 internal class FrontendXValueMarkers<V : XValue, M>(private val project: Project) : XValueMarkers<V, M>() {
   override fun getMarkup(value: XValue): ValueMarkup? {
-    val markerDto = (value as? FrontendXValue)?.markerDto ?: return null
-    // TODO[IJPL-160146]: Implement implement Color serialization
-    return ValueMarkup(markerDto.text, markerDto.color ?: JBColor.RED, markerDto.tooltipText)
+    val markerDto = FrontendXValue.asFrontendXValueOrNull(value)?.markerDto ?: return null
+    return ValueMarkup(markerDto.text, markerDto.colorId?.color(), markerDto.tooltipText)
   }
 
   override fun canMarkValue(value: XValue): Boolean {
-    // TODO[IJPL-160146]: Implement canMarkValue
-    return true
+    return FrontendXValue.asFrontendXValueOrNull(value)?.canMarkValue ?: false
   }
 
-  override fun markValue(value: XValue, markup: ValueMarkup): Promise<in Any>? {
+  override fun markValue(value: XValue, markup: ValueMarkup): Promise<in Any> {
     return project.service<FrontendXValueMarkersService>().markValue(value, markup)
   }
 
-  override fun unmarkValue(value: XValue): Promise<in Any>? {
+  override fun unmarkValue(value: XValue): Promise<in Any> {
     return project.service<FrontendXValueMarkersService>().unmarkValue(value)
   }
 
-  override fun getAllMarkers(): Map<M?, ValueMarkup?>? {
+  override fun getAllMarkers(): Map<M?, ValueMarkup?> {
     // TODO[IJPL-160146]: Implement getAllMarkers
     return mapOf()
   }
 
   override fun clear() {
-    // TODO[IJPL-160146]: Implement clear
+    val debugSessionProxy = XDebugManagerProxy.getInstance().getCurrentSessionProxy(project) ?: return
+    project.service<FrontendXValueMarkersService>().clear(debugSessionProxy)
   }
 }
 
@@ -51,18 +54,24 @@ internal class FrontendXValueMarkers<V : XValue, M>(private val project: Project
 private class FrontendXValueMarkersService(project: Project, private val cs: CoroutineScope) {
   fun markValue(value: XValue, markup: ValueMarkup): Promise<Any> {
     val valueMarked = cs.async {
-      val marker = XValueMarkerDto(markup.text, markup.color, markup.toolTipText)
-      XDebuggerValueMarkupApi.getInstance().markValue((value as FrontendXValue).xValueDto.id, marker)
+      val marker = XValueMarkerDto(markup.text, markup.color.rpcId(), markup.toolTipText)
+      XDebuggerValueMarkupApi.getInstance().markValue(FrontendXValue.asFrontendXValue(value).xValueDto.id, marker)
       marker as Any
     }
     return valueMarked.asCompletableFuture().asPromise()
   }
 
-  fun unmarkValue(value: XValue): Promise<in Any>? {
+  fun unmarkValue(value: XValue): Promise<in Any> {
     val valueUnmarked = cs.async {
-      XDebuggerValueMarkupApi.getInstance().unmarkValue((value as FrontendXValue).xValueDto.id)
+      XDebuggerValueMarkupApi.getInstance().unmarkValue(FrontendXValue.asFrontendXValue(value).xValueDto.id)
       Any()
     }
     return valueUnmarked.asCompletableFuture().asPromise()
+  }
+
+  fun clear(debugSessionProxy: XDebugSessionProxy) {
+    cs.launch {
+      XDebuggerValueMarkupApi.getInstance().clear(debugSessionProxy.id)
+    }
   }
 }

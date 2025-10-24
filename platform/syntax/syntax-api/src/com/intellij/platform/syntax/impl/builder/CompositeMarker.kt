@@ -9,7 +9,7 @@ import org.jetbrains.annotations.Nls
 
 internal class CompositeMarker(
   markerId: Int,
-  builder: ParsingTreeBuilder,
+  builder: SyntaxTreeBuilderImpl,
 ) : ProductionMarker(markerId, builder), SyntaxTreeBuilder.Marker {
 
   lateinit var type: SyntaxElementType
@@ -37,7 +37,7 @@ internal class CompositeMarker(
   }
 
   override fun getEndOffset(): Int =
-    builder.myLexStarts[endIndex] + builder.startOffset
+    builder.lexStart(endIndex) + builder.startOffset
 
   override fun getEndTokenIndex(): Int = endIndex
 
@@ -61,7 +61,7 @@ internal class CompositeMarker(
   }
 
   override fun done(type: SyntaxElementType) {
-    if (type == SyntaxTokenTypes.ERROR_ELEMENT) {
+    if (type === SyntaxTokenTypes.ERROR_ELEMENT) {
       builder.logger.warn("Error elements with empty message are discouraged. Please use builder.error() instead", RuntimeException())
     }
     this@CompositeMarker.type = type
@@ -74,7 +74,7 @@ internal class CompositeMarker(
   }
 
   override fun doneBefore(type: SyntaxElementType, before: SyntaxTreeBuilder.Marker) {
-    if (type == SyntaxTokenTypes.ERROR_ELEMENT) {
+    if (type === SyntaxTokenTypes.ERROR_ELEMENT) {
       builder.logger.warn("Error elements with empty message are discouraged. Please use builder.errorBefore() instead", RuntimeException())
     }
     this@CompositeMarker.type = type
@@ -104,6 +104,9 @@ internal class CompositeMarker(
 
   // TODO add this method to interface when it's required
   fun remapTokenType(newTokenType: SyntaxElementType) {
+    if (!isDone) {
+      builder.logger.error("Can't remap token type for non-done marker")
+    }
     type = newTokenType
   }
 

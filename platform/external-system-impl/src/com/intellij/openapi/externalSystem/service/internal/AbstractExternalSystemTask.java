@@ -1,6 +1,7 @@
 // Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.openapi.externalSystem.service.internal;
 
+import com.intellij.execution.process.ProcessOutputType;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.externalSystem.model.ExternalSystemException;
 import com.intellij.openapi.externalSystem.model.ProjectSystemId;
@@ -20,6 +21,7 @@ import com.intellij.util.ThrowableRunnable;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -138,8 +140,14 @@ public abstract class AbstractExternalSystemTask extends UserDataHolderBase impl
         });
       });
     }
+    catch (CancellationException __) {
+      // the exception shouldn't be thrown due to the legacy architecture decision
+      // if the exception would be thrown, the cancellation will never be handled due to
+      // {@link com.intellij.openapi.externalSystem.util.ExternalSystemUtil.handleSyncResult}
+      LOG.info(String.format("The execution %s was cancelled", myId));
+    }
     catch (Exception e) {
-      LOG.debug(e);
+      LOG.warn(myId + ": Task execution failed", e);
     }
     catch (Throwable e) {
       LOG.error(e);
@@ -336,8 +344,8 @@ public abstract class AbstractExternalSystemTask extends UserDataHolderBase impl
       }
 
       @Override
-      public void onTaskOutput(@NotNull ExternalSystemTaskId id, @NotNull String text, boolean stdOut) {
-        manager.onTaskOutput(id, text, stdOut);
+      public void onTaskOutput(@NotNull ExternalSystemTaskId id, @NotNull String text, @NotNull ProcessOutputType processOutputType) {
+        manager.onTaskOutput(id, text, processOutputType);
       }
     };
   }

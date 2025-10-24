@@ -22,9 +22,11 @@ import com.intellij.openapi.projectRoots.Sdk
 import com.intellij.openapi.roots.ModuleRootManager
 import com.intellij.openapi.util.io.FileUtil
 import com.jetbrains.python.HelperPackage
+import com.jetbrains.python.PyBundle
 import com.jetbrains.python.debugger.PyDebugRunner
 import com.jetbrains.python.packaging.PyExecutionException
 import com.jetbrains.python.psi.LanguageLevel
+import com.jetbrains.python.run.features.PyRunToolParameters
 import com.jetbrains.python.run.target.HelpersAwareTargetEnvironmentRequest
 import com.jetbrains.python.run.target.PathMapping
 import com.jetbrains.python.run.target.tryResolveAsPythonHelperDir
@@ -34,28 +36,59 @@ import com.jetbrains.python.sdk.flavors.PythonSdkFlavor
 import com.jetbrains.python.sdk.flavors.conda.fixCondaPathEnvIfNeeded
 import com.jetbrains.python.sdk.targetAdditionalData
 import com.jetbrains.python.target.PyTargetAwareAdditionalData.Companion.pathsAddedByUser
+import org.jetbrains.annotations.ApiStatus
 import java.nio.file.Path
+import kotlin.io.path.pathString
 
 private val LOG = Logger.getInstance("#com.jetbrains.python.run.PythonScripts")
 
 
 @JvmOverloads
-fun PythonExecution.buildTargetedCommandLine(targetEnvironment: TargetEnvironment,
-                                             sdk: Sdk?,
-                                             interpreterParameters: List<String>,
-                                             isUsePty: Boolean = false): TargetedCommandLine {
+@ApiStatus.Internal
+fun PythonExecution.buildTargetedCommandLine(
+  targetEnvironment: TargetEnvironment,
+  sdk: Sdk?,
+  interpreterParameters: List<String>,
+  isUsePty: Boolean = false,
+  runTool: PyRunToolParameters? = null,
+): TargetedCommandLine {
   val commandLineBuilder = TargetedCommandLineBuilder(targetEnvironment.request)
   workingDir?.apply(targetEnvironment)?.let { commandLineBuilder.setWorkingDirectory(it) }
   commandLineBuilder.charset = charset
   inputFile?.let { commandLineBuilder.setInputFile(TargetValue.fixed(it.absolutePath)) }
-  sdk?.configureBuilderToRunPythonOnTarget(commandLineBuilder)
-  commandLineBuilder.addParameters(interpreterParameters)
+
+  when (this) {
+    is PythonToolExecution -> {
+      toolPath?.let {
+        commandLineBuilder.exePath = TargetValue.fixed(it.pathString)
+        commandLineBuilder.addParameters(listOf(*toolParams.toTypedArray()))
+      }
+    }
+    else -> {
+      sdk?.configureBuilderToRunPythonOnTarget(commandLineBuilder)
+      commandLineBuilder.addParameters(interpreterParameters)
+    }
+  }
+
+  if (runTool != null) {
+    applyRunToolAsync(commandLineBuilder, runTool)
+  }
+
   when (this) {
     is PythonScriptExecution -> pythonScriptPath?.let { commandLineBuilder.addParameter(it.apply(targetEnvironment)) }
                                 ?: throw IllegalArgumentException("Python script path must be set")
     is PythonModuleExecution -> moduleName?.let { commandLineBuilder.addParameters(listOf("-m", it)) }
                                 ?: throw IllegalArgumentException("Python module name must be set")
+    is PythonToolScriptExecution -> pythonScriptPath?.let { commandLineBuilder.addParameter(it.apply(targetEnvironment).pathString) }
+                                    ?: throw IllegalArgumentException("Python script path must be set")
+    is PythonToolModuleExecution -> moduleName?.let { moduleName ->
+      moduleFlag?.let { moduleFlag ->
+        commandLineBuilder.addParameters(listOf(moduleFlag, moduleName))
+      } ?: throw IllegalArgumentException("Module flag must be set")
+    } ?: throw IllegalArgumentException("Python module name must be set")
+
   }
+
   for (parameter in parameters) {
     val resolvedParameter = parameter.apply(targetEnvironment)
     if (resolvedParameter != PythonExecution.SKIP_ARGUMENT) {
@@ -89,7 +122,22 @@ fun PythonExecution.buildTargetedCommandLine(targetEnvironment: TargetEnvironmen
   return commandLineBuilder.build()
 }
 
+private fun applyRunToolAsync(
+  commandLineBuilder: TargetedCommandLineBuilder,
+  runTool: PyRunToolParameters,
+) = commandLineBuilder.exePath.localValue
+  .onSuccess { originalExe: String? ->
+    commandLineBuilder.exePath = TargetValue.fixed(runTool.exe)
+    commandLineBuilder.addFixedParametersAt(0, runTool.args)
+    if (originalExe != null) {
+      commandLineBuilder.addParameterAt(runTool.args.size, originalExe)
+    }
+  }
+  .onError {
+    throw ExecutionException(PyBundle.message("dialog.message.failed.to.resolve.original.executable.for.run.tool", runTool.exe))
+  }
 
+@ApiStatus.Internal
 data class Upload(val localPath: String, val targetPath: TargetEnvironmentFunction<String>)
 
 private fun resolveUploadPath(localPath: String, uploads: List<PathMapping>): TargetEnvironmentFunction<String> {
@@ -110,6 +158,7 @@ private fun resolveUploadPath(localPath: String, uploads: List<PathMapping>): Ta
   return upload.targetPathFun.getRelativeTargetPath(localRelativePath)
 }
 
+@ApiStatus.Internal
 fun prepareHelperScriptExecution(helperPackage: HelperPackage,
                                  helpersAwareTargetRequest: HelpersAwareTargetEnvironmentRequest): PythonScriptExecution =
   PythonScriptExecution().apply {
@@ -117,16 +166,36 @@ fun prepareHelperScriptExecution(helperPackage: HelperPackage,
     pythonScriptPath = resolveUploadPath(helperPackage.asParamString(), uploads)
   }
 
+@ApiStatus.Internal
+fun prepareHelperScriptViaToolExecution(
+  helperPackage: HelperPackage,
+  helpersAwareTargetRequest: HelpersAwareTargetEnvironmentRequest,
+  toolPath: Path,
+  toolParams: List<String>,
+): PythonToolScriptExecution {
+  val envs: MutableMap<String, TargetEnvironmentFunction<String>> = mutableMapOf()
+  val uploads = addHelperEntriesToPythonPath(envs, helperPackage.pythonPathEntries, helpersAwareTargetRequest)
+  val execution = PythonToolScriptExecution(
+    toolPath,
+    toolParams,
+    resolveUploadPath(helperPackage.asParamString(), uploads).andThen { Path.of(it) }
+  )
+  execution.envs += envs;
+  return execution;
+}
+
 private const val PYTHONPATH_ENV = "PYTHONPATH"
 
 /**
  * Requests the upload of PyCharm helpers root directory to the target.
  */
+@ApiStatus.Internal
 fun PythonExecution.applyHelperPackageToPythonPath(helperPackage: HelperPackage,
                                                    helpersAwareTargetRequest: HelpersAwareTargetEnvironmentRequest): List<PathMapping> {
   return applyHelperPackageToPythonPath(helperPackage.pythonPathEntries, helpersAwareTargetRequest)
 }
 
+@ApiStatus.Internal
 fun PythonExecution.applyHelperPackageToPythonPath(pythonPathEntries: List<String>,
                                                    helpersAwareTargetRequest: HelpersAwareTargetEnvironmentRequest): List<PathMapping> {
   return addHelperEntriesToPythonPath(envs, pythonPathEntries, helpersAwareTargetRequest)
@@ -141,6 +210,7 @@ fun PythonExecution.applyHelperPackageToPythonPath(pythonPathEntries: List<Strin
  * **Note.** This method assumes that PyCharm Community and PyCharm helpers are uploaded to the same root path on the target.
  * This assumption comes from [HelpersAwareTargetEnvironmentRequest.preparePyCharmHelpers] method that returns the single path value.
  */
+@ApiStatus.Internal
 fun addHelperEntriesToPythonPath(envs: MutableMap<String, TargetEnvironmentFunction<String>>,
                                  pythonPathEntries: List<String>,
                                  helpersAwareTargetRequest: HelpersAwareTargetEnvironmentRequest,
@@ -173,6 +243,7 @@ fun addHelperEntriesToPythonPath(envs: MutableMap<String, TargetEnvironmentFunct
 /**
  * Suits for coverage and profiler scripts.
  */
+@ApiStatus.Internal
 fun PythonExecution.addPythonScriptAsParameter(targetScript: PythonExecution) {
   when (targetScript) {
     is PythonScriptExecution -> targetScript.pythonScriptPath?.let { pythonScriptPath -> addParameter(pythonScriptPath) }
@@ -180,9 +251,19 @@ fun PythonExecution.addPythonScriptAsParameter(targetScript: PythonExecution) {
 
     is PythonModuleExecution -> targetScript.moduleName?.let { moduleName -> addParameters("-m", moduleName) }
                                 ?: throw IllegalArgumentException("Python module name must be set")
+
+    is PythonToolScriptExecution -> targetScript.pythonScriptPath?.let { pythonScriptPath -> addParameter(pythonScriptPath.andThen { it.pathString }) }
+                                    ?: throw IllegalArgumentException("Python script path must be set")
+
+    is PythonToolModuleExecution -> targetScript.moduleName?.let { moduleName ->
+      targetScript.moduleFlag?.let { moduleFlag ->
+        addParameters(moduleFlag, moduleName)
+      } ?: throw java.lang.IllegalArgumentException("Module flag must be set")
+    } ?: throw IllegalArgumentException("Python module name must be set")
   }
 }
 
+@ApiStatus.Internal
 fun PythonExecution.addParametersString(parametersString: String) {
   ParametersList.parse(parametersString).forEach { parameter -> addParameter(parameter) }
 }
@@ -191,6 +272,7 @@ private fun PythonExecution.appendToPythonPath(value: TargetEnvironmentFunction<
   appendToPythonPath(envs, value, targetPlatform)
 }
 
+@ApiStatus.Internal
 fun appendToPythonPath(envs: MutableMap<String, TargetEnvironmentFunction<String>>,
                        value: TargetEnvironmentFunction<String>,
                        targetPlatform: TargetPlatform) {
@@ -199,6 +281,7 @@ fun appendToPythonPath(envs: MutableMap<String, TargetEnvironmentFunction<String
   }
 }
 
+@ApiStatus.Internal
 fun appendToPythonPath(envs: MutableMap<String, TargetEnvironmentFunction<String>>,
                        paths: Collection<TargetEnvironmentFunction<String>>,
                        targetPlatform: TargetPlatform) {
@@ -215,6 +298,8 @@ fun appendToPythonPath(envs: MutableMap<String, TargetEnvironmentFunction<String
  *
  * The result is applicable for `PYTHONPATH` and `PATH` environment variables.
  */
+
+@ApiStatus.Internal
 fun Collection<TargetEnvironmentFunction<String>>.joinToPathValue(targetPlatform: TargetPlatform): TargetEnvironmentFunction<String> =
   this.joinToStringFunction(separator = targetPlatform.platform.pathSeparator.toString())
 
@@ -234,6 +319,8 @@ fun PythonExecution.extendEnvs(additionalEnvs: Map<String, TargetEnvironmentFunc
  * Execute this command in a given environment, throwing an `ExecutionException` in case of a timeout or a non-zero exit code.
  */
 @Throws(ExecutionException::class)
+
+@ApiStatus.Internal
 fun TargetedCommandLine.execute(env: TargetEnvironment, indicator: ProgressIndicator): ProcessOutput {
   val process = env.createProcess(this, indicator)
   val capturingHandler = CapturingProcessHandler(process, charset, getCommandPresentation(env))
@@ -250,6 +337,8 @@ fun TargetedCommandLine.execute(env: TargetEnvironment, indicator: ProgressIndic
  * Checks whether the base directory of [project] is registered in [this] request. Adds it if it is not.
  * You can also provide [modules] to add its content roots and [Sdk] for which user added custom paths
  */
+
+@ApiStatus.Internal
 fun TargetEnvironmentRequest.ensureProjectSdkAndModuleDirsAreOnTarget(project: Project, vararg modules: Module) {
   fun TargetEnvironmentRequest.addPathToVolume(basePath: Path) {
     if (uploadVolumes.none { basePath.startsWith(it.localRootPath) }) {
@@ -272,6 +361,8 @@ fun TargetEnvironmentRequest.ensureProjectSdkAndModuleDirsAreOnTarget(project: P
 /**
  * Mimics [PyDebugRunner.disableBuiltinBreakpoint] for [PythonExecution].
  */
+
+@ApiStatus.Internal
 fun PythonExecution.disableBuiltinBreakpoint(sdk: Sdk?) {
   if (sdk != null && PythonSdkFlavor.getFlavor(sdk)?.getLanguageLevel(sdk)?.isAtLeast(LanguageLevel.PYTHON37) == true) {
     addEnvironmentVariable("PYTHONBREAKPOINT", "0")

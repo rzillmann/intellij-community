@@ -9,8 +9,31 @@ import com.intellij.util.containers.addIfNotNull
 import com.intellij.util.text.NameUtilCore
 import org.jetbrains.kotlin.analysis.api.KaExperimentalApi
 import org.jetbrains.kotlin.analysis.api.KaSession
+import org.jetbrains.kotlin.analysis.api.components.allSupertypes
+import org.jetbrains.kotlin.analysis.api.components.approximateToSuperPublicDenotableOrSelf
+import org.jetbrains.kotlin.analysis.api.components.expressionType
+import org.jetbrains.kotlin.analysis.api.components.isAnyType
+import org.jetbrains.kotlin.analysis.api.components.isBooleanType
+import org.jetbrains.kotlin.analysis.api.components.isByteType
+import org.jetbrains.kotlin.analysis.api.components.isCharSequenceType
+import org.jetbrains.kotlin.analysis.api.components.isCharType
+import org.jetbrains.kotlin.analysis.api.components.isDoubleType
+import org.jetbrains.kotlin.analysis.api.components.isFloatType
+import org.jetbrains.kotlin.analysis.api.components.isFunctionType
+import org.jetbrains.kotlin.analysis.api.components.isIntType
+import org.jetbrains.kotlin.analysis.api.components.isLongType
+import org.jetbrains.kotlin.analysis.api.components.isShortType
+import org.jetbrains.kotlin.analysis.api.components.isStringType
+import org.jetbrains.kotlin.analysis.api.components.isUByteType
+import org.jetbrains.kotlin.analysis.api.components.isUIntType
+import org.jetbrains.kotlin.analysis.api.components.isULongType
+import org.jetbrains.kotlin.analysis.api.components.isUShortType
+import org.jetbrains.kotlin.analysis.api.components.resolveToCall
+import org.jetbrains.kotlin.analysis.api.components.type
 import org.jetbrains.kotlin.analysis.api.resolution.singleFunctionCallOrNull
-import org.jetbrains.kotlin.analysis.api.types.*
+import org.jetbrains.kotlin.analysis.api.types.KaClassType
+import org.jetbrains.kotlin.analysis.api.types.KaType
+import org.jetbrains.kotlin.analysis.api.types.KaTypeParameterType
 import org.jetbrains.kotlin.builtins.PrimitiveType
 import org.jetbrains.kotlin.builtins.StandardNames.FqNames
 import org.jetbrains.kotlin.idea.base.codeInsight.KotlinNameSuggester.Case.CAMEL
@@ -19,10 +42,7 @@ import org.jetbrains.kotlin.idea.base.psi.unquoteKotlinIdentifier
 import org.jetbrains.kotlin.lexer.KotlinLexer
 import org.jetbrains.kotlin.lexer.KtKeywordToken
 import org.jetbrains.kotlin.lexer.KtTokens
-import org.jetbrains.kotlin.name.ClassId
-import org.jetbrains.kotlin.name.FqName
-import org.jetbrains.kotlin.name.FqNameUnsafe
-import org.jetbrains.kotlin.name.Name
+import org.jetbrains.kotlin.name.*
 import org.jetbrains.kotlin.psi.*
 import org.jetbrains.kotlin.psi.psiUtil.getOutermostParenthesizerOrThis
 import org.jetbrains.kotlin.psi.psiUtil.isIdentifier
@@ -131,7 +151,7 @@ class KotlinNameSuggester(
      *  - `print(<selection>intArrayOf(5)</selection>)` -> {message, intArrayOf, ints}
      *  - `print(<selection>listOf(User("Mary"), User("John"))</selection>)` -> {message, listOf, users}
      */
-    context(KaSession)
+    context(_: KaSession)
     fun suggestExpressionNames(expression: KtExpression, validator: (String) -> Boolean = { true }): Sequence<String> {
         return (suggestNamesByValueArgument(expression, validator) +
                 suggestNameBySimpleExpression(expression, validator) +
@@ -163,7 +183,7 @@ class KotlinNameSuggester(
      *  - `intArrayOf(5)` -> {ints}
      *  - listOf(User("Mary"), User("John")) -> {users}
      */
-    context(KaSession)
+    context(_: KaSession)
     private fun suggestNamesByType(expression: KtExpression, validator: (String) -> Boolean): Sequence<String> {
         val type = expression.expressionType ?: return emptySequence()
         return suggestTypeNames(type).map { name -> suggestNameByName(name, validator) }
@@ -177,7 +197,7 @@ class KotlinNameSuggester(
      *  - `listOf(<selection>5</selection>)` -> {element}
      *  - `ints.filter <selection>{ it > 0 }</selection>` -> {predicate}
      */
-    context(KaSession)
+    context(_: KaSession)
     private fun suggestNamesByValueArgument(expression: KtExpression, validator: (String) -> Boolean): Sequence<String> {
         val argumentExpression = expression.getOutermostParenthesizerOrThis()
         val valueArgument = argumentExpression.parent as? KtValueArgument ?: return emptySequence()
@@ -194,7 +214,7 @@ class KotlinNameSuggester(
      *  - `IntArray` -> {ints}
      *  - `List<User>` -> {users}
      */
-    context(KaSession)
+    context(_: KaSession)
     fun suggestTypeNames(type: KaType): Sequence<String> {
         return sequence {
             val presentableType = getPresentableType(type)
@@ -272,7 +292,7 @@ class KotlinNameSuggester(
         }
     }
 
-    context(KaSession)
+    context(_: KaSession)
     @OptIn(KaExperimentalApi::class)
     private fun getPresentableType(type: KaType): KaType = type.approximateToSuperPublicDenotableOrSelf(approximateLocalTypes = true)
 
@@ -283,7 +303,7 @@ class KotlinNameSuggester(
      *  - `Int?` -> NullableInt
      *  - `(String) -> Boolean` -> StringPredicate
      */
-    context(KaSession)
+    context(_: KaSession)
     fun suggestTypeAliasName(type: KtTypeElement): String {
         var isExactMatch = true
 
@@ -564,7 +584,26 @@ class KotlinNameSuggester(
             }
         }
 
-        val TYPE_PARAMETER_NAMES = listOf(
+        fun suggestNameByMultipleNames(names: Collection<String>, validator: (String) -> Boolean): String {
+            var i = 0
+            while (true) {
+                for (name in names) {
+                    val candidate = if (i > 0) name + i else name
+                    if (validator(candidate)) return candidate
+                }
+                i++
+            }
+        }
+
+        fun suggestNamesForTypeParameters(count: Int, validator: (String) -> Boolean): List<String> {
+            val result = ArrayList<String>()
+            for (i in 0 until count) {
+                result.add(suggestNameByMultipleNames(TYPE_PARAMETER_NAMES, validator))
+            }
+            return result
+        }
+
+        val TYPE_PARAMETER_NAMES: List<String> = listOf(
             "T", "U", "V", "W", "X", "Y", "Z", "A", "B", "C", "D", "E",
             "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "R", "S"
         )
@@ -591,7 +630,7 @@ class KotlinNameSuggester(
     }
 }
 
-context(KaSession)
+context(_: KaSession)
 private fun getPrimitiveType(type: KaType): PrimitiveType? {
     return when {
         type.isBooleanType -> PrimitiveType.BOOLEAN
@@ -606,11 +645,9 @@ private fun getPrimitiveType(type: KaType): PrimitiveType? {
     }
 }
 
-private val ITERABLE_LIKE_CLASS_IDS =
-    listOf(FqNames.iterable, FqNames.array.toSafe())
-        .map { ClassId.topLevel(it) }
+private val ITERABLE_LIKE_CLASS_IDS: Collection<ClassId> = hashSetOf(StandardClassIds.Iterable, StandardClassIds.Array)
 
-context(KaSession)
+context(_: KaSession)
 private fun getIterableElementType(type: KaType): KaType? {
     if (type is KaClassType && type.classId in ITERABLE_LIKE_CLASS_IDS) {
         return type.typeArguments.singleOrNull()?.type

@@ -42,7 +42,7 @@ internal class MarkdownCodeFenceErrorHighlightingIntention : IntentionAction {
               continue
             }
             val psi = psiManager.findFile(file) ?: continue
-            codeAnalyzer.restart(psi)
+            codeAnalyzer.restart(psi, this)
           }
         }
       }
@@ -53,15 +53,15 @@ internal class MarkdownCodeFenceErrorHighlightingIntention : IntentionAction {
 
   override fun getFamilyName(): String = text
 
-  override fun isAvailable(project: Project, editor: Editor?, file: PsiFile?): Boolean {
-    if (file?.fileType != MarkdownFileType.INSTANCE || !MarkdownSettings.getInstance(project).showProblemsInCodeBlocks) {
+  override fun isAvailable(project: Project, editor: Editor?, psiFile: PsiFile?): Boolean {
+    if (psiFile?.fileType != MarkdownFileType.INSTANCE || !MarkdownSettings.getInstance(project).showProblemsInCodeBlocks) {
       return false
     }
-    val element = file?.findElementAt(editor?.caretModel?.offset ?: return false) ?: return false
+    val element = psiFile?.findElementAt(editor?.caretModel?.offset ?: return false) ?: return false
     return PsiTreeUtil.getParentOfType(element, MarkdownCodeFence::class.java) != null
   }
 
-  override fun invoke(project: Project, editor: Editor?, file: PsiFile?) {
+  override fun invoke(project: Project, editor: Editor?, psiFile: PsiFile?) {
     setHideErrors(project, true)
     val notification = MarkdownNotifications.group.createNotification(
       MarkdownBundle.message("markdown.hide.problems.notification.title"),

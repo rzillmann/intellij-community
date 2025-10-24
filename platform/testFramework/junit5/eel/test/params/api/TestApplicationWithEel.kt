@@ -4,6 +4,7 @@ package com.intellij.platform.testFramework.junit5.eel.params.api
 import com.intellij.platform.testFramework.junit5.eel.params.impl.junit5.EelInterceptor
 import com.intellij.testFramework.junit5.TestApplication
 import org.jetbrains.annotations.TestOnly
+import org.junit.jupiter.api.condition.OS
 import org.junit.jupiter.api.extension.ExtendWith
 
 /**
@@ -11,13 +12,24 @@ import org.junit.jupiter.api.extension.ExtendWith
  * ```kotlin
  * @EelTestApplication
  * class MyTest {
- *   @ParametrizedTest
+ *     private val projectFixture = projectFixture() // these fixtures are
+ *     private val tempDir = tempPathFixture() // are also sit on en eel, but only instance-level, not project level
+ *   @ParametrizedTest // JUnit5 Pioneer also supported
  *   @EelSource // With Junit5Pioneer annotate parameter
  *   fun myTest(eh:EelHolder) {
  *   eh.eel
  *   }
  * }
+ *  // OR use parametrized class (No pioneer, plain JUnit5 only)
+ * @TestApplicationWithEel
+ * @ParameterizedClass
+ * class EelParametrizedClassShowCaseTest(val eelProvider: EelHolder) {
+ * // tests go here
+ * }
+ *
  * ```
+ *
+ *
  *
  * Warning: You need to provide a special vm option, most likely
  * ```
@@ -25,8 +37,16 @@ import org.junit.jupiter.api.extension.ExtendWith
  * ```
  * Run a test, and failure will report an option name.
  *
- * You either need to have providers (i.e. `intellij.platform.ijent.testFramework` in a classpath),
- * or disable [atLeastOneRemoteEelRequired]
+ * System tries to run your test against at least one remote (ijent-based) eel.
+ * You need to have providers (i.e. `intellij.platform.ijent.testFramework` in a classpath) to do that.
+ *
+ * If your particular test doesn't need remote eels for a certain OS, use [osesMayNotHaveRemoteEels].
+ *
+ * The following test will fail if no remote Eel available on any OS but Windows:
+ * ```kotlin
+ * @TestApplicationWithEel(osesMayNotHaveRemoteEels=[OS.WINDOWS])
+ * ```
+ * Do not use this option unless you are absolutely sure.
  */
 @TestOnly
 @Target(AnnotationTarget.CLASS)
@@ -34,4 +54,5 @@ import org.junit.jupiter.api.extension.ExtendWith
   EelInterceptor::class,
 )
 @TestApplication
-annotation class TestApplicationWithEel(val atLeastOneRemoteEelRequired: Boolean = true)
+@EelSource
+annotation class TestApplicationWithEel(vararg val osesMayNotHaveRemoteEels: OS)

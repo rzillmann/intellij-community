@@ -1,32 +1,40 @@
-### auto-generated section `build kotlin.base.analysis` start
+### auto-generated section `build intellij.kotlin.base.analysis` start
 load("//build:compiler-options.bzl", "create_kotlinc_options")
-load("@rules_jvm//:jvm.bzl", "jvm_library", "jvm_resources")
+load("@rules_jvm//:jvm.bzl", "jvm_library", "resourcegroup")
 
 create_kotlinc_options(
-  name = "custom",
-  context_receivers = True,
+  name = "custom_analysis",
   opt_in = [
+    "com.intellij.openapi.util.IntellijInternalApi",
     "org.jetbrains.kotlin.utils.addToStdlib.UnsafeCastFunction",
     "org.jetbrains.kotlin.analysis.api.KaIdeApi",
-  ]
+    "org.jetbrains.kotlin.analysis.api.KaContextParameterApi",
+  ],
+  x_context_parameters = True
 )
 
-jvm_resources(
-  name = "kotlin-base-analysis_resources",
-  files = glob(["resources/**/*"]),
+resourcegroup(
+  name = "analysis_resources",
+  srcs = glob(["resources/**/*"]),
   strip_prefix = "resources"
 )
 
 jvm_library(
-  name = "kotlin-base-analysis",
-  module_name = "kotlin.base.analysis",
+  name = "analysis",
+  module_name = "intellij.kotlin.base.analysis",
   visibility = ["//visibility:public"],
-  srcs = glob(["src/**/*.kt", "src/**/*.java"], allow_empty = True),
-  kotlinc_opts = ":custom",
+  srcs = glob(["src/**/*.kt", "src/**/*.java", "src/**/*.form"], allow_empty = True),
+  resources = [":analysis_resources"],
+  kotlinc_opts = ":custom_analysis",
   deps = [
     "@lib//:kotlin-stdlib",
     "@lib//:kotlinc-kotlin-compiler-common",
     "@lib//:kotlinc-analysis-api",
+    "//java/java-indexing-api:indexing",
+    "//platform/analysis-api:analysis",
+    "//platform/util/concurrency",
+    "//platform/core-api:core",
+    "//platform/editor-ui-api:editor-ui",
     "//platform/platform-impl:ide-impl",
     "@lib//:kotlinc-kotlin-scripting-common",
     "@lib//:kotlinc-kotlin-scripting-jvm",
@@ -34,31 +42,34 @@ jvm_library(
     "@lib//:kotlinc-kotlin-jps-common",
     "@lib//:kotlinc-analysis-api-platform-interface",
     "@lib//:kotlinx-coroutines-core",
-    "@lib//:guava",
-    "//plugins/kotlin/base/frontend-agnostic:kotlin-base-frontend-agnostic",
-    "//plugins/kotlin/base/util:kotlin-base-util",
-    "//plugins/kotlin/base/plugin:kotlin-base-plugin",
-    "//plugins/kotlin/base/psi:kotlin-base-psi",
+    "//libraries/guava",
+    "//platform/indexing-api:indexing",
+    "//jps/model-api:model",
+    "//platform/projectModel-api:projectModel",
+    "//platform/workspace/storage",
+    "//plugins/kotlin/base/frontend-agnostic",
+    "//plugins/kotlin/base/util",
+    "//plugins/kotlin/base/plugin",
+    "//plugins/kotlin/base/psi",
     "//platform/usageView",
-    "//plugins/kotlin/base/indices:kotlin-base-indices",
-    "//plugins/kotlin/base/platforms:kotlin-base-platforms",
-    "//plugins/kotlin/base/project-structure:kotlin-base-project-structure",
-    "//plugins/kotlin/base/compiler-configuration:kotlin-base-compiler-configuration",
-    "//plugins/kotlin/base/facet:kotlin-base-facet",
-    "//plugins/kotlin/base/scripting:kotlin-base-scripting",
+    "//plugins/kotlin/base/indices",
+    "//plugins/kotlin/base/platforms",
+    "//plugins/kotlin/base/project-structure",
+    "//plugins/kotlin/base/compiler-configuration",
+    "//plugins/kotlin/base/facet",
     "//plugins/kotlin/base/resources:kotlin-base-resources",
     "//platform/util/jdom",
     "//platform/util-class-loader:util-classLoader",
     "//platform/projectModel-impl",
     "//platform/analysis-impl",
-    "//platform/diff-impl",
     "//java/openapi:java",
     "//java/manifest",
     "//java/java-impl:impl",
     "//xml/xml-psi-impl:psi-impl",
     "//platform/workspace/jps",
     "//platform/backend/workspace",
-  ],
-  runtime_deps = [":kotlin-base-analysis_resources"]
+    "//java/java-analysis-api:analysis",
+    "//plugins/kotlin/base/scripting/scripting.shared",
+  ]
 )
-### auto-generated section `build kotlin.base.analysis` end
+### auto-generated section `build intellij.kotlin.base.analysis` end

@@ -19,12 +19,12 @@ import java.security.KeyManagementException;
 import java.security.NoSuchAlgorithmException;
 import java.security.cert.X509Certificate;
 import java.time.Duration;
+import java.util.Map;
 
 public final class ExternalAppUtil {
 
   private ExternalAppUtil() { }
 
-  @SuppressWarnings("UseOfSystemOutOrSystemErr")
   public static @NotNull Result sendIdeRequest(@NotNull String entryPoint, int idePort, @NotNull String handlerId, @Nullable String bodyContent) {
     try {
       // allow self-signed certificates of IDE
@@ -65,6 +65,10 @@ public final class ExternalAppUtil {
     }
   }
 
+  /**
+   * @deprecated use the version with ExternalAppEntry
+   */
+  @Deprecated(since = "2025.2", forRemoval = true)
   public static @NotNull String getEnv(@NotNull String env) {
     String value = System.getenv(env);
     if (value == null) {
@@ -73,41 +77,72 @@ public final class ExternalAppUtil {
     return value;
   }
 
+  public static @NotNull String getEnv(@NotNull String env, @NotNull Map<String, String> environment) {
+    String value = environment.get(env);
+    if (value == null) {
+      throw new IllegalStateException(env + " environment variable is not defined!");
+    }
+    return value;
+  }
+
+  /**
+   * @deprecated use the version with ExternalAppEntry
+   */
+  @Deprecated(since = "2025.2", forRemoval = true)
   public static int getEnvInt(@NotNull String env) {
     return Integer.parseInt(getEnv(env));
   }
 
-  @SuppressWarnings("UseOfSystemOutOrSystemErr")
+  public static int getEnvInt(@NotNull String env, @NotNull Map<String, String> environment) {
+    return Integer.parseInt(getEnv(env, environment));
+  }
+
+  /**
+   * @deprecated use the version with ExternalAppEntry
+   */
+  @Deprecated(since = "2025.2", forRemoval = true)
   public static void handleAskPassInvocation(@NotNull String handlerIdEnvName,
                                              @NotNull String idePortEnvName,
                                              @NotNull String entryPoint,
                                              String[] args) {
+    var exitCode = handleAskPassInvocation(handlerIdEnvName,
+                                           idePortEnvName,
+                                           entryPoint,
+                                           ExternalAppEntry.fromMain(args));
+    System.exit(exitCode);
+  }
+
+  public static int handleAskPassInvocation(@NotNull String handlerIdEnvName,
+                                             @NotNull String idePortEnvName,
+                                             @NotNull String entryPoint,
+                                             ExternalAppEntry entry) {
     try {
-      String handlerId = getEnv(handlerIdEnvName);
-      int idePort = getEnvInt(idePortEnvName);
+      var args = entry.getArgs();
+      String handlerId = getEnv(handlerIdEnvName, entry.getEnvironment());
+      int idePort = getEnvInt(idePortEnvName, entry.getEnvironment());
 
       String description = args.length > 0 ? args[0] : null;
 
       ExternalAppUtil.Result result = sendIdeRequest(entryPoint, idePort, handlerId, description);
 
       if (result.isError) {
-        System.err.println(result.getPresentableError());
-        System.exit(1);
+        entry.getStderr().println(result.getPresentableError());
+        return 1;
       }
 
       String passphrase = result.response;
       if (passphrase == null) {
-        System.err.println("Authentication request was cancelled");
-        System.exit(1); // dialog canceled
+        entry.getStderr().println("Authentication request was cancelled");
+        return 1; // dialog canceled
       }
 
-      System.out.println(passphrase);
-      System.exit(0);
+      entry.getStdout().println(passphrase);
+      return 0;
     }
     catch (Throwable t) {
-      System.err.println(t.getMessage());
-      t.printStackTrace(System.err);
-      System.exit(1);
+      entry.getStderr().println(t.getMessage());
+      t.printStackTrace(entry.getStderr());
+      return 1;
     }
   }
 

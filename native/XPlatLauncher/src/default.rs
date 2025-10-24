@@ -80,7 +80,7 @@ impl LaunchConfiguration for DefaultLaunchConfiguration {
         Ok(vm_options)
     }
 
-    fn get_properties_file(&self) -> Result<PathBuf> {
+    fn get_custom_properties_file(&self) -> Result<PathBuf> {
         let env_var_name = self.env_var_base_name.to_owned() + "_PROPERTIES";
         get_path_from_env_var(&env_var_name, false)
     }
@@ -418,7 +418,10 @@ fn find_ide_home(current_exe: &Path) -> Result<(PathBuf, PathBuf)> {
 
 fn traverse_parents(mut candidate: PathBuf) -> Result<Option<(PathBuf, PathBuf)>> {
     for _ in 0..IDE_HOME_LOOKUP_DEPTH {
-        candidate = candidate.parent_or_err()?;
+        candidate = match candidate.parent() {
+            Some(parent) => parent.to_path_buf(),
+            None => { break; }
+        };
         debug!("Probing for IDE home: {:?}", candidate);
         let product_info_path = candidate.join(PRODUCT_INFO_REL_PATH);
         if product_info_path.is_file() {

@@ -17,7 +17,6 @@ import org.jetbrains.kotlin.config.ExternalSystemRunTask
 import org.jetbrains.kotlin.idea.gradleTooling.KotlinPlatformContainerImpl
 import org.jetbrains.kotlin.idea.projectModel.KonanArtifactModel
 import org.jetbrains.kotlin.idea.projectModel.KotlinComponent
-import org.jetbrains.kotlin.idea.projectModel.KotlinPlatform
 import org.jetbrains.kotlin.idea.projectModel.KotlinPlatformContainer
 import org.jetbrains.kotlin.idea.util.CopyableDataNodeUserDataProperty
 import org.jetbrains.plugins.gradle.util.GradleConstants
@@ -45,10 +44,6 @@ class KotlinSourceSetInfo @PropertyMapping("kotlinComponent") constructor(val ko
     var gradleModuleId: String = ""
 
     var actualPlatforms: KotlinPlatformContainer = KotlinPlatformContainerImpl()
-
-    @Deprecated("Returns only single TargetPlatform", ReplaceWith("actualPlatforms.actualPlatforms"), DeprecationLevel.ERROR)
-    val platform: KotlinPlatform
-        get() = actualPlatforms.platforms.singleOrNull() ?: KotlinPlatform.COMMON
 
     @Transient
     var compilerArguments: CompilerArgumentsProvider? = null

@@ -9,18 +9,21 @@ import java.awt.Graphics2D
 import java.awt.geom.RoundRectangle2D
 import javax.swing.JComponent
 
+/** Floating toolbar appearing for selected and hovered cell in the top right corner of cell.*/
 @ApiStatus.Internal
-class JupyterCellActionsToolbar(  // PY-72283
+class JupyterCellActionsToolbar(
+  // PY-72283
   actionGroup: ActionGroup,
   target: JComponent,
   place: String = ActionPlaces.EDITOR_INLAY,
-) : JupyterAbstractAboveCellToolbar(actionGroup, target, place) {
+  actionsUpdatedCallback: () -> Unit,
+) : JupyterAbstractAboveCellToolbar(actionGroup, target, place, actionsUpdatedCallback) {
 
   init {
     background = EditorColorsManager.getInstance().globalScheme.defaultBackground
   }
 
-  override fun fillRect(g2: Graphics2D) {
+  override fun fillRect(g2d: Graphics2D) {
     val arcSize = getArcSize()
     val shape = RoundRectangle2D.Float(
       TOOLBAR_BORDER_THICKNESS / 2f, TOOLBAR_BORDER_THICKNESS / 2f,
@@ -28,8 +31,8 @@ class JupyterCellActionsToolbar(  // PY-72283
       arcSize.toFloat(), arcSize.toFloat()
     )
 
-    g2.clip(shape)
-    g2.fill(shape)
+    g2d.clip(shape)
+    g2d.fill(shape)
   }
 
   override fun getArcSize(): Int = JBUI.scale(8)

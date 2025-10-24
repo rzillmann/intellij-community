@@ -8,20 +8,18 @@ import com.intellij.openapi.editor.markup.GutterDraggableObject
 import com.intellij.openapi.editor.markup.GutterIconRenderer
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.NlsSafe
+import com.intellij.platform.debugger.impl.frontend.FrontendBreakpointRequestCounter.Companion.REQUEST_IS_NOT_NEEDED
+import com.intellij.platform.debugger.impl.rpc.*
 import com.intellij.platform.util.coroutines.childScope
 import com.intellij.pom.Navigatable
 import com.intellij.xdebugger.XExpression
 import com.intellij.xdebugger.XSourcePosition
 import com.intellij.xdebugger.breakpoints.SuspendPolicy
 import com.intellij.xdebugger.evaluation.XDebuggerEditorsProvider
-import com.intellij.xdebugger.impl.breakpoints.BreakpointGutterIconRenderer
-import com.intellij.xdebugger.impl.breakpoints.CustomizedBreakpointPresentation
+import com.intellij.xdebugger.impl.breakpoints.*
 import com.intellij.xdebugger.impl.breakpoints.XBreakpointBase.calculateIcon
-import com.intellij.xdebugger.impl.breakpoints.XBreakpointManagerProxy
-import com.intellij.xdebugger.impl.breakpoints.XBreakpointProxy
-import com.intellij.xdebugger.impl.breakpoints.XBreakpointTypeProxy
-import com.intellij.xdebugger.impl.breakpoints.XLineBreakpointTypeProxy
-import com.intellij.xdebugger.impl.rpc.*
+import com.intellij.xdebugger.impl.rpc.XBreakpointId
+import com.intellij.xdebugger.impl.rpc.sourcePosition
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -36,76 +34,137 @@ internal fun createXBreakpointProxy(
   parentCs: CoroutineScope,
   dto: XBreakpointDto,
   type: XBreakpointTypeProxy,
-  manager: XBreakpointManagerProxy,
-  onBreakpointChange: (XBreakpointProxy) -> Unit,
-): XBreakpointProxy {
+  manager: FrontendXBreakpointManager,
+): FrontendXBreakpointProxy {
   return if (type is XLineBreakpointTypeProxy) {
-    FrontendXLineBreakpointProxy(project, parentCs, dto, type, manager, onBreakpointChange)
+    FrontendXLineBreakpointProxy(project, parentCs, dto, type, manager)
   }
   else {
-    FrontendXBreakpointProxy(project, parentCs, dto, type, onBreakpointChange)
+    FrontendXBreakpointProxy(project, parentCs, dto, type, manager.breakpointRequestCounter)
   }
 }
 
 internal open class FrontendXBreakpointProxy(
   override val project: Project,
   parentCs: CoroutineScope,
-  private val dto: XBreakpointDto,
+  dto: XBreakpointDto,
   override val type: XBreakpointTypeProxy,
-  private val _onBreakpointChange: (XBreakpointProxy) -> Unit,
+  private val breakpointRequestCounter: FrontendBreakpointRequestCounter,
 ) : XBreakpointProxy {
   override val id: XBreakpointId = dto.id
 
   protected val cs = parentCs.childScope("FrontendXBreakpointProxy#$id")
 
-  protected val _state: MutableStateFlow<XBreakpointDtoState> = MutableStateFlow(dto.initialState)
+  /**
+   * Updates should be performed only via [updateStateIfNeeded].
+   */
+  private val _state: MutableStateFlow<XBreakpointDtoState> = MutableStateFlow(dto.initialState)
 
-  private val editorsProvider = dto.localEditorsProvider ?: createFrontendEditorsProvider()
+  private val editorsProvider = dto.editorsProviderDto?.let {
+    getEditorsProvider(cs, it, documentIdProvider = { frontendDocumentId, expression, position, mode ->
+      XBreakpointApi.getInstance().createDocument(frontendDocumentId, id, expression, position, mode)
+    })
+  }
+
+  protected val currentState: XBreakpointDtoState get() = _state.value
+
+  @Volatile
+  private var listener: (() -> Unit)? = null
+
+  /**
+   * Updates breakpoint state if needed.
+   * Returns requestId if state was updated, [REQUEST_IS_NOT_NEEDED] otherwise.
+   */
+  private fun <T> getRequestIdForStateUpdate(
+    newValue: T,
+    getter: (XBreakpointDtoState) -> T,
+    copy: (XBreakpointDtoState) -> XBreakpointDtoState,
+    forceRequestWithoutUpdate: Boolean,
+  ): Long {
+    var requestId: Long = REQUEST_IS_NOT_NEEDED
+    _state.update { old ->
+      if (!forceRequestWithoutUpdate && getter(old) == newValue) {
+        return REQUEST_IS_NOT_NEEDED
+      }
+      val newState = copy(old)
+      if (!forceRequestWithoutUpdate && newState == old) {
+        return REQUEST_IS_NOT_NEEDED
+      }
+      requestId = breakpointRequestCounter.increment()
+      newState.copy(requestId = requestId)
+    }
+    assert(requestId != REQUEST_IS_NOT_NEEDED)
+    return requestId
+  }
+
+  /**
+   * Updates the breakpoint state if needed and sends a request to the backend.
+   */
+  protected fun <T> updateStateIfNeeded(
+    newValue: T,
+    getter: (XBreakpointDtoState) -> T,
+    copy: (XBreakpointDtoState) -> XBreakpointDtoState,
+    afterStateChanged: () -> Unit = {},
+    forceRequestWithoutUpdate: Boolean = false,
+    sendRequest: suspend (Long) -> Unit,
+  ) {
+    val requestId = getRequestIdForStateUpdate(newValue, getter, copy, forceRequestWithoutUpdate)
+    if (requestId == REQUEST_IS_NOT_NEEDED) {
+      return
+    }
+    afterStateChanged()
+    onBreakpointChange()
+    project.service<FrontendXBreakpointProjectCoroutineService>().cs.launch {
+      sendRequest(requestId)
+    }
+  }
 
   init {
     cs.launch {
+      // To avoid races with the backend state updates, we only react to breakpoint state updates
+      // which have the latest requestId. Otherwise, we ignore the update.
       dto.state.toFlow().collectLatest {
-        _state.value = it
-        onBreakpointChange()
+        if (breakpointRequestCounter.isSuitableUpdate(it.requestId)) {
+          _state.value = it
+          onBreakpointChange()
+        }
       }
     }
   }
 
-  protected fun onBreakpointChange() {
-    _onBreakpointChange(this)
+  internal fun installListener(listener: () -> Unit) {
+    assert(this.listener == null) { "Listener is already installed" }
+    this.listener = listener
   }
 
-  private fun createFrontendEditorsProvider(): FrontendXDebuggerEditorsProvider? {
-    val fileTypeId = dto.editorsProviderFileTypeId ?: return null
-    return FrontendXDebuggerEditorsProvider(fileTypeId) { frontendDocumentId, expression, position, mode ->
-      XBreakpointApi.getInstance().createDocument(frontendDocumentId, id, expression, position, mode)
-    }
+  private fun onBreakpointChange() {
+    listener?.invoke()
   }
 
-  override fun getDisplayText(): String = _state.value.displayText
+  override fun getDisplayText(): String = currentState.displayText
 
   override fun getShortText(): @NlsSafe String {
-    return _state.value.shortText
+    return currentState.shortText
   }
 
-  internal fun currentState(): XBreakpointDtoState {
-    return _state.value
-  }
+  override fun getUserDescription(): String? = currentState.userDescription
 
-  override fun getUserDescription(): String? = _state.value.userDescription
-  
   override fun setUserDescription(description: String?) {
-    _state.update { it.copy(userDescription = description) }
-    onBreakpointChange()
-    project.service<FrontendXBreakpointProjectCoroutineService>().cs.launch {
-      XBreakpointApi.getInstance().setUserDescription(id, description)
+    updateStateIfNeeded(newValue = description,
+                        getter = { it.userDescription },
+                        copy = { it.copy(userDescription = description) }) { requestId ->
+      XBreakpointApi.getInstance().setUserDescription(id, requestId, description)
     }
   }
 
-  override fun getGroup(): String? = _state.value.group
+  override fun getGroup(): String? = currentState.group
 
   override fun setGroup(group: String?) {
-    // TODO IJPL-185322
+    updateStateIfNeeded(newValue = group,
+                        getter = { it.group },
+                        copy = { it.copy(group = group) }) { requestId ->
+      XBreakpointApi.getInstance().setGroup(id, requestId, group)
+    }
   }
 
   override fun getIcon(): Icon {
@@ -113,20 +172,17 @@ internal open class FrontendXBreakpointProxy(
     return calculateIcon(this)
   }
 
-  override fun isEnabled(): Boolean = _state.value.enabled
+  override fun isEnabled(): Boolean = currentState.enabled
 
   override fun setEnabled(enabled: Boolean) {
-    // TODO: there is a race in changes from server and client,
-    //  so we need to merge this state.
-    //  Otherwise, multiple clicks on the breakpoint in breakpoint dialog will work in a wrong way.
-    _state.update { it.copy(enabled = enabled) }
-    onBreakpointChange()
-    project.service<FrontendXBreakpointProjectCoroutineService>().cs.launch {
-      XBreakpointApi.getInstance().setEnabled(id, enabled)
+    updateStateIfNeeded(newValue = enabled,
+                        getter = { it.enabled },
+                        copy = { it.copy(enabled = enabled) }) { requestId ->
+      XBreakpointApi.getInstance().setEnabled(id, requestId, enabled)
     }
   }
 
-  override fun getSourcePosition(): XSourcePosition? = _state.value.sourcePosition?.sourcePosition()
+  override fun getSourcePosition(): XSourcePosition? = currentState.sourcePosition?.sourcePosition()
 
   override fun getNavigatable(): Navigatable? = getSourcePosition()?.createNavigatable(project)
 
@@ -134,62 +190,92 @@ internal open class FrontendXBreakpointProxy(
 
   override fun canNavigateToSource(): Boolean = getNavigatable()?.canNavigateToSource() ?: false
 
-  override fun isDefaultBreakpoint(): Boolean = _state.value.isDefault
+  override fun isDefaultBreakpoint(): Boolean = currentState.isDefault
 
-  override fun getSuspendPolicy(): SuspendPolicy = _state.value.suspendPolicy
+  override fun getSuspendPolicy(): SuspendPolicy = currentState.suspendPolicy
 
   override fun setSuspendPolicy(suspendPolicy: SuspendPolicy) {
-    // TODO: there is a race in changes from server and client,
-    //  so we need to merge this state.
-    //  Otherwise, multiple clicks on the breakpoint in breakpoint dialog will work in a wrong way.
-    _state.update { it.copy(suspendPolicy = suspendPolicy) }
-    onBreakpointChange()
-    project.service<FrontendXBreakpointProjectCoroutineService>().cs.launch {
-      XBreakpointApi.getInstance().setSuspendPolicy(id, suspendPolicy)
+    updateStateIfNeeded(newValue = suspendPolicy,
+                        getter = { it.suspendPolicy },
+                        copy = { it.copy(suspendPolicy = suspendPolicy) }) { requestId ->
+      XBreakpointApi.getInstance().setSuspendPolicy(id, requestId, suspendPolicy)
     }
   }
 
-  override fun getTimestamp(): Long = _state.value.timestamp
+  override fun getTimestamp(): Long = currentState.timestamp
 
-  override fun isLogMessage(): Boolean = _state.value.logMessage
+  override fun isLogMessage(): Boolean = currentState.logMessage
+  override fun isLogStack(): Boolean = currentState.logStack
+  override fun isLogExpressionEnabled(): Boolean = currentState.isLogExpressionEnabled
+  override fun getLogExpressionObjectInt(): XExpression? = currentState.logExpression?.xExpression()
 
-  override fun isLogStack(): Boolean = _state.value.logStack
+  override fun getLogExpressionObject(): XExpression? {
+    return if (isLogExpressionEnabled()) getLogExpressionObjectInt() else null
+  }
 
-  override fun isConditionEnabled(): Boolean {
-    return _state.value.isConditionEnabled
+  override fun setLogMessage(enabled: Boolean) {
+    updateStateIfNeeded(newValue = enabled,
+                        getter = { it.logMessage },
+                        copy = { it.copy(logMessage = enabled) }) { requestId ->
+      XBreakpointApi.getInstance().setLogMessage(id, requestId, enabled)
+    }
+  }
+
+  override fun setLogStack(enabled: Boolean) {
+    updateStateIfNeeded(newValue = enabled,
+                        getter = { it.logStack },
+                        copy = { it.copy(logStack = enabled) }) { requestId ->
+      XBreakpointApi.getInstance().setLogStack(id, requestId, enabled)
+    }
+  }
+
+  override fun setLogExpressionEnabled(enabled: Boolean) {
+    updateStateIfNeeded(newValue = enabled,
+                        getter = { it.isLogExpressionEnabled },
+                        copy = { it.copy(isLogExpressionEnabled = enabled) }) { requestId ->
+      XBreakpointApi.getInstance().setLogExpressionEnabled(id, requestId, enabled)
+    }
+  }
+
+  override fun setLogExpressionObject(logExpression: XExpression?) {
+    val logExpressionDto = logExpression?.toRpc()
+    updateStateIfNeeded(newValue = logExpressionDto,
+                        getter = { it.logExpression },
+                        copy = { it.copy(logExpression = logExpressionDto) }) { requestId ->
+      XBreakpointApi.getInstance().setLogExpressionObject(id, requestId, logExpressionDto)
+    }
+  }
+
+  override fun isConditionEnabled(): Boolean = currentState.isConditionEnabled
+  override fun getConditionExpressionInt(): XExpression? = currentState.conditionExpression?.xExpression()
+
+  override fun getConditionExpression(): XExpression? {
+    return if (isConditionEnabled()) getConditionExpressionInt() else null
   }
 
   override fun setConditionEnabled(enabled: Boolean) {
-    _state.update { it.copy(isConditionEnabled = enabled) }
-    onBreakpointChange()
-    project.service<FrontendXBreakpointProjectCoroutineService>().cs.launch {
-      XBreakpointApi.getInstance().setConditionEnabled(id, enabled)
+    updateStateIfNeeded(newValue = enabled,
+                        getter = { it.isConditionEnabled },
+                        copy = { it.copy(isConditionEnabled = enabled) }) { requestId ->
+      XBreakpointApi.getInstance().setConditionEnabled(id, requestId, enabled)
     }
   }
-
-  override fun getLogExpressionObject(): XExpression? = _state.value.logExpressionObject?.xExpression()
-
-  override fun getConditionExpression(): XExpression? = _state.value.conditionExpression?.xExpression()
 
   override fun setConditionExpression(condition: XExpression?) {
     val conditionDto = condition?.toRpc()
-    _state.update { it.copy(conditionExpression = conditionDto) }
-    onBreakpointChange()
-    project.service<FrontendXBreakpointProjectCoroutineService>().cs.launch {
-      XBreakpointApi.getInstance().setConditionExpression(id, conditionDto)
+    updateStateIfNeeded(newValue = conditionDto,
+                        getter = { it.conditionExpression },
+                        copy = { it.copy(conditionExpression = conditionDto) }) { requestId ->
+      XBreakpointApi.getInstance().setConditionExpression(id, requestId, conditionDto)
     }
   }
 
-  override fun getConditionExpressionInt(): XExpression? {
-    return _state.value.conditionExpressionInt?.xExpression()
-  }
-
   override fun getGeneralDescription(): String {
-    return _state.value.generalDescription
+    return currentState.generalDescription
   }
 
   override fun getTooltipDescription(): @NlsSafe String {
-    return _state.value.tooltipDescription
+    return currentState.tooltipDescription
   }
 
   override fun haveSameState(other: XBreakpointProxy, ignoreTimestamp: Boolean): Boolean {
@@ -197,53 +283,22 @@ internal open class FrontendXBreakpointProxy(
       return false
     }
 
-    // TODO: support timestamp
-    return currentState() == other.currentState()
-  }
+    val dependentBreakpointManager = FrontendXDebuggerManager.getInstance(project).breakpointsManager.dependentBreakpointManager
+    val otherState = other.currentState
 
-  override fun isLogExpressionEnabled(): Boolean {
-    return _state.value.isLogExpressionEnabled
-  }
-
-  override fun getLogExpression(): String? {
-    return _state.value.logExpression
-  }
-
-  override fun getLogExpressionObjectInt(): XExpression? {
-    return _state.value.logExpressionObjectInt?.xExpression()
-  }
-
-  override fun setLogMessage(enabled: Boolean) {
-    _state.update { it.copy(logMessage = enabled) }
-    onBreakpointChange()
-    project.service<FrontendXBreakpointProjectCoroutineService>().cs.launch {
-      XBreakpointApi.getInstance().setLogMessage(id, enabled)
-    }
-  }
-
-  override fun setLogStack(enabled: Boolean) {
-    _state.update { it.copy(logStack = enabled) }
-    onBreakpointChange()
-    project.service<FrontendXBreakpointProjectCoroutineService>().cs.launch {
-      XBreakpointApi.getInstance().setLogStack(id, enabled)
-    }
-  }
-
-  override fun setLogExpressionEnabled(enabled: Boolean) {
-    _state.update { it.copy(isLogExpressionEnabled = enabled) }
-    onBreakpointChange()
-    project.service<FrontendXBreakpointProjectCoroutineService>().cs.launch {
-      XBreakpointApi.getInstance().setLogExpressionEnabled(id, enabled)
-    }
-  }
-
-  override fun setLogExpressionObject(logExpression: XExpression?) {
-    val logExpressionDto = logExpression?.toRpc()
-    _state.update { it.copy(logExpressionObject = logExpressionDto) }
-    onBreakpointChange()
-    project.service<FrontendXBreakpointProjectCoroutineService>().cs.launch {
-      XBreakpointApi.getInstance().setLogExpressionObject(id, logExpressionDto)
-    }
+    // A lot of fields in [XBreakpointDtoState] should not be compared
+    return currentState.logMessage == otherState.logMessage &&
+           currentState.logStack == otherState.logStack &&
+           currentState.isLogExpressionEnabled == otherState.isLogExpressionEnabled &&
+           currentState.logExpression == otherState.logExpression &&
+           currentState.isConditionEnabled == otherState.isConditionEnabled &&
+           currentState.conditionExpression == otherState.conditionExpression &&
+           currentState.enabled == otherState.enabled &&
+           currentState.suspendPolicy == otherState.suspendPolicy &&
+           currentState.group == otherState.group &&
+           currentState.lineBreakpointInfo == otherState.lineBreakpointInfo &&
+           dependentBreakpointManager.getMasterBreakpoint(this) == dependentBreakpointManager.getMasterBreakpoint(other) &&
+           dependentBreakpointManager.isLeaveEnabled(this) == dependentBreakpointManager.isLeaveEnabled(other)
   }
 
   override fun getEditorsProvider(): XDebuggerEditorsProvider? {
@@ -252,12 +307,12 @@ internal open class FrontendXBreakpointProxy(
 
   override fun getCustomizedPresentation(): CustomizedBreakpointPresentation? {
     // TODO: let's convert it once on state change rather then on every getCustomizedPresentation call
-    return _state.value.customPresentation?.toPresentation()
+    return currentState.customPresentation?.toPresentation()
   }
 
   override fun getCustomizedPresentationForCurrentSession(): CustomizedBreakpointPresentation? {
     // TODO: let's convert it once on state change rather then on every getCustomizedPresentation call
-    return _state.value.currentSessionCustomPresentation?.toPresentation()
+    return currentState.currentSessionCustomPresentation?.toPresentation()
   }
 
   override fun isDisposed(): Boolean {
@@ -273,7 +328,6 @@ internal open class FrontendXBreakpointProxy(
   }
 
   override fun getGutterIconRenderer(): GutterIconRenderer? {
-    // TODO IJPL-185322
     return null
   }
 
@@ -288,6 +342,7 @@ internal open class FrontendXBreakpointProxy(
 
   override fun dispose() {
     cs.cancel()
+    listener = null
   }
 
   override fun createBreakpointDraggableObject(): GutterDraggableObject? {
@@ -300,7 +355,7 @@ internal open class FrontendXBreakpointProxy(
     }
     // TODO: do we need to pass XBreakpointType.getBreakpointComparator somehow?
     //  it always uses timestamps, so it seems like we can keep comparing by timestamps.
-    return getTimestamp().compareTo(other.getTimestamp())
+    return other.getTimestamp() compareTo this.getTimestamp()
   }
 
   override fun equals(other: Any?): Boolean {
@@ -314,6 +369,10 @@ internal open class FrontendXBreakpointProxy(
 
   override fun hashCode(): Int {
     return id.hashCode()
+  }
+
+  override fun toString(): String {
+    return this::class.simpleName + "(id=$id, type=${type.id})"
   }
 }
 

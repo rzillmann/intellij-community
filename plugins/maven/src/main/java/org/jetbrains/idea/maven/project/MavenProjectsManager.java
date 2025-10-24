@@ -662,22 +662,8 @@ public abstract class MavenProjectsManager extends MavenSimpleProjectComponent
   }
 
   public void updateProjectTargetFolders() {
-    ApplicationManager.getApplication().invokeLater(() -> {
       if (myProject.isDisposed()) return;
-
-      MavenProjectImporter.tryUpdateTargetFolders(myProject);
-      VirtualFileManager.getInstance().asyncRefresh();
-    });
-  }
-
-  /**
-   * @deprecated Use {@link #scheduleUpdateAllMavenProjects(MavenSyncSpec)}}
-   */
-  @Deprecated(forRemoval = true)
-  // used in third-party plugins
-  public List<Module> importProjects() {
-    scheduleUpdateAllMavenProjects(MavenSyncSpec.full("MavenProjectsManager.importProjects"));
-    return List.of();
+      MavenProjectImporter.scheduleUpdateTargetFolders(myProject);
   }
 
   @ApiStatus.Internal

@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 @file:Suppress("ReplacePutWithAssignment")
 
 package org.jetbrains.intellij.build
@@ -7,7 +7,12 @@ import com.intellij.openapi.util.io.FileUtil
 import io.opentelemetry.api.common.AttributeKey
 import io.opentelemetry.api.common.Attributes
 import io.opentelemetry.api.trace.Span
-import java.nio.file.*
+import java.nio.file.FileVisitResult
+import java.nio.file.Files
+import java.nio.file.LinkOption
+import java.nio.file.Path
+import java.nio.file.SimpleFileVisitor
+import java.nio.file.StandardCopyOption
 import java.nio.file.attribute.BasicFileAttributes
 import kotlin.io.path.invariantSeparatorsPathString
 
@@ -69,7 +74,7 @@ class FileSet(private val root: Path) {
     val usedExcludePatterns = HashSet<String>()
     val result = ArrayList<Path>()
     Files.walkFileTree(root, object : SimpleFileVisitor<Path>() {
-      override fun visitFile(file: Path, attrs: BasicFileAttributes?): FileVisitResult {
+      override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
         val relative = root.relativize(file)
 
         var included = false

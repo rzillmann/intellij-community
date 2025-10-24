@@ -11,8 +11,8 @@ import com.intellij.codeInspection.options.OptPane
 import com.intellij.codeInspection.options.OptPane.*
 import com.intellij.codeInspection.options.OptionController
 import com.intellij.java.JavaBundle
+import com.intellij.java.codeserver.core.JavaPreviewFeatureUtil
 import com.intellij.lang.Language
-import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.module.JdkApiCompatibilityService
 import com.intellij.openapi.module.LanguageLevelUtil
 import com.intellij.openapi.module.Module
@@ -36,12 +36,6 @@ private const val EFFECTIVE_LL = "effectiveLL"
  * <ol>
  *   <li>Generate apiXXX.txt by running [com.intellij.codeInspection.tests.JavaApiUsageGenerator#testCollectSinceApiUsages]</li>
  *   <li>Put the generated text file under community/java/java-analysis-api/src/com/intellij/openapi/module</li>
- *   <li>Add two new entries to the {@link com.intellij.openapi.module.LanguageLevelUtil.ourPresentableShortMessage}:
- *    <ul>
- *      <li>The First entry: The key is the most recent language level, the value is the second to the most recent language level.</li>
- *      <li>The Second entry: The key is the most recent preview language level, the value is the second to the most recent language level.</li>
- *    </ul>
- *   </li>
  * </ol>
  */
 class JavaApiUsageInspection : AbstractBaseUastLocalInspectionTool() {
@@ -142,7 +136,6 @@ class JavaApiUsageInspection : AbstractBaseUastLocalInspectionTool() {
         JdkApiCompatibilityService.getInstance().firstCompatibleLanguageLevel(overriddenMethod, languageLevel)
       }.minOrNull() ?: return
       val toHighlight = overrideAnnotation?.uastAnchor?.sourcePsi ?: method.uastAnchor?.sourcePsi ?: return
-      if (shouldReportSinceLevelForElement(firstCompatibleLanguageLevel, sourcePsi) == true) return
       registerError(toHighlight, firstCompatibleLanguageLevel, holder, isOnTheFly)
     }
   }
@@ -151,6 +144,19 @@ class JavaApiUsageInspection : AbstractBaseUastLocalInspectionTool() {
 
     private inline val ignored6ClassesApi get() = setOf("java.awt.geom.GeneralPath")
     private inline val generifiedClasses get() = setOf("javax.swing.JComboBox", "javax.swing.ListModel", "javax.swing.JList")
+
+    override fun processImportReference(sourceNode: UElement, target: PsiModifierListOwner) {
+      if (target !is PsiClass) return
+      var parent = sourceNode.uastParent ?: return
+      while (parent is UReferenceExpression) {
+        val uastParent = parent.uastParent
+        if (uastParent is UImportStatement || uastParent !is UReferenceExpression) break
+        parent = uastParent
+      }
+      if (sourceNode.uastParent == parent ||
+        sourceNode.textRange?.endOffset == parent.textRange?.endOffset) return
+      processReference(sourceNode, target, null)
+    }
 
     override fun processConstructorInvocation(
       sourceNode: UElement, instantiatedClass: PsiClass, constructor: PsiMethod?, subclassDeclaration: UClass?,
@@ -161,7 +167,6 @@ class JavaApiUsageInspection : AbstractBaseUastLocalInspectionTool() {
       val languageLevel = getEffectiveLanguageLevel(module)
       val firstCompatibleLanguageLevel = JdkApiCompatibilityService.getInstance()
                                            .firstCompatibleLanguageLevel(constructor, languageLevel) ?: return
-      if (shouldReportSinceLevelForElement(firstCompatibleLanguageLevel, sourcePsi) == true) return
       registerError(sourcePsi, firstCompatibleLanguageLevel, holder, isOnTheFly)
     }
 
@@ -169,21 +174,21 @@ class JavaApiUsageInspection : AbstractBaseUastLocalInspectionTool() {
       val sourcePsi = sourceNode.sourcePsi ?: return
       if (target !is PsiMember) return
       var languageLevel: LanguageLevel? = null
-      val module = ModuleUtilCore.findModuleForPsiElement(sourcePsi)
+      val file = sourcePsi.containingFile
+      val module = ModuleUtilCore.findModuleForPsiElement(file)
       if (module != null) {
         languageLevel = getEffectiveLanguageLevel(module)
         if (languageLevel.isUnsupported) {
           languageLevel = languageLevel.getNonPreviewLevel()
         }
       }
-      else if (sourcePsi.containingFile.virtualFile is LightVirtualFile) {
+      else if (file.virtualFile is LightVirtualFile) {
         //it is necessary for generated files (for example, check completions)
-        languageLevel = sourcePsi.containingFile.getUserData(PsiUtil.FILE_LANGUAGE_LEVEL_KEY)
+        languageLevel = file.getUserData(PsiUtil.FILE_LANGUAGE_LEVEL_KEY)
       }
       if (languageLevel == null) return
-      val firstCompatibleLanguageLevel = JdkApiCompatibilityService.getInstance().firstCompatibleLanguageLevel(target, languageLevel)
-      if (firstCompatibleLanguageLevel != null) {
-        if (shouldReportSinceLevelForElement(firstCompatibleLanguageLevel, sourcePsi) == true) return
+      val info = JdkApiCompatibilityService.getInstance().firstCompatibleLanguageLevelInfo(target, languageLevel)
+      if (info != null) {
         val psiClass = if (qualifier != null) {
           PsiUtil.resolveClassInType(qualifier.getExpressionType())
         }
@@ -196,7 +201,27 @@ class JavaApiUsageInspection : AbstractBaseUastLocalInspectionTool() {
             if (isIgnored(superClass)) return
           }
         }
-        registerError(sourcePsi, firstCompatibleLanguageLevel, holder, isOnTheFly)
+
+        var level = info.firstAppearLevel()
+        val outOfPreviewLevel = info.outOfPreviewLevel()
+        if (outOfPreviewLevel != null) {
+          val sdkLevel = JavaVersionService.getInstance().getJavaSdkVersion(file)?.maxLanguageLevel
+          if (sdkLevel != null && sdkLevel.isAtLeast(level) &&
+              (sdkLevel == languageLevel || languageLevel.isPreview)) {
+            // At current SDK level, the API is usable but in preview, so we should not report it
+            return
+          }
+          level = outOfPreviewLevel
+        }
+        if (sourcePsi is PsiJavaCodeReferenceElement) {
+          val previewFeatureUsage = JavaPreviewFeatureUtil.getPreviewFeatureUsage(sourcePsi, target)
+          val previewLevel = level.getPreviewLevel()
+          if (previewFeatureUsage != null && previewLevel != null) {
+            level = previewLevel
+          }
+        }
+
+        registerError(sourcePsi, level, holder, isOnTheFly)
       }
       else if (target is PsiClass && !languageLevel.isAtLeast(LanguageLevel.JDK_1_7)) {
         for (generifiedClass in generifiedClasses) {
@@ -229,17 +254,15 @@ class JavaApiUsageInspection : AbstractBaseUastLocalInspectionTool() {
     }
   }
 
-  /** Only runs in production because tests have incorrect SDKs when no mock SDK is available. */
-  private fun shouldReportSinceLevelForElement(lastIncompatibleLevel: LanguageLevel, context: PsiElement): Boolean? {
-    val jdkVersion = JavaVersionService.getInstance().getJavaSdkVersion(context) ?: return null
-    return lastIncompatibleLevel.isAtLeast(jdkVersion.maxLanguageLevel) && !ApplicationManager.getApplication().isUnitTestMode
-  }
-
   private fun registerError(reference: PsiElement, sinceLanguageLevel: LanguageLevel, holder: ProblemsHolder, isOnTheFly: Boolean) {
     if (reference.getUastParentOfType<UComment>() != null) return
-    val message = JvmAnalysisBundle.message(
-      "jvm.inspections.1.5.problem.descriptor", sinceLanguageLevel.toJavaVersion().toFeatureString()
-    )
+    val message = if (sinceLanguageLevel.isPreview) {
+      JvmAnalysisBundle.message("jvm.inspections.1.5.problem.descriptor.preview", sinceLanguageLevel.toJavaVersion().toFeatureString())
+    }
+    else {
+      JvmAnalysisBundle.message("jvm.inspections.1.5.problem.descriptor", sinceLanguageLevel.toJavaVersion().toFeatureString())
+    }
+
     val fix = if (isOnTheFly) {
       QuickFixFactory.getInstance().createIncreaseLanguageLevelFix(sinceLanguageLevel) as LocalQuickFix
     }

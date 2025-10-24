@@ -15,11 +15,10 @@ import com.intellij.platform.workspace.storage.VersionedStorageChange;
 import com.intellij.util.messages.MessageBusConnection;
 import com.intellij.workspaceModel.ide.impl.legacyBridge.module.ModuleEntityUtils;
 import com.jetbrains.python.packaging.PyPackageManager;
-import com.jetbrains.python.sdk.PythonSdkUtil;
+import com.jetbrains.python.sdk.legacy.PythonSdkUtil;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.List;
-
 
 public final class PythonModulePathCache extends PythonPathCache implements Disposable {
   public static PythonPathCache getInstance(Module module) {
@@ -49,7 +48,7 @@ public final class PythonModulePathCache extends PythonPathCache implements Disp
     updateCacheForSdk(module);
   }
 
-  private class WorkspaceListener implements WorkspaceModelChangeListener {
+  private final class WorkspaceListener implements WorkspaceModelChangeListener {
     private final Module myModule;
 
     WorkspaceListener(Module module) {

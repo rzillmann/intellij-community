@@ -24,8 +24,10 @@ import org.intellij.plugins.markdown.dto.MarkdownLinkNavigationData
 import org.intellij.plugins.markdown.lang.index.HeaderAnchorIndex
 import org.intellij.plugins.markdown.mapper.MarkdownHeaderMapper
 import org.intellij.plugins.markdown.service.MarkdownLinkOpenerRemoteApi
+import java.io.IOException
 import java.net.URI
 import java.net.URISyntaxException
+import java.nio.file.InvalidPathException
 import java.nio.file.Path
 
 internal class MarkdownLinkOpenerRemoteApiImpl : MarkdownLinkOpenerRemoteApi {
@@ -69,12 +71,19 @@ internal class MarkdownLinkOpenerRemoteApiImpl : MarkdownLinkOpenerRemoteApi {
   }
 
   override suspend fun fetchLinkNavigationData(link: String, virtualFileId: VirtualFileId?): MarkdownLinkNavigationData {
-    val file = resolveLinkAsFile(link, virtualFileId)?: return MarkdownLinkNavigationData(link, null, null, null)
+    val file = resolveLinkAsFile(link, virtualFileId)
+               ?: return MarkdownLinkNavigationData(link, null, null, null)
+
     var path = file.url
+    val project = guessProjectForFile(file)
+                  ?: return MarkdownLinkNavigationData(path, file.rpcId(), null, null)
+
     val anchor = extractAnchor(link)
-    if (!anchor.isEmpty()) path += "#$anchor"
-    val project = guessProjectForFile(file)?: return MarkdownLinkNavigationData(path, file.rpcId(), null, null)
-    if (anchor.isEmpty()) return MarkdownLinkNavigationData(path, file.rpcId(), project.projectId(), null)
+    if (anchor.isEmpty()) {
+      return MarkdownLinkNavigationData(path, file.rpcId(), project.projectId(), null)
+    }
+
+    path += "#$anchor"
     val headers = collectHeaders(anchor, file, project)
     return MarkdownLinkNavigationData(path, file.rpcId(), project.projectId(), headers)
   }
@@ -87,8 +96,15 @@ internal class MarkdownLinkOpenerRemoteApiImpl : MarkdownLinkOpenerRemoteApi {
       }
     }
     val containingFile = virtualFileId?.virtualFile()?.parent ?: return null
-    val targetFile = containingFile.findFile(link.trimAnchor()) ?: return null
-    return targetFile
+    return try {
+      containingFile.findFile(link.trimAnchor())
+    }
+    catch (_: IOException) {
+      null
+    }
+    catch (_: InvalidPathException) {
+      null
+    }
   }
 
   private fun collectHeaders(anchor: String, targetFile: VirtualFile, project: Project): List<MarkdownHeaderInfo>? {

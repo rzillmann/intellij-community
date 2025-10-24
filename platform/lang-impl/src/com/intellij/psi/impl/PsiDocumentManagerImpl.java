@@ -1,29 +1,23 @@
 // Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.psi.impl;
 
-import com.intellij.codeInsight.multiverse.CodeInsightContexts;
 import com.intellij.ide.IdeEventQueue;
 import com.intellij.injected.editor.DocumentWindow;
 import com.intellij.lang.ASTNode;
 import com.intellij.lang.injection.InjectedLanguageManager;
 import com.intellij.openapi.application.ApplicationManager;
-import com.intellij.openapi.application.ReadAction;
+import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.editor.EditorFactory;
-import com.intellij.openapi.editor.event.DocumentEvent;
 import com.intellij.openapi.editor.impl.event.EditorEventMulticasterImpl;
 import com.intellij.openapi.fileEditor.FileDocumentManager;
-import com.intellij.openapi.fileEditor.FileDocumentManagerListener;
-import com.intellij.openapi.fileEditor.impl.FileDocumentManagerImpl;
 import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.project.ProjectLocator;
-import com.intellij.openapi.project.ex.ProjectEx;
 import com.intellij.openapi.util.Segment;
 import com.intellij.openapi.util.TextRange;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vfs.VirtualFile;
-import com.intellij.pom.core.impl.PomModelImpl;
 import com.intellij.psi.FileViewProvider;
 import com.intellij.psi.PsiFile;
 import com.intellij.psi.impl.source.PostprocessReformattingAspect;
@@ -42,24 +36,12 @@ import java.util.*;
 
 //todo listen & notifyListeners readonly events?
 public final class PsiDocumentManagerImpl extends PsiDocumentManagerBase {
-  private final boolean myUnitTestMode = ApplicationManager.getApplication().isUnitTestMode();
-
   public PsiDocumentManagerImpl(@NotNull Project project) {
     super(project);
 
     EditorFactory editorFactory = EditorFactory.getInstance();
     editorFactory.getEventMulticaster().addDocumentListener(this, this);
     ((EditorEventMulticasterImpl)editorFactory.getEventMulticaster()).addPrioritizedDocumentListener(new PriorityEventCollector(), this);
-    project.getMessageBus().connect(this).subscribe(FileDocumentManagerListener.TOPIC, new FileDocumentManagerListener() {
-      @Override
-      public void fileContentLoaded(final @NotNull VirtualFile virtualFile, @NotNull Document document) {
-        PsiFile psiFile = ReadAction.compute(() -> {
-          // todo IJPL-339 figure out which psi file to pass here or get rid of psi file at all
-          return myProject.isDisposed() || !virtualFile.isValid() ? null : getCachedPsiFile(virtualFile, CodeInsightContexts.anyContext());
-        });
-        fireDocumentCreated(document, psiFile);
-      }
-    });
   }
 
   @Override
@@ -83,47 +65,15 @@ public final class PsiDocumentManagerImpl extends PsiDocumentManagerBase {
                             // and use DefaultProjectFactory.getDefaultProject() because why bother
                             || myProject.isDefault();
       if (!isMyProject) {
-        LOG.error("Trying to get PSI for a file that is not included in the project model of this project.\n" +
-                  "virtualFile=" + virtualFile + ";\n" +
-                  "project=" + myProject + " (" + myProject.getBasePath() + ");\n" +
-                  "The file actually belongs to\n  " + StringUtil.join(projects, p -> p + " (" + p.getBasePath() + ")", "\n  ") + "\n" +
-                  "Note:\n" +
-                  "This error happens if ProjectLocatorImpl#isUnder(project, file) returns false, which means that the file is not included\n" +
-                  "in the project model of the project. And usually, projects should not touch such files.\n" +
-                  "Feel free to reach out to IntelliJ Code Platform team if you have questions or concerns.");
-      }
-    }
-  }
-
-  @Override
-  public void documentChanged(@NotNull DocumentEvent event) {
-    super.documentChanged(event);
-    // optimisation: avoid documents piling up during batch processing
-    if (isUncommited(event.getDocument()) && FileDocumentManagerImpl.areTooManyDocumentsInTheQueue(myUncommittedDocuments)) {
-      if (myUnitTestMode) {
-        myStopTrackingDocuments = true;
-        try {
-          //noinspection TestOnlyProblems
-          LOG.error("Too many uncommitted documents for " + myProject + "(" +myUncommittedDocuments.size()+")"+
-                    ":\n" + StringUtil.join(myUncommittedDocuments, "\n") +
-                    (myProject instanceof ProjectEx ? "\n\n Project creation trace: " + ((ProjectEx)myProject).getCreationTrace() : ""));
-        }
-        finally {
-          //noinspection TestOnlyProblems
-          clearUncommittedDocuments();
-        }
-      }
-      // must not commit during document save
-      if (PomModelImpl.isAllowPsiModification()
-          // it can happen that document(forUseInNonAWTThread=true) outside write action caused this
-          && ApplicationManager.getApplication().isWriteAccessAllowed()) {
-        // commit one document to avoid OOME
-        for (Document document : myUncommittedDocuments) {
-          if (document != event.getDocument()) {
-            commitDocument(document);
-            break;
-          }
-        }
+        Logger.getInstance(getClass()).error(
+          "Trying to get PSI for a file that is not included in the project model of this project.\n" +
+          "virtualFile=" + virtualFile + ";\n" +
+          "project=" + myProject + " (" + myProject.getBasePath() + ");\n" +
+          "The file actually belongs to\n  " + StringUtil.join(projects, p -> p + " (" + p.getBasePath() + ")", "\n  ") + "\n" +
+          "Note:\n" +
+          "This error happens if ProjectLocatorImpl#isUnder(project, file) returns false, which means that the file is not included\n" +
+          "in the project model of the project. And usually, projects should not touch such files.\n" +
+          "Feel free to reach out to IntelliJ Code Platform team if you have questions or concerns.");
       }
     }
   }
@@ -152,8 +102,8 @@ public final class PsiDocumentManagerImpl extends PsiDocumentManagerBase {
   }
 
   @Override
-  public boolean isDocumentBlockedByPsi(@NotNull Document doc) {
-    final List<FileViewProvider> viewProviders = getCachedViewProviders(doc);
+  public boolean isDocumentBlockedByPsi(@NotNull Document document) {
+    final List<FileViewProvider> viewProviders = getCachedViewProviders(document);
     if (viewProviders.isEmpty()) return false;
 
     PostprocessReformattingAspect aspect = PostprocessReformattingAspect.getInstance(myProject);
@@ -167,24 +117,24 @@ public final class PsiDocumentManagerImpl extends PsiDocumentManagerBase {
   }
 
   @Override
-  public void doPostponedOperationsAndUnblockDocument(@NotNull Document doc) {
+  public void doPostponedOperationsAndUnblockDocument(@NotNull Document document) {
     PostprocessReformattingAspect component = PostprocessReformattingAspect.getInstance(myProject);
     if (component == null) return;
 
     List<FileViewProvider> viewProviders;
-    if (doc instanceof DocumentWindow) {
+    if (document instanceof DocumentWindow) {
       // todo IJPL-339 implement it
-      Document topDoc = ((DocumentWindow)doc).getDelegate();
+      Document topDoc = ((DocumentWindow)document).getDelegate();
       List<FileViewProvider> topViewProviders = getCachedViewProviders(topDoc);
       if (ContainerUtil.exists(topViewProviders, topViewProvider -> InjectionUtils.shouldFormatOnlyInjectedCode(topViewProvider))) { // todo is it correct?
-        viewProviders = getCachedViewProviders(doc);
+        viewProviders = getCachedViewProviders(document);
       }
       else {
         viewProviders = topViewProviders;
       }
     }
     else {
-      viewProviders = getCachedViewProviders(doc);
+      viewProviders = getCachedViewProviders(document);
     }
 
     // todo IJPL-339 is it correct?

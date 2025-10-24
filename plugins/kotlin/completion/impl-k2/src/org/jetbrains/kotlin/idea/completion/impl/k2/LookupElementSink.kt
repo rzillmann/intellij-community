@@ -8,10 +8,12 @@ import com.intellij.codeInsight.lookup.LookupElementDecorator
 import com.intellij.openapi.editor.Document
 import com.intellij.patterns.ElementPattern
 import com.intellij.psi.util.elementType
+import kotlinx.serialization.Serializable
 import org.jetbrains.kotlin.idea.base.codeInsight.contributorClass
-import org.jetbrains.kotlin.idea.base.codeInsight.duration
 import org.jetbrains.kotlin.idea.base.psi.dropCurlyBracketsIfPossible
 import org.jetbrains.kotlin.idea.completion.KotlinFirCompletionParameters
+import org.jetbrains.kotlin.idea.completion.impl.k2.contributors.ChainCompletionContributor
+import org.jetbrains.kotlin.idea.completion.api.serialization.SerializableInsertHandler
 import org.jetbrains.kotlin.idea.completion.impl.k2.contributors.FirCompletionContributor
 import org.jetbrains.kotlin.idea.completion.implCommon.handlers.CompletionCharInsertHandler
 import org.jetbrains.kotlin.idea.completion.implCommon.stringTemplates.InsertStringTemplateBracesInsertHandler
@@ -23,33 +25,48 @@ import org.jetbrains.kotlin.psi.KtBlockStringTemplateEntry
 import org.jetbrains.kotlin.psi.KtNameReferenceExpression
 import org.jetbrains.kotlin.psi.KtSimpleNameStringTemplateEntry
 import org.jetbrains.kotlin.psi.KtStringTemplateEntryWithExpression
-import kotlin.time.Duration
+import java.util.concurrent.atomic.AtomicInteger
 
 internal class LookupElementSink(
     private val resultSet: CompletionResultSet,
-    private val parameters: KotlinFirCompletionParameters,
+    internal val parameters: KotlinFirCompletionParameters,
     private val groupPriority: Int = 0,
     private val contributorClass: Class<FirCompletionContributor<*>>? = null,
+    private val addedElementCounter: AtomicInteger = AtomicInteger(0),
+    internal val registerChainContributor: (ChainCompletionContributor) -> Unit,
 ) {
-
-    var duration: Duration = Duration.ZERO
-        private set
 
     val prefixMatcher: PrefixMatcher
         get() = resultSet.prefixMatcher
 
+    val addedElementCount: Int
+        get() = addedElementCounter.get()
+
     fun withPriority(groupPriority: Int): LookupElementSink =
-        LookupElementSink(resultSet, parameters, groupPriority, contributorClass)
+        LookupElementSink(resultSet, parameters, groupPriority, contributorClass, addedElementCounter, registerChainContributor)
 
     fun withContributorClass(contributorClass: Class<FirCompletionContributor<*>>): LookupElementSink =
-        LookupElementSink(resultSet, parameters, groupPriority, contributorClass)
+        LookupElementSink(resultSet, parameters, groupPriority, contributorClass, addedElementCounter, registerChainContributor)
+
+    fun passResult(result: CompletionResult) {
+        resultSet.passResult(result)
+    }
 
     fun addElement(element: LookupElement) {
-        resultSet.addElement(decorateLookupElement(element))
+        decorateLookupElement(element).let {
+            addedElementCounter.incrementAndGet()
+            resultSet.addElement(it)
+        }
     }
 
     fun addAllElements(elements: Iterable<LookupElement>) {
-        resultSet.addAllElements(elements.map(::decorateLookupElement))
+        val decoratedElements = elements.asSequence()
+            .map {
+                addedElementCounter.incrementAndGet()
+                decorateLookupElement(it)
+            }
+            .asIterable()
+        resultSet.addAllElements(decoratedElements)
     }
 
     fun restartCompletionOnPrefixChange(prefixCondition: ElementPattern<String>) {
@@ -66,8 +83,6 @@ internal class LookupElementSink(
     private fun decorateLookupElement(
         element: LookupElement,
     ): LookupElementDecorator<LookupElement> {
-        duration += element.duration
-
         element.groupPriority = groupPriority
         element.contributorClass = contributorClass
 
@@ -82,12 +97,13 @@ internal class LookupElementSink(
 
         return LookupElementDecorator.withDelegateInsertHandler(
             LookupElementDecorator.withDelegateInsertHandler(element, bracesInsertHandler),
-            CompletionCharInsertHandler(parameters.delegate),
+            CompletionCharInsertHandler(parameters.delegate.isAutoPopup),
         )
     }
 }
 
-private object WrapSingleStringTemplateEntryWithBracesInsertHandler : InsertHandler<LookupElement> {
+@Serializable
+internal object WrapSingleStringTemplateEntryWithBracesInsertHandler : SerializableInsertHandler {
 
     override fun handleInsert(
         context: InsertionContext,

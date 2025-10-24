@@ -6,7 +6,6 @@ import com.intellij.openapi.application.EDT
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.extensions.ExtensionPointName
 import com.intellij.openapi.externalSystem.model.ProjectSystemId
-import com.intellij.openapi.progress.blockingContext
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
 import kotlinx.coroutines.Dispatchers
@@ -25,23 +24,19 @@ interface ExternalSystemUnlinkedProjectAware {
 
   fun isLinkedProject(project: Project, externalProjectPath: String): Boolean
 
-  @Deprecated("use async method instead")
+  @Deprecated("use async method instead", level = DeprecationLevel.ERROR)
   fun linkAndLoadProject(project: Project, externalProjectPath: String) {
     throw UnsupportedOperationException()
   }
 
   suspend fun linkAndLoadProjectAsync(project: Project, externalProjectPath: String) {
     withContext(Dispatchers.EDT) {
-      blockingContext {
-        @Suppress("DEPRECATION")
-        linkAndLoadProject(project, externalProjectPath)
-      }
+      @Suppress("DEPRECATION_ERROR")
+      linkAndLoadProject(project, externalProjectPath)
     }
   }
 
-  suspend fun unlinkProject(project: Project, externalProjectPath: String) {
-    throw UnsupportedOperationException("'unlinkProject' method in ${this::class.qualifiedName} is not implemented")
-  }
+  suspend fun unlinkProject(project: Project, externalProjectPath: String)
 
   fun subscribe(project: Project, listener: ExternalSystemProjectLinkListener, parentDisposable: Disposable)
 

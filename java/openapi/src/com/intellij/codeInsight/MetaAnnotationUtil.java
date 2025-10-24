@@ -74,8 +74,8 @@ public abstract class MetaAnnotationUtil {
   }
 
   private static @NotNull @Unmodifiable Collection<PsiClass> findAnnotationClasses(@NotNull Module module,
-                                                                     @NotNull String qualifiedName,
-                                                                     boolean includeTests) {
+                                                                                   @NotNull String qualifiedName,
+                                                                                   boolean includeTests) {
     PsiClass annotationClass = JavaPsiFacade.getInstance(module.getProject())
       .findClass(qualifiedName, GlobalSearchScope.moduleWithDependenciesAndLibrariesScope(module));
     if (annotationClass == null || !annotationClass.isAnnotationType()) {
@@ -198,7 +198,7 @@ public abstract class MetaAnnotationUtil {
   }
 
   private static @NotNull @Unmodifiable Collection<PsiClass> findAnnotationTypesWithChildren(Collection<PsiClass> annotationClasses,
-                                                                               GlobalSearchScope scope) {
+                                                                                             GlobalSearchScope scope) {
     if (scope == GlobalSearchScope.EMPTY_SCOPE) return annotationClasses;
 
     Set<PsiClass> classes = CollectionFactory.createCustomHashingStrategySet(HASHING_STRATEGY);
@@ -308,17 +308,32 @@ public abstract class MetaAnnotationUtil {
     @NotNull PsiModifierListOwner listOwner,
     @NotNull Collection<String> annotations
   ) {
+    return findMetaAnnotationsInHierarchy(listOwner, annotations, new HashSet<>());
+  }
+
+  private static Stream<PsiAnnotation> findMetaAnnotationsInHierarchy(
+    @NotNull PsiModifierListOwner listOwner,
+    @NotNull Collection<String> annotations,
+    @NotNull Set<PsiModifierListOwner> visited
+  ) {
+    if (!visited.add(listOwner)) return Stream.empty();
     Stream<PsiAnnotation> stream = findMetaAnnotations(listOwner, annotations);
     if (listOwner instanceof PsiClass) {
       for (PsiClass superClass : ((PsiClass)listOwner).getSupers()) {
-        stream = Stream.concat(stream, findMetaAnnotationsInHierarchy(superClass, annotations));
+        stream = Stream.concat(stream, findMetaAnnotationsInHierarchy(superClass, annotations, visited));
       }
     }
     else if (listOwner instanceof PsiMethod) {
       for (PsiMethod method : ((PsiMethod)listOwner).findSuperMethods()) {
-        stream = Stream.concat(stream, findMetaAnnotationsInHierarchy(method, annotations));
+        stream = Stream.concat(stream, findMetaAnnotationsInHierarchy(method, annotations, visited));
       }
     }
+
+    List<PsiClass> resolvedAnnotations = getResolvedClassesInAnnotationsList(listOwner);
+    for (PsiClass annotationClass : resolvedAnnotations) {
+      stream = Stream.concat(stream, findMetaAnnotationsInHierarchy(annotationClass, annotations, visited));
+    }
+
     return stream;
   }
 
@@ -335,23 +350,23 @@ public abstract class MetaAnnotationUtil {
     stack.push(aClass);
 
     while (!stack.isEmpty()) {
-        PsiClass currentClass = stack.pop();
-        
-        PsiAnnotation directAnnotation = AnnotationUtil.findAnnotation(currentClass, true, annotation);
-        if (directAnnotation != null) {
-            return directAnnotation;
-        }
+      PsiClass currentClass = stack.pop();
 
-        List<PsiClass> resolvedAnnotations = getResolvedClassesInAnnotationsList(currentClass);
-        for (PsiClass resolvedAnnotation : resolvedAnnotations) {
-            if (visited.add(resolvedAnnotation)) {
-                stack.push(resolvedAnnotation);
-            }
+      PsiAnnotation directAnnotation = AnnotationUtil.findAnnotation(currentClass, true, annotation);
+      if (directAnnotation != null) {
+        return directAnnotation;
+      }
+
+      List<PsiClass> resolvedAnnotations = getResolvedClassesInAnnotationsList(currentClass);
+      for (PsiClass resolvedAnnotation : resolvedAnnotations) {
+        if (visited.add(resolvedAnnotation)) {
+          stack.push(resolvedAnnotation);
         }
+      }
     }
 
     return null;
-}
+  }
 
   public static @NotNull Stream<PsiAnnotation> findMetaAnnotations(@NotNull PsiModifierListOwner listOwner,
                                                                    @NotNull Collection<String> annotations) {

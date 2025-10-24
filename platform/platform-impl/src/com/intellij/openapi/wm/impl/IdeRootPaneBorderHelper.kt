@@ -1,12 +1,12 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.openapi.wm.impl
 
 import com.intellij.ide.ui.LafManagerListener
 import com.intellij.ide.ui.UISettings
 import com.intellij.ide.ui.UISettingsListener
 import com.intellij.openapi.application.Application
-import com.intellij.openapi.util.SystemInfoRt
 import com.intellij.openapi.wm.impl.customFrameDecorations.header.CustomWindowHeaderUtil
+import com.intellij.util.system.OS
 import com.intellij.util.ui.JBUI
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.job
@@ -29,23 +29,23 @@ internal object IdeRootPaneBorderHelper {
    * Relies on [IdeFrameDecorator.FULL_SCREEN] in [rootPane] to acquire and listen to fullscreen state
    * [frameDecorator] is passed mainly to convey that fact and avoid adding a listener if the state never changes
    */
-  fun install(application: Application, cs: CoroutineScope, frame: JFrame, frameDecorator: IdeFrameDecorator?, rootPane: JRootPane) {
-    if (SystemInfoRt.isXWindow) {
-      installLinux(application, cs, frame, frameDecorator, rootPane)
+  fun install(app: Application, coroutineScope: CoroutineScope, frame: JFrame, frameDecorator: IdeFrameDecorator?, rootPane: JRootPane) {
+    if (OS.isGenericUnix()) {
+      installLinuxBorder(app, coroutineScope, frame, frameDecorator, rootPane)
     }
     else {
       rootPane.border = UIManager.getBorder("Window.border")
     }
   }
 
-  private fun installLinux(
+  private fun installLinuxBorder(
     application: Application,
     cs: CoroutineScope,
     frame: JFrame,
     frameDecorator: IdeFrameDecorator?,
     rootPane: JRootPane,
   ) {
-    val fullScreen = AtomicReference<Boolean>(frameDecorator?.isInFullScreen == true)
+    val fullScreen = AtomicReference(frameDecorator?.isInFullScreen == true)
     application.messageBus.connect(cs).subscribe(LafManagerListener.TOPIC, LafManagerListener {
       if (rootPane.windowDecorationStyle == NONE) {
         installLinuxBorder(rootPane, UISettings.getInstance(), fullScreen.get(), frame.extendedState)
@@ -75,10 +75,8 @@ internal object IdeRootPaneBorderHelper {
   }
 
   private fun installLinuxBorder(rootPane: JRootPane, uiSettings: UISettings, isFullScreen: Boolean, frameState: Int) {
-    if (SystemInfoRt.isXWindow) {
-      val maximized = frameState and Frame.MAXIMIZED_BOTH == Frame.MAXIMIZED_BOTH
-      val undecorated = !isFullScreen && !maximized && CustomWindowHeaderUtil.hideNativeLinuxTitle(uiSettings)
-      rootPane.border = JBUI.CurrentTheme.Window.getBorder(undecorated)
-    }
+    val maximized = frameState and Frame.MAXIMIZED_BOTH == Frame.MAXIMIZED_BOTH
+    val undecorated = !isFullScreen && !maximized && CustomWindowHeaderUtil.hideNativeLinuxTitle(uiSettings)
+    rootPane.border = JBUI.CurrentTheme.Window.getBorder(undecorated)
   }
 }

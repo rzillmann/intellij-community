@@ -18,6 +18,7 @@ import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.pom.java.LanguageLevel;
+import com.intellij.testFramework.common.BazelTestUtil;
 import com.intellij.testFramework.fixtures.MavenDependencyUtil;
 import com.intellij.util.ArrayUtilRt;
 import com.intellij.util.PathUtil;
@@ -56,15 +57,20 @@ public final class IdeaTestUtil {
 
     final LanguageLevel projectLevel = projectExt.getLanguageLevel();
     final LanguageLevel moduleLevel = LanguageLevelUtil.getCustomLanguageLevel(module);
+    final Application application = ApplicationManager.getApplication();
     try {
-      projectExt.setLanguageLevel(level);
+      application.invokeAndWait(() -> {
+        application.runWriteAction(() -> projectExt.setLanguageLevel(level));
+      });
       setModuleLanguageLevel(module, level);
       IndexingTestUtil.waitUntilIndexesAreReady(module.getProject());
       r.run();
     }
     finally {
       setModuleLanguageLevel(module, moduleLevel);
-      projectExt.setLanguageLevel(projectLevel);
+      application.invokeAndWait(() -> {
+        application.runWriteAction(() -> projectExt.setLanguageLevel(projectLevel));
+      });
       IndexingTestUtil.waitUntilIndexesAreReady(module.getProject());
     }
   }
@@ -79,7 +85,10 @@ public final class IdeaTestUtil {
   public static LanguageLevel setProjectLanguageLevel(@NotNull Project project, @NotNull LanguageLevel level) {
     LanguageLevelProjectExtension projectExt = LanguageLevelProjectExtension.getInstance(project);
     LanguageLevel oldLevel = projectExt.getLanguageLevel();
-    projectExt.setLanguageLevel(level);
+    Application application = ApplicationManager.getApplication();
+    application.invokeAndWait(() -> {
+      application.runWriteAction(() -> projectExt.setLanguageLevel(level));
+    });
     IndexingTestUtil.waitUntilIndexesAreReady(project);
     return oldLevel;
   }
@@ -99,7 +108,8 @@ public final class IdeaTestUtil {
   }
 
   public static @NotNull Sdk getMockJdk(@NotNull JavaVersion version) {
-    int mockJdk = version.feature >= 21 ? 21 :
+    int mockJdk = version.feature >= 25 ? 25 :
+                  version.feature >= 21 ? 21 :
                   version.feature >= 11 ? 11 :
                   version.feature >= 9 ? 9 :
                   version.feature >= 7 ? version.feature :
@@ -119,7 +129,7 @@ public final class IdeaTestUtil {
 
   private static Sdk createMockJdkFromRepository(String name, int version) {
     List<RemoteRepositoryDescription> repos = MavenDependencyUtil.getRemoteRepositoryDescriptions();
-    String coordinates = "org.jetbrains.mockjdk:"+ MOCK_JDK_GROUP_ID + ":" + version + ".0";
+    String coordinates = "org.jetbrains.mockjdk:" + MOCK_JDK_GROUP_ID + ":" + version + ".0.0";
     RepositoryLibraryProperties libraryProperties = new RepositoryLibraryProperties(coordinates, false);
     Collection<OrderRoot> roots =
       JarRepositoryManager.loadDependenciesModal(ProjectManager.getInstance().getDefaultProject(), libraryProperties, false, false, null,
@@ -211,27 +221,27 @@ public final class IdeaTestUtil {
     return createMockJdk(name, path, null);
   }
 
-  // it's JDK 1.4, not 14
+  /// It's JDK 1.4, not 14.
   public static @NotNull Sdk getMockJdk14() {
     return getMockJdk(JavaVersion.compose(4));
   }
 
-  // it's JDK 1.6, not 16
+  /// It's JDK 1.6, not 16.
   public static @NotNull Sdk getMockJdk16() {
     return getMockJdk(JavaVersion.compose(6));
   }
 
-  // it's JDK 1.7, not 17
+  /// It's JDK 1.7, not 17.
   public static @NotNull Sdk getMockJdk17() {
     return getMockJdk(JavaVersion.compose(7));
   }
 
-  // it's JDK 1.7, not 17
+  /// It's JDK 1.7, not 17.
   public static @NotNull Sdk getMockJdk17(@NotNull String name) {
     return createMockJdk(name, getMockJdk17Path().getPath());
   }
 
-  // it's JDK 1.8, not 18
+  /// It's JDK 1.8, not 18.
   public static @NotNull Sdk getMockJdk18() {
     return getMockJdk(JavaVersion.compose(8));
   }
@@ -266,6 +276,11 @@ public final class IdeaTestUtil {
   }
 
   private static @NotNull File getPathForJdkNamed(@NotNull String name) {
+    // Bazel-provided test dependencies, from runfiles tree
+    if (BazelTestUtil.isUnderBazelTest()) {
+      return BazelTestUtil.findRunfilesDirectoryUnderCommunityOrUltimate("java/" + name).toFile();
+    }
+
     return new File(PlatformTestUtil.getCommunityPath(), "java/" + name);
   }
 

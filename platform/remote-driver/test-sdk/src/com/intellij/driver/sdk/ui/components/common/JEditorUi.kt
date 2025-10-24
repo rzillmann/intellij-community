@@ -10,14 +10,19 @@ import com.intellij.driver.model.RemoteMouseButton
 import com.intellij.driver.sdk.*
 import com.intellij.driver.sdk.remoteDev.BeControlClass
 import com.intellij.driver.sdk.remoteDev.EditorComponentImplBeControlBuilder
+import com.intellij.driver.sdk.ui.DEFAULT_FIND_TIMEOUT
 import com.intellij.driver.sdk.ui.Finder
 import com.intellij.driver.sdk.ui.center
 import com.intellij.driver.sdk.ui.components.ComponentData
 import com.intellij.driver.sdk.ui.components.UiComponent
+import com.intellij.driver.sdk.ui.components.elements.actionButton
+import com.intellij.driver.sdk.ui.components.elements.textField
 import com.intellij.driver.sdk.ui.remote.Component
+import com.intellij.driver.sdk.ui.shouldContainText
 import org.intellij.lang.annotations.Language
 import java.awt.Point
 import java.awt.Rectangle
+import kotlin.time.Duration
 
 fun Finder.editor(@Language("xpath") xpath: String? = null): JEditorUiComponent {
   return x(xpath ?: "//div[@class='EditorComponentImpl']",
@@ -34,6 +39,8 @@ fun Finder.codeEditor(@Language("xpath") xpath: String? = null, action: JEditorU
     JEditorUiComponent::class.java).action()
 }
 
+fun Finder.codeEditorForFile(fileName: String): JEditorUiComponent = codeEditor("//div[@class='EditorTabs']//div[@accessiblename='Editor for $fileName']")
+
 fun Finder.editor(@Language("xpath") xpath: String? = null, action: JEditorUiComponent.() -> Unit) {
   x(xpath ?: "//div[@class='EditorComponentImpl']", JEditorUiComponent::class.java).action()
 }
@@ -41,7 +48,7 @@ fun Finder.editor(@Language("xpath") xpath: String? = null, action: JEditorUiCom
 open class JEditorUiComponent(data: ComponentData) : UiComponent(data) {
   private val caretPosition
     get() = editor.getCaretModel().getLogicalPosition()
-  protected open val editorComponent : EditorComponentImpl
+  protected open val editorComponent: EditorComponentImpl
     get() = driver.cast(component, EditorComponentImpl::class)
 
   val editor: Editor get() = editorComponent.getEditor()
@@ -57,6 +64,12 @@ open class JEditorUiComponent(data: ComponentData) : UiComponent(data) {
       }
     }
 
+  fun getLineNumber(text: String): Int = document.getLineNumber(this.text.indexOf(text)) + 1
+
+  fun expandAllFoldings() {
+    driver.invokeAction("ExpandAllRegions", component = component)
+  }
+
   fun isEditable(): Boolean = editorComponent.isEditable()
 
   fun isSoftWrappingEnabled(): Boolean = interact { getSoftWrapModel().isSoftWrappingEnabled() }
@@ -66,7 +79,7 @@ open class JEditorUiComponent(data: ComponentData) : UiComponent(data) {
     click(inlayCenter)
   }
 
-  fun getInlayHints(): List<InlayHint> {
+  fun getInlayHints(braceAround: Boolean = true): List<InlayHint> {
     val hints = mutableListOf<InlayHint>()
     this.editor.getInlayModel().getInlineElementsInRange(0, Int.MAX_VALUE).forEach { element ->
       val hintText = try {
@@ -77,7 +90,9 @@ open class JEditorUiComponent(data: ComponentData) : UiComponent(data) {
           driver.cast(element.getRenderer(), DeclarativeInlayRenderer::class).getPresentationList().getEntries().joinToString { it.getText() }
         }
         catch (e: DriverCallException) {
-          element.getRenderer().toString().substring(1, element.getRenderer().toString().length - 1)
+          if (braceAround)
+            element.getRenderer().toString().substring(1, element.getRenderer().toString().length - 1)
+          else element.getRenderer().toString()
         }
       }
       hints.add(InlayHint(element.getOffset(), hintText!!))
@@ -130,14 +145,16 @@ open class JEditorUiComponent(data: ComponentData) : UiComponent(data) {
   fun goToPosition(line: Int, column: Int): Unit = step("Go to position $line line $column column") {
     click()
     interact {
-      getCaretModel().moveToLogicalPosition(driver.logicalPosition(line - 1, column - 1, (this as? RefWrapper)?.getRef()?.rdTarget ?: RdTarget.DEFAULT))
+      getCaretModel().moveToLogicalPosition(driver.logicalPosition(line - 1, column - 1, (this as? RefWrapper)?.getRef()?.rdTarget
+                                                                                         ?: RdTarget.DEFAULT))
     }
   }
 
   fun goToLine(line: Int): Unit = step("Go to $line line") {
     click()
     interact {
-      getCaretModel().moveToLogicalPosition(driver.logicalPosition(line - 1, 1, (this as? RefWrapper)?.getRef()?.rdTarget ?: RdTarget.DEFAULT))
+      getCaretModel().moveToLogicalPosition(driver.logicalPosition(line - 1, 1, (this as? RefWrapper)?.getRef()?.rdTarget
+                                                                                ?: RdTarget.DEFAULT))
     }
   }
 
@@ -184,6 +201,10 @@ open class JEditorUiComponent(data: ComponentData) : UiComponent(data) {
     driver.utility(AiTestIntentionUtils::class).invokeAiAssistantIntention(editor, intentionActionName)
   }
 
+  /**
+   * @see shouldContainText For better readability
+   */
+  @Deprecated("Use shouldContainText instead", ReplaceWith("shouldContainText(expectedText)"))
   fun containsText(expectedText: String) {
     step("Verify that editor contains text: $expectedText") {
       waitFor(errorMessage = { "Editor doesn't contain text: $expectedText" },
@@ -191,6 +212,35 @@ open class JEditorUiComponent(data: ComponentData) : UiComponent(data) {
               checker = { it.contains(expectedText) })
     }
   }
+
+  fun getInlineCompletion(line: Int? = null): List<InlayHint> {
+    val startOffset = line?.let { editor.getDocument().getLineStartOffset(it - 1) } ?: 0
+    val endOffset = line?.let { editor.getDocument().getLineEndOffset(it - 1) } ?: Int.MAX_VALUE
+    val offsetToInlay: List<Pair<Int, String>> = this.editor.getInlayModel().getInlineElementsInRange(startOffset, endOffset).mapNotNull { element ->
+      try {
+        val text = driver.cast(element.getRenderer(), InlineCompletionLineRenderer::class).getBlocks().joinToString { it.text }
+        element.getOffset() to text
+      }
+      catch (_: DriverCallException) {
+        return@mapNotNull null
+      }
+    }
+    return offsetToInlay.map { InlayHint(it.first, it.second) }
+  }
+
+  fun getAfterLineHints(line: Int): List<String> = editor.getInlayModel().getAfterLineEndElementsForLogicalLine(line - 1)
+    .mapNotNull {
+      try {
+        driver.cast(it.getRenderer(), HintRenderer::class).getText()
+      }
+      catch (_: DriverCallException) {
+        return@mapNotNull null
+      }
+    }
+
+  fun getAllHighlights(): List<HighlightInfo> = editor.getMarkupModel().getAllHighlighters().mapNotNull {
+    driver.utility(HighlightInfo::class).fromRangeHighlighter(it)
+  } + driver.getHighlights(editor.getDocument())
 }
 
 @Remote("com.jetbrains.performancePlugin.utils.IntentionActionUtils", plugin = "com.jetbrains.performancePlugin")
@@ -199,7 +249,7 @@ interface IntentionActionUtils {
   fun invokeQuickFix(editor: Editor, highlightInfo: HighlightInfo, name: String)
 }
 
-@Remote("com.intellij.ml.llm.intentions.TestIntentionUtils", plugin = "com.intellij.ml.llm/intellij.ml.llm.core")
+@Remote("com.intellij.ml.llm.codeGeneration.testGeneration.TestIntentionUtils", plugin = "com.intellij.ml.llm/intellij.ml.llm.core")
 interface AiTestIntentionUtils {
   fun invokeAiAssistantIntention(editor: Editor, intentionName: String)
 }
@@ -235,6 +285,9 @@ class GutterUiComponent(data: ComponentData) : UiComponent(data) {
   val iconAreaOffset
     get() = gutter.getIconAreaOffset()
 
+  fun icon(timeout: Duration = DEFAULT_FIND_TIMEOUT, errorMessage: String = "icon not found", predicate: (GutterIcon) -> Boolean): GutterIcon =
+    waitFor(timeout = timeout, errorMessage = { errorMessage }, getter = { icons.filter(predicate) }, checker = { it.singleOrNull() != null }).single()
+
   fun getGutterIcons(): List<GutterIcon> {
     waitFor { this.icons.isNotEmpty() }
     return this.icons
@@ -245,6 +298,10 @@ class GutterUiComponent(data: ComponentData) : UiComponent(data) {
 
   fun hoverOverIcon(line: Int) {
     moveMouse(icons.firstOrNull { it.line == line - 1 }!!.location)
+  }
+
+  fun clickOnIcon(line: Int) {
+    click(icons.firstOrNull { it.line == line - 1 }!!.location)
   }
 
   fun rightClickOnIcon(line: Int) {
@@ -306,7 +363,8 @@ enum class GutterIcon(val path: String) {
   BREAKPOINT_VALID("expui/breakpoints/breakpointValid.svg"),
   NEXT_STATEMENT("expui/debugger/nextStatement.svg"),
   GOTO("icons/expui/assocFile@14x14.svg"),
-  IMPLEMENT("expui/gutter/implementingMethod.svg")
+  IMPLEMENT("expui/gutter/implementingMethod.svg"),
+  CONSTEXPR_DEBUG("resharper/RunMarkers/DebugThis.svg")
 }
 
 data class GutterState(
@@ -314,7 +372,7 @@ data class GutterState(
   val iconPath: String = "",
 )
 
-class InlayHint(val offset: Int, val text: String)
+data class InlayHint(val offset: Int, val text: String)
 
 fun List<InlayHint>.getHint(offset: Int): InlayHint {
   val foundHint = this.find { it.offset == offset }
@@ -322,6 +380,18 @@ fun List<InlayHint>.getHint(offset: Int): InlayHint {
     throw NoSuchElementException("cannot find hint with offset: $offset")
   }
   return foundHint
+}
+
+fun Finder.editorSearchReplace(@Language("xpath") xpath: String? = null, action: EditorSearchReplaceComponent.() -> Unit) {
+  x(xpath ?: "//div[@class='EditorCompositePanel']//div[@class='SearchReplaceComponent']",
+    EditorSearchReplaceComponent::class.java).action()
+}
+
+class EditorSearchReplaceComponent(data: ComponentData) : UiComponent(data) {
+  val searchField = textField { and(byClass("JBTextArea"), byAccessibleName("Search")) }
+  val replaceField = textField { and(byClass("JBTextArea"), byAccessibleName("Replace")) }
+  val matchesLabel = x("//div[@class='ActionToolbarImpl']//div[@class='JLabel']")
+  val nextOccurrenceButton = actionButton { byAccessibleName("Next Occurrence") }
 }
 
 @Remote("com.intellij.openapi.editor.impl.EditorGutterComponentImpl")

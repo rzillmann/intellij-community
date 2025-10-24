@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.openapi.actionSystem.impl
 
 import com.intellij.diagnostic.UILatencyLogger
@@ -21,7 +21,6 @@ import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.IconLoader.getDarkIcon
 import com.intellij.openapi.util.IconLoader.getDisabledIcon
 import com.intellij.openapi.util.NlsContexts
-import com.intellij.openapi.util.SystemInfo
 import com.intellij.openapi.util.SystemInfoRt
 import com.intellij.openapi.util.registry.Registry
 import com.intellij.openapi.wm.IdeFocusManager
@@ -33,6 +32,7 @@ import com.intellij.ui.JBColor
 import com.intellij.ui.awt.RelativePoint
 import com.intellij.ui.components.JBMenu
 import com.intellij.ui.icons.getMenuBarIcon
+import com.intellij.ui.mac.MacMenuSettings
 import com.intellij.ui.plaf.beg.BegMenuItemUI
 import com.intellij.ui.plaf.beg.IdeaMenuUI
 import com.intellij.util.FontUtil
@@ -41,6 +41,8 @@ import com.intellij.util.SingleAlarm
 import com.intellij.util.concurrency.EdtScheduler
 import com.intellij.util.concurrency.annotations.RequiresEdt
 import com.intellij.util.ui.JBUI
+import com.intellij.util.ui.StartupUiUtil
+import com.intellij.util.ui.moveToFitChildPopupX
 import kotlinx.coroutines.Job
 import java.awt.*
 import java.awt.event.AWTEventListener
@@ -98,22 +100,6 @@ class ActionMenu constructor(
   }
 
   companion object {
-    @Deprecated("Use ActionUtil.SUPPRESS_SUBMENU")
-    @JvmField
-    val SUPPRESS_SUBMENU = ActionUtil.SUPPRESS_SUBMENU
-
-    @Deprecated("Use ActionUtil.ALWAYS_VISIBLE_GROUP")
-    @JvmField
-    val ALWAYS_VISIBLE = ActionUtil.ALWAYS_VISIBLE_GROUP
-
-    @Deprecated("Use ActionUtil.KEYBOARD_SHORTCUT_SUFFIX")
-    @JvmField
-    val KEYBOARD_SHORTCUT_SUFFIX = ActionUtil.KEYBOARD_SHORTCUT_SUFFIX
-
-    @Deprecated("Use ActionUtil.SECONDARY_ICON")
-    @JvmField
-    val SECONDARY_ICON = ActionUtil.SECONDARY_ICON
-
     @JvmStatic
     fun shouldConvertIconToDarkVariant(): Boolean {
       return JBColor.isBright() && ColorUtil.isDark(JBColor.namedColor("MenuItem.background", 0xffffff))
@@ -121,15 +107,14 @@ class ActionMenu constructor(
 
     @JvmStatic
     val isShowNoIcons: Boolean
-      get() {
-        return SystemInfoRt.isMac && (ExperimentalUI.isNewUI() ||
-                                      Registry.get("ide.macos.main.menu.alignment.options").isOptionEnabled("No icons"))
-      }
+      get() = SystemInfoRt.isMac && (
+        ExperimentalUI.isNewUI() ||
+        Registry.get("ide.macos.main.menu.alignment.options").isOptionEnabled("No icons"))
 
     @JvmStatic
-    fun isShowNoIcons(action: AnAction?): Boolean {
+    fun isShowNoIcons(action: AnAction, presentation: Presentation): Boolean {
       return when {
-        action == null -> false
+        presentation.getClientProperty(ActionUtil.SHOW_ICON_IN_MAIN_MENU) == true -> false
         action is MainMenuPresentationAware && (action as MainMenuPresentationAware).alwaysShowIconInMainMenu() -> false
         else -> isShowNoIcons
       }
@@ -179,7 +164,7 @@ class ActionMenu constructor(
   }
 
   private fun init() {
-    subElementSelector?.stubItem = if (SystemInfo.isMacSystemMenu && isMainMenuPlace) null else StubItem()
+    subElementSelector?.stubItem = if (MacMenuSettings.isSystemMenu && isMainMenuPlace) null else StubItem()
     addStubItem()
     setBorderPainted(false)
     val menuListener = MenuListenerImpl()
@@ -225,7 +210,7 @@ class ActionMenu constructor(
       return
     }
 
-    if (SystemInfo.isMacSystemMenu && ActionPlaces.MAIN_MENU == place) {
+    if (MacMenuSettings.isSystemMenu && ActionPlaces.MAIN_MENU == place) {
       // JDK can't correctly paint our HiDPI icons at the system menu bar
       icon = getMenuBarIcon(icon, useDarkIcons)
     }
@@ -233,8 +218,7 @@ class ActionMenu constructor(
       icon = getDarkIcon(icon, true)
     }
 
-    if (isShowNoIcons &&
-        !(group.getAction() is MainMenuPresentationAware && (group.getAction() as MainMenuPresentationAware).alwaysShowIconInMainMenu())) {
+    if (isShowNoIcons && !isShowNoIcons(group.getAction(), presentation)) {
         setIcon(null)
         setDisabledIcon(null)
     }
@@ -320,7 +304,7 @@ class ActionMenu constructor(
         addStubItem()
       }
 
-      if (SystemInfo.isMacSystemMenu && isMainMenuPlace) {
+      if (MacMenuSettings.isSystemMenu && isMainMenuPlace) {
         // Menu items may contain mnemonic, and they can affect key-event dispatching (when Alt pressed)
         // To avoid the influence of mnemonic it's necessary to clear items when a menu was hidden.
         // When a user selects item of a system menu (under macOS), AppKit generates such sequence: CloseParentMenu -> PerformItemAction
@@ -350,7 +334,7 @@ class ActionMenu constructor(
         delayedClear = null
         clearItems()
       }
-      if (SystemInfo.isMacSystemMenu && ActionPlaces.MAIN_MENU == place) {
+      if (MacMenuSettings.isSystemMenu && ActionPlaces.MAIN_MENU == place) {
         fillMenu()
         // NOTE: FUS for OSX system menu is implemented in MacNativeActionMenu
       } else {
@@ -361,14 +345,14 @@ class ActionMenu constructor(
 
   override fun setPopupMenuVisible(value: Boolean) {
     isTryingToShowPopupMenu = value
-    if (value && !(SystemInfo.isMacSystemMenu && ActionPlaces.MAIN_MENU == place)) {
+    if (value && !(MacMenuSettings.isSystemMenu && ActionPlaces.MAIN_MENU == place)) {
       fillMenu()
       if (!isSelected) {
         return
       }
     }
 
-    if (!SystemInfo.isMacSystemMenu && parent is JMenuBar) {
+    if (!MacMenuSettings.isSystemMenu && parent is JMenuBar) {
       // Workaround for a problem in `javax.swing.JMenu.getPopupMenuOrigin` method:
       // 1. Show some menu above the correspondent main menu item
       // 2. Change its content (see video in IJPL-54336) or move the main frame to lower position
@@ -384,8 +368,28 @@ class ActionMenu constructor(
     }
   }
 
+  override fun getPopupMenuOrigin(): Point {
+    val result = super.getPopupMenuOrigin()
+    if (!StartupUiUtil.isWaylandToolkit() || parent !is JPopupMenu) return result
+    correctPopupMenuPositionForWayland(result)
+    return result
+  }
+
+  private fun correctPopupMenuPositionForWayland(result: Point) {
+    val popupMenu = popupMenu
+    var popupMenuSize = popupMenu.size
+    if (popupMenuSize.width <= 0) { // not shown yet
+      popupMenuSize = popupMenu.preferredSize
+    }
+
+    val popupMenuBounds = Rectangle(result, popupMenuSize)
+    moveToFitChildPopupX(popupMenuBounds, this)
+    result.x = popupMenuBounds.x
+    result.y = popupMenuBounds.y
+  }
+
   fun clearItems() {
-    if (SystemInfo.isMacSystemMenu && isMainMenuPlace) {
+    if (MacMenuSettings.isSystemMenu && isMainMenuPlace) {
       for (menuComponent in getMenuComponents()) {
         if (menuComponent is ActionMenu) {
           menuComponent.clearItems()
@@ -431,7 +435,7 @@ class ActionMenu constructor(
   }
 }
 
-private class UsabilityHelper(component: Component) : IdeEventQueue.EventDispatcher, AWTEventListener, Disposable {
+private class UsabilityHelper(component: Component) : IdeEventQueue.NonLockedEventDispatcher, AWTEventListener, Disposable {
   private var component: Component?
   private var startMousePoint: Point?
   private var xClosestToTargetSoFar = 0
@@ -540,7 +544,7 @@ private const val MOVING_AWAY_THRESHOLD = 16
 
 private class SubElementSelector(private val owner: ActionMenu) {
   companion object {
-    val isForceDisabled: Boolean = SystemInfo.isMacSystemMenu ||
+    val isForceDisabled: Boolean = MacMenuSettings.isSystemMenu ||
                                    !Registry.`is`("ide.popup.menu.navigation.keyboard.selectFirstEnabledSubItem", false)
   }
 

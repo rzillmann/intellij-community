@@ -12,6 +12,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.forEach
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
+import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.annotations.ApiStatus.Experimental
 
 /**
@@ -88,7 +89,6 @@ suspend fun <T> reportProgress(size: Int = 100, action: suspend (reporter: Progr
  * }
  * ```
  */
-@Experimental
 suspend fun <T> reportProgressScope(size: Int = 100, action: suspend CoroutineScope.(reporter: ProgressReporter) -> T): T {
   return reportProgress(size) {
     ignoreProgressReportingIn {
@@ -193,6 +193,7 @@ suspend fun <T> progressStep(
 }
 
 @Experimental
+@ApiStatus.ScheduledForRemoval
 @Deprecated("Use `ProgressReporter.sizedStep`")
 suspend fun <T> durationStep(duration: Double, text: ProgressText? = null, action: suspend CoroutineScope.() -> T): T {
   return coroutineScope(action)
@@ -203,6 +204,17 @@ suspend fun <T> durationStep(duration: Double, text: ProgressText? = null, actio
 suspend fun <X> withRawProgressReporter(action: suspend CoroutineScope.() -> X): X {
   return reportRawProgress { reporter ->
     withContext(reporter.asContextElement(), action)
+  }
+}
+
+/**
+ * Coroutines launched inside [action] will use the outer [CoroutineScope][this] and its context,
+ * hence the progress reporter will have no effect there. Use [reportProgressScope] instead.
+ */
+@Deprecated("Use `reportProgressScope` instead", ReplaceWith("reportProgressScope(size, action)"))
+suspend fun <T> CoroutineScope.reportProgress(size: Int = 100, action: suspend (reporter: ProgressReporter) -> T): T {
+  return internalCurrentStepAsConcurrent(size).use { handle ->
+    action(handle.reporter)
   }
 }
 

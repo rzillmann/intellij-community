@@ -1,7 +1,6 @@
 // Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.execution.application;
 
-import com.intellij.diagnostic.logging.LogConfigurationPanel;
 import com.intellij.execution.*;
 import com.intellij.execution.configurations.*;
 import com.intellij.execution.filters.TextConsoleBuilderFactory;
@@ -23,17 +22,16 @@ import com.intellij.openapi.module.Module;
 import com.intellij.openapi.module.ModuleManager;
 import com.intellij.openapi.module.ModuleUtilCore;
 import com.intellij.openapi.options.SettingsEditor;
-import com.intellij.openapi.options.SettingsEditorGroup;
 import com.intellij.openapi.project.DumbService;
 import com.intellij.openapi.project.IndexNotReadyException;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.NlsSafe;
 import com.intellij.openapi.util.io.FileUtilRt;
-import com.intellij.openapi.util.registry.Registry;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vfs.VirtualFileManager;
 import com.intellij.psi.PsiClass;
 import com.intellij.psi.PsiElement;
+import com.intellij.psi.PsiNamedElement;
 import com.intellij.psi.search.searches.ImplicitClassSearch;
 import com.intellij.psi.util.PsiMethodUtil;
 import com.intellij.refactoring.listeners.RefactoringElementListener;
@@ -94,7 +92,7 @@ public class ApplicationConfiguration extends JavaRunConfigurationBase
   @Override
   public void setMainClass(@NotNull PsiClass psiClass) {
     final Module originalModule = getConfigurationModule().getModule();
-    setMainClassName(JavaExecutionUtil.getRuntimeQualifiedName(psiClass));
+    setMainClassName(psiClass.getQualifiedName());
     setModule(JavaExecutionUtil.findModule(psiClass));
     restoreOriginalModule(originalModule);
   }
@@ -109,18 +107,19 @@ public class ApplicationConfiguration extends JavaRunConfigurationBase
 
   @Override
   public @NotNull SettingsEditor<? extends RunConfiguration> getConfigurationEditor() {
-    if (Registry.is("ide.new.run.config", true)) {
-      return new JavaApplicationSettingsEditor(this);
-    }
-    SettingsEditorGroup<ApplicationConfiguration> group = new SettingsEditorGroup<>();
-    group.addEditor(ExecutionBundle.message("run.configuration.configuration.tab.title"), new ApplicationConfigurable(getProject()));
-    JavaRunConfigurationExtensionManager.getInstance().appendEditors(this, group);
-    group.addEditor(ExecutionBundle.message("logs.tab.title"), new LogConfigurationPanel<>());
-    return group;
+    return new JavaApplicationSettingsEditor(this);
   }
 
   @Override
   public RefactoringElementListener getRefactoringElementListener(final PsiElement element) {
+    if (element instanceof PsiNamedElement namedElement) {
+      // do not react on unrelated refactorings
+      String elementName = namedElement.getName();
+      String mainClassName = getMainClassName();
+      if (elementName == null || mainClassName == null || !mainClassName.contains(elementName)) {
+        return null;
+      }
+    }
     final RefactoringElementListener listener = RefactoringListeners.
       getClassOrPackageListener(element, new RefactoringListeners.SingleClassConfigurationAccessor(this));
     return RunConfigurationExtension.wrapRefactoringElementListener(element, this, listener);
@@ -128,9 +127,18 @@ public class ApplicationConfiguration extends JavaRunConfigurationBase
 
   @Override
   public @Nullable PsiClass getMainClass() {
-    return getConfigurationModule().findClass(getMainClassName());
+    return DumbService.getInstance(getProject()).computeWithAlternativeResolveEnabled(() -> {
+      return getConfigurationModule().findClass(getMainClassName());
+    });
   }
 
+  /**
+   * Returns the fully qualified name of the class containing the main method. 
+   * <p>
+   * To get a {@link PsiClass} (or null if the class doesn't exist), use {@link #getMainClass()}.
+   * <p>
+   * To get a binary class name (see JLS 13.1), use {@link #getRunClass()}.
+   */
   public @NlsSafe @Nullable String getMainClassName() {
     return MAIN_CLASS_NAME;
   }
@@ -270,7 +278,12 @@ public class ApplicationConfiguration extends JavaRunConfigurationBase
 
   @Override
   public @Nullable String getRunClass() {
-    return getMainClassName();
+    PsiClass mainClass = getMainClass();
+    // if it is impossible to find a class, then it shouldn't be adjusted and should be used as is
+    // it is important for implicit classes, and
+    // it is necessary for compatibility with the older behavior
+    if (mainClass == null) return getMainClassName();
+    return JavaExecutionUtil.getRuntimeQualifiedName(mainClass);
   }
 
   @Override

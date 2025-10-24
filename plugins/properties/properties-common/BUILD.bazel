@@ -1,9 +1,9 @@
 ### auto-generated section `build intellij.properties` start
-load("@rules_jvm//:jvm.bzl", "jvm_library", "jvm_resources")
+load("@rules_jvm//:jvm.bzl", "jvm_library", "resourcegroup")
 
-jvm_resources(
+resourcegroup(
   name = "properties_resources",
-  files = glob(["resources/**/*"]),
+  srcs = glob(["resources/**/*"]),
   strip_prefix = "resources"
 )
 
@@ -11,11 +11,14 @@ jvm_library(
   name = "properties",
   module_name = "intellij.properties",
   visibility = ["//visibility:public"],
-  srcs = glob(["gen/**/*.kt", "gen/**/*.java", "src/**/*.kt", "src/**/*.java"], allow_empty = True),
+  srcs = glob(["gen/**/*.kt", "gen/**/*.java", "src/**/*.kt", "src/**/*.java", "src/**/*.form"], allow_empty = True),
+  resources = [":properties_resources"],
   deps = [
     "//platform/core-api:core",
     "//platform/analysis-api:analysis",
+    "//platform/editor-ui-api:editor-ui",
     "//platform/platform-api:ide",
+    "//platform/projectModel-api:projectModel",
     "//platform/util",
     "@lib//:kotlin-stdlib",
     "//platform/code-style-api:codeStyle",
@@ -25,7 +28,7 @@ jvm_library(
     "//platform/code-style-impl:codeStyle-impl",
     "//platform/lang-impl",
     "//platform/platform-impl:ide-impl",
-  ],
-  runtime_deps = [":properties_resources"]
+    "//platform/refactoring",
+  ]
 )
 ### auto-generated section `build intellij.properties` end

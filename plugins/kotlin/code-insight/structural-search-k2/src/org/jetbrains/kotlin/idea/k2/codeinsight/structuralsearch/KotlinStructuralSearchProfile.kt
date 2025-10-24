@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.kotlin.idea.k2.codeinsight.structuralsearch
 
 import com.intellij.lang.Language
@@ -84,7 +84,7 @@ class KotlinStructuralSearchProfile : StructuralSearchProfile() {
         project: Project,
         text: String,
         contextId: String?
-    ): PsiCodeFragment? = KtPsiFactory(project).createBlockCodeFragment(text, null)
+    ): PsiCodeFragment = KtPsiFactory(project).createBlockCodeFragment(text, null)
 
     override fun getPresentableElement(element: PsiElement): PsiElement {
         val elem = if (isIdentifier(element)) element.parent else return element
@@ -448,9 +448,9 @@ class KotlinStructuralSearchProfile : StructuralSearchProfile() {
     companion object {
         const val TYPED_VAR_PREFIX: String = "_____"
 
-        val DEFAULT_CONTEXT: PatternContext = PatternContext("default", KotlinBundle.lazyMessage("context.default"))
+        val DEFAULT_CONTEXT: PatternContext = PatternContext("default", KotlinBundle.messagePointer("context.default"))
 
-        val PROPERTY_CONTEXT: PatternContext = PatternContext("property", KotlinBundle.lazyMessage("context.property.getter.or.setter"))
+        val PROPERTY_CONTEXT: PatternContext = PatternContext("property", KotlinBundle.messagePointer("context.property.getter.or.setter"))
 
         private val PATTERN_CONTEXTS: MutableList<PatternContext> = mutableListOf(DEFAULT_CONTEXT, PROPERTY_CONTEXT)
 

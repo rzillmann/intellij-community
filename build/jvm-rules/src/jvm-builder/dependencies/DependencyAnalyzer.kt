@@ -12,7 +12,6 @@ import com.intellij.util.lang.ZipFile
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.future.asDeferred
 import kotlinx.coroutines.launch
-import org.jetbrains.bazel.jvm.worker.state.DependencyDescriptor
 import org.jetbrains.bazel.jvm.util.emptySet
 import org.jetbrains.bazel.jvm.util.orEmpty
 import org.jetbrains.bazel.jvm.worker.core.output.ABI_IC_NODE_FORMAT_VERSION
@@ -31,7 +30,7 @@ import kotlin.time.toJavaDuration
 class DependencyAnalyzer(private val coroutineScope: CoroutineScope) {
   private val cache: AsyncCache<DependencyDescriptor, Pair<ScatterMap<AbiJarSource, NodeUpdateItem>, ScatterMap<AbiJarSource, NodeUpdateItem>>> = Caffeine.newBuilder()
     .expireAfterAccess(2.minutes.toJavaDuration())
-    .maximumSize(100)
+    .maximumSize(512)
     .executor { coroutineScope.launch { it.run() } }
     .buildAsync()
 

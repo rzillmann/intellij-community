@@ -12,6 +12,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.ModificationTracker
 import com.intellij.openapi.util.SimpleModificationTracker
 import com.intellij.openapi.util.UserDataHolder
+import com.intellij.openapi.util.registry.Registry
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.PsiFile
 import com.intellij.psi.PsiManager
@@ -128,30 +129,32 @@ internal class CodeStyleCachedValueProvider(val fileSupplier: Supplier<VirtualFi
 
     private fun start() {
       val app = ApplicationManager.getApplication()
-      if (app.isDispatchThread && !app.isUnitTestMode && !app.isHeadlessEnvironment) {
+      if ((app.isDispatchThread || app.isWriteAccessAllowed) && !app.isUnitTestMode && !app.isHeadlessEnvironment) {
         LOG.debug { "async for ${file.name}" }
-        job = project.service<CodeStyleCachedValueProviderService>().coroutineScope.launch {
-          readAction {
+        job = project.service<CodeStyleCachedValueProviderService>().coroutineScope.launch(
+          CoroutineName(this@CodeStyleCachedValueProvider.toString())
+        ) {
+          val success = readAction {
             computeSettings()
           }
           withContext(Dispatchers.EDT + ModalityState.any().asContextElement()) {
             // need to fix clients and remove global lock from there
             // maybe readAction
             writeIntentReadAction {
-              notifyCachedValueComputed()
+              notifyCachedValueComputed(success)
             }
           }
         }
       }
       else {
         LOG.debug { "sync for ${file.name}" }
-        app.runReadAction(::computeSettings)
+        val success = app.runReadAction<Boolean>(::computeSettings)
         if (app.isDispatchThread) {
-          notifyCachedValueComputed()
+          notifyCachedValueComputed(success)
         }
         else {
           project.service<CodeStyleCachedValueProviderService>().coroutineScope.launch(Dispatchers.EDT + ModalityState.any().asContextElement()) {
-            notifyCachedValueComputed()
+            notifyCachedValueComputed(success)
           }
         }
       }
@@ -175,14 +178,17 @@ internal class CodeStyleCachedValueProvider(val fileSupplier: Supplier<VirtualFi
       }
     }
 
-    private fun computeSettings() {
+    /**
+     * @return true if settings were computed successfully, false otherwise
+     */
+    private fun computeSettings(): Boolean {
       val file = file
       val psiFile = psiFile
       // If the psiFile is added and deleted in the same write action,
       // it might still be present, but invalid.
       if (psiFile == null || !psiFile.isValid) {
         cancel()
-        return
+        return false
       }
 
       computationLock.lock()
@@ -197,10 +203,12 @@ internal class CodeStyleCachedValueProvider(val fileSupplier: Supplier<VirtualFi
           LOG.debug { "Created TransientCodeStyleSettings for ${file.name}" }
           for (modifier in CodeStyleSettingsModifier.EP_NAME.extensionList) {
             LOG.debug { "Modifying ${file.name}: ${modifier.javaClass.name}" }
-            if (modifier.modifySettings(modifiableSettings, psiFile)) {
+            if (modifier.modifySettingsAndUiCustomization(modifiableSettings, psiFile) || modifiableSettings.modifier != null) {
               LOG.debug { "Modified ${file.name}: ${modifier.javaClass.name}" }
-              modifiableSettings.setModifier(modifier)
               currSettings = modifiableSettings
+            }
+            if (modifiableSettings.modifier != null) {
+              LOG.debug { "Indenter for ${file.name}: ${modifier.javaClass.name}" }
               break
             }
           }
@@ -215,6 +223,7 @@ internal class CodeStyleCachedValueProvider(val fileSupplier: Supplier<VirtualFi
       finally {
         computationLock.unlock()
       }
+      return true
     }
 
     @Suppress("DEPRECATION")
@@ -237,10 +246,10 @@ internal class CodeStyleCachedValueProvider(val fileSupplier: Supplier<VirtualFi
       LOG.debug { "Computation reset for ${file.name}" }
     }
 
-    private fun notifyCachedValueComputed() {
+    private fun notifyCachedValueComputed(shouldFireEvent: Boolean = true) {
       @Suppress("DEPRECATION")
-      val currSettings = settingsManager.currentSettings
-      val newTrackerSetting = currSettings.modificationTracker.modificationCount
+      val currentProjectSettings = settingsManager.currentSettings
+      val newTrackerSetting = currentProjectSettings.modificationTracker.modificationCount
       if (oldTrackerSetting < newTrackerSetting && !insideRestartedComputation) {
         insideRestartedComputation = true
         try {
@@ -256,8 +265,27 @@ internal class CodeStyleCachedValueProvider(val fileSupplier: Supplier<VirtualFi
       for (runnable in scheduledRunnables) {
         runnable.run()
       }
-      if (!project.isDisposed) {
-        CodeStyleSettingsManager.getInstance(project).fireCodeStyleSettingsChanged(file)
+      if (shouldFireEvent && !project.isDisposed) {
+        /* IJPL-179136
+         *
+         * It is expected that CodeStyleSettingsListener implementations will access code style settings,
+         * e.g., via CodeStyle.getSettings(file), when handling a codeStyleSettingsChanged event.
+         *
+         * It is wrong to send these events after the value has been computed:
+         * if this computed value has already been evicted from the cache at that point,
+         * the computation will restart and send the event again.
+         * This may cause infinite loops of recomputation.
+         *
+         * A cache miss must only slow the system down, not break it.
+         *
+         * CodeStyleSettingsModifier implementors are required to fireCodeStyleSettingsChanged events themselves
+         * if any TransientCodeStyleSettings dependencies change.
+         */
+        if (!TooFrequentCodeStyleComputationWatcher.getInstance(project).isTooHighEvictionRateDetected()
+            && Registry.`is`("code.style.cache.enable.change.events.on.settings.cached")) {
+          val eventSettings = if (Registry.`is`("code.style.cache.change.events.include.settings")) currentResult else null
+          settingsManager.fireCodeStyleSettingsChanged(file, eventSettings)
+        }
       }
       computation.reset()
       LOG.debug { "Computation finished normally for ${file.name}" }
@@ -273,6 +301,16 @@ internal class CodeStyleCachedValueProvider(val fileSupplier: Supplier<VirtualFi
     override fun hashCode(): Int {
       return project.hashCode()
     }
+
+    fun dumpState(sb: StringBuilder) {
+      sb.append("isActive: ").append(isActive.get()).append('\n')
+      sb.append("computation tracker: ").append(tracker.modificationCount).append('\n')
+      sb.append("oldTrackerSetting: ").append(oldTrackerSetting).append('\n')
+      sb.append("insideRestartedComputation: ").append(insideRestartedComputation).append('\n')
+      sb.append("Current result: ").append(currentResult).append('\n')
+      sb.append("Scheduled runnables: ").append(scheduledRunnables.size).append('\n')
+      sb.append("Job: ").append(job).append('\n')
+    }
   }
 
   private val psiFile: PsiFile?
@@ -286,5 +324,17 @@ internal class CodeStyleCachedValueProvider(val fileSupplier: Supplier<VirtualFi
 
   override fun hashCode(): Int {
     return file.hashCode()
+  }
+
+  override fun toString(): String {
+    return "CodeStyleCachedValueProvider@${Integer.toHexString(super.hashCode())}(file=$file)"
+  }
+
+  fun dumpState(sb: StringBuilder) {
+    sb.append("File: ").append(file.toString()).append('\n')
+    sb.append("file.isValid == ").append(file.isValid).append('\n')
+    sb.append("Computation expired: ").append(isExpired).append('\n')
+    sb.append("Computation:\n")
+    computation.dumpState(sb)
   }
 }

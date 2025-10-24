@@ -4,27 +4,37 @@ package com.intellij.openapi.updateSettings.impl
 import com.intellij.ide.externalComponents.ExternalComponentSource
 import com.intellij.ide.externalComponents.UpdatableExternalComponent
 import com.intellij.ide.plugins.IdeaPluginDescriptor
-import com.intellij.ide.plugins.PluginNode
+import com.intellij.ide.plugins.newui.PluginUiModel
 import com.intellij.openapi.util.BuildNumber
+import com.intellij.openapi.util.IntellijInternalApi
 import org.jetbrains.annotations.ApiStatus
+import org.jetbrains.annotations.VisibleForTesting
 
 @ApiStatus.Internal
-class UpdateChain internal constructor(
+@IntellijInternalApi
+class UpdateChain(
   val chain: List<BuildNumber>,
   val size: String?,
 )
 
 @ApiStatus.Internal
+@IntellijInternalApi
 sealed class PlatformUpdates {
+  @ApiStatus.Internal
+  @IntellijInternalApi
   data object Empty : PlatformUpdates()
 
-  data class Loaded @JvmOverloads internal constructor(
+  @ApiStatus.Internal
+  @IntellijInternalApi
+  data class Loaded @JvmOverloads constructor(
     val newBuild: BuildInfo,
     val updatedChannel: UpdateChannel,
     val patches: UpdateChain? = null,
   ) : PlatformUpdates()
 
-  data class ConnectionError internal constructor(val error: Exception) : PlatformUpdates()
+  @ApiStatus.Internal
+  @IntellijInternalApi
+  data class ConnectionError(val error: Exception) : PlatformUpdates()
 }
 
 /**
@@ -36,7 +46,8 @@ sealed class PlatformUpdates {
  */
 // TODO separation into enabled and disabled as part of this class seems unnecessary
 @ApiStatus.Internal
-data class PluginUpdates @JvmOverloads internal constructor(
+@IntellijInternalApi
+data class PluginUpdates @JvmOverloads @VisibleForTesting constructor(
   val allEnabled: Collection<PluginDownloader> = emptyList(),
   val allDisabled: Collection<PluginDownloader> = emptyList(),
   val incompatible: Collection<IdeaPluginDescriptor> = emptyList(),
@@ -49,20 +60,23 @@ data class PluginUpdates @JvmOverloads internal constructor(
 // FIXME InternalPluginResults should not be exposed as a return value from non-internal API (or should be an interface instead) :(
 //       this also applies to neighbor classes
 @ApiStatus.Internal
-data class InternalPluginResults @JvmOverloads internal constructor(
+@IntellijInternalApi
+data class InternalPluginResults @JvmOverloads @VisibleForTesting constructor(
   val pluginUpdates: PluginUpdates,
-  val pluginNods: Collection<PluginNode> = emptyList(),
+  val pluginNods: Collection<PluginUiModel> = emptyList(),
   val errors: Map<String?, Exception> = emptyMap(),
 )
 
 @ApiStatus.Internal
-data class ExternalUpdate @JvmOverloads internal constructor(
+@IntellijInternalApi
+data class ExternalUpdate @JvmOverloads constructor(
   val source: ExternalComponentSource,
   val components: Collection<UpdatableExternalComponent> = emptyList(),
 )
 
 @ApiStatus.Internal
-data class ExternalPluginResults @JvmOverloads internal constructor(
+@IntellijInternalApi
+data class ExternalPluginResults @JvmOverloads constructor(
   val externalUpdates: Collection<ExternalUpdate> = emptyList(),
   val errors: Map<ExternalComponentSource, Exception> = emptyMap(),
 )

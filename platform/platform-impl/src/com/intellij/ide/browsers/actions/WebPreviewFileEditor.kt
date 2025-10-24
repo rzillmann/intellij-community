@@ -12,7 +12,6 @@ import com.intellij.openapi.fileEditor.FileEditorState
 import com.intellij.openapi.options.Configurable
 import com.intellij.openapi.options.SearchableConfigurable
 import com.intellij.openapi.options.ShowSettingsUtil
-import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.popup.Balloon
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.Key
@@ -38,9 +37,6 @@ class WebPreviewFileEditor internal constructor(file: WebPreviewVirtualFile) : U
   private val file = file.getUserData(CUSTOM_ORIGINAL_FILE) ?: file.originalFile
   private val panel: JCEFHtmlPanel
   private val url = file.previewUrl.toExternalForm()
-
-  @Deprecated("Use {@link #WebPreviewFileEditor(WebPreviewVirtualFile)}", level = DeprecationLevel.ERROR)
-  constructor(project: Project, file: WebPreviewVirtualFile) : this(file)
 
   init {
     panel = object : JCEFHtmlPanel(url) {

@@ -5,6 +5,8 @@ import com.intellij.openapi.actionSystem.ex.ActionUtil
 import com.intellij.openapi.module.Module
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
+import com.intellij.openapi.util.NlsContexts
+import com.intellij.openapi.util.text.StringUtil
 import com.intellij.psi.ElementDescriptionUtil
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiMember
@@ -19,15 +21,11 @@ import com.intellij.refactoring.safeDelete.usageInfo.SafeDeleteReferenceSimpleDe
 import com.intellij.refactoring.util.RefactoringDescriptionLocation
 import com.intellij.usageView.UsageInfo
 import com.intellij.util.Processor
+import com.intellij.util.containers.MultiMap
 import com.intellij.util.containers.map2Array
 import org.jetbrains.kotlin.analysis.api.KaExperimentalApi
 import org.jetbrains.kotlin.analysis.api.analyze
-import org.jetbrains.kotlin.analysis.api.resolution.KaCallableMemberCall
-import org.jetbrains.kotlin.analysis.api.resolution.KaImplicitReceiverValue
-import org.jetbrains.kotlin.analysis.api.resolution.KaSimpleFunctionCall
-import org.jetbrains.kotlin.analysis.api.resolution.KaSmartCastedReceiverValue
-import org.jetbrains.kotlin.analysis.api.resolution.successfulCallOrNull
-import org.jetbrains.kotlin.analysis.api.resolution.successfulFunctionCallOrNull
+import org.jetbrains.kotlin.analysis.api.resolution.*
 import org.jetbrains.kotlin.analysis.api.symbols.KaCallableSymbol
 import org.jetbrains.kotlin.analysis.api.symbols.KaClassSymbol
 import org.jetbrains.kotlin.analysis.api.symbols.KaSymbol
@@ -36,6 +34,7 @@ import org.jetbrains.kotlin.asJava.elements.KtLightMethod
 import org.jetbrains.kotlin.asJava.toLightMethods
 import org.jetbrains.kotlin.asJava.unwrapped
 import org.jetbrains.kotlin.idea.base.analysis.api.utils.analyzeInModalWindow
+import org.jetbrains.kotlin.idea.base.analysis.api.utils.unwrapSmartCasts
 import org.jetbrains.kotlin.idea.base.projectStructure.getKaModule
 import org.jetbrains.kotlin.idea.base.resources.KotlinBundle
 import org.jetbrains.kotlin.idea.k2.refactoring.KotlinFirRefactoringsSettings
@@ -49,13 +48,14 @@ import org.jetbrains.kotlin.idea.references.mainReference
 import org.jetbrains.kotlin.idea.search.ExpectActualUtils
 import org.jetbrains.kotlin.idea.searching.inheritors.DirectKotlinClassInheritorsSearch
 import org.jetbrains.kotlin.idea.searching.inheritors.findAllOverridings
+import org.jetbrains.kotlin.idea.util.CommentSaver
 import org.jetbrains.kotlin.idea.util.application.isUnitTestMode
 import org.jetbrains.kotlin.lexer.KtTokens
 import org.jetbrains.kotlin.psi.*
 import org.jetbrains.kotlin.psi.psiUtil.*
 
 class KotlinFirSafeDeleteProcessor : SafeDeleteProcessorDelegateBase() {
-    override fun handlesElement(element: PsiElement?) = element.canDeleteElement()
+    override fun handlesElement(element: PsiElement?): Boolean = element.canDeleteElement()
 
     override fun findUsages(
         element: PsiElement,
@@ -107,15 +107,16 @@ class KotlinFirSafeDeleteProcessor : SafeDeleteProcessorDelegateBase() {
                 }
             }
         }
-        
+
         if (element is KtParameter) {
-            val function = element.getNonStrictParentOfType<KtFunction>()
-            if (function != null) {
-                val parameterIndexAsJavaCall = element.parameterIndex() + if (function.receiverTypeReference != null) 1 else 0
-                findCallArgumentsToDelete(result, element, parameterIndexAsJavaCall, function)
-            }
             if (element.isContextParameter) {
                 findCallsWithContextParameters(result, element, element.ownerDeclaration)
+            } else {
+                val function = element.getNonStrictParentOfType<KtFunction>()
+                if (function != null) {
+                    val parameterIndexAsJavaCall = element.parameterIndex() + if (function.receiverTypeReference != null) 1 else 0
+                    findCallArgumentsToDelete(result, element, parameterIndexAsJavaCall, function)
+                }
             }
         }
 
@@ -130,9 +131,12 @@ class KotlinFirSafeDeleteProcessor : SafeDeleteProcessorDelegateBase() {
     ) {
         decl?.forEachDescendantOfType<KtExpression> { expression ->
             analyze(expression) {
+                val declarationSymbol = decl.symbol as? KaCallableSymbol ?: return@forEachDescendantOfType
                 val functionCall = expression.resolveToCall()?.successfulCallOrNull<KaCallableMemberCall<*, *>>() ?: return@forEachDescendantOfType
                 if (expression is KtCallExpression && (functionCall as? KaSimpleFunctionCall)?.isImplicitInvoke != true) return@forEachDescendantOfType
-                if (functionCall.partiallyAppliedSymbol.contextArguments.any { (((it as? KaSmartCastedReceiverValue)?.original ?: it) as? KaImplicitReceiverValue)?.symbol == element.symbol }) {
+                val resolvedSymbol = functionCall.partiallyAppliedSymbol
+                if (declarationSymbol.allOverriddenSymbols.firstOrNull { it == resolvedSymbol.symbol } != null) return@forEachDescendantOfType
+                if (resolvedSymbol.contextArguments.any { (it.unwrapSmartCasts() as? KaImplicitReceiverValue)?.symbol == element.symbol }) {
                     result.add(SafeDeleteReferenceSimpleDeleteUsageInfo(expression, element, false))
                 }
             }
@@ -315,28 +319,32 @@ class KotlinFirSafeDeleteProcessor : SafeDeleteProcessorDelegateBase() {
         return null
     }
 
-    override fun findConflicts(element: PsiElement, allElementsToDelete: Array<out PsiElement>): Collection<String>? {
+    override fun findConflicts(
+        element: PsiElement,
+        allElementsToDelete: Array<out PsiElement>,
+        usages: Array<out UsageInfo>,
+        conflicts: MultiMap<PsiElement, @NlsContexts.DialogMessage String>
+    ) {
         if (element is KtNamedFunction || element is KtProperty) {
             val ktClass = element.getNonStrictParentOfType<KtClass>()
-            if (ktClass == null || ktClass.body != element.parent) return null
+            if (ktClass == null || ktClass.body != element.parent) return
 
             val modifierList = ktClass.modifierList
-            if (modifierList != null && modifierList.hasModifier(KtTokens.ABSTRACT_KEYWORD)) return null
+            if (modifierList != null && modifierList.hasModifier(KtTokens.ABSTRACT_KEYWORD)) return
 
             return analyzeInModalWindow(element as KtDeclaration, RefactoringBundle.message("detecting.possible.conflicts")) {
                 (element.symbol as? KaCallableSymbol)?.allOverriddenSymbols
                     ?.filter { it.modality == KaSymbolModality.ABSTRACT }
                     ?.mapNotNull { it.psi }
-                    ?.mapTo(ArrayList()) {
-                        KotlinK2RefactoringsBundle.message(
-                            "safe.delete.implements.conflict.message", 
-                            ElementDescriptionUtil.getElementDescription(element, RefactoringDescriptionLocation.WITH_PARENT), 
+                    ?.forEach {
+                        val message = KotlinK2RefactoringsBundle.message("safe.delete.implements.conflict.message",
+                            ElementDescriptionUtil.getElementDescription(element, RefactoringDescriptionLocation.WITH_PARENT),
                             ElementDescriptionUtil.getElementDescription(it, RefactoringDescriptionLocation.WITH_PARENT)
                         )
+                        conflicts.putValue(it, StringUtil.capitalize(message))
                     }
             }
         }
-        return null
     }
 
     override fun preprocessUsages(project: Project, usages: Array<out UsageInfo>): Array<UsageInfo> {
@@ -348,6 +356,14 @@ class KotlinFirSafeDeleteProcessor : SafeDeleteProcessorDelegateBase() {
             is KtTypeParameter -> {
                 deleteSeparatingComma(element)
                 deleteBracesAroundEmptyList(element)
+            }
+
+            is KtProperty if ((element.parent as? KtWhenExpression)?.subjectVariable === element) -> {
+                val commentSaver = CommentSaver(element)
+                element.initializer?.let { initializer ->
+                    val replaced = element.replace(initializer.copy())
+                    commentSaver.restore(replaced)
+                }
             }
 
             is KtParameter -> {

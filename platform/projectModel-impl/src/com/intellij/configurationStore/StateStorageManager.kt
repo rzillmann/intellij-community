@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.configurationStore
 
 import com.intellij.openapi.components.*
@@ -23,6 +23,13 @@ interface StateStorageManager {
 
   fun removeStreamProvider(aClass: Class<out StreamProvider>)
 
+  /**
+   * Adds a listener for changes in configuration files
+   *
+   * @param listener the listener
+   */
+  fun addOperationListener(listener: OperationListener) {}
+
   fun getOldStorage(component: Any, componentName: String, operation: StateStorageOperation): StateStorage?
 
   fun expandMacro(collapsedPath: String): Path
@@ -38,6 +45,9 @@ interface StateStorageManager {
   @SettingsInternalApi
   fun release() {
   }
+
+  val isExternalSystemStorageEnabled: Boolean
+    get() = false
 }
 
 @Internal

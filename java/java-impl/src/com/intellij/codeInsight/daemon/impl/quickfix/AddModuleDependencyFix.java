@@ -18,13 +18,13 @@ import com.intellij.openapi.roots.JavaProjectModelModificationService;
 import com.intellij.openapi.roots.ModuleOrderEntry;
 import com.intellij.openapi.roots.ModuleRootManager;
 import com.intellij.openapi.ui.Messages;
+import com.intellij.openapi.ui.popup.IPopupChooserBuilder;
 import com.intellij.openapi.ui.popup.JBPopup;
 import com.intellij.openapi.ui.popup.JBPopupFactory;
 import com.intellij.openapi.util.Couple;
 import com.intellij.openapi.util.text.HtmlChunk;
 import com.intellij.psi.*;
 import com.intellij.psi.impl.source.resolve.JavaResolveUtil;
-import com.intellij.psi.util.PointersKt;
 import com.intellij.util.SlowOperations;
 import com.intellij.util.concurrency.AppExecutorUtil;
 import com.intellij.util.containers.ContainerUtil;
@@ -108,7 +108,7 @@ class AddModuleDependencyFix extends OrderEntryFix {
   }
 
   @Override
-  public boolean isAvailable(@NotNull Project project, Editor editor, PsiFile file) {
+  public boolean isAvailable(@NotNull Project project, Editor editor, PsiFile psiFile) {
     return !project.isDisposed() &&
            !myCurrentModule.isDisposed() &&
            !myModules.isEmpty() &&
@@ -116,15 +116,17 @@ class AddModuleDependencyFix extends OrderEntryFix {
   }
 
   @Override
-  public void invoke(@NotNull Project project, @Nullable Editor editor, PsiFile file) {
+  public void invoke(@NotNull Project project, @Nullable Editor editor, PsiFile psiFile) {
     if (myModules.size() == 1) {
       addDependencyOnModule(project, editor, ContainerUtil.getFirstItem(myModules));
     }
     else {
+      ModuleListCellRenderer renderer = new ModuleListCellRenderer();
+
       //noinspection DialogTitleCapitalization
-      JBPopup popup = JBPopupFactory.getInstance()
+      IPopupChooserBuilder<? extends Module> builder = JBPopupFactory.getInstance()
         .createPopupChooserBuilder(new ArrayList<>(myModules))
-        .setRenderer(new ModuleListCellRenderer())
+        .setRenderer(renderer)
         .setTitle(QuickFixBundle.message("orderEntry.fix.choose.module.to.add.dependency.on"))
         .setMovable(false)
         .setResizable(false)
@@ -133,8 +135,9 @@ class AddModuleDependencyFix extends OrderEntryFix {
           if (selectedValue != null) {
             addDependencyOnModule(project, editor, selectedValue);
           }
-        })
-        .createPopup();
+        });
+      builder = renderer.installSpeedSearch(builder);
+      JBPopup popup = builder.createPopup();
       if (editor != null) {
         popup.showInBestPositionFor(editor);
       }
@@ -145,7 +148,7 @@ class AddModuleDependencyFix extends OrderEntryFix {
   }
 
   @Override
-  public @NotNull IntentionPreviewInfo generatePreview(@NotNull Project project, @NotNull Editor editor, @NotNull PsiFile file) {
+  public @NotNull IntentionPreviewInfo generatePreview(@NotNull Project project, @NotNull Editor editor, @NotNull PsiFile psiFile) {
     return new IntentionPreviewInfo.Html(
       HtmlChunk.text(JavaBundle.message("adds.module.dependencies.preview",
                                         myModules.size(),
@@ -174,9 +177,9 @@ class AddModuleDependencyFix extends OrderEntryFix {
             List<BooleanSupplier> autoImportActions = new ArrayList<>();
             if (ref != null) {
               PsiElement element = ref.getElement();
-              PsiFile file = element.getContainingFile();
+              PsiFile psiFile = element.getContainingFile();
               for (ReferenceImporter importer : ReferenceImporter.EP_NAME.getExtensionList()) {
-                BooleanSupplier action = importer.computeAutoImportAtOffset(editor, file, element.getTextOffset(), false);
+                BooleanSupplier action = importer.computeAutoImportAtOffset(editor, psiFile, element.getTextOffset(), false);
                 if (action != null) {
                   autoImportActions.add(action);
                 }

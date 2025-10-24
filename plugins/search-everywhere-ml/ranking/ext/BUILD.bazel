@@ -1,24 +1,24 @@
 ### auto-generated section `build intellij.searchEverywhereMl.ranking.ext` start
-load("@rules_jvm//:jvm.bzl", "jvm_library", "jvm_resources")
+load("@rules_jvm//:jvm.bzl", "jvm_library", "resourcegroup")
 
-jvm_resources(
-  name = "searchEverywhereMl-ranking-ext_resources",
-  files = glob(["resources/**/*"]),
+resourcegroup(
+  name = "ext_resources",
+  srcs = glob(["resources/**/*"]),
   strip_prefix = "resources"
 )
 
 jvm_library(
-  name = "searchEverywhereMl-ranking-ext",
+  name = "ext",
   module_name = "intellij.searchEverywhereMl.ranking.ext",
   visibility = ["//visibility:public"],
-  srcs = glob(["src/**/*.kt", "src/**/*.java"], allow_empty = True),
+  srcs = glob(["src/**/*.kt", "src/**/*.java", "src/**/*.form"], allow_empty = True),
+  resources = [":ext_resources"],
   deps = [
     "@lib//:kotlin-stdlib",
     "@lib//:jetbrains-annotations",
     "//platform/util",
     "//platform/extensions",
     "//platform/statistics",
-  ],
-  runtime_deps = [":searchEverywhereMl-ranking-ext_resources"]
+  ]
 )
 ### auto-generated section `build intellij.searchEverywhereMl.ranking.ext` end

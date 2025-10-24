@@ -8,6 +8,7 @@ import com.intellij.ide.ui.UISettings;
 import com.intellij.internal.statistic.collectors.fus.ui.persistence.ToolbarClicksCollector;
 import com.intellij.openapi.actionSystem.*;
 import com.intellij.openapi.actionSystem.ex.*;
+import com.intellij.openapi.application.impl.InternalUICustomization;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.keymap.KeymapUtil;
@@ -54,14 +55,13 @@ public class ActionButton extends JComponent implements ActionButtonComponent, A
   private static final @NonNls Set<String> WHITE_LIST = Set.of("ExternalSystem.ProjectRefreshAction", "LoadConfigurationAction");
 
   /** @deprecated Use {@link ActionUtil#HIDE_DROPDOWN_ICON} instead */
-  @Deprecated
+  @Deprecated(forRemoval = true)
   public static final Key<Boolean> HIDE_DROPDOWN_ICON = ActionUtil.HIDE_DROPDOWN_ICON;
 
   public static final Key<HelpTooltip> CUSTOM_HELP_TOOLTIP = Key.create("CUSTOM_HELP_TOOLTIP");
 
   private JBDimension myMinimumButtonSize;
   private Supplier<? extends @NotNull Dimension> myMinimumButtonSizeFunction;
-  private PropertyChangeListener myPresentationListener;
   private Icon myDisabledIcon;
   private Icon myIcon;
   protected final Presentation myPresentation;
@@ -115,6 +115,8 @@ public class ActionButton extends JComponent implements ActionButtonComponent, A
               .firePropertyChange(AccessibleContext.ACCESSIBLE_STATE_PROPERTY, AccessibleState.CHECKED, null);
           }
         }
+
+        presentationPropertyChanged(evt);
       }
     });
     myPlace = place;
@@ -296,10 +298,6 @@ public class ActionButton extends JComponent implements ActionButtonComponent, A
     if (myRollover) {
       onMousePresenceChanged(false);
     }
-    if (myPresentationListener != null) {
-      myPresentation.removePropertyChangeListener(myPresentationListener);
-      myPresentationListener = null;
-    }
     if (myMouseDown) {
       ourGlobalMouseDown = false;
     }
@@ -312,9 +310,6 @@ public class ActionButton extends JComponent implements ActionButtonComponent, A
   @Override
   public void addNotify() {
     super.addNotify();
-    if (myPresentationListener == null) {
-      myPresentation.addPropertyChangeListener(myPresentationListener = this::presentationPropertyChanged);
-    }
     if (ActionToolbar.findToolbarBy(this) == null) {
       ActionManagerEx.withLazyActionManager(null, __ -> { update(); return Unit.INSTANCE; });
     }
@@ -339,7 +334,7 @@ public class ActionButton extends JComponent implements ActionButtonComponent, A
     ActionToolbar toolbar = ActionToolbar.findToolbarBy(this);
     ActionUiKind uiKind = toolbar instanceof ActionUiKind o ? o : ActionUiKind.TOOLBAR;
     AnActionEvent e = AnActionEvent.createEvent(getDataContext(), myPresentation, myPlace, uiKind, null);
-    ActionUtil.performDumbAwareUpdate(myAction, e, false);
+    ActionUtil.updateAction(myAction, e);
     updateToolTipText();
     updateIcon();
   }
@@ -471,9 +466,14 @@ public class ActionButton extends JComponent implements ActionButtonComponent, A
     return KeymapUtil.getFirstKeyboardShortcutText(myAction);
   }
 
+  private final InternalUICustomization myCustomization = InternalUICustomization.getInstance();
+
   @Override
   public void paintComponent(Graphics g) {
     jComponentPaint(g);
+    if (myCustomization != null) {
+      g = myCustomization.preserveGraphics(g);
+    }
     paintButtonLook(g);
   }
 
@@ -614,6 +614,9 @@ public class ActionButton extends JComponent implements ActionButtonComponent, A
     }
     else if (CUSTOM_HELP_TOOLTIP.toString().equals(propertyName)) {
       updateToolTipText();
+    }
+    else if (ActionUtil.COMPONENT_PROVIDER.toString().equals(propertyName)) {
+      LOG.debug("existing button was replaced with a CustomComponentAction: " + e.getNewValue());
     }
   }
 

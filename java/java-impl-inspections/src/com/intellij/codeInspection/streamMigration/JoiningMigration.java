@@ -1,7 +1,6 @@
 // Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.codeInspection.streamMigration;
 
-
 import com.intellij.codeInsight.intention.impl.StreamRefactoringUtil;
 import com.intellij.codeInspection.dataFlow.DfaPsiUtil;
 import com.intellij.codeInspection.dataFlow.rangeSet.LongRangeSet;
@@ -35,8 +34,8 @@ import static com.siyeh.ig.psiutils.ExpressionUtils.resolveLocalVariable;
 import static java.util.Collections.emptyList;
 import static java.util.Collections.singletonList;
 
-public class JoiningMigration extends BaseStreamApiMigration {
-  protected JoiningMigration(boolean shouldWarn) {
+final class JoiningMigration extends BaseStreamApiMigration {
+  JoiningMigration(boolean shouldWarn) {
     super(shouldWarn, "collect");
   }
 
@@ -203,7 +202,7 @@ public class JoiningMigration extends BaseStreamApiMigration {
     String generateIntermediate(CommentTracker ct) {
       if (TypeUtils.isJavaLangString(myLoopVariable.getType()) &&
           myMainJoinParts.size() == 1 &&
-          myMainJoinParts.get(0) instanceof PsiReferenceExpression) {
+          myMainJoinParts.getFirst() instanceof PsiReferenceExpression) {
         return "";
       }
       PsiElementFactory elementFactory = JavaPsiFacade.getElementFactory(myLoopVariable.getProject());
@@ -541,7 +540,7 @@ public class JoiningMigration extends BaseStreamApiMigration {
     private static @Nullable PsiMethodCallExpression tryExtractCombinedToString(PsiMethodCallExpression afterLoopAppend,
                                                                                 List<PsiElement> refs) {
       if (refs.size() == 1 && afterLoopAppend == null) { // case like return sb.append(postfix).toString();
-        PsiMethodCallExpression usage = ExpressionUtils.getCallForQualifier((PsiExpression)refs.get(0));
+        PsiMethodCallExpression usage = ExpressionUtils.getCallForQualifier((PsiExpression)refs.getFirst());
         if (APPEND.test(usage)) {
           PsiMethodCallExpression nextCall = ExpressionUtils.getCallForQualifier(usage);
           if (nextCall != null && "toString".equals(nextCall.getMethodExpression().getReferenceName())) {
@@ -751,7 +750,7 @@ public class JoiningMigration extends BaseStreamApiMigration {
         List<PsiExpression> mainJoinParts = extractJoinParts(statements);
         if (mainJoinParts == null || mainJoinParts.isEmpty()) return null;
         if (statements.isEmpty()) return null;
-        PsiVariable targetBuilder = extractStringBuilder(statements.get(0));
+        PsiVariable targetBuilder = extractStringBuilder(statements.getFirst());
         if (targetBuilder == null) return null;
         PsiStatement loop = terminalBlock.getStreamSourceStatement();
         PrefixSuffixContext context =
@@ -782,14 +781,14 @@ public class JoiningMigration extends BaseStreamApiMigration {
         if (nonFinalVariables != null && !nonFinalVariables.isEmpty()) return null;
         List<PsiStatement> statements = List.of(terminalBlock.getStatements());
         if (statements.size() < 2) return null;
-        PsiIfStatement ifStatement = tryCast(statements.get(0), PsiIfStatement.class);
+        PsiIfStatement ifStatement = tryCast(statements.getFirst(), PsiIfStatement.class);
         if (ifStatement == null) return null;
         PsiExpression condition = ifStatement.getCondition();
         if (condition == null || ifStatement.getElseBranch() != null) return null;
         List<PsiExpression> delimiter = extractDelimiter(ifStatement);
         if (delimiter == null) return null;
         List<PsiStatement> withoutCondition = statements.subList(1, statements.size());
-        PsiVariable targetBuilder = extractStringBuilder(withoutCondition.get(0));
+        PsiVariable targetBuilder = extractStringBuilder(withoutCondition.getFirst());
         if(!(targetBuilder instanceof PsiLocalVariable)) return null;
         Integer conditionPrefixLength = extractConditionPrefixLength(condition, targetBuilder);
         if (conditionPrefixLength == null) return null;
@@ -849,7 +848,7 @@ public class JoiningMigration extends BaseStreamApiMigration {
         if (specialFirstIterationLoop == null) return null;
         PsiLocalVariable boolVar = specialFirstIterationLoop.getVariable();
         if (boolVar == null) return null;
-        if (nonFinalVariables != null && !nonFinalVariables.get(0).equals(boolVar)) return null;
+        if (nonFinalVariables != null && !nonFinalVariables.getFirst().equals(boolVar)) return null;
         List<? extends PsiStatement> firstIterationStatements = specialFirstIterationLoop.getFirstIterationStatements();
         List<? extends PsiStatement> otherIterationStatements = specialFirstIterationLoop.getOtherIterationStatements();
         if (firstIterationStatements.isEmpty() || otherIterationStatements.isEmpty()) return null;
@@ -862,7 +861,7 @@ public class JoiningMigration extends BaseStreamApiMigration {
         if (!joinPartsAreEquivalent(joinData.getMainJoinParts(), firstIterationJoinParts)) return null;
 
 
-        PsiVariable targetBuilder = extractStringBuilder(firstIterationStatements.get(0));
+        PsiVariable targetBuilder = extractStringBuilder(firstIterationStatements.getFirst());
         if (targetBuilder == null) return null;
         PsiStatement loop = terminalBlock.getStreamSourceStatement();
         PrefixSuffixContext context =
@@ -906,7 +905,7 @@ public class JoiningMigration extends BaseStreamApiMigration {
         if (nonFinalVariables != null && !nonFinalVariables.isEmpty()) return null;
         List<PsiStatement> statements = Arrays.asList(terminalBlock.getStatements());
         if (statements.isEmpty()) return null;
-        PsiVariable targetBuilder = extractStringBuilder(statements.get(0));
+        PsiVariable targetBuilder = extractStringBuilder(statements.getFirst());
         if(!(targetBuilder instanceof PsiLocalVariable)) return null;
         List<PsiExpression> joinParts = extractJoinParts(statements);
         if (joinParts == null) return null;
@@ -1018,7 +1017,7 @@ public class JoiningMigration extends BaseStreamApiMigration {
         List<PsiStatement> statements = List.of(terminalBlock.getStatements());
         if (statements.size() < 2) return null;
         // TODO maybe not just last, but check if delimiter not used after assignment?
-        PsiAssignmentExpression assignment = extractAssignment(statements.get(statements.size() - 1));
+        PsiAssignmentExpression assignment = extractAssignment(statements.getLast());
         if (assignment == null) return null;
         PsiLocalVariable delimiterVar = extractDelimiterVar(assignment);
         if (delimiterVar == null) return null;
@@ -1028,11 +1027,11 @@ public class JoiningMigration extends BaseStreamApiMigration {
         List<PsiExpression> joinParts = extractJoinParts(mainStatements);
         if (joinParts == null || joinParts.isEmpty()) return null;
 
-        if (isSeparator(delimiterVar, joinParts.get(0))) return null;
-        joinParts.remove(0);
+        if (isSeparator(delimiterVar, joinParts.getFirst())) return null;
+        joinParts.removeFirst();
         if (ReferencesSearch.search(delimiterVar, new LocalSearchScope(terminalBlock.getStatements())).findAll().size() != 2) return null;
 
-        PsiVariable targetBuilder = extractStringBuilder(mainStatements.get(0));
+        PsiVariable targetBuilder = extractStringBuilder(mainStatements.getFirst());
         if (targetBuilder == null) return null;
 
         PsiStatement loop = terminalBlock.getStreamSourceStatement();
@@ -1116,7 +1115,7 @@ public class JoiningMigration extends BaseStreamApiMigration {
             break;
           }
           if (statement instanceof PsiExpressionStatement &&
-              JoiningTerminal.tryExtractJoinPart(((PsiExpressionStatement)statement).getExpression(), new ArrayList<>())) {
+              tryExtractJoinPart(((PsiExpressionStatement)statement).getExpression(), new ArrayList<>())) {
             break;
           }
           additionalPrefix++;
@@ -1143,7 +1142,7 @@ public class JoiningMigration extends BaseStreamApiMigration {
         if (!joinPartsAreEquivalent(joinData.getMainJoinParts(), firstIterationJoinParts)) return null;
 
         if (firstIterationStatements.isEmpty()) return null;
-        PsiVariable targetBuilder = extractStringBuilder(firstIterationStatements.get(0));
+        PsiVariable targetBuilder = extractStringBuilder(firstIterationStatements.getFirst());
         if (targetBuilder == null) return null;
         PsiStatement loop = terminalBlock.getStreamSourceStatement();
         PrefixSuffixContext context =
@@ -1224,9 +1223,9 @@ public class JoiningMigration extends BaseStreamApiMigration {
         PsiStatement loop = terminalBlock.getStreamSourceStatement();
         PsiLocalVariable variable = tryCast(terminalBlock.getVariable(), PsiLocalVariable.class);
         if (variable == null) return null;
-        PsiVariable targetBuilder = extractStringBuilder(statements.get(0));
+        PsiVariable targetBuilder = extractStringBuilder(statements.getFirst());
         if (targetBuilder == null) return null;
-        AppendChain beforeLoopAppend = JoiningTerminal.getCallBeforeStatement(loop, targetBuilder, emptyList());
+        AppendChain beforeLoopAppend = getCallBeforeStatement(loop, targetBuilder, emptyList());
         if (beforeLoopAppend == null) return null;
         PsiStatement beforeLoopAppendStatement = PsiTreeUtil.getParentOfType(beforeLoopAppend.outermost, PsiStatement.class);
         if (beforeLoopAppendStatement == null) return null;

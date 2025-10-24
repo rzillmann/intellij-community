@@ -1,15 +1,18 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package git4idea.actions.tag
 
 import com.intellij.openapi.actionSystem.*
+import com.intellij.vcs.git.actions.GitSingleRefActions
+import git4idea.GitTag
 import git4idea.actions.branch.GitBranchActionsDataKeys
 import git4idea.i18n.GitBundle
 import git4idea.repo.GitRemote
 import git4idea.repo.GitRepository
+import org.jetbrains.annotations.VisibleForTesting
 
 internal class GitPushTagsActionGroup : ActionGroup(GitBundle.messagePointer("action.Git.Push.Tag.text"), false) {
   override fun update(e: AnActionEvent) {
-    val tag = e.getData(GitBranchActionsDataKeys.TAGS)?.singleOrNull()
+    val tag = e.getData(GitSingleRefActions.SELECTED_REF_DATA_KEY) as? GitTag
     val repositories = e.getData(GitBranchActionsDataKeys.AFFECTED_REPOSITORIES)
     if (tag == null || repositories == null) {
       e.presentation.isEnabledAndVisible = false
@@ -22,30 +25,33 @@ internal class GitPushTagsActionGroup : ActionGroup(GitBundle.messagePointer("ac
 
   override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
 
-  override fun getChildren(e: AnActionEvent?): Array<out AnAction?> {
+  override fun getChildren(e: AnActionEvent?): Array<AnAction> {
     val repositories = e?.getData(GitBranchActionsDataKeys.AFFECTED_REPOSITORIES) ?: return emptyArray()
 
     val action = ActionManager.getInstance().getAction(GitPushTagAction.ACTION_ID)
 
-    return repositories.flatMap<GitRepository, GitPushTagActionWrapper> { repo ->
+    return repositories.flatMap { repo ->
       repo.remotes.map<GitRemote, GitPushTagActionWrapper> { remote ->
         GitPushTagActionWrapper(action, repo, remote)
       }
     }.toTypedArray()
   }
 
-  private companion object {
-    const val MAX_ACTIONS_UNTIL_POPUP = 6
+  companion object {
+    val REMOTE_IN_REPOSITORY_KEY = DataKey.create<GitRemote>("Git.Remote.In.Repository")
+
+    private const val MAX_ACTIONS_UNTIL_POPUP = 6
   }
 }
 
-private class GitPushTagActionWrapper(
+@VisibleForTesting
+class GitPushTagActionWrapper(
   action: AnAction,
   private val repository: GitRepository,
   private val remote: GitRemote,
 ) : AnActionWrapper(action), DataSnapshotProvider {
   override fun dataSnapshot(sink: DataSink) {
-    sink[GitBranchActionsDataKeys.REMOTE] = remote
+    sink[GitPushTagsActionGroup.REMOTE_IN_REPOSITORY_KEY] = remote
     sink[GitBranchActionsDataKeys.SELECTED_REPOSITORY] = repository
   }
 }

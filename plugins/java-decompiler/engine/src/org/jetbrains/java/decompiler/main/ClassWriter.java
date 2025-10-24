@@ -1106,7 +1106,7 @@ public class ClassWriter {
         List<List<AnnotationExprent>> annotations = attribute.getParamAnnotations();
         if (param < annotations.size()) {
           for (AnnotationExprent annotation : annotations.get(param)) {
-            if (mt.paramAnnCollidesWithTypeAnnotation(annotation, type, param)) continue;
+            if (mt.paramAnnCollidesWithTypeAnnotation(annotation, param)) continue;
             result.add(annotation);
           }
         }
@@ -1475,10 +1475,13 @@ public class ClassWriter {
       TargetInfo.TypeParameterTarget.extract(typeAnnotations, i).forEach(typeAnnotation -> typeAnnotation.writeTo(buffer));
       buffer.append(parameters.get(i));
       List<VarType> parameterBounds = bounds.get(i);
-      if (parameterBounds.size() > 1 || !"java/lang/Object".equals(parameterBounds.get(0).getValue())) {
+      List<TypeAnnotation> firstTypeAnnotations = TargetInfo.TypeParameterBoundTarget.extract(typeAnnotations, i, 0);
+      if (parameterBounds.size() > 1 ||
+          (parameterBounds.size() == 1 && !"java/lang/Object".equals(parameterBounds.getFirst().getValue()) ||
+           !firstTypeAnnotations.isEmpty())) {
         buffer.append(" extends ");
-        TargetInfo.TypeParameterBoundTarget.extract(typeAnnotations, i, 0).forEach(typeAnnotation -> typeAnnotation.writeTo(buffer));
-        buffer.append(ExprProcessor.getCastTypeName(parameterBounds.get(0), Collections.emptyList()));
+        firstTypeAnnotations.forEach(typeAnnotation -> typeAnnotation.writeTo(buffer));
+        buffer.append(ExprProcessor.getCastTypeName(parameterBounds.getFirst(), Collections.emptyList()));
         for (int j = 1; j < parameterBounds.size(); j++) {
           buffer.append(" & ");
           TargetInfo.TypeParameterBoundTarget.extract(typeAnnotations, i, j).forEach(typeAnnotation -> typeAnnotation.writeTo(buffer));

@@ -2,11 +2,13 @@
 package com.intellij.unscramble
 
 import com.intellij.icons.AllIcons
+import com.intellij.java.frontback.impl.JavaFrontbackBundle
 import com.intellij.openapi.util.NlsSafe
 import com.intellij.threadDumpParser.ThreadOperation
 import com.intellij.threadDumpParser.ThreadState
 import com.intellij.ui.SimpleTextAttributes
 import org.jetbrains.annotations.ApiStatus
+import org.jetbrains.annotations.Nls
 import java.awt.Color
 import java.util.*
 import javax.swing.Icon
@@ -22,6 +24,8 @@ interface DumpItem {
   val interestLevel: Int
 
   val icon: Icon
+
+  val iconToolTip: @Nls String?
 
   val attributes: SimpleTextAttributes
 
@@ -175,6 +179,13 @@ private class JavaThreadDumpItem(private val threadState: ThreadState) : Mergeab
       }
     }
 
+  override val iconToolTip: @Nls String?
+    get() = when {
+      threadState.isVirtual -> JavaFrontbackBundle.message("dump.item.java.thread.icon.tooltip.virtual")
+      threadState.isDaemon -> JavaFrontbackBundle.message("dump.item.java.thread.icon.tooltip.daemon")
+      else -> null
+    }
+
   override val attributes: SimpleTextAttributes = when {
     threadState.isSleeping -> DumpItem.SLEEPING_ATTRIBUTES
     threadState.isEmptyStackTrace || this.isServiceThread || threadState.isKnownJDKThread() -> DumpItem.UNINTERESTING_ATTRIBUTES
@@ -232,5 +243,33 @@ private class JavaThreadDumpItem(private val threadState: ThreadState) : Mergeab
       )
     }
   }
+}
+
+class InfoDumpItem(private val title: @Nls String, private val details: @NlsSafe String) : MergeableDumpItem {
+  override val mergeableToken: MergeableToken = object : MergeableToken {
+    override fun equals(other: Any?) = super.equals(other)
+    override fun hashCode() = super.hashCode()
+    override val item = this@InfoDumpItem
+  }
+
+  override val name: @NlsSafe String
+    get() = title
+  override val stateDesc: @NlsSafe String
+    get() = ""
+  override val stackTrace: @NlsSafe String
+    get() = details
+  override val interestLevel: Int
+    get() = Int.MIN_VALUE
+  override val icon: Icon
+    get() = AllIcons.General.Information
+  override val iconToolTip: @Nls String?
+    get() = null
+  override val attributes: SimpleTextAttributes
+    get() = SimpleTextAttributes.REGULAR_ATTRIBUTES
+  override val isDeadLocked: Boolean
+    get() = false
+  override val awaitingDumpItems: Set<DumpItem>
+    get() = emptySet()
+
 }
 

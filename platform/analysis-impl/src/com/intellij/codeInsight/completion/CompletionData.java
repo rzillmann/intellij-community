@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 
 package com.intellij.codeInsight.completion;
 
@@ -18,11 +18,14 @@ import com.intellij.patterns.ObjectPattern;
 import com.intellij.psi.*;
 import com.intellij.psi.filters.ElementFilter;
 import com.intellij.psi.filters.TrueFilter;
+import com.intellij.psi.impl.PsiDocumentManagerBase;
 import com.intellij.psi.impl.source.resolve.reference.impl.PsiMultiReference;
 import com.intellij.psi.meta.PsiMetaData;
 import com.intellij.psi.util.PsiUtilCore;
 import com.intellij.util.containers.ContainerUtil;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.*;
 
@@ -31,6 +34,7 @@ import static com.intellij.patterns.StandardPatterns.not;
 /**
  * @deprecated see {@link CompletionContributor}
  */
+@ApiStatus.Internal
 @Deprecated(forRemoval = true)
 public class CompletionData {
   private static final Logger LOG = Logger.getInstance(CompletionData.class);
@@ -53,6 +57,7 @@ public class CompletionData {
   /**
    * @deprecated see {@link CompletionContributor}
    */
+  @ApiStatus.Internal
   @Deprecated(forRemoval = true)
   protected void registerVariant(CompletionVariant variant){
     myCompletionVariants.add(variant);
@@ -122,12 +127,24 @@ public class CompletionData {
     }
   };
 
-  private static String findPrefixStatic(final PsiElement insertedElement, final int offsetInFile, ElementPattern<Character> prefixStartTrim) {
+  private static @NotNull String findPrefixStatic(@Nullable PsiElement insertedElement,
+                                                  int offsetInFile,
+                                                  @NotNull ElementPattern<Character> prefixStartTrim) {
     if(insertedElement == null) return "";
 
     final Document document = insertedElement.getContainingFile().getViewProvider().getDocument();
     assert document != null;
-    LOG.assertTrue(!PsiDocumentManager.getInstance(insertedElement.getProject()).isUncommited(document), "Uncommitted");
+
+    PsiDocumentManager documentManager = PsiDocumentManager.getInstance(insertedElement.getProject());
+    if (documentManager.isUncommited(document)) {
+      Throwable throwable = null;
+      if (documentManager instanceof PsiDocumentManagerBase base) {
+        Map<Document, Throwable> traces = base.getUncommitedDocumentsWithTraces();
+        throwable = traces.get(document);
+      }
+
+      LOG.error("Uncommitted document", throwable);
+    }
 
     final String prefix = CompletionUtil.findReferencePrefix(insertedElement, offsetInFile);
     if (prefix != null) return prefix;
@@ -142,12 +159,13 @@ public class CompletionData {
   /**
    * @deprecated Use {@link CompletionUtil} methods instead
    */
+  @ApiStatus.Internal
   @Deprecated(forRemoval = true)
-  public static String findPrefixStatic(final PsiElement insertedElement, final int offsetInFile) {
+  public static @NotNull String findPrefixStatic(final PsiElement insertedElement, final int offsetInFile) {
     return findPrefixStatic(insertedElement, offsetInFile, NOT_JAVA_ID);
   }
 
-  private static String findPrefixDefault(final PsiElement insertedElement, final int offset, final @NotNull ElementPattern trimStart) {
+  private static @NotNull String findPrefixDefault(@NotNull PsiElement insertedElement, int offset, @NotNull ElementPattern trimStart) {
     String substr = insertedElement.getText().substring(0, offset - insertedElement.getTextRange().getStartOffset());
     if (substr.isEmpty() || Character.isWhitespace(substr.charAt(substr.length() - 1))) return "";
 
@@ -159,21 +177,21 @@ public class CompletionData {
   }
 
   public static @NotNull LookupElement objectToLookupItem(final @NotNull Object object) {
-    if (object instanceof LookupElement) return (LookupElement)object;
+    if (object instanceof LookupElement lookupElement) return lookupElement;
 
     String s = null;
     TailType tailType = TailTypes.noneType();
-    if (object instanceof PsiElement){
-      s = PsiUtilCore.getName((PsiElement)object);
+    if (object instanceof PsiElement psiElement){
+      s = PsiUtilCore.getName(psiElement);
     }
-    else if (object instanceof PsiMetaData) {
-      s = ((PsiMetaData)object).getName();
+    else if (object instanceof PsiMetaData metaData) {
+      s = metaData.getName();
     }
-    else if (object instanceof String) {
-      s = (String)object;
+    else if (object instanceof String string) {
+      s = string;
     }
-    else if (object instanceof PresentableLookupValue) {
-      s = ((PresentableLookupValue)object).getPresentation();
+    else if (object instanceof PresentableLookupValue lookupValue) {
+      s = lookupValue.getPresentation();
     }
     if (s == null) {
       throw PluginException.createByClass("Null string for object: " + object + " of " + object.getClass(), null, object.getClass());
@@ -211,13 +229,13 @@ public class CompletionData {
   }
 
   protected void completeReference(PsiReference reference, PsiElement position, Set<? super LookupElement> set, TailType tailType, ElementFilter filter, CompletionVariant variant) {
-    if (reference instanceof PsiMultiReference) {
-      for (PsiReference ref : getReferences((PsiMultiReference)reference)) {
+    if (reference instanceof PsiMultiReference multiReference) {
+      for (PsiReference ref : getReferences(multiReference)) {
         completeReference(ref, position, set, tailType, filter, variant);
       }
     }
-    else if (reference instanceof PsiReferencesWrapper) {
-      for (PsiReference ref : ((PsiReferencesWrapper)reference).getReferences()) {
+    else if (reference instanceof PsiReferencesWrapper wrapper) {
+      for (PsiReference ref : wrapper.getReferences()) {
         completeReference(ref, position, set, tailType, filter, variant);
       }
     }
@@ -235,8 +253,8 @@ public class CompletionData {
           }
         }
         else {
-          if (completion instanceof LookupItem) {
-            final Object o = ((LookupItem<?>)completion).getObject();
+          if (completion instanceof LookupItem<?> lookupItem) {
+            final Object o = lookupItem.getObject();
             if (o instanceof PsiElement) {
               if (!filter.isClassAcceptable(o.getClass()) || !filter.isAcceptable(o, position)) continue;
             }

@@ -1,7 +1,10 @@
 // Copyright 2000-2022 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.kotlin.idea.navigation
 
+import com.intellij.openapi.project.Project
 import com.intellij.psi.search.GlobalSearchScope
+import com.intellij.psi.util.CachedValuesManager
+import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.kotlin.analysis.api.KaExperimentalApi
 import org.jetbrains.kotlin.analysis.api.analyze
 import org.jetbrains.kotlin.analysis.api.permissions.KaAllowAnalysisFromWriteAction
@@ -23,6 +26,8 @@ import org.jetbrains.kotlin.idea.stubindex.KotlinFullClassNameIndex
 import org.jetbrains.kotlin.idea.stubindex.KotlinTopLevelFunctionFqnNameIndex
 import org.jetbrains.kotlin.idea.stubindex.KotlinTopLevelPropertyFqnNameIndex
 import org.jetbrains.kotlin.idea.stubindex.KotlinTopLevelTypeAliasFqNameIndex
+import org.jetbrains.kotlin.name.CallableId
+import org.jetbrains.kotlin.name.ClassId
 import org.jetbrains.kotlin.platform.TargetPlatform
 import org.jetbrains.kotlin.platform.isCommon
 import org.jetbrains.kotlin.psi.*
@@ -32,19 +37,22 @@ import org.jetbrains.kotlin.psi.psiUtil.isExpectDeclaration
 import org.jetbrains.kotlin.psi.psiUtil.isExtensionDeclaration
 import org.jetbrains.kotlin.types.Variance
 
-internal class KotlinAnalysisApiBasedDeclarationNavigationPolicyImpl : KotlinDeclarationNavigationPolicy {
+@ApiStatus.Internal
+open class KotlinAnalysisApiBasedDeclarationNavigationPolicyImpl : KotlinDeclarationNavigationPolicy {
     override fun getNavigationElement(declaration: KtDeclaration): KtElement {
-        val ktFile = declaration.containingKtFile
-        if (!ktFile.isCompiled) return declaration
-        val project = ktFile.project
-        return when (val module = ktFile.getKaModule(project, useSiteModule = null) ) {
-            is KaLibraryModule -> getCorrespondingDeclarationInLibrarySourceOrBinaryCounterpart(
-                module.librarySources ?: return declaration,
-                declaration,
-                module
-            )
+        return CachedValuesManager.getProjectPsiDependentCache(declaration) { declaration ->
+            val ktFile = declaration.containingKtFile
+            if (!ktFile.isCompiled) return@getProjectPsiDependentCache declaration
+            val project = ktFile.project
+            when (val module = ktFile.getKaModule(project, useSiteModule = null) ) {
+                is KaLibraryModule -> getCorrespondingDeclarationInLibrarySourceOrBinaryCounterpart(
+                    module.librarySources ?: return@getProjectPsiDependentCache declaration,
+                    declaration,
+                    module
+                )
 
-            else -> declaration
+                else -> declaration
+            }
         }
     }
 
@@ -83,7 +91,7 @@ internal class KotlinAnalysisApiBasedDeclarationNavigationPolicyImpl : KotlinDec
 
     private fun getCorrespondingDeclarationInLibrarySourceOrBinaryCounterpart(
         declaration: KtDeclaration,
-        scope: GlobalSearchScope,
+        scope: Scope,
         module: KaModule
     ): KtElement? {
         return when (declaration) {
@@ -102,7 +110,7 @@ internal class KotlinAnalysisApiBasedDeclarationNavigationPolicyImpl : KotlinDec
         }
     }
 
-    private fun getCorrespondingEnumEntry(declaration: KtEnumEntry, scope: GlobalSearchScope, module: KaModule): KtEnumEntry? {
+    private fun getCorrespondingEnumEntry(declaration: KtEnumEntry, scope: Scope, module: KaModule): KtEnumEntry? {
         val enumClass = declaration.containingClassOrObject ?: return null
         val classLikeDeclaration = getCorrespondingClassLikeDeclaration(enumClass, scope, module) as? KtClass ?: return null
         val enumEntryName = declaration.name
@@ -111,23 +119,23 @@ internal class KotlinAnalysisApiBasedDeclarationNavigationPolicyImpl : KotlinDec
 
     private fun getCorrespondingClassLikeDeclaration(
         declaration: KtClassLikeDeclaration,
-        scope: GlobalSearchScope,
+        scope: Scope,
         module: KaModule
     ): KtClassLikeDeclaration? {
         val classId = declaration.getClassId() ?: return null
         val project = module.project
         val targetPlatform = module.targetPlatform
 
-        val classIdName = classId.asFqNameString()
         val targetDeclaration =
-            KotlinFullClassNameIndex[classIdName, project, scope].firstOrNull { it.matchesWithPlatform(targetPlatform) } ?:
-            KotlinTopLevelTypeAliasFqNameIndex[classIdName, project, scope].firstOrNull { it.matchesWithPlatform(targetPlatform) }
+            getClassesByClassId(classId, project, scope).firstOrNull { it.matchesWithPlatform(targetPlatform) } ?:
+            getTypeAliasesByClassId(classId, project, scope).firstOrNull { it.matchesWithPlatform(targetPlatform) }
         return targetDeclaration
     }
 
+
     private fun getCorrespondingCallableDeclaration(
         declaration: KtCallableDeclaration,
-        scope: GlobalSearchScope,
+        scope: Scope,
         module: KaModule
     ): KtElement? {
         val declarationName = declaration.name ?: return null
@@ -146,14 +154,12 @@ internal class KotlinAnalysisApiBasedDeclarationNavigationPolicyImpl : KotlinDec
             else -> {
                 val candidates = when (val containingClass = declaration.containingClassOrObject) {
                     null -> {
-                        val packageFqName = declaration.containingKtFile.packageFqName.takeUnless { it.isRoot }?.asString()
-                        val callableName = "${packageFqName?.let { "$it." }.orEmpty()}${declarationName}"
+                        if (declaration !is KtNamedFunction && declaration !is KtProperty) return null
+                        val callableId = CallableId(declaration.containingKtFile.packageFqName, declaration.nameAsName ?: return null)
                         val project = module.project
-                        when (declaration) {
-                            is KtNamedFunction -> KotlinTopLevelFunctionFqnNameIndex[callableName, project, scope]
-                            is KtProperty -> KotlinTopLevelPropertyFqnNameIndex[callableName, project, scope]
-                            else -> return null
-                        }
+                        val declarations = getTopLevelCallablesByName(declaration, callableId, project, scope)
+                        val targetPlatform = module.targetPlatform
+                        declarations.filter { it.matchesWithPlatform(targetPlatform) }
                     }
 
                     else -> {
@@ -169,7 +175,7 @@ internal class KotlinAnalysisApiBasedDeclarationNavigationPolicyImpl : KotlinDec
                                     ?.let { return it }
                             }
                         }
-                        declarations
+                        declarations.asSequence()
                     }
                 }
                 return chooseCallableCandidate(declaration, candidates)
@@ -177,7 +183,7 @@ internal class KotlinAnalysisApiBasedDeclarationNavigationPolicyImpl : KotlinDec
         }
     }
 
-    private fun chooseCallableCandidate(original: KtCallableDeclaration, candidates: Collection<KtDeclaration>): KtCallableDeclaration? {
+    private fun chooseCallableCandidate(original: KtCallableDeclaration, candidates: Sequence<KtDeclaration>): KtCallableDeclaration? {
         return when (original) {
             is KtConstructor<*> -> chooseCallableCandidate(original, candidates) { original, candidate ->
                 constructorsMatchesByPsi(original, candidate)
@@ -287,27 +293,50 @@ internal class KotlinAnalysisApiBasedDeclarationNavigationPolicyImpl : KotlinDec
 
     private inline fun <reified C : KtCallableDeclaration> chooseCallableCandidate(
         original: C,
-        candidates: Collection<KtDeclaration>,
-        matchesByPsi: (C, C) -> Boolean
+        candidates: Sequence<KtDeclaration>,
+        crossinline matchesByPsi: (C, C) -> Boolean
     ): C? {
         val filteredCandidates = candidates.filterIsInstance<C>().filter { matchesByPsi(original, it) }
+        filteredCandidates.singleOrNull()?.let { return it }
 
-        return when (filteredCandidates.size) {
-            0 -> null
-            1 -> filteredCandidates.single()
-            else -> filteredCandidates.firstOrNull { compareCallableTypesByResolve(original, it) }
-        }
+        return filteredCandidates.firstOrNull { compareCallableTypesByResolve(original, it) }
+            ?: filteredCandidates.firstOrNull()
     }
 
-    private fun KaModule.getContentScopeWithCommonDependencies(): GlobalSearchScope {
-        if (targetPlatform.isCommon()) return contentScope
-
-        val scopes = buildList {
-            add(contentScope)
-            allDirectDependencies().filter { it.targetPlatform.isCommon() }.mapTo(this) { it.contentScope }
+    private fun KaModule.getContentScopeWithCommonDependencies(): Scope {
+        val root = this
+        if (targetPlatform.isCommon()) return Scope(listOf(root), contentScope)
+        val modules = buildList {
+            add(root)
+            allDirectDependencies().filterTo(this) { it.targetPlatform.isCommon() }
         }
-        return KaGlobalSearchScopeMerger.getInstance(project).union(scopes)
+        return Scope(
+            modules,
+            KaGlobalSearchScopeMerger.getInstance(project).union(modules.map { it.contentScope })
+        )
     }
+
+    protected open fun getTopLevelCallablesByName(
+        declaration: KtCallableDeclaration,
+        callableId: CallableId,
+        project: Project,
+        scope: Scope
+    ): Sequence<KtCallableDeclaration> = when (declaration) {
+        is KtNamedFunction -> KotlinTopLevelFunctionFqnNameIndex[callableId.asSingleFqName().asString(), project, scope.globalSearchScope]
+        is KtProperty -> KotlinTopLevelPropertyFqnNameIndex[callableId.asSingleFqName().asString(), project, scope.globalSearchScope]
+        else -> error("Unexpected declaration ${declaration::class}")
+    }.asSequence()
+
+    protected open fun getTypeAliasesByClassId(classId: ClassId, project: Project, scope: Scope): Sequence<KtTypeAlias> =
+        KotlinTopLevelTypeAliasFqNameIndex[classId.asFqNameString(), project, scope.globalSearchScope].asSequence()
+
+    protected open fun getClassesByClassId(classId: ClassId, project: Project, scope: Scope): Sequence<KtClassOrObject> =
+        KotlinFullClassNameIndex[classId.asFqNameString(), project, scope.globalSearchScope].asSequence()
+
+    data class Scope(
+        val modules: List<KaModule>,
+        val globalSearchScope: GlobalSearchScope,
+    )
 
     companion object {
         @KaExperimentalApi

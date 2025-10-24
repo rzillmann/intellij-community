@@ -9,8 +9,8 @@ import java.util.List;
 
 @FunctionalInterface
 @ApiStatus.Internal
-public interface ResultSink {
+interface ResultSink {
   void accept(@NotNull Object toolId,
               @NotNull PsiElement element,
-              @NotNull List<? extends HighlightInfo> info);
+              @NotNull List<? extends @NotNull HighlightInfo> info);
 }

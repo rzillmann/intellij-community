@@ -1,19 +1,24 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.openapi.application.impl;
 
+import com.intellij.openapi.diagnostic.Logger;
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.function.Predicate;
 
 // array-backed queue with additional support for fast bulk inserts
-final class BulkArrayQueue<T> {
+@ApiStatus.Internal
+public final class BulkArrayQueue<T> {
+  private static final Logger LOG = Logger.getInstance(BulkArrayQueue.class);
+
   // maintain wrap-around queue using these pointers into myQueue
   private int tail; // index at which the next element would be stored via enqueue()
   private int head; // index to a stored element to be returned by pollFirst(); if tail==head the queue is empty
   private Object[] myQueue = new Object[1024];
 
-  void enqueue(@NotNull T info) {
+  public void enqueue(@NotNull T info) {
     int newTail = (tail + 1) % myQueue.length;
     if (newTail == head) {
       growAndUnwrap(0);
@@ -42,24 +47,38 @@ final class BulkArrayQueue<T> {
       firstChunkSize = oldCapacity - head;
       System.arraycopy(myQueue, 0, newQueue, reserveAtStart + firstChunkSize, tail);
     }
-    System.arraycopy(myQueue, head, newQueue, reserveAtStart, firstChunkSize);
+    try {
+      System.arraycopy(myQueue, head, newQueue, reserveAtStart, firstChunkSize);
+    } catch (Throwable e) {
+      LOG.warn("Could not copy array: head=" + head + ", tail=" + tail + ", capacity=" + oldCapacity + ", reserveAtStart=" + reserveAtStart + ", firstChunkSize=" + firstChunkSize, e);
+      throw e;
+    }
     tail = size() + reserveAtStart;
     head = reserveAtStart;
     myQueue = newQueue;
   }
 
 
-  int size() {
+  public int size() {
     return head <= tail ? tail - head : tail + myQueue.length-head;
   }
 
-  T pollFirst() {
+  public int capacity() { return  myQueue.length; }
+
+  public T pollFirst() {
     if (isEmpty()) return null;
     int nextHead = (head+1) % myQueue.length;
     T info = getAndNullize(head);
     head = nextHead;
     return info;
   }
+
+  public T peekFirst() {
+    if (isEmpty()) return null;
+    //noinspection unchecked
+    return (T)myQueue[head];
+  }
+
 
   private @NotNull T getAndNullize(int head) {
     //noinspection unchecked
@@ -69,21 +88,22 @@ final class BulkArrayQueue<T> {
   }
 
   // insert all from "elements" before "head"
-  void bulkEnqueueFirst(@NotNull ObjectArrayList<? extends @NotNull T> elements) {
+  public void bulkEnqueueFirst(@NotNull ObjectArrayList<? extends @NotNull T> elements) {
     int insertSize = elements.size();
     int oldCapacity = myQueue.length;
     int emptySpace = oldCapacity - size() - 1;
     if (insertSize > emptySpace) {
       growAndUnwrap(insertSize);
     }
-    int firstChunkSize = head <= tail ? Math.min(insertSize, head) : Math.min(insertSize, head - tail - 1);
-    elements.getElements(0, myQueue, head - firstChunkSize, firstChunkSize);
-    head -= firstChunkSize;
-    if (firstChunkSize != insertSize) {
-      int secondChunkSize = insertSize - firstChunkSize;
-      // wraparound
-      elements.getElements(firstChunkSize, myQueue, oldCapacity - secondChunkSize, secondChunkSize);
-      head = oldCapacity - secondChunkSize;
+    int secondChunkSize = head <= tail ? Math.min(insertSize, head) : Math.min(insertSize, head - tail - 1);
+    int firstChunkSize = insertSize - secondChunkSize;
+
+    head -= secondChunkSize;
+    elements.getElements(firstChunkSize, myQueue, head, secondChunkSize);
+
+    if (firstChunkSize != 0) {
+      head = oldCapacity - firstChunkSize;
+      elements.getElements(0, myQueue, head, firstChunkSize);
     }
   }
 

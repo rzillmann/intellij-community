@@ -18,7 +18,10 @@ import com.intellij.openapi.project.DumbAware;
 import com.intellij.openapi.project.DumbService;
 import com.intellij.openapi.project.IndexNotReadyException;
 import com.intellij.openapi.project.Project;
-import com.intellij.openapi.util.*;
+import com.intellij.openapi.util.Disposer;
+import com.intellij.openapi.util.Pair;
+import com.intellij.openapi.util.Segment;
+import com.intellij.openapi.util.TextRange;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.psi.*;
 import com.intellij.psi.impl.PsiDocumentManagerBase;
@@ -95,11 +98,11 @@ public final class InjectedLanguageManagerImpl extends InjectedLanguageManager i
   @Override
   public PsiLanguageInjectionHost getInjectionHost(@NotNull FileViewProvider injectedProvider) {
     //noinspection removal
-    if (!(injectedProvider instanceof InjectedFileViewProvider)) {
+    if (!(injectedProvider instanceof InjectedFileViewProvider injected)) {
       return null;
     }
     //noinspection removal
-    return ((InjectedFileViewProvider)injectedProvider).getShreds().getHostPointer().getElement();
+    return injected.getShreds().getHostPointer().getElement();
   }
 
   @Override
@@ -109,8 +112,8 @@ public final class InjectedLanguageManagerImpl extends InjectedLanguageManager i
     if (virtualFile instanceof VirtualFileWindow) {
       // use a utility method in case the file's overridden getContext()
       PsiElement host = FileContextUtil.getFileContext(file);
-      if (host instanceof PsiLanguageInjectionHost) {
-        return (PsiLanguageInjectionHost)host;
+      if (host instanceof PsiLanguageInjectionHost injectionHost) {
+        return injectionHost;
       }
     }
     return InjectedLanguageUtilBase.findInjectionHost(file);
@@ -140,7 +143,7 @@ public final class InjectedLanguageManagerImpl extends InjectedLanguageManager i
       return null;
     }
     Document document = PsiDocumentManager.getInstance(file.getProject()).getCachedDocument(file);
-    return document instanceof DocumentWindow ? (DocumentWindow)document : null;
+    return document instanceof DocumentWindow w ? w : null;
   }
 
   // used only from tests => no need for complex synchronization
@@ -494,8 +497,7 @@ public final class InjectedLanguageManagerImpl extends InjectedLanguageManager i
       return null;
     }
 
-    if (element instanceof PsiLanguageInjectionHost
-        && !((PsiLanguageInjectionHost)element).isValidHost()) {
+    if (element instanceof PsiLanguageInjectionHost host && !host.isValidHost()) {
       return null;
     }
 
@@ -511,13 +513,19 @@ public final class InjectedLanguageManagerImpl extends InjectedLanguageManager i
       }
       catch (IndexNotReadyException ignore) {
       }
+      catch (Throwable e) {
+        if (Logger.shouldRethrow(e)) {
+          throw e;
+        }
+        LOG.error(e);
+      }
     }
     return null;
   }
 
   @Override
   public @Nullable List<Pair<PsiElement, TextRange>> getInjectedPsiFiles(@NotNull PsiElement host) {
-    if (!(host instanceof PsiLanguageInjectionHost) || !((PsiLanguageInjectionHost) host).isValidHost()) {
+    if (!(host instanceof PsiLanguageInjectionHost injectionHost) || !injectionHost.isValidHost()) {
       return null;
     }
     PsiElement inTree = InjectedLanguageUtilBase.loadTree(host, host.getContainingFile());

@@ -1,14 +1,16 @@
 // Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.notebooks.visualization.ui.cell.toolbar
 
+import com.intellij.ide.ui.customization.CustomActionsSchema
+import com.intellij.notebooks.jupyter.core.jupyter.CellType
 import com.intellij.notebooks.ui.afterDistinctChange
 import com.intellij.notebooks.ui.visualization.NotebookUtil.notebookAppearance
-import com.intellij.notebooks.visualization.NotebookCellLines
 import com.intellij.notebooks.visualization.NotebookVisualizationCoroutine
 import com.intellij.notebooks.visualization.controllers.selfUpdate.SelfManagedCellController
 import com.intellij.notebooks.visualization.ui.DataProviderComponent
 import com.intellij.notebooks.visualization.ui.EditorCell
 import com.intellij.notebooks.visualization.ui.jupyterToolbars.JupyterCellActionsToolbar
+import com.intellij.notebooks.visualization.ui.notebookEditor
 import com.intellij.notebooks.visualization.ui.providers.bounds.JupyterBoundsChangeHandler
 import com.intellij.openapi.actionSystem.ActionGroup
 import com.intellij.openapi.actionSystem.ActionManager
@@ -25,11 +27,11 @@ import java.awt.Point
 import java.awt.Rectangle
 import java.time.Duration
 import javax.swing.JComponent
-import javax.swing.JPanel
 import javax.swing.SwingUtilities
 import kotlin.time.toKotlinDuration
 
-@OptIn(FlowPreview::class)
+/** Position of the floating toolbar in cells top right corner. */
+@OptIn(FlowPreview::class) // For 'debounce'.
 internal class EditorCellActionsToolbarController(
   private val cell: EditorCell,
 ) : SelfManagedCellController {
@@ -41,7 +43,7 @@ internal class EditorCellActionsToolbarController(
   }
 
   private val targetComponent: JComponent?
-    get() = (cell.view?.selfManagedControllers?.firstOrNull { it is DataProviderComponent } as? DataProviderComponent)?.retrieveDataProvider()
+    get() = cell.view?.controllers?.filterIsInstance<DataProviderComponent>()?.firstOrNull()?.retrieveDataProvider()
 
   init {
     coroutineScope.launch {
@@ -59,19 +61,19 @@ internal class EditorCellActionsToolbarController(
     cell.isHovered.afterDistinctChange(this) {
       updateToolbarVisibility()
     }
-    cell.isUnderDiff.afterDistinctChange(this) {
+    editor.notebookEditor.singleFileDiffMode.afterDistinctChange(this) {
       updateToolbarVisibility()
     }
     updateToolbarVisibility()
   }
 
-  override fun selfUpdate() {
+  override fun checkAndRebuildInlays() {
     val component = targetComponent ?: return
     updateToolbarPosition(component)
   }
 
   private fun updateToolbarVisibility() {
-    val shouldBeVisible = cell.isUnderDiff.get().not() && (cell.isSelected.get() || cell.isHovered.get())
+    val shouldBeVisible = editor.notebookEditor.singleFileDiffMode.get().not() && (cell.isSelected.get() || cell.isHovered.get())
     if (shouldBeVisible)
       showToolbar()
     else
@@ -84,36 +86,30 @@ internal class EditorCellActionsToolbarController(
     val component = targetComponent ?: return
     val actionGroup = getActionGroup(cell.interval.type) ?: return
 
-    toolbar = JupyterCellActionsToolbar(actionGroup, component)
+    toolbar = JupyterCellActionsToolbar(actionGroup, component, actionsUpdatedCallback = { updateToolbarPosition(component) })
     showToolbarJob?.cancel()
 
     showToolbarJob = coroutineScope.launch {
       delay(SHOW_TOOLBAR_DELAY_MS)
       withContext(Dispatchers.Main) {
-        editor.contentComponent.add(toolbar, 0)
         updateToolbarPosition(component)
-        refreshUI()
+        editor.contentComponent.add(toolbar, 0)
       }
     }
   }
 
   private fun updateToolbarPosition(targetComponent: JComponent) {
     val toolbar = toolbar ?: return
-
-    toolbar.validate()
-    toolbar.bounds = calculateToolbarBounds(targetComponent, toolbar)
+    val newBounds = calculateToolbarBounds(targetComponent, toolbar)
+    if (newBounds != toolbar.bounds) {
+      toolbar.bounds = newBounds
+    }
   }
 
   fun hideToolbar() {
     showToolbarJob?.cancel()
     showToolbarJob = null
     removeToolbar()
-    refreshUI()
-  }
-
-  private fun refreshUI() {
-    editor.contentComponent.revalidate()
-    editor.contentComponent.repaint()
   }
 
   private fun removeToolbar() = toolbar?.let {
@@ -122,35 +118,27 @@ internal class EditorCellActionsToolbarController(
   }
 
   override fun dispose() {
-    showToolbarJob?.cancel()
     coroutineScope.cancel()
     hideToolbar()
   }
 
-  private fun getActionGroup(cellType: NotebookCellLines.CellType): ActionGroup? = when (cellType) {
-    NotebookCellLines.CellType.CODE -> {
+  private fun getActionGroup(cellType: CellType): ActionGroup? = when (cellType) {
+    CellType.CODE -> {
       hideDropdownIcon(ADDITIONAL_CODE_ELLIPSIS_ACTION_GROUP_ID)
-      ActionManager.getInstance().getAction(ADDITIONAL_CODE_ACTION_GROUP_ID) as? ActionGroup
+      CustomActionsSchema.getInstance().getCorrectedAction(ADDITIONAL_CODE_ACTION_GROUP_ID) as? ActionGroup
     }
-    NotebookCellLines.CellType.MARKDOWN -> {
+    CellType.MARKDOWN -> {
       hideDropdownIcon(ADDITIONAL_MARKDOWN_ELLIPSIS_ACTION_GROUP_ID)
       ActionManager.getInstance().getAction(ADDITIONAL_MARKDOWN_ACTION_GROUP_ID) as? ActionGroup
     }
-    NotebookCellLines.CellType.RAW -> null
+    CellType.RAW -> null
   }
 
   private fun hideDropdownIcon(actionGroupId: String) = ActionManager.getInstance().getAction(actionGroupId)
     .templatePresentation
     .putClientProperty(ActionUtil.HIDE_DROPDOWN_ICON, true)
 
-  private fun calculateToolbarBounds(
-    panel: JComponent,
-    toolbar: JPanel,
-  ): Rectangle {
-    // todo: maybe fuse with JupyterAboveCellToolbarManager.Companion.calculateToolbarBounds
-    toolbar.doLayout()
-    panel.doLayout()
-
+  private fun calculateToolbarBounds(panel: JComponent, toolbar: JComponent): Rectangle {
     val toolbarHeight = toolbar.preferredSize.height
     val toolbarWidth = toolbar.preferredSize.width
 
@@ -181,7 +169,7 @@ internal class EditorCellActionsToolbarController(
     private const val RELATIVE_Y_OFFSET_RATIO = 0.05
 
     @Language("devkit-action-id")
-    private const val ADDITIONAL_CODE_ACTION_GROUP_ID = "Jupyter.AboveCodeCellAdditionalToolbar"
+    private const val ADDITIONAL_CODE_ACTION_GROUP_ID = "JupyterCodeCellToolbarCustomizeActionsGroup"
 
     @Language("devkit-action-id")
     private const val ADDITIONAL_CODE_ELLIPSIS_ACTION_GROUP_ID = "Jupyter.AboveCodeCellAdditionalToolbar.Ellipsis"

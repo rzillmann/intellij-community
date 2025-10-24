@@ -1,7 +1,6 @@
 // Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.lang.impl.modcommand;
 
-import com.intellij.codeInsight.generation.ClassMember;
 import com.intellij.codeInsight.highlighting.HighlightManager;
 import com.intellij.codeInsight.hint.HintManager;
 import com.intellij.codeInsight.intention.IntentionAction;
@@ -9,11 +8,7 @@ import com.intellij.codeInsight.intention.impl.IntentionActionWithTextCaching;
 import com.intellij.codeInsight.intention.impl.IntentionContainer;
 import com.intellij.codeInsight.intention.impl.IntentionGroup;
 import com.intellij.codeInsight.intention.impl.IntentionHintComponent;
-import com.intellij.codeInsight.template.Template;
-import com.intellij.codeInsight.template.TemplateBuilderImpl;
-import com.intellij.codeInsight.template.TemplateEditingAdapter;
-import com.intellij.codeInsight.template.TemplateManager;
-import com.intellij.codeInspection.options.OptMultiSelector;
+import com.intellij.codeInsight.template.*;
 import com.intellij.codeInspection.options.OptionContainer;
 import com.intellij.codeInspection.options.OptionController;
 import com.intellij.codeInspection.options.OptionControllerProvider;
@@ -23,16 +18,14 @@ import com.intellij.diff.comparison.ComparisonPolicy;
 import com.intellij.diff.fragments.DiffFragment;
 import com.intellij.ide.BrowserUtil;
 import com.intellij.ide.DataManager;
-import com.intellij.ide.util.MemberChooser;
-import com.intellij.injected.editor.EditorWindow;
 import com.intellij.lang.LangBundle;
 import com.intellij.lang.injection.InjectedLanguageManager;
 import com.intellij.modcommand.*;
-import com.intellij.modcommand.ModChooseMember.SelectionMode;
 import com.intellij.modcommand.ModUpdateFileText.Fragment;
 import com.intellij.openapi.actionSystem.ActionPlaces;
 import com.intellij.openapi.actionSystem.CommonDataKeys;
 import com.intellij.openapi.actionSystem.DataContext;
+import com.intellij.openapi.actionSystem.ex.ActionUtil;
 import com.intellij.openapi.actionSystem.impl.SimpleDataContext;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.ModalityState;
@@ -58,9 +51,11 @@ import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.openapi.wm.WindowManager;
 import com.intellij.psi.*;
 import com.intellij.psi.impl.PsiManagerEx;
+import com.intellij.psi.impl.source.tree.injected.InjectedLanguageEditorUtil;
 import com.intellij.psi.impl.source.tree.injected.InjectedLanguageUtil;
 import com.intellij.psi.util.PsiTreeUtil;
 import com.intellij.refactoring.RefactoringBundle;
+import com.intellij.refactoring.rename.NameSuggestionProvider;
 import com.intellij.refactoring.rename.PsiElementRenameHandler;
 import com.intellij.refactoring.rename.Renamer;
 import com.intellij.refactoring.rename.RenamerFactory;
@@ -70,15 +65,12 @@ import com.intellij.util.concurrency.AppExecutorUtil;
 import com.intellij.util.concurrency.annotations.RequiresEdt;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.containers.MultiMap;
-import one.util.streamex.IntStreamEx;
 import one.util.streamex.StreamEx;
 import org.jetbrains.annotations.*;
 
 import javax.swing.*;
 import java.awt.datatransfer.StringSelection;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
+import java.util.*;
 import java.util.concurrent.Callable;
 
 import static java.util.Objects.requireNonNull;
@@ -91,8 +83,8 @@ public class ModCommandExecutorImpl extends ModCommandBatchExecutorImpl {
   @RequiresEdt
   @Override
   public void executeInteractively(@NotNull ActionContext context, @NotNull ModCommand command, @Nullable Editor editor) {
-    if (editor instanceof EditorWindow window) {
-      editor = window.getDelegate();
+    if (editor != null) {
+      editor = InjectedLanguageEditorUtil.getTopLevelEditor(editor);
     }
     if (!ensureWritable(context.project(), command)) return;
     doExecuteInteractively(context, command, ModCommand.nop(), editor);
@@ -127,9 +119,6 @@ public class ModCommandExecutorImpl extends ModCommandBatchExecutorImpl {
     }
     if (command instanceof ModChooseAction chooser) {
       return executeChoose(context, chooser, editor);
-    }
-    if (command instanceof ModChooseMember chooser) {
-      return executeChooseMember(context, chooser, editor);
     }
     if (command instanceof ModDisplayMessage message) {
       return executeMessage(project, message, editor);
@@ -255,36 +244,6 @@ public class ModCommandExecutorImpl extends ModCommandBatchExecutorImpl {
     return true;
   }
 
-  private static boolean executeChooseMember(@NotNull ActionContext context, @NotNull ModChooseMember modChooser, @Nullable Editor editor) {
-    List<? extends OptMultiSelector.@NotNull OptElement> result;
-    if (ApplicationManager.getApplication().isUnitTestMode()) {
-      result = modChooser.defaultSelection();
-    }
-    else {
-      ClassMember[] members = ContainerUtil.map2Array(modChooser.elements(), ClassMember.EMPTY_ARRAY, ClassMember::from);
-      SelectionMode mode = modChooser.mode();
-      boolean allowEmptySelection = mode == SelectionMode.SINGLE_OR_EMPTY ||
-                                    mode == SelectionMode.MULTIPLE_OR_EMPTY;
-      boolean allowMultiSelection = mode == SelectionMode.MULTIPLE ||
-                                    mode == SelectionMode.MULTIPLE_OR_EMPTY;
-      MemberChooser<ClassMember> chooser = new MemberChooser<>(members, allowEmptySelection, allowMultiSelection, context.project());
-      ClassMember[] selected = IntStreamEx.ofIndices(modChooser.elements(), modChooser.defaultSelection()::contains)
-        .elements(members).toArray(ClassMember.EMPTY_ARRAY);
-      chooser.selectElements(selected);
-      chooser.setTitle(modChooser.title());
-      chooser.setCopyJavadocVisible(false);
-      ActionContextPointer pointer = new ActionContextPointer(context);
-      if (!chooser.showAndGet()) return false;
-      List<ClassMember> elements = chooser.getSelectedElements();
-      result = elements == null ? List.of() :
-               IntStreamEx.ofIndices(members, elements::contains).elements(modChooser.elements()).toList();
-      context = pointer.restoreAndCheck(editor);
-      if (context == null) return false;
-    }
-    ModCommandExecutor.executeInteractively(context, modChooser.title(), editor, () -> modChooser.nextCommand().apply(result));
-    return true;
-  }
-
   private static boolean executeStartTemplate(@NotNull ActionContext context, @NotNull ModStartTemplate template, @Nullable Editor editor) {
     VirtualFile file = actualize(template.file());
     if (file == null) return false;
@@ -297,32 +256,39 @@ public class ModCommandExecutorImpl extends ModCommandBatchExecutorImpl {
     WriteAction.run(() -> {
       TemplateBuilderImpl builder = new TemplateBuilderImpl(psiFile);
       for (ModStartTemplate.TemplateField field : template.fields()) {
-        if (field instanceof ModStartTemplate.ExpressionField expr) {
-          if (expr.varName() != null) {
-            builder.replaceElement(psiFile, expr.range(), expr.varName(), expr.expression(), true);
-          } else {
-            builder.replaceElement(psiFile, expr.range(), expr.expression());
+        switch (field) {
+          case ModStartTemplate.ExpressionField(TextRange range, String varName, Expression expression) -> {
+            if (varName != null) {
+              builder.replaceElement(psiFile, range, varName, expression, true);
+            } else {
+              builder.replaceElement(psiFile, range, expression);
+            }
           }
-        }
-        else if (field instanceof ModStartTemplate.DependantVariableField variableField) {
-          builder.replaceElement(psiFile, variableField.range(), variableField.varName(),
-                                 variableField.dependantVariableName(), variableField.alwaysStopAt());
-        }
-        else if (field instanceof ModStartTemplate.EndField endField) {
-          PsiElement leaf = psiFile.findElementAt(endField.range().getStartOffset());
-          if (leaf != null) {
-            builder.setEndVariableBefore(leaf);
+          case ModStartTemplate.DependantVariableField(TextRange range, String varName, String variableName, boolean alwaysStopAt) ->
+            builder.replaceElement(psiFile, range, varName, variableName, alwaysStopAt);
+          case ModStartTemplate.EndField(TextRange range) -> {
+            PsiElement leaf = psiFile.findElementAt(range.getStartOffset());
+            if (leaf != null) {
+              builder.setEndVariableBefore(leaf);
+            }
           }
         }
       }
 
       final Template tmpl = builder.buildInlineTemplate();
-      finalEditor.getCaretModel().moveToOffset(0);
-      TemplateManager.getInstance(context.project()).startTemplate(finalEditor, tmpl, new TemplateEditingAdapter() {
-        @Override
-        public void templateFinished(@NotNull Template tmpl, boolean brokenOff) {
-          ModCommandExecutor.executeInteractively(context, name, editor, () -> template.templateFinishFunction().apply(psiFile));
-        }
+      CaretAutoMoveController.forbidCaretMovementInsideIfNeeded(finalEditor, () -> {
+        finalEditor.getCaretModel().moveToOffset(0);
+        TemplateManager.getInstance(context.project()).startTemplate(finalEditor, tmpl, new TemplateEditingAdapter() {
+          @Override
+          public void templateFinished(@NotNull Template tmpl, boolean brokenOff) {
+            ModCommandExecutor.executeInteractively(
+              context,
+              name,
+              editor,
+              () -> template.templateFinishFunction().apply(psiFile)
+            );
+          }
+        });
       });
     });
     return true;
@@ -361,9 +327,10 @@ public class ModCommandExecutorImpl extends ModCommandBatchExecutorImpl {
     PsiFile psiFile = PsiManagerEx.getInstanceEx(project).findFile(file);
     if (psiFile == null) return false;
     TextRange range = rename.symbolRange().range();
+    TextRange nameRange = requireNonNullElse(rename.symbolRange().nameIdentifierRange(), range);
     InjectedLanguageManager manager = InjectedLanguageManager.getInstance(project);
-    PsiElement injectedElement = manager.findInjectedElementAt(psiFile, range.getStartOffset());
-    PsiElement psiElement = injectedElement != null ? injectedElement : psiFile.findElementAt(range.getStartOffset());
+    PsiElement injectedElement = manager.findInjectedElementAt(psiFile, nameRange.getStartOffset());
+    PsiElement psiElement = injectedElement != null ? injectedElement : psiFile.findElementAt(nameRange.getStartOffset());
     PsiNamedElement namedElement = PsiTreeUtil.getNonStrictParentOfType(psiElement, PsiNamedElement.class);
     if (namedElement == null) return false;
     Editor finalEditor = getEditor(project, editor, file);
@@ -372,11 +339,16 @@ public class ModCommandExecutorImpl extends ModCommandBatchExecutorImpl {
       finalEditor = InjectedLanguageUtil.getInjectedEditorForInjectedFile(finalEditor, injectedElement.getContainingFile()); 
     }
     DataContext context = DataManager.getInstance().getDataContext(finalEditor.getComponent());
+    Set<String> nameSuggestions = new LinkedHashSet<>(rename.nameSuggestions());
+    if (nameSuggestions.isEmpty() || nameSuggestions.equals(Collections.singleton(namedElement.getName()))) {
+      ActionUtil.underModalProgress(project, RefactoringBundle.message("progress.title.collecting.suggested.names"),
+                                    () -> NameSuggestionProvider.suggestNames(namedElement, psiElement, nameSuggestions));
+    }
     DataContext finalContext = SimpleDataContext.builder()
       .setParent(context)
       .add(CommonDataKeys.PSI_ELEMENT, namedElement)
       .add(CommonDataKeys.EDITOR, finalEditor)
-      .add(PsiElementRenameHandler.NAME_SUGGESTIONS, rename.nameSuggestions())
+      .add(PsiElementRenameHandler.NAME_SUGGESTIONS, List.copyOf(nameSuggestions))
       .build();
     PsiElement anchor = namedElement instanceof PsiNameIdentifierOwner owner ? 
                         requireNonNullElse(owner.getNameIdentifier(), namedElement) : namedElement;

@@ -4,10 +4,6 @@ a:com.intellij.concurrency.AsyncFutureFactory
 - s:getInstance():com.intellij.concurrency.AsyncFutureFactory
 - s:wrap(java.lang.Object):com.intellij.concurrency.AsyncFuture
 - s:wrapException(java.lang.Throwable):com.intellij.concurrency.AsyncFuture
-com.intellij.concurrency.AsyncFutureResult
-- com.intellij.concurrency.AsyncFuture
-- a:set(java.lang.Object):V
-- a:setException(java.lang.Throwable):V
 f:com.intellij.concurrency.ConcurrentCollectionFactory
 - <init>():V
 - s:createConcurrentIdentityMap():java.util.concurrent.ConcurrentMap
@@ -18,7 +14,6 @@ f:com.intellij.concurrency.ConcurrentCollectionFactory
 - s:createConcurrentIntObjectSoftValueMap():com.intellij.util.containers.ConcurrentIntObjectMap
 - s:createConcurrentIntObjectWeakValueMap():com.intellij.util.containers.ConcurrentIntObjectMap
 - s:createConcurrentLongObjectMap():com.intellij.util.containers.ConcurrentLongObjectMap
-- s:createConcurrentLongObjectMap(I):com.intellij.util.containers.ConcurrentLongObjectMap
 - s:createConcurrentMap():java.util.concurrent.ConcurrentMap
 - s:createConcurrentMap(I,F,I,com.intellij.util.containers.HashingStrategy):java.util.concurrent.ConcurrentMap
 - s:createConcurrentMap(com.intellij.util.containers.HashingStrategy):java.util.concurrent.ConcurrentMap
@@ -45,9 +40,6 @@ f:com.intellij.openapi.util.SimpleTimer
 - s:getInstance():com.intellij.openapi.util.SimpleTimer
 - s:newInstance(java.lang.String):com.intellij.openapi.util.SimpleTimer
 - setUp(java.lang.Runnable,J):com.intellij.openapi.util.SimpleTimerTask
-com.intellij.openapi.util.SimpleTimerTask
-- a:cancel():V
-- a:isCancelled():Z
 c:com.intellij.openapi.util.TimedOutCallback
 - com.intellij.openapi.util.ActionCallback
 - java.lang.Runnable
@@ -84,10 +76,6 @@ a:com.intellij.util.concurrency.EdtExecutorService
 - <init>():V
 - s:getInstance():com.intellij.util.concurrency.EdtExecutorService
 - s:getScheduledExecutorInstance():java.util.concurrent.ScheduledExecutorService
-com.intellij.util.concurrency.EdtScheduledExecutorService
-- java.util.concurrent.ScheduledExecutorService
-- s:getInstance():com.intellij.util.concurrency.EdtScheduledExecutorService
-- a:schedule(java.lang.Runnable,com.intellij.openapi.application.ModalityState,J,java.util.concurrent.TimeUnit):java.util.concurrent.ScheduledFuture
 c:com.intellij.util.concurrency.FutureResult
 - java.util.concurrent.Future
 - <init>():V
@@ -219,9 +207,6 @@ a:org.jetbrains.concurrency.ObsolescentConsumer
 - org.jetbrains.concurrency.Obsolescent
 - <init>(org.jetbrains.concurrency.Obsolescent):V
 - isObsolete():Z
-org.jetbrains.concurrency.ObsolescentFunction
-- com.intellij.util.Function
-- org.jetbrains.concurrency.Obsolescent
 f:org.jetbrains.concurrency.Promises
 - sf:all(java.util.Collection):org.jetbrains.concurrency.Promise
 - sf:all(java.util.Collection,java.lang.Object):org.jetbrains.concurrency.Promise

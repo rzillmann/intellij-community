@@ -15,7 +15,10 @@ import com.intellij.openapi.observable.util.isNotNull
 import com.intellij.openapi.observable.util.not
 import com.intellij.openapi.observable.util.transform
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.DialogPanel
 import com.intellij.openapi.ui.popup.JBPopupFactory
+import com.intellij.openapi.ui.popup.JBPopupListener
+import com.intellij.openapi.ui.popup.LightweightWindowEvent
 import com.intellij.openapi.ui.popup.PopupStep
 import com.intellij.openapi.ui.popup.util.BaseListPopupStep
 import com.intellij.openapi.util.Disposer
@@ -25,24 +28,19 @@ import com.intellij.ui.JBColor
 import com.intellij.ui.SideBorder
 import com.intellij.ui.components.JBComboBoxLabel
 import com.intellij.ui.components.JBOptionButton
-import com.intellij.ui.dsl.builder.BottomGap
-import com.intellij.ui.dsl.builder.RightGap
-import com.intellij.ui.dsl.builder.TopGap
-import com.intellij.ui.dsl.builder.bindText
-import com.intellij.ui.dsl.builder.panel
+import com.intellij.ui.dsl.builder.*
 import com.intellij.ui.jcef.JCEFHtmlPanel
 import com.jetbrains.python.PyBundle.message
 import com.jetbrains.python.packaging.PyPackageUtil
 import com.jetbrains.python.packaging.common.PythonPackageDetails
+import com.jetbrains.python.packaging.management.toInstallRequest
 import com.jetbrains.python.packaging.toolwindow.PyPackagingToolWindowService
 import com.jetbrains.python.packaging.toolwindow.actions.InstallWithOptionsPackageAction
-import com.jetbrains.python.packaging.toolwindow.model.DisplayablePackage
-import com.jetbrains.python.packaging.toolwindow.model.InstallablePackage
-import com.jetbrains.python.packaging.toolwindow.model.InstalledPackage
+import com.jetbrains.python.packaging.toolwindow.model.*
 import com.jetbrains.python.packaging.toolwindow.ui.PyPackagesUiComponents
 import com.jetbrains.python.packaging.utils.PyPackageCoroutine
+import com.jetbrains.python.sdk.isReadOnly
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.jetbrains.annotations.Nls
 import java.awt.BorderLayout
@@ -50,36 +48,32 @@ import java.awt.Font
 import java.awt.event.ActionEvent
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
-import javax.swing.AbstractAction
-import javax.swing.Action
-import javax.swing.BorderFactory
-import javax.swing.JComponent
-import javax.swing.JPanel
-import javax.swing.SwingConstants
+import javax.swing.*
 
 class PyPackageDescriptionController(val project: Project) : Disposable {
   private val latestText: String
     get() = message("python.toolwindow.packages.latest.version.label")
 
   val service: PyPackagingToolWindowService = project.service<PyPackagingToolWindowService>()
-
-  internal val selectedPackage = AtomicProperty<DisplayablePackage?>(null)
   private val isManagement = AtomicBooleanProperty(false)
 
+  internal val selectedPackage = AtomicProperty<DisplayablePackage?>(null)
   private val selectedPackageDetails = AtomicProperty<PythonPackageDetails?>(null)
 
   private val packageNameProperty = selectedPackage.transform { it?.name ?: "" }
   private val packageVersionProperty: ObservableMutableProperty<@NlsSafe String> = AtomicProperty(latestText)
-
   private val packageDocumentationProperty = selectedPackageDetails.transform { it?.documentationUrl }
+
+  private var suppressClearOnFocusLoss: Boolean = false
+  private var currentPackageKey: String? = null
 
   private val installActionButton = JBOptionButton(null, emptyArray())
 
   private val installAction = wrapAction(message("action.PyInstallPackage.text"), message("progress.text.installing")) {
     val details = selectedPackageDetails.get() ?: return@wrapAction
     val version = versionSelector.text.takeIf { it != latestText }
-    val specification = details.repository.createPackageSpecification(details.name, version)
-    project.service<PyPackagingToolWindowService>().installPackage(specification)
+    val specification = details.toPackageSpecification(version) ?: return@wrapAction
+    project.service<PyPackagingToolWindowService>().installPackage(specification.toInstallRequest())
   }
 
   private val installWithOptionAction: Action = wrapAction(message("action.PyInstallWithOptionPackage.text"), message("progress.text.installing")) {
@@ -99,16 +93,15 @@ class PyPackageDescriptionController(val project: Project) : Disposable {
 
     selectedPackageDetails.afterChange { packageDetails ->
       packageDetails ?: return@afterChange
-
-      PyPackageCoroutine.launch(project, Dispatchers.Main) {
+      PyPackageCoroutine.launch(project, Dispatchers.Default) {
         val render = PyPackageDetailsHtmlRender(project, service.currentSdk)
         val html = render.getHtml(packageDetails)
-        panel.setHtml(html)
+            panel.setHtml(html)
       }
     }
   }
 
-  private val leftPanel = panel {
+  private val leftPanel: DialogPanel = panel {
     row {
       val packageNameLabel = label("").bindText(packageNameProperty).component
       packageNameLabel.verticalAlignment = SwingConstants.CENTER
@@ -122,25 +115,35 @@ class PyPackageDescriptionController(val project: Project) : Disposable {
     }.topGap(TopGap.SMALL).bottomGap(BottomGap.NONE).resizableRow()
   }
 
-  private val rightPanel = panel {
+  private val rightPanel: DialogPanel = panel {
     row {
       cell(progressIndicatorComponent).gap(RightGap.SMALL).visibleIf(progressEnabledProperty)
       versionSelector.apply {
         versionSelector.text = packageVersionProperty.get()
         addMouseListener(object : MouseAdapter() {
           override fun mouseClicked(e: MouseEvent?) {
+            if (!isManagement.get())
+              return
             val availableVersions = selectedPackageDetails.get()?.availableVersions ?: emptyList()
-            val latestVersion = availableVersions.first()
+            val latestVersion = availableVersions.firstOrNull() ?: return
             val versions = listOf(latestText) + availableVersions
-            JBPopupFactory.getInstance().createListPopup(
+            suppressClearOnFocusLoss = true
+            val popup = JBPopupFactory.getInstance().createListPopup(
               object : BaseListPopupStep<String>(null, versions) {
                 override fun onChosen(@NlsContexts.Label selectedValue: String, finalChoice: Boolean): PopupStep<*>? {
                   packageVersionProperty.set(selectedValue)
                   val effectiveVersion = if (selectedValue == latestText) latestVersion else selectedValue
-                  suggestInstallPackage(effectiveVersion)
+                  if (isManagement.get())
+                    suggestInstallPackage(effectiveVersion)
                   return FINAL_CHOICE
                 }
-              }, 8).showUnderneathOf(this@apply)
+              }, 8)
+            popup.addListener(object : JBPopupListener {
+              override fun onClosed(event: LightweightWindowEvent) {
+                suppressClearOnFocusLoss = false
+              }
+            })
+            popup.showUnderneathOf(this@apply)
           }
         })
       }
@@ -150,7 +153,14 @@ class PyPackageDescriptionController(val project: Project) : Disposable {
       }
       val comboBox = cell(versionSelector)
       comboBox.enabledIf(isManagement.and(progressEnabledProperty.not())).gap(RightGap.SMALL)
-      comboBox.visibleIf(progressEnabledProperty.not())
+      comboBox.visibleIf(progressEnabledProperty.not().and(
+        selectedPackage.transform { pkg ->
+          when (pkg) {
+            is InstallablePackage, is InstalledPackage -> true
+            is RequirementPackage, is ExpandResultNode, is DisplayablePackage, null -> false
+          }
+        }
+      ))
 
       installActionButton.action = installAction
       installActionButton.options = arrayOf(installWithOptionAction)
@@ -181,25 +191,29 @@ class PyPackageDescriptionController(val project: Project) : Disposable {
 
   val wrappedComponent: JComponent = UiDataProvider.wrapComponent(component, UiDataProvider {})
 
-  override fun dispose() {}
-
   fun setPackage(pyPackage: DisplayablePackage) {
+    val newKey = pyPackage.name
     selectedPackage.set(pyPackage)
-    packageVersionProperty.set(calculateVersionText())
-    isManagement.set(PyPackageUtil.packageManagementEnabled(service.currentSdk, true, false))
+    if (currentPackageKey != newKey) {
+      packageVersionProperty.set(calculateVersionText())
+      currentPackageKey = newKey
+    }
+    isManagement.set(service.currentSdk?.isReadOnly == false && PyPackageUtil.packageManagementEnabled(service.currentSdk, true, false))
   }
 
   fun setPackageDetails(packageDetails: PythonPackageDetails) {
     selectedPackageDetails.set(packageDetails)
+    if (packageVersionProperty.get().isEmpty()) {
+      packageVersionProperty.set(calculateVersionText())
+    }
   }
 
   private fun updatePackageVersion(newVersion: String) {
     val details = selectedPackageDetails.get() ?: return
-    val newVersionSpec = details.toPackageSpecification(newVersion)
-    println(newVersionSpec.versionSpecs)
+    val newVersionSpec = details.toPackageSpecification(newVersion) ?: return
     val pyPackagingToolWindowService = PyPackagingToolWindowService.getInstance(project)
     PyPackageCoroutine.launch(project, Dispatchers.IO) {
-      pyPackagingToolWindowService.installPackage(newVersionSpec)
+      pyPackagingToolWindowService.installPackage(newVersionSpec.toInstallRequest())
     }
   }
 
@@ -227,7 +241,7 @@ class PyPackageDescriptionController(val project: Project) : Disposable {
     progressIndicatorComponent.removeAll()
     progressIndicatorComponent.add(progressIndicator.component, BorderLayout.CENTER)
 
-    val job = PyPackageCoroutine.getIoScope(project).launch(Dispatchers.IO) {
+    val job = PyPackageCoroutine.launch(project, Dispatchers.IO) {
       try {
         progressIndicator.start()
         actionPerformed()
@@ -244,4 +258,6 @@ class PyPackageDescriptionController(val project: Project) : Disposable {
       job.cancel()
     }
   }
+
+  override fun dispose() {}
 }

@@ -4,50 +4,34 @@ package org.jetbrains.plugins.gradle.service.project;
 import com.intellij.build.events.MessageEvent;
 import com.intellij.build.issue.BuildIssue;
 import com.intellij.openapi.externalSystem.model.task.ExternalSystemTaskId;
-import com.intellij.openapi.externalSystem.model.task.ExternalSystemTaskNotificationListener;
-import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.UserDataHolderEx;
-import org.gradle.tooling.CancellationToken;
 import org.gradle.tooling.model.BuildIdentifier;
 import org.gradle.tooling.model.BuildModel;
 import org.gradle.tooling.model.ProjectModel;
-import org.gradle.tooling.model.build.BuildEnvironment;
 import org.gradle.tooling.model.idea.IdeaModule;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.plugins.gradle.model.GradleLightBuild;
-import org.jetbrains.plugins.gradle.settings.GradleExecutionSettings;
+import org.jetbrains.plugins.gradle.service.execution.GradleExecutionContext;
 
 import java.util.Collection;
 
 /**
  * @author Vladislav.Soroka
  */
-public interface ProjectResolverContext extends UserDataHolderEx {
-  @NotNull
-  ExternalSystemTaskId getExternalSystemTaskId();
+@ApiStatus.NonExtendable
+public interface ProjectResolverContext extends GradleExecutionContext, UserDataHolderEx {
 
-  @Nullable
-  String getIdeProjectPath();
+  @NotNull String getExternalProjectPath();
 
-  @NotNull
-  String getProjectPath();
+  @NotNull ExternalSystemTaskId getExternalSystemTaskId();
 
-  @NotNull
-  default Project getProject() {
-    return getExternalSystemTaskId().getProject();
-  }
+  @NotNull String getProjectGradleVersion();
 
-  @NotNull
-  GradleExecutionSettings getSettings();
+  @Nullable String getIdeProjectPath();
 
-  @NotNull
-  CancellationToken getCancellationToken();
-
-  @NotNull
-  ExternalSystemTaskNotificationListener getListener();
-
+  @ApiStatus.Internal
   boolean isPhasedSyncEnabled();
 
   boolean isResolveModulePerSourceSet();
@@ -55,9 +39,6 @@ public interface ProjectResolverContext extends UserDataHolderEx {
   boolean isUseQualifiedModuleNames();
 
   boolean isDelegatedBuild();
-
-  @Nullable
-  BuildEnvironment getBuildEnvironment();
 
   @NotNull
   GradleLightBuild getRootBuild();
@@ -98,9 +79,6 @@ public interface ProjectResolverContext extends UserDataHolderEx {
   }
 
   boolean hasModulesWithModel(@NotNull Class<?> modelClass);
-
-  @Nullable
-  String getProjectGradleVersion();
 
   @Nullable
   String getBuildSrcGroup();

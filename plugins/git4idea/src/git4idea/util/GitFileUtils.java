@@ -10,6 +10,7 @@ import com.intellij.openapi.vcs.VcsException;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.util.ArrayUtil;
 import com.intellij.util.ObjectUtils;
+import com.intellij.util.concurrency.annotations.RequiresBackgroundThread;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.vcsUtil.VcsFileUtil;
 import com.intellij.vcsUtil.VcsUtil;
@@ -244,6 +245,20 @@ public final class GitFileUtils {
     }
   }
 
+  public static void restoreStagedAndWorktree(@NotNull Project project,
+                                              @NotNull VirtualFile root,
+                                              @NotNull List<FilePath> files,
+                                              @NotNull String source)
+    throws VcsException {
+    for (List<String> paths : VcsFileUtil.chunkPaths(root, files)) {
+      GitLineHandler handler = new GitLineHandler(project, root, GitCommand.RESTORE);
+      handler.addParameters("--staged", "--worktree", "--source=" + source);
+      handler.endOptions();
+      handler.addParameters(paths);
+      Git.getInstance().runCommand(handler).throwOnError();
+    }
+  }
+
   /**
    * Get file content for the specific revision
    *
@@ -253,6 +268,7 @@ public final class GitFileUtils {
    * @return the content of file if file is found
    * @throws VcsException if there is a problem with running git
    */
+  @RequiresBackgroundThread
   public static byte @NotNull [] getFileContent(@Nullable Project project,
                                                 @NotNull VirtualFile root,
                                                 @NotNull @NonNls String revisionOrBranch,

@@ -798,6 +798,11 @@ public abstract class FindUsagesFirTestGenerated extends AbstractFindUsagesFirTe
                 runTest("../../idea/tests/testData/findUsages/kotlin/findFunctionUsages/kotlinExtensionFunction.0.kt");
             }
 
+            @TestMetadata("kotlinFunctionWithPropertyFromSuperClass.0.kt")
+            public void testKotlinFunctionWithPropertyFromSuperClass() throws Exception {
+                runTest("../../idea/tests/testData/findUsages/kotlin/findFunctionUsages/kotlinFunctionWithPropertyFromSuperClass.0.kt");
+            }
+
             @TestMetadata("kotlinInterfaceImplThroughDelegate.0.kt")
             public void testKotlinInterfaceImplThroughDelegate() throws Exception {
                 runTest("../../idea/tests/testData/findUsages/kotlin/findFunctionUsages/kotlinInterfaceImplThroughDelegate.0.kt");
@@ -846,6 +851,11 @@ public abstract class FindUsagesFirTestGenerated extends AbstractFindUsagesFirTe
             @TestMetadata("kotlinNestedClassMethodUsages.0.kt")
             public void testKotlinNestedClassMethodUsages() throws Exception {
                 runTest("../../idea/tests/testData/findUsages/kotlin/findFunctionUsages/kotlinNestedClassMethodUsages.0.kt");
+            }
+
+            @TestMetadata("kotlinNoBaseMethodUsages.0.kt")
+            public void testKotlinNoBaseMethodUsages() throws Exception {
+                runTest("../../idea/tests/testData/findUsages/kotlin/findFunctionUsages/kotlinNoBaseMethodUsages.0.kt");
             }
 
             @TestMetadata("kotlinOverloadAndExtensionUsages.0.kt")
@@ -2008,6 +2018,11 @@ public abstract class FindUsagesFirTestGenerated extends AbstractFindUsagesFirTe
             @TestMetadata("JKFieldUsagesReadWriteAccess.0.java")
             public void testJKFieldUsagesReadWriteAccess() throws Exception {
                 runTest("../../idea/tests/testData/findUsages/java/findJavaFieldUsages/JKFieldUsagesReadWriteAccess.0.java");
+            }
+
+            @TestMetadata("JKRecordFieldUsages.0.java")
+            public void testJKRecordFieldUsages() throws Exception {
+                runTest("../../idea/tests/testData/findUsages/java/findJavaFieldUsages/JKRecordFieldUsages.0.java");
             }
         }
 

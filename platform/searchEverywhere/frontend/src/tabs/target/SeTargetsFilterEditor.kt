@@ -2,12 +2,11 @@
 package com.intellij.platform.searchEverywhere.frontend.tabs.target
 
 import com.intellij.ide.actions.searcheverywhere.PersistentSearchEverywhereContributorFilter
+import com.intellij.ide.actions.searcheverywhere.PreviewAction
 import com.intellij.ide.actions.searcheverywhere.SearchEverywhereFiltersAction
 import com.intellij.ide.ui.icons.icon
 import com.intellij.openapi.actionSystem.AnAction
-import com.intellij.platform.searchEverywhere.SeSearchScopesInfo
-import com.intellij.platform.searchEverywhere.frontend.SeFilterActionsPresentation
-import com.intellij.platform.searchEverywhere.frontend.SeFilterPresentation
+import com.intellij.platform.scopes.SearchScopesInfo
 import com.intellij.platform.searchEverywhere.frontend.tabs.utils.SeFilterEditorBase
 import com.intellij.platform.searchEverywhere.frontend.tabs.utils.SeTypeVisibilityStateHolder
 import com.intellij.platform.searchEverywhere.providers.target.SeTargetsFilter
@@ -15,25 +14,36 @@ import com.intellij.platform.searchEverywhere.providers.target.SeTypeVisibilityS
 import org.jetbrains.annotations.ApiStatus.Internal
 
 @Internal
-class SeTargetsFilterEditor(private val scopesInfo: SeSearchScopesInfo?,
-                            typeVisibilityStates: List<SeTypeVisibilityStatePresentation>?) : SeFilterEditorBase<SeTargetsFilter>(
-  SeTargetsFilter(scopesInfo?.selectedScopeId, hiddenTypes(typeVisibilityStates))
+class SeTargetsFilterEditor(
+  private val scopesInfo: SearchScopesInfo?,
+  typeVisibilityStates: List<SeTypeVisibilityStatePresentation>?,
+  private val hasPreviewAction: Boolean,
+) : SeFilterEditorBase<SeTargetsFilter>(
+  SeTargetsFilter(scopesInfo?.selectedScopeId,
+                  scopesInfo?.selectedScopeId != scopesInfo?.everywhereScopeId,
+                  hiddenTypes(typeVisibilityStates))
 ) {
-  val visibilityStateHolder: SeTypeVisibilityStateHolder? =
-    typeVisibilityStates?.takeIf { it.isNotEmpty() }?.let { SeTypeVisibilityStateHolder(it) }
-
-  override fun getPresentation(): SeFilterPresentation {
-    return object : SeFilterActionsPresentation {
-      override fun getActions(): List<AnAction> = listOfNotNull(getScopeFilterAction(), getTypeFilterAction())
-    }
+  private val updateFilterValueWithVisibilityStates = {
+    filterValue = filterValue.cloneWith(hiddenTypes(visibilityStateHolder?.elements))
   }
 
-  private fun getScopeFilterAction(): AnAction? {
-    if (scopesInfo == null) return null
+  private val visibilityStateHolder: SeTypeVisibilityStateHolder? =
+    typeVisibilityStates?.takeIf { it.isNotEmpty() }?.let {
+      SeTypeVisibilityStateHolder(it, updateFilterValueWithVisibilityStates)
+    }
 
-    return SeScopeChooserActionProvider(scopesInfo) {
-      filterValue = filterValue.cloneWith(it)
+  private val scopeFilterAction: AnAction? = scopesInfo?.let {
+    SeScopeChooserActionProvider(scopesInfo) { scopeId, isAutoToggleEnabled ->
+      filterValue = filterValue.cloneWith(scopeId, isAutoToggleEnabled)
     }.getAction()
+  }
+
+  override fun getHeaderActions(): List<AnAction> = listOfNotNull(getScopeFilterAction(),
+                                                                  if (hasPreviewAction) PreviewAction() else null,
+                                                                  getTypeFilterAction())
+
+  private fun getScopeFilterAction(): AnAction? {
+    return scopeFilterAction
   }
 
   private fun getTypeFilterAction(): AnAction? {
@@ -43,9 +53,7 @@ class SeTargetsFilterEditor(private val scopesInfo: SeSearchScopesInfo?,
                                                                        visibilityStateHolder,
                                                                        { it.name },
                                                                        { it.iconId?.icon() })
-    return SearchEverywhereFiltersAction(persistentFilter) {
-      filterValue = filterValue.cloneWith(hiddenTypes(visibilityStateHolder.elements))
-    }
+    return SearchEverywhereFiltersAction(persistentFilter, updateFilterValueWithVisibilityStates)
   }
 
   companion object {

@@ -3,12 +3,10 @@ package com.intellij.codeInsight.daemon.quickFix;
 
 import com.intellij.codeInsight.CodeInsightBundle;
 import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer;
-import com.intellij.codeInsight.hint.HintManager;
 import com.intellij.codeInsight.intention.preview.IntentionPreviewInfo;
 import com.intellij.codeInspection.LocalQuickFixAndIntentionActionOnPsiElement;
 import com.intellij.icons.AllIcons;
 import com.intellij.openapi.application.ApplicationManager;
-import com.intellij.openapi.command.WriteCommandAction;
 import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.roots.ProjectFileIndex;
@@ -79,11 +77,11 @@ public abstract class AbstractCreateFileFix extends LocalQuickFixAndIntentionAct
    * Must be implemented, as default implementation won't work anyway
    */
   @Override
-  public abstract @NotNull IntentionPreviewInfo generatePreview(@NotNull Project project, @NotNull Editor editor, @NotNull PsiFile file);
+  public abstract @NotNull IntentionPreviewInfo generatePreview(@NotNull Project project, @NotNull Editor editor, @NotNull PsiFile psiFile);
 
   @Override
   public boolean isAvailable(@NotNull Project project,
-                             @NotNull PsiFile file,
+                             @NotNull PsiFile psiFile,
                              @NotNull PsiElement startElement,
                              @NotNull PsiElement endElement) {
     long current = System.currentTimeMillis();
@@ -104,11 +102,11 @@ public abstract class AbstractCreateFileFix extends LocalQuickFixAndIntentionAct
 
   @Override
   public void invoke(@NotNull Project project,
-                     @NotNull PsiFile file,
+                     @NotNull PsiFile psiFile,
                      @Nullable Editor editor,
                      @NotNull PsiElement startElement,
                      @NotNull PsiElement endElement) {
-    if (isAvailable(project, null, file)) {
+    if (isAvailable(project, null, psiFile)) {
       if (myDirectories.size() == 1) {
         apply(myStartElement.getProject(), myDirectories.get(0), editor);
       }
@@ -164,37 +162,9 @@ public abstract class AbstractCreateFileFix extends LocalQuickFixAndIntentionAct
     }
   }
 
-  /**
-   * @deprecated override {@link #apply(Project, Supplier, Editor)} instead
-   */
-  @SuppressWarnings("unused")
-  @Deprecated(forRemoval = true)
-  protected void apply(@NotNull Project project, @NotNull PsiDirectory targetDirectory, @Nullable Editor editor)
-    throws IncorrectOperationException {
-  }
-
   protected void apply(@NotNull Project project,
                        @NotNull Supplier<? extends @Nullable PsiDirectory> targetDirectory,
-                       @Nullable Editor editor)
-    throws IncorrectOperationException {
-
-    // only for compatibility with 3-rd party plugins, not used
-    @Nullable PsiDirectory directory;
-    try {
-      directory = WriteCommandAction.writeCommandAction(project)
-        .withName(CodeInsightBundle.message(myKey, myNewFileName))
-        .compute(() -> targetDirectory.get());
-    }
-    catch (IncorrectCreateFilePathException e) {
-      if (editor != null) {
-        HintManager.getInstance().showErrorHint(editor, e.getLocalizedMessage());
-      }
-      directory = null;
-    }
-    if (directory != null) {
-      // for compatibility with plugins
-      apply(project, directory, editor);
-    }
+                       @Nullable Editor editor) {
   }
 
   protected @Nullable HtmlChunk getDescription(@NotNull Icon itemIcon) {
@@ -283,14 +253,20 @@ public abstract class AbstractCreateFileFix extends LocalQuickFixAndIntentionAct
         @Override
         public void onClosed(@NotNull LightweightWindowEvent event) {
           // rerun code-insight after popup close
-          PsiFile file = PsiDocumentManager.getInstance(project).getPsiFile(editor.getDocument());
-          if (file != null) {
-            DaemonCodeAnalyzer.getInstance(project).restart(file);
+          PsiFile psiFile = PsiDocumentManager.getInstance(project).getPsiFile(editor.getDocument());
+          if (psiFile != null) {
+            DaemonCodeAnalyzer.getInstance(project).restart(psiFile, this);
           }
         }
       })
       .createPopup()
       .showInBestPositionFor(editor);
+  }
+
+  @TestOnly
+  @ApiStatus.Internal
+  public List<TargetDirectory> getDirectories() {
+    return myDirectories;
   }
 
   private static @Unmodifiable @NotNull List<TargetDirectoryListItem> getTargetDirectoryListItems(List<? extends TargetDirectory> directories) {

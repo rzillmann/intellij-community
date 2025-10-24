@@ -11,16 +11,16 @@ import com.intellij.internal.statistic.service.fus.collectors.UIEventLogger.Stat
 import com.intellij.internal.statistic.service.fus.collectors.UIEventLogger.StatusBarWidgetClicked
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.actionSystem.*
-import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.application.EDT
-import com.intellij.openapi.application.ModalityState
-import com.intellij.openapi.application.asContextElement
-import com.intellij.openapi.components.ComponentManagerEx
+import com.intellij.openapi.application.*
 import com.intellij.openapi.components.service
+import com.intellij.openapi.components.serviceAsync
+import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.extensions.LoadingOrder
 import com.intellij.openapi.extensions.LoadingOrder.Orderable
 import com.intellij.openapi.fileEditor.FileEditor
-import com.intellij.openapi.progress.*
+import com.intellij.openapi.progress.ProgressIndicatorModel
+import com.intellij.openapi.progress.ProgressModel
+import com.intellij.openapi.progress.TaskInfo
 import com.intellij.openapi.progress.impl.BridgeTaskSupport
 import com.intellij.openapi.progress.impl.PerProjectTaskInfoEntityCollector
 import com.intellij.openapi.project.Project
@@ -57,7 +57,6 @@ import com.intellij.ui.util.height
 import com.intellij.util.EventDispatcher
 import com.intellij.util.concurrency.annotations.RequiresEdt
 import com.intellij.util.ui.*
-import fleet.util.logging.logger
 import kotlinx.collections.immutable.persistentHashSetOf
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
@@ -113,6 +112,8 @@ open class IdeStatusBarImpl @ApiStatus.Internal constructor(
   private val listeners = EventDispatcher.create(StatusBarListener::class.java)
 
   private val progressFlow = MutableSharedFlow<ProgressSetChangeEvent>(replay = 1, extraBufferCapacity = Int.MAX_VALUE)
+
+  internal var borderPainter: BorderPainter = DefaultBorderPainter()
 
   companion object {
     internal val HOVERED_WIDGET_ID: DataKey<String> = DataKey.create("HOVERED_WIDGET_ID")
@@ -210,7 +211,16 @@ open class IdeStatusBarImpl @ApiStatus.Internal constructor(
 
     enableEvents(AWTEvent.MOUSE_EVENT_MASK)
     enableEvents(AWTEvent.MOUSE_MOTION_EVENT_MASK)
-    IdeEventQueue.getInstance().addDispatcher({ e -> if (e is MouseEvent) dispatchMouseEvent(e) else false }, coroutineScope)
+    IdeEventQueue.getInstance().addDispatcher(object : IdeEventQueue.NonLockedEventDispatcher {
+      override fun dispatch(e: AWTEvent): Boolean {
+        return if (e is MouseEvent) {
+          dispatchMouseEvent(e)
+        }
+        else {
+          false
+        }
+      }
+    }, coroutineScope)
   }
 
   internal fun initialize() {
@@ -301,7 +311,7 @@ open class IdeStatusBarImpl @ApiStatus.Internal constructor(
    * @param widget widget to add
    */
   internal suspend fun addWidgetToLeft(widget: StatusBarWidget) {
-    withContext(Dispatchers.EDT) {
+    withContext(Dispatchers.UiWithModelAccess) {
       addWidget(widget, Position.LEFT, LoadingOrder.ANY)
     }
   }
@@ -313,7 +323,7 @@ open class IdeStatusBarImpl @ApiStatus.Internal constructor(
   }
 
   internal suspend fun init(project: Project, frame: IdeFrame, extraItems: List<kotlin.Pair<StatusBarWidget, LoadingOrder>> = emptyList()) {
-    val service = project.service<StatusBarWidgetsManager>()
+    val service = project.serviceAsync<StatusBarWidgetsManager>()
     val items = span("status bar pre-init") {
       service.init(frame)
     }
@@ -326,7 +336,7 @@ open class IdeStatusBarImpl @ApiStatus.Internal constructor(
     val anyModality = ModalityState.any().asContextElement()
     val items: List<WidgetBean> = span("status bar widget creating") {
       widgets.map { (widget, anchor) ->
-        val component = span(widget.ID(), Dispatchers.EDT + anyModality) {
+        val component = span(widget.ID(), Dispatchers.UiWithModelAccess + anyModality) {
           val component = wrap(widget)
           if (component is StatusBarWidgetWrapper) {
             component.beforeUpdate()
@@ -334,15 +344,13 @@ open class IdeStatusBarImpl @ApiStatus.Internal constructor(
           component
         }
         val item = WidgetBean(widget = widget, position = Position.RIGHT, component = component, order = anchor)
-        blockingContext {
-          widget.install(this@IdeStatusBarImpl)
-        }
+        widget.install(this@IdeStatusBarImpl)
         Disposer.register(parentDisposable, widget)
         item
       }
     }
 
-    withContext(Dispatchers.EDT + anyModality + CoroutineName("status bar widget adding")) {
+    withContext(Dispatchers.UiWithModelAccess + anyModality + CoroutineName("status bar widget adding")) {
       for (item in items) {
         widgetMap.put(item.widget.ID(), item)
       }
@@ -356,14 +364,14 @@ open class IdeStatusBarImpl @ApiStatus.Internal constructor(
     }
 
     if (listeners.hasListeners()) {
-      withContext(Dispatchers.EDT + anyModality) {
+      withContext(Dispatchers.UiWithModelAccess + anyModality) {
         for (item in items) {
           fireWidgetAdded(widget = item.widget, anchor = item.anchor)
         }
       }
     }
 
-    withContext(Dispatchers.EDT) {
+    withContext(Dispatchers.UiWithModelAccess) {
       PopupHandler.installPopupMenu(this@IdeStatusBarImpl, StatusBarWidgetsActionGroup.GROUP_ID, ActionPlaces.STATUS_BAR_PLACE)
     }
   }
@@ -470,14 +478,15 @@ open class IdeStatusBarImpl @ApiStatus.Internal constructor(
       BridgeTaskSupport.getInstance().withBridgeBackgroundProgress(project, indicator, info)
     }
     else {
-      val model = ProgressIndicatorModel(indicator, info.title, info.isCancellable)
-      addProgressImpl(model, info)
+      addProgressImpl(ProgressIndicatorModel(indicator, info.title, info.isCancellable), info)
     }
   }
 
   internal fun addProgressImpl(progressModel: ProgressModel, info: TaskInfo) {
-    check(progressFlow.tryEmit(ProgressSetChangeEvent(newProgress = Triple(info, progressModel, ClientId.currentOrNull),
-                                                      existingProgresses = infoAndProgressPanel?.backgroundProcesses ?: emptyList())))
+    check(progressFlow.tryEmit(ProgressSetChangeEvent(
+      newProgress = Triple(info, progressModel, ClientId.currentOrNull),
+      existingProgresses = infoAndProgressPanel?.backgroundProcesses ?: emptyList(),
+    )))
     createInfoAndProgressPanel().addProgress(progressModel, info)
   }
 
@@ -493,14 +502,16 @@ open class IdeStatusBarImpl @ApiStatus.Internal constructor(
    * corrected for potential future usages.
    */
   @ApiStatus.Internal
-  fun getVisibleProcessFlow(): Flow<VisibleProgress> = flow {
-    var firstTime = true
-    progressFlow.collect { event ->
-      if (firstTime) {
-        firstTime = false
-        event.existingVisibleProgresses.forEach { emit(it) }
+  fun getVisibleProcessFlow(): Flow<VisibleProgress> {
+    return flow {
+      var firstTime = true
+      progressFlow.collect { event ->
+        if (firstTime) {
+          firstTime = false
+          event.existingVisibleProgresses.forEach { emit(it) }
+        }
+        event.newVisibleProgress?.let { emit(it) }
       }
-      event.newVisibleProgress?.let { emit(it) }
     }
   }
 
@@ -592,6 +603,7 @@ open class IdeStatusBarImpl @ApiStatus.Internal constructor(
   override fun paintChildren(g: Graphics) {
     paintWidgetEffectBackground(g)
     super.paintChildren(g)
+    borderPainter.paintAfterChildren(this, g)
   }
 
   private fun dispatchMouseEvent(e: MouseEvent): Boolean {
@@ -791,6 +803,7 @@ open class IdeStatusBarImpl @ApiStatus.Internal constructor(
       })
   }
 
+  @Suppress("RedundantInnerClassModifier")
   protected inner class AccessibleIdeStatusBarImpl : AccessibleJComponent() {
     override fun getAccessibleRole(): AccessibleRole = AccessibilityUtils.GROUPED_ELEMENTS
   }
@@ -999,16 +1012,23 @@ private interface StatusBarWidgetWrapper {
   fun beforeUpdate()
 }
 
-internal fun adaptV2Widget(id: String,
-                           dataContext: WidgetPresentationDataContext,
-                           presentationFactory: (CoroutineScope) -> WidgetPresentation): StatusBarWidget {
+internal fun adaptV2Widget(
+  id: String,
+  dataContext: WidgetPresentationDataContext,
+  parentCoroutineScope: CoroutineScope,
+  presentationFactory: (CoroutineScope) -> WidgetPresentation,
+): StatusBarWidget {
   return object : StatusBarWidget, CustomStatusBarWidget {
-    private val coroutineScope = (dataContext.project as ComponentManagerEx).getCoroutineScope().childScope()
+    private val coroutineScope = parentCoroutineScope.childScope(id)
 
     override fun ID(): String = id
 
     override fun getComponent(): JComponent {
-      return createComponentByWidgetPresentation(presentation = presentationFactory(coroutineScope), project = dataContext.project, scope = coroutineScope)
+      return createComponentByWidgetPresentation(
+        presentation = presentationFactory(coroutineScope),
+        project = dataContext.project,
+        scope = coroutineScope,
+      )
     }
 
     override fun dispose() {

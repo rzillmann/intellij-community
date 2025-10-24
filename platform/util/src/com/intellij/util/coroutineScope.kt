@@ -7,21 +7,36 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.job
+import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.annotations.ApiStatus.Experimental
 import org.jetbrains.annotations.ApiStatus.Internal
 import java.util.concurrent.atomic.AtomicReference
 
 @Internal
 @Experimental
-@JvmOverloads
-fun Job.cancelOnDispose(disposable: Disposable, disposeOnCompletion: Boolean = true) {
-  val childDisposable = Disposable { cancel("disposed") }
-  Disposer.register(disposable, childDisposable)
-  if (disposeOnCompletion) {
-    job.invokeOnCompletion {
-      Disposer.dispose(childDisposable)
+fun Job.cancelOnDispose(disposable: Disposable) {
+  val origin = Throwable()
+  val childDisposable = object : Disposable {
+    override fun dispose() {
+      cancel("disposed")
+    }
+
+    override fun toString(): String {
+      val topTrace = origin.stackTrace[1]
+      return "Cancel on dispose spawned in `$topTrace`"
     }
   }
+  Disposer.register(disposable, childDisposable)
+  invokeOnCompletion {
+    Disposer.dispose(childDisposable)
+  }
+}
+
+@Internal
+@Experimental
+@Deprecated("Use `cancelOnDispose`", ReplaceWith("cancelOnDispose(disposable)"))
+fun Job.cancelOnDispose(disposable: Disposable, disposeOnCompletion: Boolean = true) {
+  cancelOnDispose(disposable)
 }
 
 /**
@@ -50,6 +65,8 @@ fun Disposable.disposeOnCompletion(cs: CoroutineScope) {
  * - Its disposal happens out of scope, after the scope is completed. The scope does not wait for the disposal.
  * - The disposal failure does not cancel the scope.
  */
+@Internal
+@ApiStatus.ScheduledForRemoval
 @Deprecated("Use `disposeOnCompletion` instead", ReplaceWith("disposeOnCompletion(cs)"))
 fun Disposable.attachAsChildTo(cs: CoroutineScope) {
   disposeOnCompletion(cs)

@@ -5,8 +5,10 @@ package org.jetbrains.kotlin.idea.gradleTooling
 import com.intellij.gradle.toolingExtension.impl.model.dependencyDownloadPolicyModel.GradleDependencyDownloadPolicy
 import com.intellij.gradle.toolingExtension.impl.model.dependencyDownloadPolicyModel.GradleDependencyDownloadPolicyCache
 import com.intellij.gradle.toolingExtension.impl.model.dependencyModel.GradleDependencyResolver
+import com.intellij.gradle.toolingExtension.impl.telemetry.GradleOpenTelemetry
 import com.intellij.gradle.toolingExtension.impl.util.GradleModelProviderUtil
 import com.intellij.gradle.toolingExtension.impl.util.javaPluginUtil.JavaPluginUtil
+import com.intellij.gradle.toolingExtension.util.GradleReflectionUtil
 import com.intellij.gradle.toolingExtension.util.GradleVersionUtil
 import org.gradle.api.Project
 import org.gradle.api.Task
@@ -17,6 +19,7 @@ import org.gradle.api.artifacts.ProjectDependency
 import org.gradle.api.provider.Property
 import org.gradle.tooling.BuildController
 import org.gradle.tooling.model.gradle.GradleBuild
+import org.jetbrains.kotlin.idea.gradleTooling.AndroidAwareGradleModelProvider.Companion.isAgpApplied
 import org.jetbrains.kotlin.idea.gradleTooling.reflect.KotlinExtensionReflection
 import org.jetbrains.kotlin.idea.projectModel.KotlinTaskProperties
 import org.jetbrains.kotlin.tooling.core.Interner
@@ -135,10 +138,12 @@ class AndroidAwareGradleModelProvider(
     companion object {
         fun parseParameter(project: Project, parameterValue: String?): Result {
             return Result(
-                hasProjectAndroidBasePlugin = project.plugins.findPlugin("com.android.base") != null,
+                hasProjectAndroidBasePlugin = project.isAgpApplied(),
                 requestedVariantNames = parameterValue?.splitToSequence(',')?.map { it.lowercase(Locale.getDefault()) }?.toSet()
             )
         }
+
+        fun Project.isAgpApplied(): Boolean = plugins.hasPlugin("com.android.base")
     }
 }
 
@@ -156,15 +161,24 @@ class KotlinGradleModelBuilder : AbstractKotlinGradleModelBuilder(), ModelBuilde
 
     override fun canBuild(modelName: String?): Boolean = modelName == KotlinGradleModel::class.java.name
 
-    private fun getImplementedProjects(project: Project): List<Project> {
+    private fun getImplementedProjectNames(project: Project): List<String> {
         return listOf("expectedBy", "implement")
             .flatMap { project.configurations.findByName(it)?.dependencies ?: emptySet<Dependency>() }
             .filterIsInstance<ProjectDependency>()
-            .mapNotNull { it.dependencyProject }
+            .mapNotNull { dependency ->
+                if (GradleVersionUtil.isCurrentGradleOlderThan("9.0")) {
+                    val dependencyProject = GradleReflectionUtil.getValue(dependency, "getDependencyProject", Project::class.java)
+                    dependencyProject?.pathOrName()
+                } else {
+                    dependency.pathOrName()
+                }
+            }
     }
 
     // see GradleProjectResolverUtil.getModuleId() in IDEA codebase
     private fun Project.pathOrName() = if (path == ":") name else path
+
+    private fun ProjectDependency.pathOrName() = if (path == ":") name else path
 
     private fun Task.getDependencyClasspath(): List<String> {
         try {
@@ -223,6 +237,7 @@ class KotlinGradleModelBuilder : AbstractKotlinGradleModelBuilder(), ModelBuilde
         val androidVariantRequest = AndroidAwareGradleModelProvider.parseParameter(project, parameter?.value)
         if (androidVariantRequest.shouldSkipBuildAllCall()) return null
         val kotlinPluginId = kotlinPluginIds.singleOrNull { project.plugins.findPlugin(it) != null }
+            ?: project.getAgpBuildInKotlinPluginId()
         val platformPluginId = platformPluginIds.singleOrNull { project.plugins.findPlugin(it) != null }
         val target = project.getTarget()
 
@@ -250,7 +265,6 @@ class KotlinGradleModelBuilder : AbstractKotlinGradleModelBuilder(), ModelBuilde
         }
 
         val platform = platformPluginId ?: pluginToPlatform.entries.singleOrNull { project.plugins.findPlugin(it.key) != null }?.value
-        val implementedProjects = getImplementedProjects(project)
 
         if (builderContext != null) {
             downloadKotlinStdlibSourcesIfNeeded(project, builderContext)
@@ -262,12 +276,28 @@ class KotlinGradleModelBuilder : AbstractKotlinGradleModelBuilder(), ModelBuilde
             additionalVisibleSourceSets = additionalVisibleSourceSets,
             coroutines = getCoroutines(project),
             platformPluginId = platform,
-            implements = implementedProjects.map { it.pathOrName() },
+            implements = getImplementedProjectNames(project),
             kotlinTarget = platform ?: kotlinPluginId,
             kotlinTaskProperties = extraProperties,
             gradleUserHome = project.gradle.gradleUserHomeDir.absolutePath,
             kotlinGradlePluginVersion = project.kotlinGradlePluginVersion()
         )
+    }
+
+    // Since AGP 8.12.0-alpha02 Kotlin support was introduced without the need to apply the "kotlin-android" plugin.
+    // But AGP still applies 'KotlinBaseApiPlugin', so we are trying to detect it here by using the interface name from KGP-API
+    // which 'KotlinBaseApiPlugin' implements.
+    private fun Project.getAgpBuildInKotlinPluginId(): String? = if (isAgpApplied() &&
+        plugins
+            .matching { plugin ->
+                plugin::class.java.superclass.interfaces.any {
+                    it.name == "org.jetbrains.kotlin.gradle.plugin.KotlinJvmFactory"
+                }
+            }.isNotEmpty()
+    ) {
+        "kotlin-android"
+    } else {
+        null
     }
 
     private fun downloadKotlinStdlibSourcesIfNeeded(project: Project, context: ModelBuilderContext) {

@@ -1,4 +1,36 @@
+*:com.intellij.codeInsight.multiverse.EditorContextManager
+- *sf:Companion:com.intellij.codeInsight.multiverse.EditorContextManager$Companion
+- a:getCachedEditorContexts(com.intellij.openapi.editor.Editor):com.intellij.codeInsight.multiverse.EditorSelectedContexts
+- s:getEditorContext(com.intellij.openapi.editor.Editor,com.intellij.openapi.project.Project):com.intellij.codeInsight.multiverse.CodeInsightContext
+- a:getEditorContexts(com.intellij.openapi.editor.Editor):com.intellij.codeInsight.multiverse.EditorSelectedContexts
+- a:getEventFlow():kotlinx.coroutines.flow.Flow
+- s:getInstance(com.intellij.openapi.project.Project):com.intellij.codeInsight.multiverse.EditorContextManager
+- a:setEditorContext(com.intellij.openapi.editor.Editor,com.intellij.codeInsight.multiverse.EditorSelectedContexts):V
+*f:com.intellij.codeInsight.multiverse.EditorContextManager$ChangeEvent
+- <init>(com.intellij.openapi.editor.Editor,com.intellij.codeInsight.multiverse.EditorSelectedContexts):V
+- f:getEditor():com.intellij.openapi.editor.Editor
+- f:getNewContexts():com.intellij.codeInsight.multiverse.EditorSelectedContexts
+*:com.intellij.codeInsight.multiverse.EditorContextManager$ChangeEventListener
+- java.util.EventListener
+- a:editorContextsChanged(com.intellij.codeInsight.multiverse.EditorContextManager$ChangeEvent):V
+*f:com.intellij.codeInsight.multiverse.EditorContextManager$Companion
+- f:getEditorContext(com.intellij.openapi.editor.Editor,com.intellij.openapi.project.Project):com.intellij.codeInsight.multiverse.CodeInsightContext
+- f:getInstance(com.intellij.openapi.project.Project):com.intellij.codeInsight.multiverse.EditorContextManager
+- f:getInstanceAsync(com.intellij.openapi.project.Project,kotlin.coroutines.Continuation):java.lang.Object
+- f:getTopic():com.intellij.util.messages.Topic
+*:com.intellij.codeInsight.multiverse.EditorSelectedContexts
+- a:contains(com.intellij.codeInsight.multiverse.CodeInsightContext):Z
+- a:getAdditionalContexts():java.util.Set
+- getAllContexts():java.util.Set
+- a:getMainContext():com.intellij.codeInsight.multiverse.CodeInsightContext
+*f:com.intellij.codeInsight.multiverse.SingleEditorContext
+- com.intellij.codeInsight.multiverse.EditorSelectedContexts
+- <init>(com.intellij.codeInsight.multiverse.CodeInsightContext):V
+- contains(com.intellij.codeInsight.multiverse.CodeInsightContext):Z
+- getAdditionalContexts():java.util.Set
+- getMainContext():com.intellij.codeInsight.multiverse.CodeInsightContext
 *:com.intellij.ide.lightEdit.LightEditService
+- *sf:Companion:com.intellij.ide.lightEdit.LightEditService$Companion
 - a:closeEditorWindow():Z
 - a:createNewDocument(java.nio.file.Path):com.intellij.ide.lightEdit.LightEditorInfo
 - a:getEditorManager():com.intellij.ide.lightEdit.LightEditorManager
@@ -6,7 +38,6 @@
 - a:getProject():com.intellij.openapi.project.Project
 - a:getSelectedFile():com.intellij.openapi.vfs.VirtualFile
 - a:getSelectedFileEditor():com.intellij.openapi.fileEditor.FileEditor
-- s:getWindowName():java.lang.String
 - a:isAutosaveMode():Z
 - a:isForceOpenInLightEditMode():Z
 - a:isLightEditEnabled():Z
@@ -20,6 +51,9 @@
 - a:setAutosaveMode(Z):V
 - a:showEditorWindow():V
 - a:updateFileStatus(java.util.Collection):V
+*f:com.intellij.ide.lightEdit.LightEditService$Companion
+- f:getInstance():com.intellij.ide.lightEdit.LightEditService
+- f:getWindowName():java.lang.String
 *:com.intellij.ide.lightEdit.LightEditServiceListener
 - lightEditWindowClosed(com.intellij.openapi.project.Project):V
 - lightEditWindowOpened(com.intellij.openapi.project.Project):V
@@ -98,6 +132,18 @@ a:com.intellij.openapi.actionSystem.AnAction
 - a:calcWidthInPixels(com.intellij.openapi.editor.CustomFoldRegion):I
 - getContextMenuGroup(com.intellij.openapi.editor.CustomFoldRegion):com.intellij.openapi.actionSystem.ActionGroup
 - a:paint(com.intellij.openapi.editor.CustomFoldRegion,java.awt.Graphics2D,java.awt.geom.Rectangle2D,com.intellij.openapi.editor.markup.TextAttributes):V
+*:com.intellij.openapi.editor.EditorThreading
+- *sf:Companion:com.intellij.openapi.editor.EditorThreading$Companion
+- s:assertInteractionAllowed():V
+- s:compute(com.intellij.openapi.util.ThrowableComputable):java.lang.Object
+- a:doAssertInteractionAllowed():V
+- a:doCompute(com.intellij.openapi.util.ThrowableComputable):java.lang.Object
+- a:doRun(java.lang.Runnable):V
+- s:run(java.lang.Runnable):V
+*f:com.intellij.openapi.editor.EditorThreading$Companion
+- f:assertInteractionAllowed():V
+- f:compute(com.intellij.openapi.util.ThrowableComputable):java.lang.Object
+- f:run(java.lang.Runnable):V
 com.intellij.openapi.editor.FoldingModel
 - *:addCustomLinesFolding(I,I,com.intellij.openapi.editor.CustomFoldRegionRenderer):com.intellij.openapi.editor.CustomFoldRegion
 *:com.intellij.openapi.editor.ScrollPositionCalculator

@@ -7,7 +7,9 @@ import com.intellij.ui.IconManager
 import com.intellij.ui.PlatformIcons
 import com.intellij.ui.RowIcon
 import org.jetbrains.annotations.ApiStatus
+import org.jetbrains.kotlin.analysis.api.KaExperimentalApi
 import org.jetbrains.kotlin.analysis.api.KaSession
+import org.jetbrains.kotlin.analysis.api.components.containingDeclaration
 import org.jetbrains.kotlin.analysis.api.symbols.*
 import org.jetbrains.kotlin.idea.KotlinIcons
 import org.jetbrains.kotlin.psi.KtElement
@@ -15,7 +17,7 @@ import javax.swing.Icon
 
 @ApiStatus.Internal
 object KotlinIconProvider {
-    context(KaSession)
+    context(_: KaSession)
     fun getIconFor(symbol: KaSymbol, @Iconable.IconFlags flags: Int = 0): Icon? {
         symbol.psi?.let { referencedPsi ->
             if (referencedPsi !is KtElement) {
@@ -36,19 +38,24 @@ object KotlinIconProvider {
         return baseIcon
     }
 
-    context(KaSession)
+    context(_: KaSession)
     private fun getBaseIcon(symbol: KaSymbol): Icon? {
         if (symbol is KaNamedFunctionSymbol) {
             val isAbstract = symbol.modality == KaSymbolModality.ABSTRACT
-
+            val suspend = symbol.isSuspend
             return when {
                 symbol.isExtension -> {
                     if (isAbstract) KotlinIcons.ABSTRACT_EXTENSION_FUNCTION else KotlinIcons.EXTENSION_FUNCTION
                 }
                 symbol.location == KaSymbolLocation.CLASS -> {
-                    IconManager.getInstance().getPlatformIcon(if (isAbstract) PlatformIcons.AbstractMethod else PlatformIcons.Method)
+                    if (suspend) {
+                        KotlinIcons.SUSPEND_METHOD
+                    } else {
+                        val platformIcon = if (isAbstract) PlatformIcons.AbstractMethod else PlatformIcons.Method
+                        IconManager.getInstance().getPlatformIcon(platformIcon)
+                    }
                 }
-                else -> KotlinIcons.FUNCTION
+                else -> if (suspend) KotlinIcons.SUSPEND_FUNCTION else KotlinIcons.FUNCTION
             }
         }
 
@@ -65,8 +72,9 @@ object KotlinIconProvider {
             }
         }
 
+        @OptIn(KaExperimentalApi::class)
         return when (symbol) {
-            is KaValueParameterSymbol -> KotlinIcons.PARAMETER
+            is KaValueParameterSymbol, is KaContextParameterSymbol -> KotlinIcons.PARAMETER
             is KaLocalVariableSymbol -> if (symbol.isVal) KotlinIcons.VAL else KotlinIcons.VAR
             is KaPropertySymbol -> if (symbol.isVal) KotlinIcons.FIELD_VAL else KotlinIcons.FIELD_VAR
             is KaTypeParameterSymbol -> IconManager.getInstance().getPlatformIcon(PlatformIcons.Class)
@@ -78,12 +86,15 @@ object KotlinIconProvider {
     }
 
     private fun getVisibilityIcon(symbol: KaSymbol): Icon? {
-        val visibility = (symbol as? KaDeclarationSymbol)?.visibility ?: return null
+        val visibility: KaSymbolVisibility =
+            (symbol as? KaValueParameterSymbol)?.generatedPrimaryConstructorProperty?.visibility
+                ?: (symbol as? KaDeclarationSymbol)?.visibility
+                ?: return null
         val id = when (visibility) {
             KaSymbolVisibility.PUBLIC -> PlatformIcons.Public
             KaSymbolVisibility.PROTECTED -> PlatformIcons.Protected
             KaSymbolVisibility.PRIVATE -> PlatformIcons.Private
-            KaSymbolVisibility.INTERNAL -> PlatformIcons.Private
+            KaSymbolVisibility.INTERNAL -> PlatformIcons.Local
             else -> return null
         }
         return IconManager.getInstance().getPlatformIcon(id)

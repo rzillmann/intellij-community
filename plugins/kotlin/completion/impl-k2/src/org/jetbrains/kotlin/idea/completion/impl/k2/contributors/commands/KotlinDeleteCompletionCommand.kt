@@ -13,9 +13,10 @@ import com.intellij.psi.*
 import com.intellij.psi.util.PsiTreeUtil
 import org.jetbrains.annotations.Nls
 import org.jetbrains.kotlin.idea.KotlinFileType
+import org.jetbrains.kotlin.psi.KtClassOrObject
 import org.jetbrains.kotlin.psi.KtExpression
+import org.jetbrains.kotlin.psi.KtFile
 import org.jetbrains.kotlin.psi.KtNamedDeclaration
-import javax.swing.Icon
 
 internal class KotlinDeleteCompletionCommandProvider : CommandProvider {
   override fun getCommands(context: CommandCompletionProviderContext): List<CompletionCommand> {
@@ -25,13 +26,20 @@ internal class KotlinDeleteCompletionCommandProvider : CommandProvider {
     if (!hasTheSameOffset) return emptyList()
     psiElement = getTopWithTheSameOffset(psiElement, context.offset)
     val highlightInfo = HighlightInfoLookup(psiElement.textRange, EditorColors.SEARCH_RESULT_ATTRIBUTES, 0)
-    return listOf(createCommand(highlightInfo, psiElement))
+      val command = createCommand(highlightInfo, psiElement) ?: return emptyList<CompletionCommand>()
+      return listOf(command)
   }
 
-    private fun createCommand(highlightInfo: HighlightInfoLookup, psiElement: PsiElement): CompletionCommand {
+    private fun createCommand(highlightInfo: HighlightInfoLookup, psiElement: PsiElement): CompletionCommand? {
         val copy = psiElement.containingFile.copy() as PsiFile
         val previewBefore = copy.text
         val elementToDelete = PsiTreeUtil.findSameElementInCopy(psiElement, copy)
+        if (elementToDelete is KtClassOrObject) {
+            val file = elementToDelete.containingFile as? KtFile ?: return null
+            if (elementToDelete.isTopLevel() && file.declarations.size <= 1) {
+                return null
+            }
+        }
         elementToDelete.delete()
         val previewAfter = copy.text
         val preview: IntentionPreviewInfo = IntentionPreviewInfo.CustomDiff(
@@ -58,14 +66,12 @@ private fun getTopWithTheSameOffset(psiElement: KtExpression, offset: Int): KtEx
 private class KotlinDeleteCompletionCommand(
   override val highlightInfo: HighlightInfoLookup?,
   private val preview: IntentionPreviewInfo,
-) : CompletionCommand(), CompletionCommandWithPreview, DumbAware {
-  override val name: String
-    get() = "Delete element"
-  override val i18nName: @Nls String
+) : CompletionCommand(), DumbAware {
+  override val synonyms: List<String>
+    get() = listOf("Delete element")
+  override val presentableName: @Nls String
     get() = ActionsBundle.message("action.EditorDelete.text")
-  override val icon: Icon?
-    get() = null
-  override val priority: Int?
+  override val priority: Int
         get() = -100
 
   override fun execute(offset: Int, psiFile: PsiFile, editor: Editor?) {
@@ -82,7 +88,7 @@ private class KotlinDeleteCompletionCommand(
     }, psiFile)
   }
 
-  override fun getPreview(): IntentionPreviewInfo? {
+  override fun getPreview(): IntentionPreviewInfo {
     return preview
   }
 }

@@ -38,7 +38,7 @@ import java.util.List;
 import java.util.function.Consumer;
 
 @ApiStatus.Internal
-public final class B implements AnnotationBuilder {
+final class B implements AnnotationBuilder {
   private final @NotNull AnnotationHolderImpl myHolder;
   private final @Nls String message;
   private final @NotNull PsiElement myCurrentElement;
@@ -52,7 +52,6 @@ public final class B implements AnnotationBuilder {
   private TextAttributes enforcedAttributes;
   private TextAttributesKey textAttributesKey;
   private ProblemHighlightType highlightType;
-  private Boolean needsUpdateOnTyping;
   private @NlsContexts.Tooltip String tooltip;
   private List<FixB> fixes;
   private boolean created;
@@ -266,13 +265,11 @@ public final class B implements AnnotationBuilder {
 
   @Override
   public @NotNull AnnotationBuilder needsUpdateOnTyping() {
-    return needsUpdateOnTyping(true);
+    return this;
   }
 
   @Override
   public @NotNull AnnotationBuilder needsUpdateOnTyping(boolean value) {
-    assertNotSet(this.needsUpdateOnTyping, "needsUpdateOnTyping");
-    this.needsUpdateOnTyping = value;
     return this;
   }
 
@@ -300,9 +297,6 @@ public final class B implements AnnotationBuilder {
       tooltip = XmlStringUtil.wrapInHtml(XmlStringUtil.escapeString(message));
     }
     Annotation annotation = new Annotation(range.getStartOffset(), range.getEndOffset(), severity, message, tooltip);
-    if (needsUpdateOnTyping != null) {
-      annotation.setNeedsUpdateOnTyping(needsUpdateOnTyping);
-    }
     if (highlightType != null) {
       annotation.setHighlightType(highlightType);
     }
@@ -388,7 +382,6 @@ public final class B implements AnnotationBuilder {
            omitIfEmpty(enforcedAttributes, "enforcedAttributes") +
            omitIfEmpty(textAttributesKey, "textAttributesKey") +
            omitIfEmpty(highlightType, "highlightType") +
-           omitIfEmpty(needsUpdateOnTyping, "needsUpdateOnTyping") +
            omitIfEmpty(tooltip, "tooltip") +
            omitIfEmpty(fixes, "fixes") +
            '}';

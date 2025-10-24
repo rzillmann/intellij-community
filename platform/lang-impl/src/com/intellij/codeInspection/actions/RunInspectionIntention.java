@@ -54,23 +54,23 @@ public final class RunInspectionIntention implements IntentionAction, HighPriori
   }
 
   @Override
-  public boolean isAvailable(@NotNull Project project, Editor editor, PsiFile file) {
-    return LocalInspectionToolWrapper.findTool2RunInBatch(project, file, myShortName) != null;
+  public boolean isAvailable(@NotNull Project project, Editor editor, PsiFile psiFile) {
+    return LocalInspectionToolWrapper.findTool2RunInBatch(project, psiFile, myShortName) != null;
   }
 
   @Override
-  public void invoke(@NotNull Project project, Editor editor, PsiFile file) throws IncorrectOperationException {
-    final Module module = file != null ? ModuleUtilCore.findModuleForPsiElement(file) : null;
+  public void invoke(@NotNull Project project, Editor editor, PsiFile psiFile) throws IncorrectOperationException {
+    final Module module = psiFile != null ? ModuleUtilCore.findModuleForPsiElement(psiFile) : null;
     AnalysisScope analysisScope = new AnalysisScope(project);
-    if (file != null) {
-      PsiFile topLevelFile = InjectedLanguageManager.getInstance(project).getTopLevelFile(file);
+    if (psiFile != null) {
+      PsiFile topLevelFile = InjectedLanguageManager.getInstance(project).getTopLevelFile(psiFile);
       final VirtualFile virtualFile = topLevelFile.getVirtualFile();
-      if (file.isPhysical() && virtualFile != null && virtualFile.isInLocalFileSystem()) {
+      if (psiFile.isPhysical() && virtualFile != null && virtualFile.isInLocalFileSystem()) {
         analysisScope = new AnalysisScope(topLevelFile);
       }
     }
 
-    selectScopeAndRunInspection(myShortName, analysisScope, module, file, project);
+    selectScopeAndRunInspection(myShortName, analysisScope, module, psiFile, project);
   }
 
   public static void selectScopeAndRunInspection(@NotNull String toolShortName,
@@ -117,7 +117,7 @@ public final class RunInspectionIntention implements IntentionAction, HighPriori
     LinkedHashSet<InspectionToolWrapper<?, ?>> allWrappers = new LinkedHashSet<>();
     allWrappers.add(toolWrapper);
     rootProfile.collectDependentInspections(toolWrapper, allWrappers, project);
-    List<InspectionToolWrapper<?, ?>> toolWrappers = allWrappers.size() == 1 ? Collections.singletonList(allWrappers.iterator().next()) : new ArrayList<>(allWrappers);
+    List<InspectionToolWrapper<?, ?>> toolWrappers = allWrappers.size() == 1 ? Collections.singletonList(allWrappers.getFirst()) : new ArrayList<>(allWrappers);
     InspectionProfileImpl model = new InspectionProfileImpl(toolWrapper.getDisplayName(), new InspectionToolsSupplier.Simple(toolWrappers), rootProfile);
     for (InspectionToolWrapper wrapper : toolWrappers) {
       model.enableTool(wrapper.getShortName(), project);

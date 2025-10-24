@@ -37,11 +37,6 @@ public final class PyElementGeneratorImpl extends PyElementGenerator {
   }
 
   @Override
-  protected void specifyFileLanguageLevel(@NotNull VirtualFile virtualFile, @Nullable LanguageLevel langLevel) {
-    PythonLanguageLevelPusher.specifyFileLanguageLevel(virtualFile, langLevel);
-  }
-
-  @Override
   public ASTNode createNameIdentifier(String name, LanguageLevel languageLevel) {
     final PsiFile dummyFile = createDummyFile(languageLevel, name);
     final PyExpressionStatement expressionStatement = (PyExpressionStatement)dummyFile.getFirstChild();
@@ -223,13 +218,15 @@ public final class PyElementGeneratorImpl extends PyElementGenerator {
   }
 
   @Override
-  public PyBinaryExpression createBinaryExpression(String s, PyExpression expr, PyExpression listLiteral) {
-    final PsiFile dummyFile = createDummyFile(LanguageLevel.getDefault(), "a " + s + " b");
+  public PyBinaryExpression createBinaryExpression(@NotNull String operator,
+                                                   @NotNull PyExpression leftOperand,
+                                                   @NotNull PyExpression rightOperand) {
+    final PsiFile dummyFile = createDummyFile(LanguageLevel.getDefault(), "a " + operator + " b");
     final PyExpressionStatement expressionStatement = (PyExpressionStatement)dummyFile.getFirstChild();
     PyBinaryExpression binExpr = (PyBinaryExpression)expressionStatement.getExpression();
     ASTNode binnode = binExpr.getNode();
-    binnode.replaceChild(binExpr.getLeftExpression().getNode(), expr.getNode().copyElement());
-    binnode.replaceChild(binExpr.getRightExpression().getNode(), listLiteral.getNode().copyElement());
+    binnode.replaceChild(binExpr.getLeftExpression().getNode(), leftOperand.getNode().copyElement());
+    binnode.replaceChild(binExpr.getRightExpression().getNode(), rightOperand.getNode().copyElement());
     return binExpr;
   }
 
@@ -319,12 +316,6 @@ public final class PyElementGeneratorImpl extends PyElementGenerator {
   }
 
   @Override
-  public PyPassStatement createPassStatement() {
-    final PyStatementList statementList = createPassStatementList();
-    return (PyPassStatement)statementList.getStatements()[0];
-  }
-
-  @Override
   public @NotNull PyDecoratorList createDecoratorList(final String @NotNull ... decoratorTexts) {
     assert decoratorTexts.length > 0;
     StringBuilder functionText = new StringBuilder();
@@ -337,11 +328,6 @@ public final class PyElementGeneratorImpl extends PyElementGenerator {
     final PyDecoratorList decoratorList = function.getDecoratorList();
     assert decoratorList != null;
     return decoratorList;
-  }
-
-  private PyStatementList createPassStatementList() {
-    final PyFunction function = createFromText(LanguageLevel.getDefault(), PyFunction.class, "def foo():\n\tpass");
-    return function.getStatementList();
   }
 
   @Override
@@ -365,8 +351,8 @@ public final class PyElementGeneratorImpl extends PyElementGenerator {
   }
 
   @Override
-  public @NotNull PyNoneLiteralExpression createEllipsis() {
-    return createFromText(LanguageLevel.PYTHON30, PyNoneLiteralExpression.class, "...", new int[]{0, 0});
+  public @NotNull PyEllipsisLiteralExpression createEllipsis() {
+    return createFromText(LanguageLevel.PYTHON30, PyEllipsisLiteralExpression.class, "...", new int[]{0, 0});
   }
 
   @Override

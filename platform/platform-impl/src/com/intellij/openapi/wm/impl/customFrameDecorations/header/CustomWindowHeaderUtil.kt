@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.openapi.wm.impl.customFrameDecorations.header
 
 import com.intellij.diagnostic.LoadingState
@@ -7,9 +7,9 @@ import com.intellij.ide.ui.MainMenuDisplayMode
 import com.intellij.ide.ui.UISettings
 import com.intellij.ide.ui.customization.CustomisedActionGroup
 import com.intellij.openapi.actionSystem.ActionGroup
+import com.intellij.openapi.actionSystem.ActionManager
+import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.DefaultActionGroup
-import com.intellij.openapi.util.SystemInfo
-import com.intellij.openapi.util.SystemInfoRt
 import com.intellij.openapi.util.registry.Registry
 import com.intellij.openapi.wm.impl.*
 import com.intellij.openapi.wm.impl.headertoolbar.HeaderClickTransparentListener
@@ -18,6 +18,7 @@ import com.intellij.ui.WindowMoveListener
 import com.intellij.ui.components.panels.HorizontalLayout
 import com.intellij.ui.mac.MacWinTabsHandler
 import com.intellij.ui.mac.screenmenu.Menu
+import com.intellij.util.system.OS
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.StartupUiUtil
 import com.jetbrains.JBR
@@ -32,20 +33,17 @@ object CustomWindowHeaderUtil {
   /**
    * Returns `true` if a menu button should be placed in a toolbar instead of a menu bar.
    */
-  internal fun isMenuButtonInToolbar(uiSettings: UISettings): Boolean {
-    return ExperimentalUI.isNewUI() &&
-           (SystemInfoRt.isUnix && !SystemInfoRt.isMac && uiSettings.mainMenuDisplayMode != MainMenuDisplayMode.SEPARATE_TOOLBAR && !hideNativeLinuxTitle(uiSettings) ||
-            SystemInfo.isMac && !Menu.isJbScreenMenuEnabled())
-  }
+  internal fun isMenuButtonInToolbar(uiSettings: UISettings): Boolean =
+    ExperimentalUI.isNewUI() && (
+      OS.isGenericUnix() && uiSettings.mainMenuDisplayMode != MainMenuDisplayMode.SEPARATE_TOOLBAR && !hideNativeLinuxTitle(uiSettings) ||
+      OS.CURRENT == OS.macOS && !Menu.isJbScreenMenuEnabled()
+    )
 
-  internal fun hideNativeLinuxTitle(uiSettings: UISettings): Boolean {
-    return hideNativeLinuxTitleAvailable && hideNativeLinuxTitleSupported && uiSettings.mergeMainMenuWithWindowTitle
-  }
+  internal fun hideNativeLinuxTitle(uiSettings: UISettings): Boolean =
+    hideNativeLinuxTitleAvailable && hideNativeLinuxTitleSupported && uiSettings.mergeMainMenuWithWindowTitle
 
   internal val hideNativeLinuxTitleSupported: Boolean
-    get() = SystemInfoRt.isUnix && !SystemInfoRt.isMac &&
-            ExperimentalUI.isNewUI() &&
-            hideNativeLinuxTitleNotSupportedReason == null
+    get() = OS.isGenericUnix() && ExperimentalUI.isNewUI() && hideNativeLinuxTitleNotSupportedReason == null
 
   internal enum class HideNativeLinuxTitleNotSupportedReason {
     INCOMPATIBLE_JBR,
@@ -70,17 +68,14 @@ object CustomWindowHeaderUtil {
     }
 
   internal val hideNativeLinuxTitleAvailable: Boolean
-    get() = SystemInfoRt.isUnix && !SystemInfoRt.isMac &&
-            ExperimentalUI.isNewUI() &&
-            Registry.`is`("ide.linux.hide.native.title", false)
+    get() = OS.isGenericUnix() && ExperimentalUI.isNewUI() && Registry.`is`("ide.linux.hide.native.title", false)
 
   internal val isFloatingMenuBarSupported: Boolean
-    get() = !SystemInfoRt.isMac && FrameInfoHelper.Companion.isFullScreenSupportedInCurrentOs()
+    get() = OS.CURRENT != OS.macOS && FrameInfoHelper.isFullScreenSupportedInCurrentOs()
 
-  internal fun isDecoratedMenu(uiSettings: UISettings): Boolean {
-    return (SystemInfoRt.isWindows || SystemInfoRt.isMac && ExperimentalUI.isNewUI()) &&
-           (isToolbarInHeader(uiSettings, false) || IdeFrameDecorator.isCustomDecorationActive())
-  }
+  internal fun isDecoratedMenu(uiSettings: UISettings): Boolean =
+    (OS.CURRENT == OS.Windows || OS.CURRENT == OS.macOS && ExperimentalUI.isNewUI()) &&
+    (isToolbarInHeader(uiSettings, false) || IdeFrameDecorator.isCustomDecorationActive())
 
   internal inline fun isCompactHeader(mainToolbarActionSupplier: () -> List<Pair<ActionGroup, HorizontalLayout.Group>>): Boolean {
     if (isCompactHeader()) {
@@ -89,12 +84,12 @@ object CustomWindowHeaderUtil {
 
     val mainToolbarHasNoActions = mainToolbarActionSupplier().all {
       when (val g = it.first) {
-        is DefaultActionGroup -> g.childActionsOrStubs.isEmpty()
-        is CustomisedActionGroup -> g.defaultChildrenOrStubs.isEmpty()
+        is DefaultActionGroup -> isEmptyExceptNonRemovableActions(g.childActionsOrStubs)
+        is CustomisedActionGroup -> isEmptyExceptNonRemovableActions(g.defaultChildrenOrStubs)
         else -> false
       }
     }
-    return if (SystemInfoRt.isMac) {
+    return if (OS.CURRENT == OS.macOS) {
       mainToolbarHasNoActions
     }
     else {
@@ -102,19 +97,30 @@ object CustomWindowHeaderUtil {
     }
   }
 
-  internal fun isCompactHeader(): Boolean {
-    if (!LoadingState.CONFIGURATION_STORE_INITIALIZED.isOccurred) {
-      return false
+  internal fun isCompactHeader(): Boolean =
+    LoadingState.CONFIGURATION_STORE_INITIALIZED.isOccurred &&
+    (DistractionFreeModeController.shouldMinimizeCustomHeader() || !UISettings.getInstance().showNewMainToolbar)
+
+  private fun isEmptyExceptNonRemovableActions(actions: Array<AnAction>): Boolean {
+    val manager = ActionManager.getInstance()
+    for (action in actions) {
+      val id = manager.getId(action)
+      //return false
+      if (id !in NON_REMOVABLE_ACTIONS) return false
     }
-    return DistractionFreeModeController.shouldMinimizeCustomHeader() || !UISettings.getInstance().showNewMainToolbar
+    return true
   }
+
+  private val NON_REMOVABLE_ACTIONS = setOf(
+    "TrialStateWidget"
+  )
 
   internal fun isToolbarInHeader(uiSettings: UISettings, isFullscreen: Boolean): Boolean {
     if (IdeFrameDecorator.isCustomDecorationAvailable) {
-      if (SystemInfoRt.isMac) {
+      if (OS.CURRENT == OS.macOS) {
         return true
       }
-      if (SystemInfoRt.isWindows && uiSettings.mainMenuDisplayMode != MainMenuDisplayMode.SEPARATE_TOOLBAR && uiSettings.mergeMainMenuWithWindowTitle && !isFullscreen) {
+      if (OS.CURRENT == OS.Windows && uiSettings.mainMenuDisplayMode != MainMenuDisplayMode.SEPARATE_TOOLBAR && uiSettings.mergeMainMenuWithWindowTitle && !isFullscreen) {
         return true
       }
     }
@@ -127,7 +133,7 @@ object CustomWindowHeaderUtil {
   fun getPreferredWindowHeaderHeight(isCompactHeader: Boolean): Int = JBUI.scale(
     when {
       isCompactHeader -> HEADER_HEIGHT_DFM
-      UISettings.getInstance().compactMode -> HEADER_HEIGHT_COMPACT
+      UISettings.shadowInstance.compactMode -> HEADER_HEIGHT_COMPACT
       else -> HEADER_HEIGHT_NORMAL
     }
   )
@@ -144,7 +150,7 @@ object CustomWindowHeaderUtil {
       CustomHeader.enableCustomHeader(frame)
     }
     frame.doSetRootPane(rootPane)
-    if (SystemInfoRt.isMac) {
+    if (OS.CURRENT == OS.macOS) {
       MacWinTabsHandler.fastInit(frame)
     }
   }

@@ -42,6 +42,7 @@ public final class CaretImpl extends UserDataHolderBase implements Caret, Dumpab
 
   private final EditorImpl myEditor;
   private final @NotNull CaretModelImpl myCaretModel;
+  private final CaretId myCaretId;
   private boolean isValid = true;
   private Throwable myDisposalTrace;
 
@@ -78,6 +79,7 @@ public final class CaretImpl extends UserDataHolderBase implements Caret, Dumpab
   CaretImpl(@NotNull EditorImpl editor, @NotNull CaretModelImpl caretModel) {
     myEditor = editor;
     myCaretModel = caretModel;
+    myCaretId = new CaretId();
 
     myLogicalCaret = new LogicalPosition(0, 0);
     myVisibleCaret = new VisualPosition(0, 0);
@@ -86,6 +88,10 @@ public final class CaretImpl extends UserDataHolderBase implements Caret, Dumpab
     Document doc = myEditor.getDocument();
     myVisualLineEnd = doc.getLineCount() > 1 ? doc.getLineStartOffset(1) : doc.getLineCount() == 0 ? 0 : doc.getLineEndOffset(0);
     myDocumentUpdateCounter = myCaretModel.myDocumentUpdateCounter;
+  }
+
+  public CaretId getCaretId() {
+    return myCaretId;
   }
 
   @Override
@@ -658,7 +664,7 @@ public final class CaretImpl extends UserDataHolderBase implements Caret, Dumpab
   @Override
   public int getOffset() {
     assertNotUpdating();
-    ApplicationManager.getApplication().assertReadAccessAllowed();
+    EditorThreading.assertInteractionAllowed();
     while (true) {
       PositionMarker marker = myPositionMarker;
       if (marker == null) return 0; // caret was disposed
@@ -910,7 +916,7 @@ public final class CaretImpl extends UserDataHolderBase implements Caret, Dumpab
 
   @Override
   public int getSelectionStart() {
-    ApplicationManager.getApplication().assertReadAccessAllowed();
+    EditorThreading.assertInteractionAllowed();
     if (hasSelection()) {
       RangeMarker marker = mySelectionMarker;
       if (marker != null) {
@@ -963,7 +969,7 @@ public final class CaretImpl extends UserDataHolderBase implements Caret, Dumpab
 
   @Override
   public int getSelectionEnd() {
-    ApplicationManager.getApplication().assertReadAccessAllowed();
+    EditorThreading.assertInteractionAllowed();
     if (hasSelection()) {
       RangeMarker marker = mySelectionMarker;
       if (marker != null) {
@@ -1016,7 +1022,7 @@ public final class CaretImpl extends UserDataHolderBase implements Caret, Dumpab
 
   @Override
   public boolean hasSelection() {
-    ApplicationManager.getApplication().assertReadAccessAllowed();
+    EditorThreading.assertInteractionAllowed();
     SelectionMarker marker = mySelectionMarker;
     return hasSelection(marker);
   }
@@ -1028,7 +1034,7 @@ public final class CaretImpl extends UserDataHolderBase implements Caret, Dumpab
 
   @Override
   public @NotNull TextRange getSelectionRange() {
-    ApplicationManager.getApplication().assertReadAccessAllowed();
+    EditorThreading.assertInteractionAllowed();
     SelectionMarker marker = mySelectionMarker;
     if (hasSelection(marker)) {
       return marker.getTextRange();
@@ -1207,7 +1213,7 @@ public final class CaretImpl extends UserDataHolderBase implements Caret, Dumpab
 
   @Override
   public int getLeadSelectionOffset() {
-    ApplicationManager.getApplication().assertReadAccessAllowed();
+    EditorThreading.assertInteractionAllowed();
     int caretOffset = getOffset();
     if (hasSelection()) {
       RangeMarker marker = mySelectionMarker;
@@ -1320,9 +1326,7 @@ public final class CaretImpl extends UserDataHolderBase implements Caret, Dumpab
       int padding = selectionMarker.endVirtualOffset - selectionMarker.startVirtualOffset;
       StringBuilder builder = new StringBuilder(selectedText.length() + padding);
       builder.append(selectedText);
-      for (int i = 0; i < padding; i++) {
-        builder.append(' ');
-      }
+      builder.repeat(' ', padding);
       return builder.toString();
     }
     else {
@@ -1335,7 +1339,7 @@ public final class CaretImpl extends UserDataHolderBase implements Caret, Dumpab
   }
 
   boolean hasVirtualSelection() {
-    ApplicationManager.getApplication().assertReadAccessAllowed();
+    EditorThreading.assertInteractionAllowed();
     SelectionMarker marker = mySelectionMarker;
     return marker != null && marker.isValid() && isVirtualSelectionEnabled() && marker.hasVirtualSelection();
   }

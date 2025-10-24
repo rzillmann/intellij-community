@@ -16,6 +16,7 @@ import com.intellij.openapi.progress.*;
 import com.intellij.openapi.progress.util.*;
 import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.util.EmptyRunnable;
+import com.intellij.openapi.util.registry.Registry;
 import com.intellij.openapi.wm.ex.ProgressIndicatorEx;
 import com.intellij.testFramework.BombedProgressIndicator;
 import com.intellij.testFramework.LightPlatformTestCase;
@@ -1150,6 +1151,7 @@ public class ProgressIndicatorTest extends LightPlatformTestCase {
   }
 
   public void testEmptyProgressIndicatorPointsToTheCauseOfCancellation() {
+    Registry.get("ide.rich.cancellation.traces").setValue(true, getTestRootDisposable());
     EmptyProgressIndicator indicator = new EmptyProgressIndicator();
     notableStacktrace(indicator);
     try {
@@ -1165,5 +1167,32 @@ public class ProgressIndicatorTest extends LightPlatformTestCase {
 
   public void notableStacktrace(ProgressIndicator indicator) {
     indicator.cancel();
+  }
+
+  public void testPushPopStateMustSaveProgressWindowTitle() {
+    ProgressWindow window = new ProgressWindow(false, getProject());
+    window.setTitle("myTitle");
+    window.setIndeterminate(false);
+    window.setFraction(1);
+    window.setText("text0");
+    window.setText2("2text0");
+    assertEquals("myTitle", window.getTitle());
+    assertEquals("text0", window.getText());
+    assertEquals("2text0", window.getText2());
+    assertEquals(1.0, window.getFraction());
+    window.pushState();
+    window.setTitle("myTitle2");
+    window.setFraction(0);
+    window.setText("text1");
+    window.setText2("2text1");
+    assertEquals("myTitle2", window.getTitle());
+    assertEquals("text1", window.getText());
+    assertEquals("2text1", window.getText2());
+    assertEquals(0.0, window.getFraction());
+    window.popState();
+    assertEquals("myTitle", window.getTitle());
+    assertEquals("text0", window.getText());
+    assertEquals("2text0", window.getText2());
+    assertEquals(1.0, window.getFraction());
   }
 }

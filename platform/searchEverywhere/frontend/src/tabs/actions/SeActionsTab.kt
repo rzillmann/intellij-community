@@ -4,58 +4,102 @@ package com.intellij.platform.searchEverywhere.frontend.tabs.actions
 import com.intellij.ide.IdeBundle
 import com.intellij.ide.actions.searcheverywhere.CheckBoxSearchEverywhereToggleAction
 import com.intellij.openapi.actionSystem.AnAction
+import com.intellij.openapi.actionSystem.DataContext
+import com.intellij.openapi.application.EDT
 import com.intellij.openapi.util.Disposer
-import com.intellij.platform.searchEverywhere.SeActionItemPresentation
 import com.intellij.platform.searchEverywhere.SeItemData
+import com.intellij.platform.searchEverywhere.SeItemPresentation
 import com.intellij.platform.searchEverywhere.SeParams
+import com.intellij.platform.searchEverywhere.SePreviewInfo
 import com.intellij.platform.searchEverywhere.SeResultEvent
-import com.intellij.platform.searchEverywhere.frontend.SeFilterActionsPresentation
-import com.intellij.platform.searchEverywhere.frontend.SeFilterEditor
-import com.intellij.platform.searchEverywhere.frontend.SeFilterPresentation
-import com.intellij.platform.searchEverywhere.frontend.SeTab
+import com.intellij.platform.searchEverywhere.frontend.*
 import com.intellij.platform.searchEverywhere.frontend.providers.actions.SeActionsFilter
 import com.intellij.platform.searchEverywhere.frontend.resultsProcessing.SeTabDelegate
 import com.intellij.platform.searchEverywhere.frontend.tabs.utils.SeFilterEditorBase
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.withContext
 import org.jetbrains.annotations.ApiStatus
 
 @ApiStatus.Internal
-class SeActionsTab(private val delegate: SeTabDelegate): SeTab {
-  override val name: String get() = IdeBundle.message("search.everywhere.group.name.actions")
-  override val shortName: String get() = name
-  override val id: String get() = "ActionSearchEverywhereContributor"
+class SeActionsTab(private val delegate: SeTabDelegate) : SeTab {
+  override val name: String get() = NAME
+  override val id: String get() = ID
+  private val filterEditor: SeFilterEditor = SeActionsFilterEditor()
 
   override fun getItems(params: SeParams): Flow<SeResultEvent> = delegate.getItems(params)
-  override suspend fun getFilterEditor(): SeFilterEditor = SeActionsFilterEditor()
+  override suspend fun getFilterEditor(): SeFilterEditor = filterEditor
 
-  override suspend fun itemSelected(item: SeItemData, modifiers: Int, searchText: String): Boolean {
-    val presentation = item.presentation
-    if (presentation is SeActionItemPresentation) {
-      presentation.commonData.toggleStateIfSwitcher()
+  override suspend fun itemSelected(item: SeItemData, modifiers: Int, searchText: String): Boolean = coroutineScope {
+    withContext(Dispatchers.EDT) {
+      delegate.itemSelected(item, modifiers, searchText)
     }
+  }
 
-    return delegate.itemSelected(item, modifiers, searchText)
+  override suspend fun getEmptyResultInfo(context: DataContext): SeEmptyResultInfo {
+    return SeEmptyResultInfoProvider(getFilterEditor(),
+                                     delegate.getProvidersIds(),
+                                     delegate.canBeShownInFindResults()).getEmptyResultInfo(delegate.project, context)
+  }
+
+  override suspend fun canBeShownInFindResults(): Boolean {
+    return delegate.canBeShownInFindResults()
+  }
+
+  override suspend fun getUpdatedPresentation(item: SeItemData): SeItemPresentation? {
+    return delegate.getUpdatedPresentation(item)
+  }
+
+  override suspend fun performExtendedAction(item: SeItemData): Boolean {
+    return delegate.performExtendedAction(item)
+  }
+
+  override suspend fun isPreviewEnabled(): Boolean {
+    return delegate.isPreviewEnabled()
+  }
+
+  override suspend fun getPreviewInfo(itemData: SeItemData): SePreviewInfo? {
+    return delegate.getPreviewInfo(itemData, false)
+  }
+
+  override suspend fun isExtendedInfoEnabled(): Boolean {
+    return delegate.isExtendedInfoEnabled()
   }
 
   override fun dispose() {
     Disposer.dispose(delegate)
   }
+
+  companion object {
+    @ApiStatus.Internal
+    const val ID: String = "ActionSearchEverywhereContributor"
+    @ApiStatus.Internal
+    val NAME: String = IdeBundle.message("search.everywhere.group.name.actions")
+  }
 }
 
-private class SeActionsFilterEditor : SeFilterEditorBase<SeActionsFilter>(SeActionsFilter(false)) {
-  override fun getPresentation(): SeFilterPresentation {
-    return object : SeFilterActionsPresentation {
-      override fun getActions(): List<AnAction> {
-        return listOf<AnAction>(object : CheckBoxSearchEverywhereToggleAction(IdeBundle.message("checkbox.disabled.included")) {
-          override fun isEverywhere(): Boolean {
-            return filterValue.includeDisabled
-          }
+private class SeActionsFilterEditor : SeFilterEditorBase<SeActionsFilter>(SeActionsFilter(false, isAutoTogglePossible = true)) {
 
-          override fun setEverywhere(state: Boolean) {
-            filterValue = SeActionsFilter(state)
-          }
-        })
-      }
+  private val actions = listOf<AnAction>(object : CheckBoxSearchEverywhereToggleAction(IdeBundle.message("checkbox.disabled.included")), AutoToggleAction {
+    private var isAutoToggleEnabled: Boolean = true
+
+    override fun isEverywhere(): Boolean {
+      return filterValue.includeDisabled
     }
-  }
+
+    override fun setEverywhere(state: Boolean) {
+      filterValue = SeActionsFilter(state, isAutoTogglePossible = false)
+      isAutoToggleEnabled = false
+    }
+
+    override fun autoToggle(everywhere: Boolean): Boolean {
+      if (!canToggleEverywhere() || !isAutoToggleEnabled || isEverywhere == everywhere) return false
+
+      filterValue = SeActionsFilter(everywhere, isAutoTogglePossible = !everywhere)
+      return true
+    }
+  })
+
+  override fun getHeaderActions(): List<AnAction> = actions
 }

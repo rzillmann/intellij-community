@@ -14,8 +14,8 @@ import com.intellij.openapi.wm.ToolWindowManager
 import com.intellij.vcs.log.VcsLogDataPack
 import com.intellij.vcs.log.VcsLogFileHistoryProvider
 import com.intellij.vcs.log.VcsLogListener
-import com.intellij.vcs.log.impl.VcsLogNavigationUtil.waitForRefresh
 import com.intellij.vcs.log.impl.VcsProjectLog
+import com.intellij.vcs.log.impl.waitForRefresh
 import com.intellij.vcs.log.ui.VcsLogUiHolder
 import com.intellij.vcs.log.visible.VisiblePack
 import com.jetbrains.performancePlugin.PerformanceTestSpan
@@ -28,7 +28,8 @@ import kotlin.coroutines.resume
 
 class ShowFileHistoryCommand(text: String, line: Int) : PerformanceCommandCoroutineAdapter(text, line) {
   override suspend fun doExecute(context: PlaybackContext) {
-    val logManager = VcsProjectLog.getInstance(context.project).logManager ?: throw RuntimeException("VcsLogManager instance is null")
+    val logManager = VcsProjectLog.awaitLogIsReady(context.project)
+                     ?: throw RuntimeException("VcsLogManager was not initialised")
     withContext(Dispatchers.EDT) {
       if (!logManager.isLogUpToDate) logManager.waitForRefresh()
 

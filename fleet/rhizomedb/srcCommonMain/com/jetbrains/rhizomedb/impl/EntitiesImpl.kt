@@ -135,10 +135,6 @@ internal fun Q.entityTypePossibleAttributes(entityTypeEID: EID): List<Attribute<
     Attribute<Any>(v as EID)
   }
 
-private object Logger {
-  val logger = logger<Logger>()
-}
-
 fun DbContext<Q>.attributeSerializer(attr: Attribute<*>): KSerializer<Any>? =
   (entity(attr.eid) as EntityAttribute<*, *>?)?.serializerLazy?.value as KSerializer<Any>?
 
@@ -163,9 +159,9 @@ fun Q.entity(eid: EID): Entity? =
  * @see com.jetbrains.rhizomedb.plugin.EntityTypeRegistrationGenerator
  */
 @ApiStatus.Internal
-fun registerEntityTypeProvider(provider: EntityTypeProvider): Boolean {
-  entityTypeProvidersList.add(provider)
+fun registerEntityTypeProvider(moduleName: String, provider: EntityTypeProvider): Boolean {
+  entityTypeProvidersList.getOrPut(moduleName) { mutableListOf() }.add(provider)
   return true
 }
 
-val entityTypeProvidersList: MutableList<EntityTypeProvider> = mutableListOf()
+val entityTypeProvidersList: MutableMap<String, MutableList<EntityTypeProvider>> = mutableMapOf()

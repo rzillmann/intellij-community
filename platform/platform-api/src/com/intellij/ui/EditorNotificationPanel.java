@@ -30,6 +30,8 @@ import com.intellij.ui.border.NamedBorder;
 import com.intellij.ui.components.panels.HorizontalLayout;
 import com.intellij.ui.components.panels.NonOpaquePanel;
 import com.intellij.ui.components.panels.Wrapper;
+import com.intellij.ui.dsl.builder.DslComponentProperty;
+import com.intellij.ui.dsl.gridLayout.UnscaledGaps;
 import com.intellij.util.IncorrectOperationException;
 import com.intellij.util.ObjectUtils;
 import com.intellij.util.PlatformUtils;
@@ -161,6 +163,7 @@ public class EditorNotificationPanel extends JPanel implements IntentionActionPr
     setOpaque(true);
 
     myLabel.setForeground(mySchemeSupplier.get().getDefaultForeground());
+    putClientProperty(DslComponentProperty.VISUAL_PADDINGS, UnscaledGaps.EMPTY);
   }
 
   public EditorNotificationPanel(@NotNull Status status) {
@@ -600,8 +603,8 @@ public class EditorNotificationPanel extends JPanel implements IntentionActionPr
     }
 
     @Override
-    public void invoke(@NotNull Project project, Editor editor, PsiFile file) throws IncorrectOperationException {
-      myOptions.get(0).invoke(project, editor, file);
+    public void invoke(@NotNull Project project, Editor editor, PsiFile psiFile) throws IncorrectOperationException {
+      myOptions.get(0).invoke(project, editor, psiFile);
     }
 
     @Override
@@ -640,13 +643,13 @@ public class EditorNotificationPanel extends JPanel implements IntentionActionPr
     }
 
     @Override
-    public boolean isAvailable(@NotNull Project project, Editor editor, PsiFile file) {
+    public boolean isAvailable(@NotNull Project project, Editor editor, PsiFile psiFile) {
       return true;
     }
 
     @Override
-    public @NotNull IntentionPreviewInfo generatePreview(@NotNull Project project, @NotNull Editor editor, @NotNull PsiFile file) {
-      return myOptions.get(0).generatePreview(project, editor, file);
+    public @NotNull IntentionPreviewInfo generatePreview(@NotNull Project project, @NotNull Editor editor, @NotNull PsiFile psiFile) {
+      return myOptions.get(0).generatePreview(project, editor, psiFile);
     }
 
     @Override
@@ -673,23 +676,23 @@ public class EditorNotificationPanel extends JPanel implements IntentionActionPr
     }
 
     @Override
-    public boolean isAvailable(@NotNull Project project, Editor editor, PsiFile file) {
+    public boolean isAvailable(@NotNull Project project, Editor editor, PsiFile psiFile) {
       return true;
     }
 
     @Override
-    public void invoke(@NotNull Project project, Editor editor, PsiFile file) throws IncorrectOperationException {
+    public void invoke(@NotNull Project project, Editor editor, PsiFile psiFile) throws IncorrectOperationException {
       if (myLabel instanceof ActionHyperlinkLabel actionLabel) {
-        actionLabel.handleIntentionActionClick(editor, file);
+        actionLabel.handleIntentionActionClick(editor, psiFile);
       } else {
         myLabel.doClick();
       }
     }
 
     @Override
-    public @NotNull IntentionPreviewInfo generatePreview(@NotNull Project project, @NotNull Editor editor, @NotNull PsiFile file) {
+    public @NotNull IntentionPreviewInfo generatePreview(@NotNull Project project, @NotNull Editor editor, @NotNull PsiFile psiFile) {
       if (myLabel instanceof ActionHyperlinkLabel actionLabel) {
-        return actionLabel.myHandler.generatePreview(editor, file);
+        return actionLabel.myHandler.generatePreview(editor, psiFile);
       }
       return IntentionPreviewInfo.EMPTY;
     }
@@ -718,12 +721,12 @@ public class EditorNotificationPanel extends JPanel implements IntentionActionPr
     }
 
     @Override
-    public boolean isAvailable(@NotNull Project project, Editor editor, PsiFile file) {
+    public boolean isAvailable(@NotNull Project project, Editor editor, PsiFile psiFile) {
       return true;
     }
 
     @Override
-    public void invoke(@NotNull Project project, Editor editor, PsiFile file) throws IncorrectOperationException {
+    public void invoke(@NotNull Project project, Editor editor, PsiFile psiFile) throws IncorrectOperationException {
       myLabel.dispatchEvent(new MouseEvent(myLabel, MouseEvent.MOUSE_PRESSED, System.currentTimeMillis(), 0, 0, 0, 1, false));
       myLabel.dispatchEvent(new MouseEvent(myLabel, MouseEvent.MOUSE_RELEASED, System.currentTimeMillis(), 0, 0, 0, 1, false));
       myLabel.dispatchEvent(new MouseEvent(myLabel, MouseEvent.MOUSE_CLICKED, System.currentTimeMillis(), 0, 0, 0, 1, false));

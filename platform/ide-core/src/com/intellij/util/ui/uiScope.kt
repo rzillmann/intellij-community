@@ -1,16 +1,17 @@
 // Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.util.ui
 
-import com.intellij.openapi.application.AccessToken
-import com.intellij.openapi.application.ModalityState
-import com.intellij.openapi.application.UI
-import com.intellij.openapi.application.asContextElement
+import com.intellij.openapi.application.*
+import com.intellij.openapi.util.registry.Registry
+import com.intellij.platform.kernel.withKernel
 import com.intellij.ui.ComponentUtil
 import com.intellij.util.BitUtil
 import com.intellij.util.concurrency.ThreadingAssertions
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ReceiveChannel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.selects.select
 import org.jetbrains.annotations.ApiStatus.Experimental
 import org.jetbrains.annotations.ApiStatus.Internal
@@ -23,6 +24,50 @@ import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
 
 /**
+ * Executes [block] in a coroutine **once** the [UI component][this] becomes [showing][ComponentUtil.isShowing].
+ *
+ * When the component is hidden, the launched coroutine is cancelled.
+ * In particular, the component becomes hidden when it's removed from the hierarchy.
+ * If the component is shown again, then the coroutine is restarted
+ * if it didn't run to completion the first time because it was canceled.
+ *
+ * The [block] is executed with the modality state of the [component][this].
+ * This means that the [block] execution might happen in a different EDT event,
+ * because it has to wait for the proper modality.
+ *
+ * The intended use of this function is to perform some sort of "slow initialization" that needs to be able to invoke suspending code.
+ * Because some Swing containers are designed in such a way that components may be removed and then re-added
+ * during content update, it's important to ensure that the initialization is restarted and allowed to complete.
+ * This means that [block] must be coded in such a way that allows cancellation and restart.
+ * Typically, it follows the compute-and-apply pattern where the "compute" part is idempotent and suspending,
+ * and the "apply" part is pure UI code that is fast and not cancellable.
+ *
+ * It's not recommended to use this function with never-ending coroutines (e.g, `collect`),
+ * as it's then identical to `launchOnShow` and that function should be used instead.
+ *
+ * @param debugName name to use as [CoroutineName]
+ * @param context additional context of the coroutine.
+ * [CoroutineName], [Job], [ContinuationInterceptor] and [ModalityState] are ignored
+ * @see launchOnShow
+ */
+@Experimental
+fun <C : Component> C.initOnShow(
+  debugName: String,
+  context: CoroutineContext = EmptyCoroutineContext,
+  block: suspend CoroutineScope.() -> Unit,
+): Job {
+  ThreadingAssertions.assertEventDispatchThread()
+  val component = this
+  var completed = false
+  return launchUsingIsShowingFlow(component, debugName, context) { parentScope, childScope ->
+    if (completed) return@launchUsingIsShowingFlow // Just in case. Should not happen because we cancel the parent scope.
+    childScope.block()
+    completed = true
+    parentScope.cancel("initOnShow completed")
+  }
+}
+
+/**
  * Launches [block] in a coroutine **once** the [UI component][this] becomes [showing][ComponentUtil.isShowing]
  * and cancels the coroutine when the UI component is hidden.
  * In particular, the component becomes hidden when it's removed from the hierarchy.
@@ -32,7 +77,12 @@ import kotlin.coroutines.EmptyCoroutineContext
  * because it has to wait for the proper modality.
  *
  * The [block] may be executed at most **one time**.
- * It will not be restarted if canceled by the component becoming hidden.
+ * Once it starts executing, it will not be restarted if canceled by the component becoming hidden,
+ * regardless of whether the block completed normally or at all.
+ * This means that if this function is used for suspending initialization,
+ * and the component is hidden before the initialization completes (quite a common case),
+ * **the initialization will never complete.** That's why this function is deprecated,
+ * and [initOnShow] should be used instead.
  *
  * @param debugName name to use as [CoroutineName]
  * @param context additional context of the coroutine.
@@ -40,6 +90,7 @@ import kotlin.coroutines.EmptyCoroutineContext
  * @see launchOnShow
  */
 @Experimental
+@Deprecated("The given coroutine may never complete, use initOnShow instead", replaceWith = ReplaceWith("initOnShow"))
 fun <C : Component> C.launchOnceOnShow(
   debugName: String,
   context: CoroutineContext = EmptyCoroutineContext,
@@ -48,20 +99,30 @@ fun <C : Component> C.launchOnceOnShow(
   ThreadingAssertions.assertEventDispatchThread()
   val component = this
 
-  @OptIn(DelicateCoroutinesApi::class)
-  return GlobalScope.launch(Dispatchers.Unconfined + CoroutineName(debugName)) {
+  if (isUnconfinedFixEnabled()) {
+    return launchOnceOnShowFixed(component, debugName, context, block)
+  }
+
+  return launchUnconfined(debugName) {
+    var started = false
     showingAsChannel(component) { channel ->
-      while (!channel.receive()) Unit // await showing
-      val uiCoroutine = launchUiCoroutine(component, context, block)
-      val waitingForHidden = launch {
-        while (channel.receive()) Unit // await hidden
-      }
-      select {
-        uiCoroutine.onJoin {
-          waitingForHidden.cancel()
+      while (!started) {
+        while (!channel.receive()) Unit // await showing
+        val uiCoroutine = launchUiCoroutine(component, context) {
+          started = true
+          block()
         }
-        waitingForHidden.onJoin {
-          uiCoroutine.cancel()
+        val waitingForHidden = launch {
+          while (channel.receive()) Unit // await hidden
+        }
+        select {
+          uiCoroutine.onJoin {
+            waitingForHidden.cancel()
+          }
+          waitingForHidden.onJoin {
+            // need to cancel AND join, so the while(!started) check works correctly
+            uiCoroutine.cancelAndJoin()
+          }
         }
       }
     }
@@ -87,7 +148,7 @@ fun <C : Component> C.launchOnceOnShow(
  * @param debugName name to use as [CoroutineName]
  * @param context additional context of the coroutine.
  * [CoroutineName], [Job], [ContinuationInterceptor] and [ModalityState] are ignored
- * @see launchOnceOnShow
+ * @see initOnShow
  */
 @Experimental
 fun <C : Component> C.launchOnShow(
@@ -111,8 +172,11 @@ fun <C : Component> C.launchOnShow(
   ThreadingAssertions.assertEventDispatchThread()
   val component = this
 
-  @OptIn(DelicateCoroutinesApi::class)
-  return GlobalScope.launch(Dispatchers.Unconfined + CoroutineName(debugName)) {
+  if (isUnconfinedFixEnabled()) {
+    return launchOnShowFixed(component, debugName, context, block)
+  }
+
+  return launchUnconfined(debugName) {
     showingAsChannel(component) { channel ->
       supervisorScope {
         // Poor man's [distinctUntilChanged] + [collectLatest]
@@ -136,6 +200,17 @@ fun <C : Component> C.launchOnShow(
   }
 }
 
+/**
+ * Launches the given task in the global scope without dispatching.
+ */
+private fun launchUnconfined(debugName: String, block: suspend CoroutineScope.() -> Unit): Job {
+  @OptIn(DelicateCoroutinesApi::class)
+  return GlobalScope.launch(
+    context = Dispatchers.Unconfined + CoroutineName(debugName),
+    block = block,
+  )
+}
+
 private suspend fun showingAsChannel(component: Component, block: suspend (ReceiveChannel<Boolean>) -> Unit) {
   val channel = Channel<Boolean>(capacity = Int.MAX_VALUE) // don't skip events
   try {
@@ -151,6 +226,93 @@ private suspend fun showingAsChannel(component: Component, block: suspend (Recei
   }
   finally {
     channel.close()
+  }
+}
+
+private fun isUnconfinedFixEnabled(): Boolean = Registry.`is`("ide.ui.coroutine.scopes.unconfined.fix", defaultValue = false)
+
+private fun launchOnceOnShowFixed(
+  component: Component,
+  debugName: String,
+  context: CoroutineContext,
+  block: suspend CoroutineScope.() -> Unit,
+): Job {
+  var started = false
+  return launchUsingIsShowingFlow(component, debugName, context) { parentScope, childScope ->
+    if (!started) {
+      started = true
+      try {
+        childScope.block()
+      }
+      finally {
+        parentScope.cancel("launchOnceOnShow completed")
+      }
+    }
+  }
+}
+
+private fun launchOnShowFixed(
+  component: Component,
+  debugName: String,
+  context: CoroutineContext,
+  block: suspend CoroutineScope.() -> Unit,
+): Job {
+  return launchUsingIsShowingFlow(component, debugName, context) { _, childScope ->
+    childScope.block()
+  }
+}
+
+private fun launchUsingIsShowingFlow(
+  component: Component,
+  debugName: String,
+  context: CoroutineContext,
+  block: suspend (CoroutineScope, CoroutineScope) -> Unit,
+): Job {
+  @OptIn(DelicateCoroutinesApi::class)
+  return GlobalScope.launch(
+    context = Dispatchers.UiWithModelAccess + ModalityState.any().asContextElement() + CoroutineName(debugName),
+  ) {
+    val parentScope = this
+    val isShowingFlow = MutableStateFlow(isShowing(component))
+    val listener = HierarchyListener { evt ->
+      if (BitUtil.isSet(evt.changeFlags, HierarchyEvent.SHOWING_CHANGED.toLong()) || showingChanged) {
+        isShowingFlow.value = isShowing(component)
+      }
+    }
+    component.installHierarchyListener(listener).use {
+      isShowingFlow.collectLatest { isShowing ->
+        if (isShowing) {
+          supervisorScope {
+            launchUiCoroutine(component, context) {
+              // Because this thing is launched in a separate EDT event, we need to check again.
+              // Otherwise, it's possible that the component is no longer showing,
+              // but the coroutine wasn't cancelled yet.
+              if (isShowing(component)) {
+                val childScope = this
+                block(parentScope, childScope)
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+@Internal
+@VisibleForTesting
+var forceRespectIsShowingClientProperty: Boolean = false
+
+@Internal
+@VisibleForTesting
+inline fun withForcedRespectIsShowingClientProperty(block: () -> Unit) {
+  assert(!forceRespectIsShowingClientProperty)
+  forceRespectIsShowingClientProperty = true
+  try {
+    block()
+  }
+  finally {
+    forceRespectIsShowingClientProperty = false
   }
 }
 
@@ -170,7 +332,19 @@ fun withShowingChanged(block: () -> Unit) {
 }
 
 private fun isShowing(component: Component): Boolean {
-  return ComponentUtil.isShowing(component, false)
+  return if (isUnconfinedFixEnabled() && !forceRespectIsShowingClientProperty) {
+    // Outside unit tests, we ignore the client property that forces isShowing, and use pure Swing instead.
+    // This is because there are some usages that crash when there's no real window parent.
+    // And anyway, this new API is designed for pure UI code.
+    // But even in remdev scenarios with various hacks, isShowing works just fine.
+    // When it does NOT work is when this property is set and then the component is hidden.
+    // If we're unlucky enough to get our event scheduled when the component is in that limbo state,
+    // we get all kinds of trouble.
+    component.isShowing
+  }
+  else {
+    ComponentUtil.isShowing(component, false)
+  }
 }
 
 private fun CoroutineScope.launchUiCoroutine(
@@ -184,7 +358,13 @@ private fun CoroutineScope.launchUiCoroutine(
     .minusKey(Job)
     .plus(Dispatchers.UI)
     .plus(componentModality.asContextElement())
-  return launch(effectiveContext, block = block)
+  return launch(effectiveContext) {
+    // withKernel should be kept here, because we need to propagate the context to coroutine launched via GlobalScope
+    @Suppress("DEPRECATION")
+    withKernel {
+      block()
+    }
+  }
 }
 
 private fun Component.installHierarchyListener(listener: HierarchyListener): AccessToken {

@@ -42,6 +42,19 @@ public interface ProcessDebugger {
   String execTableCommand(String threadId, String frameId, String command, TableCommandType commandType,
                           TableCommandParameters tableCommandParameters) throws PyDebuggerException;
 
+  @Nullable
+  String execTableImageCommand(String threadId, String frameId, String command, TableCommandType commandType,
+                          TableCommandParameters tableCommandParameters) throws PyDebuggerException;
+
+  /**
+   * Represents the type of group that can be used when loading frames for debugging purposes.
+   * <p>
+   * - DEFAULT: Represents default variables.
+   * <p>
+   * - SPECIAL: Represents special variables (__dict__, __doc__, ...).
+   * <p>
+   * - RETURN: Represents variables specifically related to return values.
+   */
   enum GROUP_TYPE {
     DEFAULT,
     SPECIAL,

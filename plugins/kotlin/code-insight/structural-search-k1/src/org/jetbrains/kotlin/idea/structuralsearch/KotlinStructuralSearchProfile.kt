@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.kotlin.idea.structuralsearch
 
 import com.intellij.lang.Language
@@ -6,11 +6,7 @@ import com.intellij.openapi.fileTypes.LanguageFileType
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Key
 import com.intellij.openapi.util.text.StringUtil
-import com.intellij.psi.PsiCodeFragment
-import com.intellij.psi.PsiComment
-import com.intellij.psi.PsiElement
-import com.intellij.psi.PsiErrorElement
-import com.intellij.psi.PsiWhiteSpace
+import com.intellij.psi.*
 import com.intellij.psi.util.elementType
 import com.intellij.structuralsearch.*
 import com.intellij.structuralsearch.impl.matcher.CompiledPattern
@@ -89,7 +85,7 @@ class KotlinStructuralSearchProfile : StructuralSearchProfile() {
         project: Project,
         text: String,
         contextId: String?
-    ): PsiCodeFragment? = KtPsiFactory(project).createBlockCodeFragment(text, null)
+    ): PsiCodeFragment = KtPsiFactory(project).createBlockCodeFragment(text, null)
 
     override fun getPresentableElement(element: PsiElement): PsiElement {
         val elem = if (isIdentifier(element)) element.parent else return element
@@ -441,8 +437,8 @@ class KotlinStructuralSearchProfile : StructuralSearchProfile() {
 
     companion object {
         const val TYPED_VAR_PREFIX: String = "_____"
-        val DEFAULT_CONTEXT: PatternContext = PatternContext("default", KotlinBundle.lazyMessage("context.default"))
-        val PROPERTY_CONTEXT: PatternContext = PatternContext("property", KotlinBundle.lazyMessage("context.property.getter.or.setter"))
+        val DEFAULT_CONTEXT: PatternContext = PatternContext("default", KotlinBundle.messagePointer("context.default"))
+        val PROPERTY_CONTEXT: PatternContext = PatternContext("property", KotlinBundle.messagePointer("context.property.getter.or.setter"))
         private val PATTERN_CONTEXTS: MutableList<PatternContext> = mutableListOf(DEFAULT_CONTEXT, PROPERTY_CONTEXT)
         private val PATTERN_ERROR: Key<String> = Key("patternError")
 

@@ -2,9 +2,11 @@ package org.jetbrains.jewel.markdown.extensions
 
 import org.commonmark.parser.Parser.ParserExtension
 import org.commonmark.renderer.text.TextContentRenderer.TextContentRendererExtension
+import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.jewel.foundation.ExperimentalJewelApi
 
 /** An extension for the Jewel Markdown processing engine. */
+@ApiStatus.Experimental
 @ExperimentalJewelApi
 public interface MarkdownProcessorExtension {
     /**
@@ -44,5 +46,9 @@ public interface MarkdownProcessorExtension {
      * Can be null if this extension does not handle custom delimited inline nodes.
      */
     public val delimitedInlineProcessorExtension: MarkdownDelimitedInlineProcessorExtension?
+        get() = null
+
+    /** An extension for handling the translation of HTML blocks to Markdown blocks and inlines. */
+    public val htmlConverterExtension: MarkdownHtmlConverterExtension?
         get() = null
 }

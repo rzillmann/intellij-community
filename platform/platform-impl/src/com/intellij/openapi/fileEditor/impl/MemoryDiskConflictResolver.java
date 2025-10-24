@@ -22,6 +22,7 @@ import com.intellij.openapi.vfs.newvfs.events.VFileContentChangeEvent;
 import com.intellij.ui.UIBundle;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.VisibleForTesting;
 
 import javax.swing.*;
 import java.awt.event.ActionEvent;
@@ -64,7 +65,7 @@ public class MemoryDiskConflictResolver {
     }
   }
 
-  boolean hasConflict(VirtualFile file) {
+  boolean hasConflict(@NotNull VirtualFile file) {
     return myConflicts.contains(file);
   }
 
@@ -81,7 +82,8 @@ public class MemoryDiskConflictResolver {
     myConflictAppeared = null;
   }
 
-  boolean askReloadFromDisk(VirtualFile file, Document document) {
+  @VisibleForTesting
+  protected boolean askReloadFromDisk(@NotNull VirtualFile file, @NotNull Document document) {
     if (myConflictAppeared != null) {
       Throwable trace = myConflictAppeared;
       myConflictAppeared = null;

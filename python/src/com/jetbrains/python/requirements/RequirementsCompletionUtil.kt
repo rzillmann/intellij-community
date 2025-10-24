@@ -10,27 +10,30 @@ import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.runBlockingCancellable
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.projectRoots.Sdk
+import com.jetbrains.python.packaging.PyPackageName
 import com.jetbrains.python.packaging.management.PythonPackageManager
-import com.jetbrains.python.packaging.management.createSpecification
-import com.jetbrains.python.psi.icons.PythonPsiApiIcons
+import com.jetbrains.python.parser.icons.PythonParserIcons
 
 fun completePackageNames(project: Project, sdk: Sdk, result: CompletionResultSet) {
   val repositoryManager = PythonPackageManager.forSdk(project, sdk).repositoryManager
   val packages = repositoryManager.allPackages()
   val maxPriority = packages.size
   packages.asSequence().map {
-    LookupElementBuilder.create(it.lowercase()).withIcon(PythonPsiApiIcons.Python)
+    LookupElementBuilder.create(it.lowercase()).withIcon(PythonParserIcons.PythonFile)
   }.mapIndexed { index, lookupElementBuilder ->
     PrioritizedLookupElement.withPriority(lookupElementBuilder, (maxPriority - index).toDouble())
   }.forEach { result.addElement(it) }
 }
 
 fun completeVersions(name: String, project: Project, sdk: Sdk, result: CompletionResultSet, addQuotes: Boolean) {
-  val repositoryManager = PythonPackageManager.forSdk(project, sdk).repositoryManager
-  val packageSpecification = repositoryManager.createSpecification(name, null) ?: return
+  val packageManager = PythonPackageManager.forSdk(project, sdk)
+  val repositoryManager = packageManager.repositoryManager
+
   val versions = ApplicationUtil.runWithCheckCanceled({
                                                         runBlockingCancellable {
-                                                          repositoryManager.getPackageDetails(packageSpecification).availableVersions
+                                                          repositoryManager.getVersions(
+                                                            PyPackageName.normalizePackageName(name), null)
+                                                          ?: emptyList()
                                                         }
                                                       }, EmptyProgressIndicator.notNullize(ProgressManager.getInstance().progressIndicator))
 

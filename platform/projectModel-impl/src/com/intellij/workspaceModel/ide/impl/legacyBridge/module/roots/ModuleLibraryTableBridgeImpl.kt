@@ -18,7 +18,7 @@ import com.intellij.workspaceModel.ide.legacyBridge.ModuleBridge
 import org.jetbrains.annotations.ApiStatus
 
 /**
- * This class mwthods [registerModuleLibraryInstances], [addLibrary] should be marked as internal after [ModuleManagerComponentBridge]
+ * This class methods [registerModuleLibraryInstances], [addLibrary] should be marked as internal after [ModuleManagerComponentBridge]
  * migration to the `intellij.platform.projectModel.impl` module
  */
 @ApiStatus.Internal
@@ -68,7 +68,7 @@ class ModuleLibraryTableBridgeImpl(private val moduleBridge: ModuleBridge) : Mod
 
   override fun dispose() {
     for (library in libraryIterator) {
-      if (!(library as LibraryEx).isDisposed) Disposer.dispose(library)
+      if (!(library as LibraryEx).isDisposed) LibraryBridgeImpl.disposeLibrary(library)
     }
   }
 

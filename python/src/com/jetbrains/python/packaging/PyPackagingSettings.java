@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.jetbrains.python.packaging;
 
 import com.intellij.openapi.Disposable;
@@ -8,11 +8,13 @@ import com.intellij.openapi.project.Project;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.xmlb.XmlSerializerUtil;
 import one.util.streamex.StreamEx;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.Unmodifiable;
 
 import java.util.List;
-
+@ApiStatus.Internal
 @State(name = "PyPackaging")
 public class PyPackagingSettings implements PersistentStateComponent<PyPackagingSettings>, Disposable {
 
@@ -37,7 +39,7 @@ public class PyPackagingSettings implements PersistentStateComponent<PyPackaging
    * @return first item in {@code versions} if {@link PyPackagingSettings#earlyReleasesAsUpgrades} is true,
    * first non-pre- and non-developmental release otherwise.
    */
-  public @Nullable String selectLatestVersion(@NotNull List<String> versions) {
+  public @Nullable String selectLatestVersion(@NotNull @Unmodifiable List<String> versions) {
     if (!earlyReleasesAsUpgrades) {
       return StreamEx
         .of(versions)

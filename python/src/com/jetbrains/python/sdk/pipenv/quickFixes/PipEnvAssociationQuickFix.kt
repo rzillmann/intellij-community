@@ -7,7 +7,7 @@ import com.intellij.openapi.module.ModuleUtilCore
 import com.intellij.openapi.project.Project
 import com.jetbrains.python.PyBundle
 import com.jetbrains.python.sdk.pythonSdk
-import com.jetbrains.python.sdk.setAssociationToModule
+import com.jetbrains.python.sdk.setAssociationToModuleAsync
 
 /**
  * A quick-fix for setting up the pipenv for the module of the current PSI element.
@@ -20,6 +20,6 @@ class PipEnvAssociationQuickFix : LocalQuickFix {
   override fun applyFix(project: Project, descriptor: ProblemDescriptor) {
     val element = descriptor.psiElement ?: return
     val module = ModuleUtilCore.findModuleForPsiElement(element) ?: return
-    module.pythonSdk?.setAssociationToModule(module)
+    module.pythonSdk?.setAssociationToModuleAsync(module)
   }
 }

@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.psi;
 
 import com.intellij.codeInsight.AnnotationTargetUtil;
@@ -390,7 +390,9 @@ public final class LambdaUtil {
       return castType;
     }
     else if (parent instanceof PsiVariable) {
-      return ((PsiVariable)parent).getType();
+      PsiVariable variable = (PsiVariable)parent;
+      PsiTypeElement typeElement = variable.getTypeElement();
+      return typeElement != null && typeElement.isInferredType() ? null : variable.getType();
     }
     else if (parent instanceof PsiAssignmentExpression && expression instanceof PsiExpression && !PsiUtil.isOnAssignmentLeftHand((PsiExpression)expression)) {
       final PsiExpression lExpression = ((PsiAssignmentExpression)parent).getLExpression();
@@ -490,7 +492,7 @@ public final class LambdaUtil {
   }
 
   public static boolean processParentOverloads(PsiFunctionalExpression functionalExpression, final Consumer<? super PsiType> overloadProcessor) {
-    LOG.assertTrue(PsiTypesUtil.getExpectedTypeByParent(functionalExpression) == null);
+    if (PsiTypesUtil.getExpectedTypeByParent(functionalExpression) != null) return false;
     PsiElement parent = functionalExpression.getParent();
     PsiElement expr = functionalExpression;
     while (parent instanceof PsiParenthesizedExpression || parent instanceof PsiConditionalExpression) {

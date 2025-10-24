@@ -10,7 +10,6 @@ import org.jetbrains.kotlin.analysis.api.types.KaTypeNullability
 import org.jetbrains.kotlin.idea.codeinsight.api.applicators.fixes.KotlinQuickFixFactory
 import org.jetbrains.kotlin.idea.quickfix.AddEqEqTrueFix
 import org.jetbrains.kotlin.psi.KtExpression
-import org.jetbrains.kotlin.psi.KtProperty
 import org.jetbrains.kotlin.utils.addToStdlib.safeAs
 
 object TypeMismatchFactories {
@@ -24,11 +23,11 @@ object TypeMismatchFactories {
     }
 
     val assignmentTypeMismatch: KotlinQuickFixFactory.ModCommandBased<KaFirDiagnostic.AssignmentTypeMismatch> = KotlinQuickFixFactory.ModCommandBased { diagnostic: KaFirDiagnostic.AssignmentTypeMismatch ->
-        getFixesForTypeMismatch(diagnostic.psi, diagnostic.expectedType, diagnostic.actualType)
+        getFixesForTypeMismatch(diagnostic.expression, diagnostic.expectedType, diagnostic.actualType)
     }
 
     val initializerTypeMismatch: KotlinQuickFixFactory.ModCommandBased<KaFirDiagnostic.InitializerTypeMismatch> = KotlinQuickFixFactory.ModCommandBased { diagnostic: KaFirDiagnostic.InitializerTypeMismatch ->
-        (diagnostic.psi as? KtProperty)?.initializer?.let { getFixesForTypeMismatch(it, diagnostic.expectedType, diagnostic.actualType) }
+        diagnostic.initializer?.let { getFixesForTypeMismatch(it, diagnostic.expectedType, diagnostic.actualType) }
             ?: emptyList()
     }
 
@@ -50,7 +49,7 @@ object TypeMismatchFactories {
         actualType: KaType
     ): List<ModCommandAction> {
         // TODO: Add more fixes than just AddExclExclCallFix when available.
-        if (!expectedType.canBeNull && actualType.canBeNull) {
+        if (!expectedType.isNullable && actualType.isNullable) {
             // We don't want to offer AddExclExclCallFix if we know the expression is definitely null, e.g.:
             //
             //   if (nullableInt == null) {

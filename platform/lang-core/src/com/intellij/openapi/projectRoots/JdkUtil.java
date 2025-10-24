@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.openapi.projectRoots;
 
 import com.intellij.execution.CantRunException;
@@ -15,16 +15,14 @@ import com.intellij.execution.target.local.LocalTargetEnvironmentRequest;
 import com.intellij.ide.util.PropertiesComponent;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Key;
-import com.intellij.openapi.util.SystemInfo;
 import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.util.io.JarUtil;
-import com.intellij.platform.eel.EelDescriptor;
-import com.intellij.platform.eel.EelPlatform;
 import com.intellij.platform.eel.provider.EelProviderUtil;
 import com.intellij.util.lang.JavaVersion;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.jps.model.java.JdkVersionDetector;
 
 import java.io.File;
 import java.nio.file.Files;
@@ -46,7 +44,7 @@ public final class JdkUtil {
 
   private JdkUtil() { }
 
-  /** @deprecated outdated, please use {@link org.jetbrains.jps.model.java.JdkVersionDetector} instead */
+  /** @deprecated outdated, please use {@link JdkVersionDetector} instead */
   @Deprecated
   public static @Nullable String getJdkMainAttribute(@NotNull Sdk jdk, @NotNull Attributes.Name attribute) {
     String homePath = jdk.getHomePath();
@@ -136,8 +134,7 @@ public final class JdkUtil {
    * @return if the JDK can be run on this machine.
    */
   public static boolean isCompatible(@NotNull Path jdkHomePath, @NotNull Project project) {
-    EelDescriptor jdkDescriptor = EelProviderUtil.getEelDescriptor(jdkHomePath);
-    return jdkDescriptor == EelProviderUtil.getEelDescriptor(project);
+    return EelProviderUtil.getEelDescriptor(jdkHomePath).getMachine().equals(EelProviderUtil.getEelDescriptor(project).getMachine());
   }
 
   public static boolean checkForJre(@NotNull String homePath) {
@@ -201,16 +198,6 @@ public final class JdkUtil {
 
   public static boolean useClasspathJar() {
     return PropertiesComponent.getInstance().getBoolean("idea.dynamic.classpath.jar", true);
-  }
-
-  private static boolean isCompatibleWithOs(@NotNull EelDescriptor descriptor) {
-    EelPlatform os = descriptor.getPlatform();
-    if (SystemInfo.isWindows) {
-      return os instanceof EelPlatform.Windows;
-    }
-    else {
-      return os instanceof EelPlatform.Posix;
-    }
   }
 
   //<editor-fold desc="Deprecated stuff.">

@@ -31,9 +31,6 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 @Service(Service.Level.APP)
 internal class TerminalFocusFusService(private val coroutineScope: CoroutineScope) {
-  companion object {
-    @JvmStatic fun getInstance(): TerminalFocusFusService = service()
-  }
 
   private val initialized = AtomicBoolean(false)
 
@@ -85,7 +82,7 @@ internal class TerminalFocusFusService(private val coroutineScope: CoroutineScop
     }
   }
 
-  fun ensureInitialized() {
+  private fun ensureInitialized() {
     if (!initialized.compareAndSet(false, true)) return
     coroutineScope.launch(Dispatchers.UI + CoroutineName("TerminalFocusFusService initialization")) {
       initializeState()
@@ -152,6 +149,12 @@ internal class TerminalFocusFusService(private val coroutineScope: CoroutineScop
     }
     LOG.debug("Focus is going from the terminal to '$fusString'")
     ReworkedTerminalUsageCollector.logFocusLost(fusString)
+  }
+
+  companion object {
+    fun ensureInitialized() {
+      service<TerminalFocusFusService>().ensureInitialized()
+    }
   }
 }
 

@@ -1,20 +1,7 @@
-/*
- * Copyright 2000-2016 JetBrains s.r.o.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.psi.impl.source;
 
+import com.intellij.codeInsight.TypeNullability;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.pom.java.LanguageLevel;
 import com.intellij.psi.*;
@@ -22,6 +9,7 @@ import com.intellij.psi.search.GlobalSearchScope;
 import com.intellij.psi.util.PsiUtil;
 import com.intellij.psi.util.PsiUtilCore;
 import com.intellij.util.IncorrectOperationException;
+import com.intellij.util.JavaTypeNullabilityUtil;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -30,11 +18,13 @@ public class PsiImmediateClassType extends PsiClassType.Stub {
   private final PsiSubstitutor mySubstitutor;
   private final PsiManager myManager;
   private final @Nullable PsiElement myPsiContext;
+  private @Nullable TypeNullability myNullability;
   private String myCanonicalText;
   private String myCanonicalTextAnnotated;
   private String myPresentableText;
   private String myPresentableTextAnnotated;
   private String myInternalCanonicalText;
+  private String myClassName;
 
   private final ClassResolveResult myClassResolveResult = new ClassResolveResult() {
     private ClassResolveResult myCapturedResult = null;
@@ -111,11 +101,21 @@ public class PsiImmediateClassType extends PsiClassType.Stub {
                                @Nullable LanguageLevel level,
                                @NotNull TypeAnnotationProvider provider,
                                @Nullable PsiElement context) {
+    this(aClass, substitutor, level, provider, context, null);
+  }
+
+  PsiImmediateClassType(@NotNull PsiClass aClass,
+                        @NotNull PsiSubstitutor substitutor,
+                        @Nullable LanguageLevel level,
+                        @NotNull TypeAnnotationProvider provider,
+                        @Nullable PsiElement context,
+                        @Nullable TypeNullability nullability) {
     super(level, provider);
     myClass = aClass;
     myManager = aClass.getManager();
     mySubstitutor = substitutor;
     myPsiContext = context;
+    myNullability = nullability;
     substitutor.ensureValid();
   }
 
@@ -126,12 +126,39 @@ public class PsiImmediateClassType extends PsiClassType.Stub {
 
   @Override
   public String getClassName() {
-    return myClass.getName();
+    String className = myClassName;
+    if (className == null) {
+      myClassName = className = myClass.getName();
+    }
+    return className;
   }
 
   @Override
   public @Nullable PsiElement getPsiContext() {
     return myPsiContext;
+  }
+
+  @Override
+  public @NotNull TypeNullability getNullability() {
+    TypeNullability nullability = myNullability;
+    if (nullability == null) {
+      myNullability = nullability = JavaTypeNullabilityUtil.getTypeNullability(this);
+    }
+    return nullability;
+  }
+
+  @Override
+  public @NotNull PsiClassType withNullability(@NotNull TypeNullability nullability) {
+    return new PsiImmediateClassType(myClass, mySubstitutor, myLanguageLevel, getAnnotationProvider(), myPsiContext, nullability);
+  }
+
+  @Override
+  public @NotNull PsiImmediateClassType annotate(@NotNull TypeAnnotationProvider provider) {
+    PsiImmediateClassType annotated = (PsiImmediateClassType)super.annotate(provider);
+    if (annotated != this) {
+      annotated.myNullability = null;
+    }
+    return annotated;
   }
 
   @Override

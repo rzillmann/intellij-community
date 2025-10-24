@@ -1,14 +1,13 @@
 // Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.codeInsight.annoPackages;
 
+import com.intellij.codeInsight.ContextNullabilityInfo;
 import com.intellij.codeInsight.Nullability;
 import com.intellij.codeInsight.NullabilityAnnotationInfo;
 import com.intellij.psi.*;
-import com.intellij.psi.util.PsiTreeUtil;
 import com.intellij.psi.util.PsiUtil;
 import com.intellij.util.ArrayUtil;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 import java.util.Collections;
 import java.util.List;
@@ -22,28 +21,32 @@ public final class JSpecifyAnnotationSupport implements AnnotationPackageSupport
   private static final String DEFAULT_NULLNESS_UNKNOWN = PACKAGE_NAME + "." + "NullUnmarked";
 
   @Override
-  public @Nullable NullabilityAnnotationInfo getNullabilityByContainerAnnotation(@NotNull PsiAnnotation anno,
-                                                                                 @NotNull PsiElement context,
-                                                                                 PsiAnnotation.TargetType @NotNull [] types,
-                                                                                 boolean superPackage) {
-    if (superPackage) return null;
+  public @NotNull ContextNullabilityInfo getNullabilityByContainerAnnotation(@NotNull PsiAnnotation anno,
+                                                                             PsiAnnotation.TargetType @NotNull [] types,
+                                                                             boolean superPackage) {
+    if (superPackage) return ContextNullabilityInfo.EMPTY;
     String name = anno.getQualifiedName();
-    if (name == null) return null;
-    PsiExpression parentExpression = PsiTreeUtil.getParentOfType(context, PsiExpression.class);
-    if (parentExpression instanceof PsiTypeCastExpression cast && PsiTreeUtil.isAncestor(cast.getCastType(), context, false)) {
-      return null;
-    }
-    if (ArrayUtil.contains(PsiAnnotation.TargetType.LOCAL_VARIABLE, types)) return null;
+    if (name == null) return ContextNullabilityInfo.EMPTY;
+    if (ArrayUtil.contains(PsiAnnotation.TargetType.LOCAL_VARIABLE, types)) return ContextNullabilityInfo.EMPTY;
     Nullability nullability;
     switch (name) {
       case DEFAULT_NOT_NULL -> nullability = Nullability.NOT_NULL;
       case DEFAULT_NULLNESS_UNKNOWN -> nullability = Nullability.UNKNOWN;
       default -> {
-        return null;
+        return ContextNullabilityInfo.EMPTY;
       }
     }
-    if (resolvesToTypeParameter(context)) return null;
-    return new NullabilityAnnotationInfo(anno, nullability, true);
+    return ContextNullabilityInfo.constant(new NullabilityAnnotationInfo(anno, nullability, true))
+      .disableInCast()
+      .filtering(context -> !resolvesToTypeParameter(context));
+  }
+
+  @Override
+  public @NotNull List<@NotNull PsiAnnotation> getConflictingContainerAnnotations(@NotNull PsiAnnotationOwner owner) {
+    PsiAnnotation marked = owner.findAnnotation(DEFAULT_NOT_NULL);
+    PsiAnnotation unmarked = owner.findAnnotation(DEFAULT_NULLNESS_UNKNOWN);
+    if (marked != null && unmarked != null) return List.of(marked, unmarked);
+    return List.of();
   }
 
   static boolean resolvesToTypeParameter(@NotNull PsiElement context) {

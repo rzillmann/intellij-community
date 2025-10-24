@@ -1,7 +1,6 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.openapi.vfs.local;
 
-import com.intellij.ide.plugins.DynamicPluginsTestUtil;
 import com.intellij.openapi.actionSystem.ActionManager;
 import com.intellij.openapi.actionSystem.CommonDataKeys;
 import com.intellij.openapi.application.ApplicationManager;
@@ -9,6 +8,7 @@ import com.intellij.openapi.application.PathManager;
 import com.intellij.openapi.project.DefaultProjectFactory;
 import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.util.Ref;
+import com.intellij.openapi.util.io.FileAttributes;
 import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.util.io.IoTestUtil;
 import com.intellij.openapi.vfs.*;
@@ -22,6 +22,7 @@ import com.intellij.openapi.vfs.newvfs.BulkFileListener;
 import com.intellij.openapi.vfs.newvfs.VfsImplUtil;
 import com.intellij.openapi.vfs.newvfs.events.VFileContentChangeEvent;
 import com.intellij.openapi.vfs.newvfs.events.VFileEvent;
+import com.intellij.platform.testFramework.DynamicPluginTestUtilsKt;
 import com.intellij.testFramework.EdtTestUtil;
 import com.intellij.testFramework.PlatformTestUtil;
 import com.intellij.testFramework.TestActionEvent;
@@ -40,10 +41,7 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.Random;
+import java.util.*;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
@@ -206,15 +204,6 @@ public class JarFileSystemTest extends BareTestFixtureTestCase {
   }
 
   @Test
-  @SuppressWarnings("removal")
-  public void testJarHandlerDoNotCreateCopyWhenListingArchive() {
-    var jar = IoTestUtil.createTestJar(tempDir.newFile("test.jar"));
-    var fs = (JarFileSystemImpl)JarFileSystem.getInstance();
-    fs.setNoCopyJarForPath(jar.getPath());
-    assertFalse(fs.isMakeCopyOfJar(jar));
-  }
-
-  @Test
   public void testNonConformantZipTolerance() {
     var zip = createJar(
       "/", "w/../W",                      // entries to be ignored
@@ -370,7 +359,7 @@ public class JarFileSystemTest extends BareTestFixtureTestCase {
     EdtTestUtil.runInEdtAndWait(() -> {
       assertNotNull(LocalFileSystem.getInstance().refreshAndFindFileByNioFile(copiedJar));
 
-      var fsRegistration = DynamicPluginsTestUtil.loadExtensionWithText(fsExtText, "com.intellij");
+      var fsRegistration = DynamicPluginTestUtilsKt.loadExtensionWithText(fsExtText, "com.intellij");
       try {
         Disposer.register(fsRegistration, JarFileSystemImpl::cleanupForNextTest);
 
@@ -393,6 +382,55 @@ public class JarFileSystemTest extends BareTestFixtureTestCase {
         Disposer.dispose(fsRegistration);
       }
     });
+  }
+
+  @Test
+  public void listWithAttributes_ReturnsSameDataAs_GetAttributes() {
+    var jar = createJar(
+      "a/a",
+      "a/b",
+      "a/c",
+
+      "b/a/a",
+      "b/b/b",
+      "b/c/c",
+
+      "c/a/a",
+      "c/b/b",
+      "c/c/c"
+    );
+    JarFileSystem jarFileSystem = JarFileSystem.getInstance();
+    VirtualFile jarRoot = jarFileSystem.getJarRootForLocalFile(jar);
+
+    checkAttributesAreEqual(jarRoot, jarFileSystem);
+  }
+
+  private static void checkAttributesAreEqual(@NotNull VirtualFile dir,
+                                              @NotNull JarFileSystem jarFileSystem) {
+    Map<String, FileAttributes> childrenWithAttributes = jarFileSystem.listWithAttributes(dir, null);
+    String[] childrenNames = jarFileSystem.list(dir);
+
+    assertThat(childrenWithAttributes.keySet())
+      .containsExactlyInAnyOrder(childrenNames);
+
+    for (String childName : childrenNames) {
+      VirtualFile child = dir.findChild(childName);
+      //System.out.println(child.getPath());
+
+      FileAttributes attributesFromBatchMethod = childrenWithAttributes.get(childName);
+      FileAttributes attributesFromSingleMethod = jarFileSystem.getAttributes(child);
+
+      assertThat(attributesFromSingleMethod)
+        .isEqualTo(attributesFromBatchMethod);
+
+      Map<String, FileAttributes> singleEntryAttributes = jarFileSystem.listWithAttributes(dir, Set.of(childName));
+      assertThat(singleEntryAttributes.get(childName))
+        .isEqualTo(attributesFromSingleMethod);
+
+      if (child.isDirectory()) {
+        checkAttributesAreEqual(child, jarFileSystem);
+      }
+    }
   }
 
   private static VirtualFile findByPath(String path) {

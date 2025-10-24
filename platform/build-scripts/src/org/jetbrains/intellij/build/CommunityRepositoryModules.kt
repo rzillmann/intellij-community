@@ -5,6 +5,7 @@ package org.jetbrains.intellij.build
 
 import kotlinx.collections.immutable.PersistentList
 import kotlinx.collections.immutable.persistentListOf
+import org.jetbrains.intellij.build.dependencies.BuildDependenciesDownloader
 import org.jetbrains.intellij.build.impl.BundledMavenDownloader
 import org.jetbrains.intellij.build.impl.LibraryPackMode
 import org.jetbrains.intellij.build.impl.PluginLayout
@@ -18,11 +19,12 @@ import org.jetbrains.intellij.build.impl.projectStructureMapping.DistributionFil
 import org.jetbrains.intellij.build.impl.projectStructureMapping.ProjectLibraryEntry
 import org.jetbrains.intellij.build.io.copyDir
 import org.jetbrains.intellij.build.io.copyFileToDir
-import org.jetbrains.intellij.build.kotlin.KotlinPluginBuilder
+import org.jetbrains.intellij.build.kotlin.CommunityKotlinPluginBuilder
 import org.jetbrains.intellij.build.python.PythonCommunityPluginModules
 import org.jetbrains.intellij.build.telemetry.TraceManager.spanBuilder
 import org.jetbrains.intellij.build.telemetry.use
 import org.jetbrains.jps.model.library.JpsOrderRootType
+import java.net.URI
 import java.nio.file.Path
 import java.util.Locale
 
@@ -43,10 +45,10 @@ object CommunityRepositoryModules {
       spec.bundlingRestrictions.supportedOs = persistentListOf(OsFamily.MACOS)
     },
     plugin("intellij.webp") { spec ->
-      spec.withPlatformBin(OsFamily.WINDOWS, JvmArchitecture.x64, "plugins/webp/lib/libwebp/win", "lib/libwebp/win")
-      spec.withPlatformBin(OsFamily.MACOS, JvmArchitecture.x64, "plugins/webp/lib/libwebp/mac", "lib/libwebp/mac")
-      spec.withPlatformBin(OsFamily.MACOS, JvmArchitecture.aarch64, "plugins/webp/lib/libwebp/mac", "lib/libwebp/mac")
-      spec.withPlatformBin(OsFamily.LINUX, JvmArchitecture.x64, "plugins/webp/lib/libwebp/linux", "lib/libwebp/linux")
+      spec.withPlatformBin(OsFamily.WINDOWS, JvmArchitecture.x64, WindowsLibcImpl.DEFAULT, "plugins/webp/lib/libwebp/win", "lib/libwebp/win")
+      spec.withPlatformBin(OsFamily.MACOS, JvmArchitecture.x64, MacLibcImpl.DEFAULT, "plugins/webp/lib/libwebp/mac", "lib/libwebp/mac")
+      spec.withPlatformBin(OsFamily.MACOS, JvmArchitecture.aarch64, MacLibcImpl.DEFAULT, "plugins/webp/lib/libwebp/mac", "lib/libwebp/mac")
+      spec.withPlatformBin(OsFamily.LINUX, JvmArchitecture.x64, LinuxLibcImpl.GLIBC, "plugins/webp/lib/libwebp/linux", "lib/libwebp/linux")
     },
     plugin("intellij.webp") { spec ->
       spec.bundlingRestrictions.marketplace = true
@@ -62,21 +64,17 @@ object CommunityRepositoryModules {
       spec.mainJarName = "uiDesigner.jar"
       spec.withModule("intellij.java.guiForms.jps", "jps/java-guiForms-jps.jar")
     },
-    KotlinPluginBuilder.kotlinPlugin(KotlinPluginBuilder.KotlinUltimateSources.WITH_COMMUNITY_MODULES),
+    CommunityKotlinPluginBuilder.kotlinPlugin(),
     pluginAuto(listOf("intellij.vcs.git")) { spec ->
       spec.withModule("intellij.vcs.git.rt", "git4idea-rt.jar")
     },
     pluginAuto(listOf("intellij.xpath")) { spec ->
       spec.withModule("intellij.xpath.rt", "rt/xslt-rt.jar")
     },
-    pluginAuto(listOf("intellij.platform.langInjection", "intellij.java.langInjection", "intellij.xml.langInjection")) { spec ->
-      spec.withModule("intellij.java.langInjection.jps")
-    },
     pluginAutoWithCustomDirName("intellij.tasks.core") { spec ->
       spec.directoryName = "tasks"
       spec.withModule("intellij.tasks")
       spec.withModule("intellij.tasks.compatibility")
-      spec.withModule("intellij.tasks.jira")
       spec.withModule("intellij.tasks.java")
     },
     pluginAuto(listOf("intellij.xslt.debugger")) { spec ->
@@ -157,6 +155,7 @@ object CommunityRepositoryModules {
     pluginAuto("intellij.junit") { spec ->
       spec.withModule("intellij.junit.rt", "junit-rt.jar")
       spec.withModule("intellij.junit.v5.rt", "junit5-rt.jar")
+      spec.withModule("intellij.junit.v6.rt", "junit6-rt.jar")
     },
     plugin("intellij.testng") { spec ->
       spec.mainJarName = "testng-plugin.jar"
@@ -188,8 +187,8 @@ object CommunityRepositoryModules {
       spec.withModule("intellij.terminal.completion")
       spec.withResource("resources/shell-integrations", "shell-integrations")
     },
-    pluginAuto(listOf("intellij.textmate")) { spec ->
-      spec.withResource("lib/bundles", "lib/bundles")
+    pluginAuto(listOf("intellij.textmate.plugin")) { spec ->
+      spec.withResourceFromModule("intellij.textmate", "lib/bundles", "lib/bundles")
     },
     PythonCommunityPluginModules.pythonCommunityPluginLayout(),
     androidDesignPlugin(),
@@ -205,17 +204,21 @@ object CommunityRepositoryModules {
       spec.withModuleLibrary("intellij.remoterobot.robot.server.core", spec.mainModule, "")
       spec.withProjectLibrary("okhttp")
     },
+    pluginAuto(listOf("intellij.performanceTesting")),
     pluginAuto(listOf("intellij.performanceTesting.ui")),
-    githubPlugin("intellij.vcs.github.community", productCode = "IC"),
-    gitlabPlugin("intellij.vcs.gitlab.community", productCode = "IC"),
+    pluginAuto(listOf("intellij.vcs.github")),
+    pluginAuto(listOf("intellij.vcs.gitlab")),
     pluginAuto(listOf("intellij.compilation.charts")) { spec ->
       spec.withModule("intellij.compilation.charts.jps")
     },
     plugin("intellij.repository.search") { spec ->
       spec.withModule("intellij.maven.model", relativeJarPath = "maven-model.jar")
       spec.withProjectLibrary("package-search-api-client")
-      spec.withProjectLibrary("ktor-client-logging")
       spec.withProjectLibrary("kotlinx-document-store-mvstore")
+    },
+    pluginAuto("intellij.java.jshell") { spec ->
+      spec.withModule("intellij.java.jshell.protocol", "jshell-protocol.jar")
+      spec.withModuleLibrary("jshell-frontend", "intellij.java.jshell.execution", "jshell-frontend.jar")
     }
   )
 
@@ -230,7 +233,15 @@ object CommunityRepositoryModules {
       spec.withModule("intellij.cucumber.jvmFormatter5", "cucumber-jvmFormatter5.jar")
     },
     pluginAuto("intellij.serial.monitor") { spec ->
-      spec.withProjectLibrary("io.github.java.native.jssc", LibraryPackMode.STANDALONE_SEPARATE)
+      // jSerialComm java JAR - Remember to update the binary dependency when updating to a new version!
+      spec.withProjectLibrary("jetbrains.intellij.deps.jSerialComm", LibraryPackMode.STANDALONE_SEPARATE)
+
+      // jSerialComm native library
+      spec.withGeneratedResources { targetDir, context ->
+        val uri = URI.create("https://packages.jetbrains.team/files/p/ij/intellij-build-dependencies/jSerialComm/25666bc98300c6fd674d3a03afd700714c6fe571/jSerialComm.zip")
+        val downloaded = BuildDependenciesDownloader.downloadFileToCacheLocation(context.paths.communityHomeDirRoot, uri)
+        BuildDependenciesDownloader.extractFile(downloaded, targetDir.resolve("bin"), context.paths.communityHomeDirRoot)
+      }
     },
   )
 
@@ -244,13 +255,13 @@ object CommunityRepositoryModules {
       }
       spec.withModule("intellij.android.designer.customview")
       spec.withModule("intellij.android.designer")
+      spec.withModule("intellij.android.designer.gradle")
       spec.withModule("intellij.android.glance-designer")
       spec.withModule("intellij.android.layoutlib")
       spec.withModule("intellij.android.nav.editor")
       spec.withModule("intellij.android.nav.editor.gradle")
       spec.withModule("intellij.android.preview-designer")
       spec.withModule("intellij.android.wear-designer")
-      spec.withModule("intellij.android.motion-editor")
       spec.withModule("intellij.android.visual-lint")
 
       // libs:
@@ -273,10 +284,10 @@ object CommunityRepositoryModules {
   }
 
   val supportedFfmpegPresets: PersistentList<SupportedDistribution> = persistentListOf(
-    SupportedDistribution(os = OsFamily.MACOS, arch = JvmArchitecture.x64),
-    SupportedDistribution(os = OsFamily.MACOS, arch = JvmArchitecture.aarch64),
-    SupportedDistribution(os = OsFamily.WINDOWS, arch = JvmArchitecture.x64),
-    SupportedDistribution(os = OsFamily.LINUX, arch = JvmArchitecture.x64),
+    SupportedDistribution(os = OsFamily.MACOS, arch = JvmArchitecture.x64, MacLibcImpl.DEFAULT),
+    SupportedDistribution(os = OsFamily.MACOS, arch = JvmArchitecture.aarch64, MacLibcImpl.DEFAULT),
+    SupportedDistribution(os = OsFamily.WINDOWS, arch = JvmArchitecture.x64, WindowsLibcImpl.DEFAULT),
+    SupportedDistribution(os = OsFamily.LINUX, arch = JvmArchitecture.x64, LinuxLibcImpl.GLIBC),
   )
 
   private fun createAndroidPluginLayout(
@@ -286,7 +297,6 @@ object CommunityRepositoryModules {
     addition: ((PluginLayout.PluginLayoutSpec) -> Unit)?,
   ): PluginLayout =
     pluginAutoWithCustomDirName(mainModuleName, "android") { spec ->
-      spec.semanticVersioning = true
       spec.withCustomVersion { pluginXmlSupplier, ideBuildVersion, _ ->
         val pluginXml = pluginXmlSupplier()
         if (pluginXml.indexOf("<version>") != -1) {
@@ -312,19 +322,12 @@ object CommunityRepositoryModules {
       spec.withModule("intellij.android.common", "android-common.jar")
       spec.withModule("intellij.android.jps.model", "android-common.jar")
 
-      // android-extensions-ide.jar
-      spec.withModule("intellij.android.kotlin.extensions.common", "android-extensions-ide.jar")
-
-      // android-kotlin-extensions-tooling.jar
-      spec.withModule("intellij.android.kotlin.extensions.tooling", "android-kotlin-extensions-tooling.jar")
-
       //android-gradle-tooling.jar
       spec.withModule("intellij.android.gradle-tooling.api", "android-gradle.jar")
       spec.withModule("intellij.android.gradle-tooling.impl", "android-gradle.jar")
       spec.withModule("intellij.android.projectSystem.gradle.sync", "android-gradle.jar")
 
       // android-kotlin.jar
-      spec.withModule("intellij.android.kotlin.extensions", "android-kotlin.jar")
       spec.withModule("intellij.android.kotlin.idea", "android-kotlin.jar")
       spec.withModule("intellij.android.kotlin.idea.common", "android-kotlin.jar")
       spec.withModule("intellij.android.kotlin.idea.k1", "android-kotlin.jar")
@@ -516,7 +519,7 @@ object CommunityRepositoryModules {
       spec.withModuleLibrary("ffmpeg-javacpp", "intellij.android.streaming", "javacpp-$javacppVersion.jar")
 
       // include only required as platform-dependent binaries
-      for ((supportedOs, supportedArch) in supportedFfmpegPresets) {
+      for ((supportedOs, supportedArch, supportedLibc) in supportedFfmpegPresets) {
         val osName = supportedOs.osName.lowercase(Locale.ENGLISH)
         val ffmpegLibraryName = "ffmpeg-$osName-$supportedArch"
         val javacppLibraryName = "javacpp-$osName-$supportedArch"
@@ -527,8 +530,8 @@ object CommunityRepositoryModules {
           spec.withModuleLibrary(javacppLibraryName, "intellij.android.streaming", "${javacppLibraryName}-$javacppVersion.jar")
         }
         else {
-          spec.withGeneratedPlatformResources(supportedOs, supportedArch) { targetDir, context ->
-            val streamingModule = context.projectModel.project.modules.find { it.name == "intellij.android.streaming" }!!
+          spec.withGeneratedPlatformResources(supportedOs, supportedArch, supportedLibc) { targetDir, context ->
+            val streamingModule = context.projectModel.project.findModuleByName("intellij.android.streaming")!!
             val ffmpegLibrary = streamingModule.libraryCollection.findLibrary(ffmpegLibraryName)!!
             val javacppLibrary = streamingModule.libraryCollection.findLibrary(javacppLibraryName)!!
             val libDir = targetDir.resolve("lib")
@@ -636,30 +639,6 @@ object CommunityRepositoryModules {
     }
   }
 
-  fun githubPlugin(mainModuleName: String, productCode: String): PluginLayout {
-    return plugin(mainModuleName) { spec ->
-      spec.directoryName = "vcs-github-$productCode"
-      spec.mainJarName = "vcs-github.jar"
-      spec.withModules(listOf(
-        "intellij.vcs.github"
-      ))
-      spec.withCustomVersion { _, version, _ ->
-        PluginVersionEvaluatorResult(pluginVersion = "$version-$productCode")
-      }
-    }
-  }
-
-  // inspired by CommunityRepositoryModules.githubPlugin
-  fun gitlabPlugin(mainModuleName: String, productCode: String): PluginLayout {
-    return plugin(mainModuleName) { spec ->
-      spec.directoryName = "vcs-gitlab-$productCode"
-      spec.mainJarName = "vcs-gitlab.jar"
-      spec.withCustomVersion { _, version, _ ->
-        PluginVersionEvaluatorResult(pluginVersion = "$version-$productCode")
-      }
-    }
-  }
-
   fun groovyPlugin(additionalModules: List<String> = emptyList(), addition: ((PluginLayout.PluginLayoutSpec) -> Unit)? = null): PluginLayout {
     return plugin("intellij.groovy") { spec ->
       spec.directoryName = "Groovy"
@@ -696,7 +675,7 @@ private suspend fun copyAnt(pluginDir: Path, context: BuildContext): List<Distri
       dirFilter = { !it.endsWith("src") },
       fileFilter = { file ->
         if (file.toString().endsWith(".jar")) {
-          sources.add(ZipSource(file = file, distributionFileEntryProducer = null, filter = ::defaultLibrarySourcesNamesFilter))
+          sources.add(ZipSource(file = file, distributionFileEntryProducer = null, filter = ::defaultLibrarySourcesNamesFilter, moduleName = null))
           false
         }
         else {

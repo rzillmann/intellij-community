@@ -6,16 +6,22 @@ import com.intellij.openapi.ui.Messages
 import org.jetbrains.annotations.Nls
 import org.jetbrains.kotlin.analysis.api.KaSession
 import org.jetbrains.kotlin.analysis.api.analyze
-import org.jetbrains.kotlin.analysis.api.symbols.KaCallableSymbol
-import org.jetbrains.kotlin.analysis.api.symbols.KaClassKind
-import org.jetbrains.kotlin.analysis.api.symbols.KaClassSymbol
-import org.jetbrains.kotlin.analysis.api.symbols.KaFunctionSymbol
-import org.jetbrains.kotlin.analysis.api.symbols.KaNamedFunctionSymbol
-import org.jetbrains.kotlin.analysis.api.symbols.KaPropertySymbol
-import org.jetbrains.kotlin.analysis.api.symbols.KaSymbolModality
-import org.jetbrains.kotlin.analysis.api.symbols.KaSymbolOrigin
-import org.jetbrains.kotlin.analysis.api.symbols.KaValueParameterSymbol
+import org.jetbrains.kotlin.analysis.api.components.allSupertypes
+import org.jetbrains.kotlin.analysis.api.components.containingDeclaration
+import org.jetbrains.kotlin.analysis.api.components.containingSymbol
+import org.jetbrains.kotlin.analysis.api.components.defaultType
+import org.jetbrains.kotlin.analysis.api.components.isAnyType
+import org.jetbrains.kotlin.analysis.api.components.isIntType
+import org.jetbrains.kotlin.analysis.api.components.isMarkedNullable
+import org.jetbrains.kotlin.analysis.api.components.isPrimitive
+import org.jetbrains.kotlin.analysis.api.components.isStringType
+import org.jetbrains.kotlin.analysis.api.components.memberScope
+import org.jetbrains.kotlin.analysis.api.components.returnType
+import org.jetbrains.kotlin.analysis.api.components.semanticallyEquals
+import org.jetbrains.kotlin.analysis.api.symbols.*
 import org.jetbrains.kotlin.analysis.api.types.symbol
+import org.jetbrains.kotlin.config.LanguageFeature
+import org.jetbrains.kotlin.idea.base.projectStructure.languageVersionSettings
 import org.jetbrains.kotlin.idea.base.resources.KotlinBundle
 import org.jetbrains.kotlin.idea.codeinsight.utils.isNonNullableBooleanType
 import org.jetbrains.kotlin.idea.codeinsight.utils.isNullableAnyType
@@ -29,12 +35,7 @@ import org.jetbrains.kotlin.idea.util.application.isUnitTestMode
 import org.jetbrains.kotlin.lexer.KtTokens
 import org.jetbrains.kotlin.name.Name
 import org.jetbrains.kotlin.name.StandardClassIds
-import org.jetbrains.kotlin.psi.KtClass
-import org.jetbrains.kotlin.psi.KtClassOrObject
-import org.jetbrains.kotlin.psi.KtNamedDeclaration
-import org.jetbrains.kotlin.psi.KtNamedFunction
-import org.jetbrains.kotlin.psi.KtProperty
-import org.jetbrains.kotlin.psi.KtPsiFactory
+import org.jetbrains.kotlin.psi.*
 import org.jetbrains.kotlin.psi.psiUtil.hasActualModifier
 import org.jetbrains.kotlin.psi.psiUtil.hasExpectModifier
 import org.jetbrains.kotlin.psi.psiUtil.isIdentifier
@@ -42,7 +43,7 @@ import org.jetbrains.kotlin.psi.psiUtil.quoteIfNeeded
 import org.jetbrains.kotlin.util.OperatorNameConventions
 
 object GenerateEqualsAndHashCodeUtils {
-    context(KaSession)
+    context(_: KaSession)
     fun matchesEqualsMethodSignature(function: KaNamedFunctionSymbol): Boolean {
         if (function.modality == KaSymbolModality.ABSTRACT) return false
         if (function.name != OperatorNameConventions.EQUALS) return false
@@ -50,10 +51,16 @@ object GenerateEqualsAndHashCodeUtils {
         val param = function.valueParameters.singleOrNull() ?: return false
         val paramType = param.returnType
         val returnType = function.returnType
-        return paramType.isNullableAnyType() && returnType.isNonNullableBooleanType()
+        if (!returnType.isNonNullableBooleanType()) return false
+        if (paramType.isNullableAnyType()) return true
+        // check for CustomEqualsInValueClasses
+        if (function.psi?.languageVersionSettings?.supportsFeature(LanguageFeature.CustomEqualsInValueClasses) != true) return false
+        val classSymbol = function.containingDeclaration as? KaNamedClassSymbol ?: return false
+        if (!classSymbol.isInline) return false
+        return paramType.semanticallyEquals(classSymbol.defaultType)
     }
 
-    context(KaSession)
+    context(_: KaSession)
     fun matchesHashCodeMethodSignature(function: KaNamedFunctionSymbol): Boolean {
         if (function.modality == KaSymbolModality.ABSTRACT) return false
         if (function.name != OperatorNameConventions.HASH_CODE) return false
@@ -63,7 +70,7 @@ object GenerateEqualsAndHashCodeUtils {
         return returnType.isIntType && !returnType.isMarkedNullable
     }
 
-    context(KaSession)
+    context(_: KaSession)
     fun matchesToStringMethodSignature(function: KaNamedFunctionSymbol): Boolean {
         if (function.modality == KaSymbolModality.ABSTRACT) return false
         if (function.name != OperatorNameConventions.TO_STRING) return false
@@ -73,15 +80,15 @@ object GenerateEqualsAndHashCodeUtils {
         return returnType.isStringType && !returnType.isMarkedNullable
     }
 
-    context(KaSession)
+    context(_: KaSession)
     fun findEqualsMethodForClass(classSymbol: KaClassSymbol): KaCallableSymbol? =
         findNonGeneratedMethodInSelfOrSuperclass(classSymbol, OperatorNameConventions.EQUALS) { matchesEqualsMethodSignature(it) }
 
-    context(KaSession)
+    context(_: KaSession)
     fun findToStringMethodForClass(classSymbol: KaClassSymbol): KaCallableSymbol? =
         findNonGeneratedMethodInSelfOrSuperclass(classSymbol, OperatorNameConventions.TO_STRING) { matchesToStringMethodSignature(it) }
 
-    context(KaSession)
+    context(_: KaSession)
     fun findHashCodeMethodForClass(classSymbol: KaClassSymbol): KaCallableSymbol? =
         findNonGeneratedMethodInSelfOrSuperclass(classSymbol, OperatorNameConventions.HASH_CODE) { matchesHashCodeMethodSignature(it) }
 
@@ -89,7 +96,7 @@ object GenerateEqualsAndHashCodeUtils {
      * Searches for a callable member symbol with the given [methodName] that matches the [signatureFilter].
      * If the found symbol is generated, the search is done for one more time in the superclass' scope
      */
-    context(KaSession)
+    context(_: KaSession)
     private fun findNonGeneratedMethodInSelfOrSuperclass(
       classSymbol: KaClassSymbol,
       methodName: Name,
@@ -111,7 +118,7 @@ object GenerateEqualsAndHashCodeUtils {
      * Finds methods whose name is [methodName] not only from the class [classSymbol] but also its parent classes,
      * and returns method symbols after filtering them using [condition].
      */
-    context(KaSession)
+    context(_: KaSession)
     private fun findMethod(
       classSymbol: KaClassSymbol, methodName: Name, condition: (KaNamedFunctionSymbol) -> Boolean
     ): KaCallableSymbol? = classSymbol.memberScope.callables(methodName).filter {
@@ -123,7 +130,7 @@ object GenerateEqualsAndHashCodeUtils {
      * Because currently `kotlin.Any` is not listed in symbol's supertypes when all declared supertypes are interfaces,
      * this case is handled separately.
      */
-    context(KaSession)
+    context(_: KaSession)
     private fun findExplicitSuperclassOrAny(classSymbol: KaClassSymbol): KaClassSymbol? {
         val supertypes = classSymbol.superTypes
         return supertypes.map { it.symbol }.filterIsInstance<KaClassSymbol>().singleOrNull { it.classKind == KaClassKind.CLASS }
@@ -131,7 +138,7 @@ object GenerateEqualsAndHashCodeUtils {
     }
 
 
-    context(KaSession)
+    context(_: KaSession)
     fun getPropertiesToUseInGeneratedMember(classOrObject: KtClassOrObject): List<KtNamedDeclaration> =
         buildList<KtNamedDeclaration> {
             classOrObject.primaryConstructorParameters.filterTo(this) { it.hasValOrVar() }
@@ -153,7 +160,7 @@ object GenerateEqualsAndHashCodeUtils {
      * ```
      * error because the method where this error appears must be ignored.
      */
-    context(KaSession)
+    context(_: KaSession)
     fun generateEquals(info: Info, tryToFindEqualsMethodForClass: Boolean = true): KtNamedFunction? {
         if (info.equalsInClass != null) return null
 
@@ -199,7 +206,7 @@ object GenerateEqualsAndHashCodeUtils {
      * ```
      * error because the method where this error appears must be ignored.
      */
-    context(KaSession)
+    context(_: KaSession)
     fun generateHashCode(info: Info, tryToFindHashCodeMethodForClass: Boolean = true): KtNamedFunction? {
         if (info.hashCodeInClass != null) return null
 
@@ -221,7 +228,7 @@ object GenerateEqualsAndHashCodeUtils {
         return function
     }
 
-    context(KaSession)
+    context(_: KaSession)
     fun generateToString(klass: KtClassOrObject, declarations: List<KtNamedDeclaration>, template: String): KtNamedFunction? {
 
         val contextMap = mutableMapOf<String, Any?>()
@@ -243,7 +250,7 @@ object GenerateEqualsAndHashCodeUtils {
         return function
     }
 
-    context(KaSession)
+    context(_: KaSession)
     private fun setupExpectActualFunction(klass: KtClassOrObject, function: KtNamedFunction) {
         if (klass.hasExpectModifier()) {
             (function.bodyExpression ?: function.bodyBlockExpression)?.delete()
@@ -294,21 +301,21 @@ object GenerateEqualsAndHashCodeUtils {
 
 }
 
-context(KaSession)
+context(_: KaSession)
 private fun List<KtNamedDeclaration>.sortedWithPrimitiveFirst(): List<KtNamedDeclaration> = sortedWith(object : Comparator<KtNamedDeclaration> {
     override fun compare(o1: KtNamedDeclaration, o2: KtNamedDeclaration): Int {
         val isBacking1 = o1.propertyHasBackingField()
         val isBacking2 = o2.propertyHasBackingField()
         val fieldCompare = -isBacking1.compareTo(isBacking2)
         if (fieldCompare != 0) return fieldCompare
+        check (o1 is KtDeclarationWithReturnType && o2 is KtDeclarationWithReturnType)
         return -o1.returnType.isPrimitive.compareTo(o2.returnType.isPrimitive)
     }
 })
 
-context(KaSession)
+context(_: KaSession)
 private fun KtNamedDeclaration.propertyHasBackingField(): Boolean {
-    val symbol = symbol
-    return when (symbol) {
+    return when (val symbol = symbol) {
         is KaPropertySymbol -> symbol.hasBackingField
         is KaValueParameterSymbol -> {
             symbol.generatedPrimaryConstructorProperty?.hasBackingField == true

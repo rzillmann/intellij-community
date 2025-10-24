@@ -1,9 +1,10 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.psi.util;
 
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Comparing;
 import com.intellij.psi.*;
+import com.intellij.psi.codeStyle.JavaCodeStyleManager;
 import com.intellij.util.containers.ContainerUtil;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -42,19 +43,37 @@ public final class ImportsUtil {
     if (refExpr != null) {
       expressionToExpand.add(refExpr);
     }
-    expressionToExpand.sort((o1, o2) -> o2.getTextOffset() - o1.getTextOffset());
-    for (PsiJavaCodeReferenceElement expression : expressionToExpand) {
-      expand(expression, staticImport);
-    }
-    staticImport.delete();
-  }
 
-  public static void expand(@NotNull PsiJavaCodeReferenceElement ref, PsiImportStaticStatement staticImport) {
-    PsiElementFactory elementFactory = JavaPsiFacade.getElementFactory(ref.getProject());
+    expressionToExpand.sort((o1, o2) -> o2.getTextOffset() - o1.getTextOffset());
+
     PsiClass targetClass = staticImport.resolveTargetClass();
     assert targetClass != null;
+
+    for (PsiJavaCodeReferenceElement expression : ContainerUtil.filter(expressionToExpand, e -> !(e.getParent() instanceof PsiAnnotation)) ) {
+      if(PsiTreeUtil.isAncestor(staticImport, expression, false)) continue;
+      expand(expression, targetClass);
+    }
+
+    staticImport.delete();
+
+    for (PsiJavaCodeReferenceElement expression : ContainerUtil.filter(expressionToExpand, e -> (e.getParent() instanceof PsiAnnotation)) ) {
+      expand(expression, targetClass);
+    }
+  }
+
+  public static void expand(@NotNull PsiJavaCodeReferenceElement ref, @NotNull PsiClass targetClass) {
+    PsiElementFactory elementFactory = JavaPsiFacade.getElementFactory(ref.getProject());
     if (ref instanceof PsiReferenceExpression) {
       ((PsiReferenceExpression)ref).setQualifierExpression(elementFactory.createReferenceExpression(targetClass));
+    }
+    else if (ref.getParent() instanceof PsiAnnotation) {
+      PsiAnnotation oldAnnotation = (PsiAnnotation)ref.getParent();
+      PsiAnnotationOwner owner = oldAnnotation.getOwner();
+      if (owner != null) {
+        PsiAnnotation annotation = owner.addAnnotation(targetClass.getQualifiedName() + "." + ref.getText());
+        JavaCodeStyleManager.getInstance(ref.getProject()).shortenClassReferences(annotation);
+        oldAnnotation.delete();
+      }
     }
     else if (ref instanceof PsiImportStaticReferenceElement) {
       ref.replace(
@@ -99,7 +118,7 @@ public final class ImportsUtil {
    * @return a list of implicit import statements associated with the given Java file.
    */
   public static List<PsiImportStatementBase> getAllImplicitImports(@NotNull PsiJavaFile file) {
-    return CachedValuesManager.getProjectPsiDependentCache(file, javaFile -> {
+    List<PsiImportStatementBase> cache = CachedValuesManager.getProjectPsiDependentCache(file, javaFile -> {
       List<PsiImportStatementBase> results = new ArrayList<>();
       Project project = javaFile.getProject();
       PsiElementFactory factory = PsiElementFactory.getInstance(project);
@@ -112,5 +131,6 @@ public final class ImportsUtil {
       }
       return results;
     });
+    return new ArrayList<>(cache);
   }
 }

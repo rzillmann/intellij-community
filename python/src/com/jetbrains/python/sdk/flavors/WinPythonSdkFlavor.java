@@ -12,10 +12,11 @@ import com.intellij.openapi.util.UserDataHolder;
 import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.util.io.FileUtilRt;
 import com.intellij.openapi.util.text.StringUtil;
+import com.intellij.python.community.helpersLocator.PythonHelpersLocator;
 import com.intellij.util.concurrency.SynchronizedClearableLazy;
 import com.intellij.util.concurrency.annotations.RequiresBackgroundThread;
 import com.intellij.util.containers.ContainerUtil;
-import com.jetbrains.python.PythonHelpersLocator;
+import com.jetbrains.python.sdk.WinRegistryService;
 import kotlin.text.Regex;
 import org.jetbrains.annotations.*;
 
@@ -34,6 +35,8 @@ import static com.jetbrains.python.venvReader.ResolveUtilKt.tryResolvePath;
  * This class knows how to find python in Windows Registry according to
  * <a href="https://www.python.org/dev/peps/pep-0514/">PEP 514</a>
  */
+@ApiStatus.Internal
+
 public class WinPythonSdkFlavor extends CPythonSdkFlavor<PyFlavorData.Empty> {
   private static final @NotNull String[] REG_ROOTS = {"HKEY_LOCAL_MACHINE", "HKEY_CURRENT_USER"};
   /**
@@ -83,7 +86,7 @@ public class WinPythonSdkFlavor extends CPythonSdkFlavor<PyFlavorData.Empty> {
     return PyFlavorData.Empty.class;
   }
 
-  @RequiresBackgroundThread
+  @RequiresBackgroundThread(generateAssertion = false)
   @Override
   protected final @NotNull Collection<@NotNull Path> suggestLocalHomePathsImpl(final @Nullable Module module,
                                                                                final @Nullable UserDataHolder context) {
@@ -93,7 +96,7 @@ public class WinPythonSdkFlavor extends CPythonSdkFlavor<PyFlavorData.Empty> {
     return ContainerUtil.map(candidates, Path::of);
   }
 
-  @RequiresBackgroundThread
+  @RequiresBackgroundThread(generateAssertion = false)
   private void findInCandidatePaths(Set<String> candidates, String... exe_names) {
     @SuppressWarnings("TestOnlyProblems")
     var root = System.getProperty(ROOT_TO_SEARCH_PYTHON_IN, "C:\\");
@@ -146,8 +149,9 @@ public class WinPythonSdkFlavor extends CPythonSdkFlavor<PyFlavorData.Empty> {
     myAppxCache.drop();
   }
 
-
-  void findInRegistry(final @NotNull Collection<String> candidates) {
+  @VisibleForTesting
+  @ApiStatus.Internal
+  public void findInRegistry(final @NotNull Collection<String> candidates) {
     candidates.addAll(myRegistryCache.getValue());
   }
 

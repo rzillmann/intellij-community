@@ -1,7 +1,7 @@
 // Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.diff;
 
-import com.intellij.codeInsight.daemon.OutsidersPsiFileSupport;
+import com.intellij.codeInsight.daemon.SyntheticPsiFileSupport;
 import com.intellij.diff.actions.DocumentFragmentContent;
 import com.intellij.diff.actions.ImmutableDocumentFragmentContent;
 import com.intellij.diff.contents.*;
@@ -11,6 +11,7 @@ import com.intellij.diff.util.DiffUserDataKeysEx;
 import com.intellij.diff.util.DiffUtil;
 import com.intellij.ide.highlighter.ArchiveFileType;
 import com.intellij.openapi.application.AccessToken;
+import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.ReadAction;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.diff.DiffBundle;
@@ -32,6 +33,8 @@ import com.intellij.openapi.vfs.VfsUtil;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.openapi.vfs.encoding.EncodingManager;
 import com.intellij.openapi.vfs.encoding.EncodingProjectManager;
+import com.intellij.openapi.vfs.transformer.TextPresentationTransformer;
+import com.intellij.openapi.vfs.transformer.TextPresentationTransformers;
 import com.intellij.psi.PsiDocumentManager;
 import com.intellij.testFramework.BinaryLightVirtualFile;
 import com.intellij.testFramework.LightVirtualFile;
@@ -395,19 +398,31 @@ public final class DiffContentFactoryImpl extends DiffContentFactoryEx {
     if (fileType != null && fileType.isBinary()) return null;
 
     LightVirtualFile file = new MyLightVirtualFile(lightFilePath, fileType, content);
+
+    TextPresentationTransformers transformersManager = ApplicationManager.getApplication().getService(TextPresentationTransformers.class);
+    TextPresentationTransformer transformer = transformersManager.forFileType(file.getFileType());
+    //noinspection ConstantValue
+    if (transformer != null) {
+      String convertedText = transformer.fromPersistent(content, file).toString();
+      file = new MyLightVirtualFile(lightFilePath, fileType, convertedText);
+    }
+
     file.setWritable(!readOnly);
 
+    LightVirtualFile finalFile = file;
     return ReadAction.compute(() -> {
-      Document document = FileDocumentManager.getInstance().getDocument(file, project);
+      Document document = FileDocumentManager.getInstance().getDocument(finalFile, project);
       if (document == null) {
         return null;
       }
+
       PsiDocumentManager.getInstance(project).getPsiFile(document);
       return document;
     });
   }
 
-  private static boolean isBinaryContent(byte @NotNull [] content, @NotNull FileType fileType) {
+  @ApiStatus.Internal
+  public static boolean isBinaryContent(byte @NotNull [] content, @NotNull FileType fileType) {
     if (fileType instanceof UIBasedFileType) {
       return true; // text file, that should be shown as binary (SVG, UI Forms).
     }
@@ -626,7 +641,7 @@ public final class DiffContentFactoryImpl extends DiffContentFactoryEx {
 
       VirtualFile file = FileDocumentManager.getInstance().getFile(document);
       if (file != null && !file.isInLocalFileSystem()) {
-        OutsidersPsiFileSupport.markFile(file, originalFilePath);
+        SyntheticPsiFileSupport.markFile(file, originalFilePath);
       }
 
       if (fileName != null) {
@@ -884,8 +899,10 @@ public final class DiffContentFactoryImpl extends DiffContentFactoryEx {
       @Override
       public @Nullable FileType guessContentType() {
         VirtualFile file = myFilePath.getVirtualFile();
-        if (file != null) return file.getFileType();
-        return null;
+        if (file == null) {
+          return FileTypeManager.getInstance().getFileTypeByFileName(myFilePath.getName());
+        }
+        return file.getFileType();
       }
     }
 

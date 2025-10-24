@@ -7,15 +7,7 @@ import com.intellij.ide.HelpTooltip
 import com.intellij.ide.actions.ActivateToolWindowAction
 import com.intellij.ide.actions.ToolWindowMoveAction
 import com.intellij.ide.ui.UISettings
-import com.intellij.openapi.actionSystem.ActionButtonComponent
-import com.intellij.openapi.actionSystem.ActionGroup
-import com.intellij.openapi.actionSystem.ActionManager
-import com.intellij.openapi.actionSystem.ActionPlaces
-import com.intellij.openapi.actionSystem.ActionUpdateThread
-import com.intellij.openapi.actionSystem.AnAction
-import com.intellij.openapi.actionSystem.AnActionEvent
-import com.intellij.openapi.actionSystem.DefaultActionGroup
-import com.intellij.openapi.actionSystem.Presentation
+import com.intellij.openapi.actionSystem.*
 import com.intellij.openapi.actionSystem.impl.ActionButton
 import com.intellij.openapi.project.DumbAware
 import com.intellij.openapi.project.DumbAwareToggleAction
@@ -25,25 +17,16 @@ import com.intellij.openapi.wm.impl.SquareStripeButton.Companion.createMoveGroup
 import com.intellij.toolWindow.ResizeStripeManager
 import com.intellij.toolWindow.StripeButtonUi
 import com.intellij.toolWindow.ToolWindowEventSource
-import com.intellij.ui.ColorUtil
-import com.intellij.ui.MouseDragHelper
-import com.intellij.ui.PopupHandler
-import com.intellij.ui.RelativeFont
-import com.intellij.ui.UIBundle
+import com.intellij.toolWindow.ToolWindowLeftToolbar
+import com.intellij.toolWindow.ToolWindowToolbar
+import com.intellij.ui.*
 import com.intellij.ui.icons.loadIconCustomVersionOrScale
 import com.intellij.ui.icons.toStrokeIcon
 import com.intellij.util.concurrency.SynchronizedClearableLazy
 import com.intellij.util.ui.JBInsets
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
-import java.awt.Color
-import java.awt.Component
-import java.awt.Dimension
-import java.awt.GradientPaint
-import java.awt.Graphics
-import java.awt.Graphics2D
-import java.awt.Point
-import java.awt.Rectangle
+import java.awt.*
 import java.awt.event.MouseEvent
 import java.awt.image.BufferedImage
 import java.util.function.Supplier
@@ -65,10 +48,10 @@ internal abstract class AbstractSquareStripeButton(
     })
   }
 
-  fun paintDraggingButton(g: Graphics) {
+  fun paintDraggingButton(g: Graphics, isLeft: Boolean) {
     val areaSize = size.also {
       JBInsets.removeFrom(it, insets)
-      JBInsets.removeFrom(it, SquareStripeButtonLook.ICON_PADDING)
+      JBInsets.removeFrom(it, SquareStripeButtonLook.getIconPadding(isLeft))
     }
 
     val color = JBUI.CurrentTheme.ToolWindow.DragAndDrop.BUTTON_FLOATING_BACKGROUND
@@ -231,13 +214,13 @@ internal class SquareStripeButton(action: SquareAnActionButton, val toolWindow: 
     return arrayOf(text.substring(0, index), text.substring(index + 1))
   }
 
-  override fun paintButtonLook(g: Graphics?) {
+  override fun paintButtonLook(g: Graphics) {
+    val look = buttonLook
     if (!myShowName) {
       super.paintButtonLook(g)
       return
     }
 
-    val look = buttonLook
     look.paintBackground(g, this)
     look.paintIcon(g, this, icon)
 
@@ -385,3 +368,7 @@ internal open class SquareAnActionButton(@JvmField protected val window: ToolWin
   }
 }
 
+internal fun Component.isOnTheLeftStripe(): Boolean {
+  val stripe = ComponentUtil.getParentOfType(ToolWindowToolbar::class.java, this)
+  return stripe is ToolWindowLeftToolbar
+}

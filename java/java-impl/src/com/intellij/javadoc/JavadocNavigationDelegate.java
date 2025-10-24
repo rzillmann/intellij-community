@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.javadoc;
 
 import com.intellij.codeInsight.CodeInsightSettings;
@@ -18,9 +18,6 @@ import java.util.List;
  * Holds javadoc-specific navigation logic.
  */
 public final class JavadocNavigationDelegate extends EditorNavigationDelegateAdapter {
-
-  private static final JavadocHelper ourHelper = JavadocHelper.getInstance();
-  
   /**
    * Improves navigation in case of incomplete javadoc parameter descriptions.
    * <p/>
@@ -79,7 +76,14 @@ public final class JavadocNavigationDelegate extends EditorNavigationDelegateAda
   }
   
   public static Result navigateToLineEnd(@NotNull Editor editor, @NotNull PsiFile psiFile) {
-    final Document document = editor.getDocument();
+    final Document document;
+
+    try {
+      document = psiFile.getFileDocument();
+    } catch (UnsupportedOperationException ignored) {
+      return Result.CONTINUE;
+    }
+
     final CaretModel caretModel = editor.getCaretModel();
     final int offset = caretModel.getOffset();
 
@@ -94,13 +98,13 @@ public final class JavadocNavigationDelegate extends EditorNavigationDelegateAda
       return Result.CONTINUE;
     }
 
-    final Pair<JavadocHelper.JavadocParameterInfo,List<JavadocHelper.JavadocParameterInfo>> pair = ourHelper.parse(psiFile, editor, offset);
+    final Pair<JavadocHelper.JavadocParameterInfo,List<JavadocHelper.JavadocParameterInfo>> pair = JavadocHelper.parse(psiFile, editor, offset);
     if (pair.first == null || pair.first.parameterDescriptionStartPosition != null) {
       return Result.CONTINUE;
     }
 
-    final LogicalPosition position = ourHelper.calculateDescriptionStartPosition(psiFile, pair.second, pair.first);
-    ourHelper.navigate(position, editor, psiFile.getProject());
+    final LogicalPosition position = JavadocHelper.calculateDescriptionStartPosition(psiFile, pair.second, pair.first);
+    JavadocHelper.navigate(position, editor, psiFile.getProject());
     return Result.STOP;
   }
 }

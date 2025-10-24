@@ -9,6 +9,7 @@ import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.util.Pair;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.util.CommonProcessors;
+import com.intellij.util.concurrency.annotations.RequiresBackgroundThread;
 import com.intellij.util.io.*;
 import com.intellij.util.io.storage.AbstractStorage;
 import com.intellij.vcs.log.*;
@@ -41,6 +42,8 @@ public final class VcsLogStorageImpl implements Disposable, VcsLogStorage {
   private static final @NotNull @NonNls String REFS_STORAGE = "refs";
   private static final @NotNull @NonNls String STORAGE = "storage";
 
+  private static final @NotNull String STORAGE_CLOSED_MESSAGE = "Storage is closed";
+
   public static final int VERSION = 8;
   public static final int NO_INDEX = -1;
   private static final int REFS_VERSION = 2;
@@ -48,8 +51,8 @@ public final class VcsLogStorageImpl implements Disposable, VcsLogStorage {
   private final @NotNull StorageId.Directory myHashesStorageId;
   private final @NotNull StorageId.Directory myRefsStorageId;
 
-  private final @NotNull MyPersistentBTreeEnumerator myCommitIdEnumerator;
-  private final @NotNull PersistentEnumerator<VcsRef> myRefsEnumerator;
+  private @Nullable MyPersistentBTreeEnumerator myCommitIdEnumerator;
+  private @Nullable PersistentEnumerator<VcsRef> myRefsEnumerator;
   private final @NotNull VcsLogErrorHandler myErrorHandler;
   private volatile boolean myDisposed = false;
 
@@ -68,10 +71,12 @@ public final class VcsLogStorageImpl implements Disposable, VcsLogStorage {
       List<VirtualFile> roots = logProviders.keySet().stream().sorted(Comparator.comparing(VirtualFile::getPath)).toList();
       MyCommitIdKeyDescriptor commitIdKeyDescriptor = new MyCommitIdKeyDescriptor(roots);
       myHashesStorageId = hashesStorageId;
-      myCommitIdEnumerator = new MyPersistentBTreeEnumerator(myHashesStorageId, commitIdKeyDescriptor, storageLockContext);
+      MyPersistentBTreeEnumerator commitIdEnumerator =
+        new MyPersistentBTreeEnumerator(myHashesStorageId, commitIdKeyDescriptor, storageLockContext);
+      myCommitIdEnumerator = commitIdEnumerator;
       Disposer.register(this, () -> {
         try {
-          myCommitIdEnumerator.close();
+          commitIdEnumerator.close();
         }
         catch (IOException e) {
           LOG.warn(e);
@@ -80,11 +85,13 @@ public final class VcsLogStorageImpl implements Disposable, VcsLogStorage {
 
       VcsRefKeyDescriptor refsKeyDescriptor = new VcsRefKeyDescriptor(logProviders, commitIdKeyDescriptor);
       myRefsStorageId = refsStorageId;
-      myRefsEnumerator = new PersistentEnumerator<>(myRefsStorageId.getStorageFile(STORAGE), refsKeyDescriptor, AbstractStorage.PAGE_SIZE,
-                                                    storageLockContext, myRefsStorageId.getVersion());
+      PersistentEnumerator<VcsRef> refsEnumerator =
+        new PersistentEnumerator<>(myRefsStorageId.getStorageFile(STORAGE), refsKeyDescriptor, AbstractStorage.PAGE_SIZE,
+                                   storageLockContext, myRefsStorageId.getVersion());
+      myRefsEnumerator = refsEnumerator;
       Disposer.register(this, () -> {
         try {
-          myRefsEnumerator.close();
+          refsEnumerator.close();
         }
         catch (IOException e) {
           LOG.warn(e);
@@ -101,10 +108,16 @@ public final class VcsLogStorageImpl implements Disposable, VcsLogStorage {
   }
 
   private @Nullable CommitId doGetCommitId(int index) throws IOException {
+    if (myCommitIdEnumerator == null) {
+      throw new IllegalStateException(STORAGE_CLOSED_MESSAGE);
+    }
     return myCommitIdEnumerator.valueOf(index);
   }
 
   private int getOrPut(@NotNull Hash hash, @NotNull VirtualFile root) throws IOException {
+    if (myCommitIdEnumerator == null) {
+      throw new IllegalStateException(STORAGE_CLOSED_MESSAGE);
+    }
     return myCommitIdEnumerator.enumerate(new CommitId(hash, root));
   }
 
@@ -139,6 +152,9 @@ public final class VcsLogStorageImpl implements Disposable, VcsLogStorage {
   @Override
   public boolean containsCommit(@NotNull CommitId id) {
     checkDisposed();
+    if (myCommitIdEnumerator == null) {
+      throw new IllegalStateException(STORAGE_CLOSED_MESSAGE);
+    }
     try {
       return myCommitIdEnumerator.contains(id);
     }
@@ -151,6 +167,9 @@ public final class VcsLogStorageImpl implements Disposable, VcsLogStorage {
   @Override
   public void iterateCommits(@NotNull Predicate<? super CommitId> consumer) {
     checkDisposed();
+    if (myCommitIdEnumerator == null) {
+      throw new IllegalStateException(STORAGE_CLOSED_MESSAGE);
+    }
     try {
       myCommitIdEnumerator.iterateData(new CommonProcessors.FindProcessor<>() {
         @Override
@@ -167,6 +186,9 @@ public final class VcsLogStorageImpl implements Disposable, VcsLogStorage {
   @Override
   public int getRefIndex(@NotNull VcsRef ref) {
     checkDisposed();
+    if (myRefsEnumerator == null) {
+      throw new IllegalStateException(STORAGE_CLOSED_MESSAGE);
+    }
     try {
       return myRefsEnumerator.enumerate(ref);
     }
@@ -179,6 +201,9 @@ public final class VcsLogStorageImpl implements Disposable, VcsLogStorage {
   @Override
   public @Nullable VcsRef getVcsRef(int refIndex) {
     checkDisposed();
+    if (myRefsEnumerator == null) {
+      throw new IllegalStateException(STORAGE_CLOSED_MESSAGE);
+    }
     try {
       return myRefsEnumerator.valueOf(refIndex);
     }
@@ -191,7 +216,14 @@ public final class VcsLogStorageImpl implements Disposable, VcsLogStorage {
   @Override
   public void flush() {
     checkDisposed();
+    if (myCommitIdEnumerator == null) {
+      throw new IllegalStateException(STORAGE_CLOSED_MESSAGE);
+    }
     myCommitIdEnumerator.force();
+    
+    if (myRefsEnumerator == null) {
+      throw new IllegalStateException(STORAGE_CLOSED_MESSAGE);
+    }
     myRefsEnumerator.force();
   }
 
@@ -214,6 +246,9 @@ public final class VcsLogStorageImpl implements Disposable, VcsLogStorage {
 
   @Override
   public void dispose() {
+    // nullize references to ensure that backing files can be closed and deleted
+    myCommitIdEnumerator = null;
+    myRefsEnumerator = null;
   }
 
   private static class MyCommitIdKeyDescriptor implements KeyDescriptor<CommitId> {
@@ -336,12 +371,24 @@ public final class VcsLogStorageImpl implements Disposable, VcsLogStorage {
         LOG.error("Could not create index storage backend", e);
         return new Pair<>(storage, null);
       }
-    }, () -> {
-      for (StorageId.Directory storageId : storageIds) {
-        if (!storageId.cleanupAllStorageFiles()) {
+    }, () -> cleanupStorageFiles(storageIds));
+  }
+
+  @RequiresBackgroundThread
+  static void cleanupStorageFiles(@NotNull Collection<? extends StorageId> storageIds) {
+    for (StorageId storageId : storageIds) {
+      try {
+        boolean deleted = storageId.cleanupAllStorageFiles();
+        if (deleted) {
+          LOG.info("Deleted storage files in " + storageId.getStoragePath());
+        }
+        else {
           LOG.error("Could not clean up storage files in " + storageId.getStoragePath());
         }
       }
-    });
+      catch (Exception e) {
+        LOG.error("Could not clean up storage files in " + storageId.getStoragePath(), e);
+      }
+    }
   }
 }

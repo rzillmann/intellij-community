@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 
 package com.intellij.codeInsight.template.impl;
 
@@ -38,16 +38,16 @@ public final class ListTemplatesHandler implements CodeInsightActionHandler {
   private static final Logger LOG = Logger.getInstance(ListTemplatesHandler.class);
 
   @Override
-  public void invoke(final @NotNull Project project, final @NotNull Editor editor, @NotNull PsiFile file) {
+  public void invoke(final @NotNull Project project, final @NotNull Editor editor, @NotNull PsiFile psiFile) {
     EditorUtil.fillVirtualSpaceUntilCaret(editor);
 
     PsiDocumentManager.getInstance(project).commitDocument(editor.getDocument());
     int offset = editor.getCaretModel().getOffset();
     List<TemplateImpl> applicableTemplates = TemplateManagerImpl.listApplicableTemplateWithInsertingDummyIdentifier(
-      TemplateActionContext.expanding(file, editor));
+      TemplateActionContext.expanding(psiFile, editor));
 
     Map<TemplateImpl, String> matchingTemplates = filterTemplatesByPrefix(applicableTemplates, editor, offset, false, true);
-    MultiMap<String, CustomLiveTemplateLookupElement> customTemplatesLookupElements = getCustomTemplatesLookupItems(editor, file, offset);
+    MultiMap<String, CustomLiveTemplateLookupElement> customTemplatesLookupElements = getCustomTemplatesLookupItems(editor, psiFile, offset);
 
     if (matchingTemplates.isEmpty()) {
       for (TemplateImpl template : applicableTemplates) {
@@ -62,11 +62,14 @@ public final class ListTemplatesHandler implements CodeInsightActionHandler {
       return;
     }
 
-    showTemplatesLookup(project, editor, file, matchingTemplates, customTemplatesLookupElements);
+    showTemplatesLookup(project, editor, psiFile, matchingTemplates, customTemplatesLookupElements);
   }
 
-  public static Map<TemplateImpl, String> filterTemplatesByPrefix(@NotNull Collection<? extends TemplateImpl> templates, @NotNull Editor editor,
-                                                                  int offset, boolean fullMatch, boolean searchInDescription) {
+  public static @NotNull Map<TemplateImpl, String> filterTemplatesByPrefix(@NotNull Collection<? extends TemplateImpl> templates,
+                                                                           @NotNull Editor editor,
+                                                                           int offset,
+                                                                           boolean fullMatch,
+                                                                           boolean searchInDescription) {
     if (offset > editor.getDocument().getTextLength()) {
       LOG.error("Cannot filter templates, index out of bounds. Offset: " + offset,
                 CoreAttachmentFactory.createAttachment(editor.getDocument()));
@@ -163,7 +166,7 @@ public final class ListTemplatesHandler implements CodeInsightActionHandler {
   private static LiveTemplateLookupElement createTemplateElement(final TemplateImpl template) {
     return new LiveTemplateLookupElementImpl(template, false) {
       @Override
-      public @Unmodifiable Set<String> getAllLookupStrings() {
+      public @Unmodifiable @NotNull Set<String> getAllLookupStrings() {
         String description = template.getDescription();
         if (description == null) {
           return super.getAllLookupStrings();
@@ -222,16 +225,16 @@ public final class ListTemplatesHandler implements CodeInsightActionHandler {
 
   private static final class MyLookupAdapter implements LookupListener {
     private final Map<TemplateImpl, String> myTemplate2Argument;
-    private final PsiFile myFile;
+    private final PsiFile myPsiFile;
 
     MyLookupAdapter(@Nullable Map<TemplateImpl, String> template2Argument) {
       myTemplate2Argument = template2Argument;
-      myFile = null;
+      myPsiFile = null;
     }
 
-    MyLookupAdapter(@Nullable PsiFile file) {
+    MyLookupAdapter(@Nullable PsiFile psiFile) {
       myTemplate2Argument = null;
-      myFile = file;
+      myPsiFile = psiFile;
     }
 
     @Override
@@ -254,12 +257,12 @@ public final class ListTemplatesHandler implements CodeInsightActionHandler {
         });
       }
       else if (item instanceof CustomLiveTemplateLookupElement) {
-        if (myFile != null) {
+        if (myPsiFile != null) {
           WriteCommandAction.writeCommandAction(project).run(() -> {
             Editor editor = lookup.getEditor();
             if (!editor.isDisposed()) {
               editor.getCaretModel().runForEachCaret(caret -> {
-                ((CustomLiveTemplateLookupElement)item).expandTemplate(lookup.getEditor(), myFile);
+                ((CustomLiveTemplateLookupElement)item).expandTemplate(lookup.getEditor(), myPsiFile);
               });
             }
           });
@@ -271,7 +274,7 @@ public final class ListTemplatesHandler implements CodeInsightActionHandler {
   private static final class TemplatesArranger extends LookupArranger {
 
     @Override
-    public Pair<List<LookupElement>, Integer> arrangeItems(@NotNull Lookup lookup, boolean onExplicitAction) {
+    public @NotNull Pair<List<LookupElement>, Integer> arrangeItems(@NotNull Lookup lookup, boolean onExplicitAction) {
       LinkedHashSet<LookupElement> result = new LinkedHashSet<>();
       List<LookupElement> items = getMatchingItems();
       for (LookupElement item : items) {
@@ -286,7 +289,7 @@ public final class ListTemplatesHandler implements CodeInsightActionHandler {
     }
 
     @Override
-    public LookupArranger createEmptyCopy() {
+    public @NotNull LookupArranger createEmptyCopy() {
       return new TemplatesArranger();
     }
   }

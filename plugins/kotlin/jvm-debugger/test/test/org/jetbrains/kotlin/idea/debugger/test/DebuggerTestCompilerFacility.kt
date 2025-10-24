@@ -20,7 +20,7 @@ import org.jetbrains.kotlin.analyzer.AnalysisResult
 import org.jetbrains.kotlin.caches.resolve.KotlinCacheService
 import org.jetbrains.kotlin.cli.jvm.compiler.findMainClass
 import org.jetbrains.kotlin.config.*
-import org.jetbrains.kotlin.idea.base.plugin.artifacts.TestKotlinArtifacts
+import org.jetbrains.kotlin.idea.artifacts.TestKotlinArtifacts
 import org.jetbrains.kotlin.idea.codegen.CodegenTestUtil
 import org.jetbrains.kotlin.idea.resolve.languageVersionSettings
 import org.jetbrains.kotlin.idea.test.KotlinBaseTest.TestFile
@@ -49,7 +49,7 @@ open class DebuggerTestCompilerFacility(
     private val jvmTarget: JvmTarget,
     private val compileConfig: TestCompileConfiguration,
 ) {
-    private val kotlinStdlibPath = TestKotlinArtifacts.kotlinStdlib.absolutePath
+    private val kotlinStdlibPath = TestKotlinArtifacts.kotlinStdlib.absolutePathString()
 
     protected val mainFiles: TestFilesByLanguageAndPlatform
     private val libraryFiles: TestFilesByLanguageAndPlatform
@@ -148,7 +148,8 @@ open class DebuggerTestCompilerFacility(
         commonSrcDir: File,
         scriptSrcDir: File,
         classesDir: File,
-        libClassesDir: File
+        libClassesDir: File,
+        additionalClassesDir: List<File> = emptyList(),
     ) = with(mainFiles) {
         resources.copy(jvmSrcDir)
         resources.copy(classesDir) // sic!
@@ -163,14 +164,14 @@ open class DebuggerTestCompilerFacility(
         if (kotlinJvm.isNotEmpty() || kotlinCommon.isNotEmpty()) {
             val options = getCompileOptionsForMainSources(jvmSrcDir, commonSrcDir, module.name)
             doWriteAction {
-                compileKotlinFilesWithCliCompiler(jvmSrcDir, commonSrcDir, classesDir, libClassesDir, options)
+                compileKotlinFilesWithCliCompiler(jvmSrcDir, commonSrcDir, classesDir, libClassesDir, options, additionalClassesDir)
             }
         }
 
         if (java.isNotEmpty()) {
             CodegenTestUtil.compileJava(
                 java.map { File(jvmSrcDir, it.name).absolutePath },
-                getClasspath(module) + listOf(classesDir.absolutePath),
+                getClasspath(module) + additionalClassesDir.map { it.absolutePath } + listOf(classesDir.absolutePath),
                 listOf("-g"),
                 classesDir
             )
@@ -194,12 +195,12 @@ open class DebuggerTestCompilerFacility(
 
     private fun compileKotlinFilesWithCliCompiler(
         jvmSrcDir: File, commonSrcDir: File, classesDir: File,
-        libClassesDir: File, options: List<String>,
+        libClassesDir: File, options: List<String>, additionalClassesDir: List<File>,
     ) {
         KotlinCompilerStandalone(
             listOf(jvmSrcDir, commonSrcDir), target = classesDir,
             options = options,
-            classpath = mavenArtifacts.map(::File) + libClassesDir,
+            classpath = mavenArtifacts.map(::File) + additionalClassesDir + libClassesDir,
             compileKotlinSourcesBeforeJava = false,
         ).compile()
     }
@@ -213,8 +214,20 @@ open class DebuggerTestCompilerFacility(
     private fun getCompilerOptionsCommonForLibAndSource(): List<String> {
         val options = mutableListOf(
             "-Xlambdas=${compileConfig.lambdasGenerationScheme.description}",
-            "-Xcontext-receivers",
         )
+
+        for (feature in compileConfig.enabledLanguageFeatures) {
+            when (feature) {
+                LanguageFeature.ContextReceivers -> {
+                    options.add("-Xcontext-receivers")
+                }
+                LanguageFeature.ContextParameters -> {
+                    options.add("-Xcontext-parameters")
+                }
+                else -> {}
+            }
+        }
+
         if (compileConfig.languageVersion != null) {
             options.add("-language-version=${compileConfig.languageVersion}")
         }
@@ -249,11 +262,10 @@ open class DebuggerTestCompilerFacility(
     }
 
     // Returns the qualified name of the main test class.
-    fun analyzeAndFindMainClass(jvmKtFiles: List<KtFile>): String {
+    internal fun analyzeAndFindMainClass(jvmKtFiles: List<KtFile>): String? {
         return runReadAction {
             val (languageVersionSettings, analysisResult) = analyzeSources(jvmKtFiles)
             findMainClass(analysisResult.bindingContext, languageVersionSettings, jvmKtFiles)?.asString()
-                ?: error("Cannot find main class name")
         }
     }
 

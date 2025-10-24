@@ -75,6 +75,7 @@ a:com.intellij.platform.workspace.storage.EntityType
 - <init>(com.intellij.platform.workspace.storage.EntityType):V
 - b:<init>(com.intellij.platform.workspace.storage.EntityType,I,kotlin.jvm.internal.DefaultConstructorMarker):V
 - pf:builder():com.intellij.platform.workspace.storage.WorkspaceEntity$Builder
+- p:getEntityClass():java.lang.Class
 com.intellij.platform.workspace.storage.ExternalEntityMapping
 - a:forEach(kotlin.jvm.functions.Function2):V
 - a:getDataByEntity(com.intellij.platform.workspace.storage.WorkspaceEntity):java.lang.Object
@@ -155,6 +156,8 @@ com.intellij.platform.workspace.storage.WorkspaceEntityWithSymbolicId
 @:com.intellij.platform.workspace.storage.annotations.Default
 - java.lang.annotation.Annotation
 @:com.intellij.platform.workspace.storage.annotations.Open
+- java.lang.annotation.Annotation
+@:com.intellij.platform.workspace.storage.annotations.Parent
 - java.lang.annotation.Annotation
 f:com.intellij.platform.workspace.storage.impl.url.VirtualFileUrlImplKt
 - sf:toVirtualFileUrl(java.io.File,com.intellij.platform.workspace.storage.url.VirtualFileUrlManager):com.intellij.platform.workspace.storage.url.VirtualFileUrl

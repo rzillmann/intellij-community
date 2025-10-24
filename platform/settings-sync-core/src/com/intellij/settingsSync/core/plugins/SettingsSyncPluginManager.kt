@@ -1,9 +1,6 @@
 package com.intellij.settingsSync.core.plugins
 
-import com.intellij.ide.plugins.IdeaPluginDescriptor
-import com.intellij.ide.plugins.PluginEnableStateChangedListener
-import com.intellij.ide.plugins.PluginStateListener
-import com.intellij.ide.plugins.PluginStateManager
+import com.intellij.ide.plugins.*
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.invokeAndWaitIfNeeded
@@ -11,25 +8,26 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.SettingsCategory
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.extensions.PluginId
+import com.intellij.openapi.util.IntellijInternalApi
 import com.intellij.settingsSync.core.*
-import com.intellij.settingsSync.core.RestartForPluginDisable
-import com.intellij.settingsSync.core.RestartForPluginEnable
 import com.intellij.settingsSync.core.config.BUNDLED_PLUGINS_ID
-import com.intellij.settingsSync.core.enabledOrDisabled
 import com.intellij.settingsSync.core.plugins.SettingsSyncPluginsState.PluginData
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import org.jetbrains.annotations.TestOnly
+import java.nio.file.FileVisitResult
 import java.time.Instant
 
+@OptIn(IntellijInternalApi::class)
 @Service
 internal class SettingsSyncPluginManager(private val cs: CoroutineScope) : Disposable {
   private val pluginInstallationStateListener = PluginInstallationStateListener()
   private val pluginEnabledStateListener = PluginEnabledStateListener()
   private val LOCK = Object()
 
-  private val PLUGIN_EXCEPTIONS = setOf("com.intellij.ja", "com.intellij.ko", "com.intellij.zh", "com.intellij.marketplace")
+  private val PLUGIN_EXCEPTIONS = setOf("com.intellij.ja", "com.intellij.ko", "com.intellij.zh",
+                                        "com.intellij.marketplace", PluginManagerCore.ULTIMATE_PLUGIN_ID.idString)
 
   // TODO: migrate to better solution in 2024.3.
   // Other places where these are mentioned:
@@ -83,7 +81,9 @@ internal class SettingsSyncPluginManager(private val cs: CoroutineScope) : Dispo
         }
       }
 
-
+      val pluginIdMap = PluginManagerCore.buildPluginIdMap()
+      val contentModuleIdMap = PluginManagerCore.getPluginSet().buildContentModuleIdMap()
+      
       for (plugin in currentIdePlugins) {
         val id = plugin.pluginId
         if (!isPluginSynceable(id) || PluginManagerProxy.getInstance().isIncompatible(plugin)) {
@@ -94,6 +94,14 @@ internal class SettingsSyncPluginManager(private val cs: CoroutineScope) : Dispo
           // also don't touch localization plugins as they become bundled in 242 and might cause issues:
           // see https://youtrack.jetbrains.com/issue/IJPL-157227/IDE-is-localized-after-Settings-Sync-between-2024.1-and-2024.2-if-language-plugins-had-updates
           LOG.info("Plugin $id is not syncable!")
+        }
+        else if (
+          PluginManagerCore.isDisabled(PluginManagerCore.ULTIMATE_PLUGIN_ID) &&
+          isUltimate(plugin, pluginIdMap, contentModuleIdMap)
+        ) {
+          if (LOG.isDebugEnabled) {
+            LOG.debug("Skipped syncing ultimate plugin ${plugin.pluginId}")
+          }
         }
         else if (shouldSaveState(plugin)) {
           newPlugins[id] = getPluginData(plugin)
@@ -107,6 +115,26 @@ internal class SettingsSyncPluginManager(private val cs: CoroutineScope) : Dispo
       state = SettingsSyncPluginsState(newPlugins)
       return state
     }
+  }
+
+  private fun isUltimate(
+    plugin: IdeaPluginDescriptor,
+    pluginIdMap: Map<PluginId, IdeaPluginDescriptorImpl>,
+    contentModuleIdMap: Map<PluginModuleId, ContentModuleDescriptor>,
+  ): Boolean {
+    var isUltimate = false
+    PluginManagerCore.processAllNonOptionalDependencyIds(plugin as IdeaPluginDescriptorImpl, pluginIdMap, contentModuleIdMap) {
+      if (it == PluginManagerCore.ULTIMATE_PLUGIN_ID) {
+        isUltimate = true
+      }
+      if (isUltimate) {
+        FileVisitResult.TERMINATE
+      }
+      else {
+        FileVisitResult.CONTINUE
+      }
+    }
+    return isUltimate
   }
 
   private fun isPluginSynceable(pluginId: PluginId): Boolean =

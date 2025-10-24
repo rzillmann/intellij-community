@@ -134,7 +134,7 @@ private fun KtPsiFactory.handleWhenGuard(ktExpression: KtExpression?, entry: KtW
  *  }
  * ```
  */
-context(KaSession)
+context(_: KaSession)
 fun KtWhenExpression.introduceSubjectIfPossible(subject: KtExpression?, context: PsiElement = this): KtWhenExpression {
     subject ?: return this
 
@@ -154,9 +154,7 @@ fun KtWhenExpression.introduceSubjectIfPossible(subject: KtExpression?, context:
 
                     val conditionExpression = (condition as KtWhenConditionWithExpression).expression
                     if (conditionExpression != null) {
-                        val codeFragment =
-                            psiFactory.createExpressionCodeFragment(conditionExpression.text, context).getContentElement() as KtExpression
-                        appendConditionWithSubjectRemoved(codeFragment, subject)
+                        appendConditionWithSubjectRemoved(conditionExpression, subject)
                     }
                 }
             }
@@ -173,7 +171,7 @@ fun KtWhenExpression.introduceSubjectIfPossible(subject: KtExpression?, context:
 /**
  * Returns [KtExpression] as potential subject for [KtWhenExpression].
  */
-context(KaSession)
+context(_: KaSession)
 fun KtWhenExpression.getSubjectToIntroduce(checkConstants: Boolean = true): KtExpression? {
     if (subjectExpression != null) return null
 
@@ -196,7 +194,7 @@ fun KtWhenExpression.getSubjectToIntroduce(checkConstants: Boolean = true): KtEx
     return lastCandidate
 }
 
-context(KaSession)
+context(_: KaSession)
 private fun BuilderByPattern<KtExpression>.appendConditionWithSubjectRemoved(conditionExpression: KtExpression?, subject: KtExpression) {
     when (conditionExpression) {
         is KtIsExpression -> {
@@ -267,7 +265,7 @@ private enum class SearchState {
     }
 }
 
-context(KaSession)
+context(_: KaSession)
 fun KtExpression?.getWhenConditionSubjectCandidate(checkConstants: Boolean): KtExpression? {
     if (this == null) return null
     fun KtExpression?.getCandidate(state: SearchState): KtExpression? {
@@ -333,7 +331,7 @@ fun KtExpression.hasCandidateNameReferenceExpression(checkConstants: Boolean): B
     return !(resolved is KtObjectDeclaration || (resolved as? KtProperty)?.hasModifier(KtTokens.CONST_KEYWORD) == true)
 }
 
-context(KaSession)
+context(_: KaSession)
 fun KtExpression?.matches(right: KtExpression?): Boolean {
     if (this == null && right == null) return true
 
@@ -362,24 +360,35 @@ fun KtIfExpression.introduceValueForCondition(occurrenceInThenClause: KtExpressi
 }
 
 fun KtExpression.isPure(): Boolean {
-    val expr = safeDeparenthesize()
-    if (expr is KtSimpleNameExpression) {
-        val target = expr.mainReference.resolve()
-        return when {
-            target is KtProperty && (target.isLocal || target.initializer != null && !target.isVar) -> {
-                true
-            }
+    when (val expr = safeDeparenthesize()) {
+        is KtSimpleNameExpression -> {
+            return when (val target = expr.mainReference.resolve()) {
+              is KtProperty if (target.isLocal || target.initializer != null && !target.isVar) -> {
+                  true
+              }
 
-            target is KtParameter && !(target.isPropertyParameter() && target.isMutable) -> {
-                true
-            }
+                is KtParameter if !(target.isPropertyParameter() && target.isMutable) -> {
+                    true
+                }
 
-            else -> false
+                else -> false
+            }
         }
-    } else if (expr is KtQualifiedExpression) {
-        return expr.receiverExpression.isPure() && expr.selectorExpression?.isPure() != false
+
+        is KtQualifiedExpression -> {
+            return expr.receiverExpression.isPure() && expr.selectorExpression?.isPure() != false
+        }
+
+        is KtConstantExpression -> {
+            return true
+        }
+
+        is KtStringTemplateExpression -> {
+            return expr.entries.all { it is KtLiteralStringTemplateEntry }
+        }
+
+        else -> return false
     }
-    return false
 }
 
 fun KtExpression.convertToIfNotNullExpression(

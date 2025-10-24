@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 @file:Suppress("ReplaceGetOrSet", "OVERRIDE_DEPRECATION", "LoggingSimilarMessage")
 
 package com.intellij.openapi.extensions.impl
@@ -13,7 +13,7 @@ import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.extensions.*
 import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.util.Disposer
-import com.intellij.util.Java11Shim
+import com.intellij.util.containers.Java11Shim
 import com.intellij.util.ThreeState
 import kotlinx.collections.immutable.PersistentList
 import kotlinx.collections.immutable.persistentListOf
@@ -86,9 +86,9 @@ sealed class ExtensionPointImpl<T : Any>(@JvmField val name: String,
     }
   }
 
-  fun <CACHE_KEY : Any?, V : Any?> getCacheMap(): ConcurrentMap<CACHE_KEY, V> {
+  fun <CACHE_KEY : Any, V : Any?> getCacheMap(): ConcurrentMap<CACHE_KEY, V> {
     @Suppress("UNCHECKED_CAST")
-    return (keyMapperToCache ?: keyMapperToCacheUpdater.updateAndGet(this) { ConcurrentHashMap<Any?, Map<*, *>>() })
+    return (keyMapperToCache ?: keyMapperToCacheUpdater.updateAndGet(this) { ConcurrentHashMap<Any, Map<*, *>>() })
       as ConcurrentMap<CACHE_KEY, V>
   }
 
@@ -683,9 +683,11 @@ sealed class ExtensionPointImpl<T : Any>(@JvmField val name: String,
     }
   }
 
-  final override fun addExtensionPointListener(listener: ExtensionPointListener<T>,
-                                               invokeForLoadedExtensions: Boolean,
-                                               parentDisposable: Disposable?) {
+  final override fun addExtensionPointListener(
+    listener: ExtensionPointListener<T>,
+    invokeForLoadedExtensions: Boolean,
+    parentDisposable: Disposable?,
+  ) {
     if (!addListener(listener)) {
       return
     }
@@ -699,9 +701,11 @@ sealed class ExtensionPointImpl<T : Any>(@JvmField val name: String,
     }
   }
 
-  internal fun addExtensionPointListener(coroutineScope: CoroutineScope,
-                                         invokeForLoadedExtensions: Boolean,
-                                         listener: ExtensionPointListener<T>) {
+  final override fun addExtensionPointListener(
+    coroutineScope: CoroutineScope,
+    invokeForLoadedExtensions: Boolean,
+    listener: ExtensionPointListener<T>,
+  ) {
     if (!addListener(listener)) {
       return
     }

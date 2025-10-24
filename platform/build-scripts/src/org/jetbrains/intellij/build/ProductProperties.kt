@@ -6,7 +6,9 @@ import com.intellij.platform.runtime.product.ProductMode
 import com.jetbrains.plugin.structure.base.plugin.PluginCreationFail
 import com.jetbrains.plugin.structure.base.plugin.PluginCreationResult
 import com.jetbrains.plugin.structure.base.plugin.PluginCreationSuccess
+import com.jetbrains.plugin.structure.base.problems.InvalidPluginIDProblem
 import com.jetbrains.plugin.structure.base.problems.PluginProblem
+import com.jetbrains.plugin.structure.base.problems.PropertyNotSpecified
 import com.jetbrains.plugin.structure.intellij.plugin.IdePlugin
 import kotlinx.collections.immutable.PersistentList
 import kotlinx.collections.immutable.persistentListOf
@@ -17,7 +19,7 @@ import org.jetbrains.intellij.build.impl.qodana.QodanaProductProperties
 import org.jetbrains.jps.model.JpsProject
 import org.jetbrains.jps.model.module.JpsModule
 import java.nio.file.Path
-import java.util.*
+import java.util.Locale
 import java.util.function.BiPredicate
 
 /**
@@ -132,8 +134,9 @@ abstract class ProductProperties {
    * An identifier which will be used to form names for directories where configuration and caches will be stored, usually a product name
    * without spaces with an added version ('IntelliJIdea2016.1' for IntelliJ IDEA 2016.1).
    */
-  open fun getSystemSelector(appInfo: ApplicationInfoProperties, buildNumber: String): String =
-    "${appInfo.fullProductName}${appInfo.majorVersion}.${appInfo.minorVersionMainPart}"
+  open fun getSystemSelector(appInfo: ApplicationInfoProperties, buildNumber: String): String {
+    return "${appInfo.fullProductName}${appInfo.majorVersion}.${appInfo.minorVersionMainPart}"
+  }
 
   /**
    * If `true`, Alt+Button1 shortcut will be removed from 'Quick Evaluate Expression' action and assigned to 'Add/Remove Caret' action
@@ -214,7 +217,7 @@ abstract class ProductProperties {
   var rootModuleForModularLoader: String? = null
 
   /**
-   * Specifies the mode of this product which will be used to determine which plugin modules should be loaded at runtime by 
+   * Specifies the mode of this product which will be used to determine which plugin modules should be loaded at runtime by
    * [the modular loader][com.intellij.platform.bootstrap.ModuleBasedProductLoadingStrategy].
    * This property makes sense only if [rootModuleForModularLoader] is set to a non-null value.
    */
@@ -336,7 +339,7 @@ abstract class ProductProperties {
    * Paths to externally built plugins to be included in the IDE.
    * They will be copied into the build, as well as included in the IDE classpath when launching it to build search index, .jar order, etc.
    */
-  open fun getAdditionalPluginPaths(context: BuildContext): List<Path> = emptyList()
+  open suspend fun getAdditionalPluginPaths(context: BuildContext): List<Path> = emptyList()
 
   /**
    * Override this function to provide additional JVM command line arguments which will be added to launchers along with 
@@ -345,7 +348,7 @@ abstract class ProductProperties {
   open fun getAdditionalContextDependentIdeJvmArguments(context: BuildContext): List<String> = emptyList()
 
   /**
-   * @return custom properties for [org.jetbrains.intellij.build.impl.productInfo.ProductInfoData].
+   * @return custom properties for [com.intellij.platform.buildData.productInfo.ProductInfoData].
    */
   @Suppress("KDocUnresolvedReference")
   open fun generateCustomPropertiesForProductInfo(): List<CustomProperty> = emptyList()
@@ -403,6 +406,13 @@ abstract class ProductProperties {
   @Suppress("DEPRECATION")
   open fun applicationInfoOverride(project: JpsProject): ApplicationInfoOverrides? = null
 
+  /**
+   * For a standalone frontend distribution, specifies the platform prefix of its base IDE. In other cases returns `null`.
+   */
+  @get:ApiStatus.Internal
+  open val baseIdePlatformPrefixForFrontend: String? 
+    get() = null
+
   @Deprecated("Do not use it. Needed only for JetBrains Client per-ide customisation + it's temporary")
   data class ApplicationInfoOverrides(
     val fullProductName: String,
@@ -430,6 +440,11 @@ abstract class ProductProperties {
   var qodanaProductProperties: QodanaProductProperties? = null
 
   /**
+   * Custom compatible build range for all plugins build together with a product distribution
+   */
+  var customCompatibleBuildRange: CompatibleBuildRange? = null
+
+  /**
    * Additional validation can be performed here for [BuildOptions.VALIDATE_PLUGINS_TO_BE_PUBLISHED] step.
    * Please do not ignore validation failures here, they will fail CI builds anyway.
    * @param pluginId may be null if missing or a plugin descriptor is malformed
@@ -437,8 +452,27 @@ abstract class ProductProperties {
    */
   open fun validatePlugin(pluginId: String?, result: PluginCreationResult<IdePlugin>, context: BuildContext): List<PluginProblem> {
     return when (result) {
-      is PluginCreationSuccess -> result.unacceptableWarnings
+      is PluginCreationSuccess -> buildList {
+        addAll(result.unacceptableWarnings)
+        if (result.plugin.pluginVersion == null) {
+          add(PropertyNotSpecified("version"))
+        }
+        val id = result.plugin.pluginId
+        if (id == null) {
+          add(PropertyNotSpecified("id"))
+        }
+        else if (!PLUGIN_ID_REGEX.matches(id)) {
+          add(InvalidPluginIDProblem(id))
+        }
+      }
       is PluginCreationFail -> result.errorsAndWarnings
     }
   }
 }
+
+/**
+ * From https://plugins.jetbrains.com/docs/intellij/plugin-configuration-file.html#idea-plugin__id:
+ * > Please use characters, numbers, and '.'/'-'/'_' symbols only and keep it reasonably short.
+ */
+private val PLUGIN_ID_REGEX: Regex = "^[\\w.-]+$".toRegex()
+

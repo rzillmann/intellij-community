@@ -2,6 +2,7 @@
 package org.jetbrains.kotlin.gradle.multiplatformTests.testFeatures
 
 import com.intellij.execution.executors.DefaultRunExecutor
+import com.intellij.execution.process.ProcessOutputType
 import com.intellij.openapi.externalSystem.model.execution.ExternalSystemTaskExecutionSettings
 import com.intellij.openapi.externalSystem.model.task.ExternalSystemTaskId
 import com.intellij.openapi.externalSystem.model.task.ExternalSystemTaskNotificationListener
@@ -10,7 +11,7 @@ import com.intellij.openapi.externalSystem.service.notification.ExternalSystemPr
 import com.intellij.openapi.externalSystem.task.TaskCallback
 import com.intellij.openapi.externalSystem.util.ExternalSystemUtil
 import com.intellij.openapi.project.Project
-import org.jetbrains.kotlin.gradle.multiplatformTests.KotlinMppTestsContext
+import org.jetbrains.kotlin.gradle.multiplatformTests.KotlinSyncTestsContext
 import org.jetbrains.kotlin.gradle.multiplatformTests.TestConfigurationDslScope
 import org.jetbrains.kotlin.gradle.multiplatformTests.TestFeature
 import org.jetbrains.kotlin.gradle.multiplatformTests.writeAccess
@@ -53,6 +54,7 @@ import java.util.concurrent.TimeUnit
  * ```
  */
 interface GradleProjectsPublishingDsl {
+    // IMPORTANT: Publication will not work if you use onlyCheckers AND if you don't specify GradleProjectsPublishingTestsFeature there
     fun TestConfigurationDslScope.publish(vararg subprojectNames: String) {
         writeAccess.getConfiguration(GradleProjectsPublishingTestsFeature)
             .publishedSubprojectNames.addAll(subprojectNames)
@@ -62,7 +64,7 @@ interface GradleProjectsPublishingDsl {
 object GradleProjectsPublishingTestsFeature : TestFeature<ProjectsToPublish> {
     override fun createDefaultConfiguration(): ProjectsToPublish = ProjectsToPublish(mutableSetOf())
 
-    override fun KotlinMppTestsContext.beforeImport() {
+    override fun KotlinSyncTestsContext.beforeImport() {
         testConfiguration.getConfiguration(this@GradleProjectsPublishingTestsFeature).publishedSubprojectNames.forEach {
             GradleProjectsPublisher.publishSubproject(it, testProjectRoot, testProject)
         }
@@ -90,8 +92,8 @@ object GradleProjectsPublisher {
     private fun runTaskAndGetErrorOutput(projectPath: String, project: Project, taskName: String, scriptParameters: String = ""): String {
         val taskErrOutput = StringBuilder()
         val stdErrListener = object : ExternalSystemTaskNotificationListener {
-            override fun onTaskOutput(id: ExternalSystemTaskId, text: String, stdOut: Boolean) {
-                if (!stdOut) {
+            override fun onTaskOutput(id: ExternalSystemTaskId, text: String, processOutputType: ProcessOutputType) {
+                if (processOutputType.isStderr) {
                     taskErrOutput.append(text)
                 }
             }

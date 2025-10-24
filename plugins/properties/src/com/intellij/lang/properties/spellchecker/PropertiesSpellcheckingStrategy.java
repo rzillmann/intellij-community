@@ -7,9 +7,11 @@ import com.intellij.lang.properties.psi.impl.PropertyKeyImpl;
 import com.intellij.lang.properties.psi.impl.PropertyValueImpl;
 import com.intellij.openapi.extensions.ExtensionPointName;
 import com.intellij.openapi.project.DumbAware;
+import com.intellij.openapi.util.registry.Registry;
 import com.intellij.psi.PsiElement;
 import com.intellij.spellchecker.inspections.PlainTextSplitter;
 import com.intellij.spellchecker.inspections.PropertiesSplitter;
+import com.intellij.spellchecker.inspections.Splitter;
 import com.intellij.spellchecker.tokenizer.*;
 import org.jetbrains.annotations.NotNull;
 
@@ -19,7 +21,7 @@ final class PropertiesSpellcheckingStrategy extends SpellcheckingStrategy implem
     ExtensionPointName.create("com.intellij.properties.spellcheckerMnemonicsTokenizer");
 
   private final Tokenizer<PropertyValueImpl> myPropertyValueTokenizer = new PropertyValueTokenizer();
-  private final Tokenizer<PropertyKeyImpl> myPropertyTokenizer = TokenizerBase.create(PropertiesSplitter.getInstance());
+  private final Tokenizer<PropertyKeyImpl> myPropertyTokenizer = new PropertyKeyTokenizer();
 
   @Override
   public @NotNull Tokenizer<?> getTokenizer(PsiElement element) {
@@ -38,14 +40,33 @@ final class PropertiesSpellcheckingStrategy extends SpellcheckingStrategy implem
     return super.getTokenizer(element);
   }
 
+  @Override
+  public boolean useTextLevelSpellchecking() {
+    return Registry.is("spellchecker.grazie.enabled", false);
+  }
+
+  @Override
+  protected boolean isLiteral(@NotNull PsiElement element) {
+    return !super.isComment(element);
+  }
+
+  private static class PropertyKeyTokenizer extends TokenizerBase<PropertyKeyImpl> {
+    private PropertyKeyTokenizer() {
+      super(PropertiesSplitter.getInstance());
+    }
+
+    @Override
+    public void consumeToken(@NotNull PropertyKeyImpl element, @NotNull TokenConsumer consumer, @NotNull Splitter splitter) {
+      consumer.consumeToken(element, true, splitter);
+    }
+  }
+
   private static class PropertyValueTokenizer extends EscapeSequenceTokenizer<PropertyValueImpl> {
     @Override
     public void tokenize(@NotNull PropertyValueImpl element, @NotNull TokenConsumer consumer) {
       String text = element.getText();
 
-      var mnemonicsTokenizers = MNEMONICS_EP_NAME.getExtensionList();
-      if (!mnemonicsTokenizers.isEmpty()) {
-        MnemonicsTokenizer tokenizer = mnemonicsTokenizers.get(0);
+      for (MnemonicsTokenizer tokenizer : MNEMONICS_EP_NAME.getExtensionList()) {
         if (tokenizer.hasMnemonics(text)) {
           tokenizer.tokenize(element, consumer);
           return;

@@ -1,7 +1,6 @@
 // Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.plugins.terminal.fus
 
-import com.intellij.ide.util.PropertiesComponent
 import com.intellij.internal.statistic.beans.MetricEvent
 import com.intellij.internal.statistic.eventLog.EventLogGroup
 import com.intellij.internal.statistic.eventLog.events.EventFields
@@ -11,13 +10,13 @@ import com.intellij.internal.statistic.service.fus.collectors.ApplicationUsagesC
 import com.intellij.openapi.editor.colors.FontPreferences
 import com.intellij.terminal.TerminalUiSettingsManager
 import org.jetbrains.plugins.terminal.*
-import org.jetbrains.plugins.terminal.TerminalCommandHandlerCustomizer.Constants
 import org.jetbrains.plugins.terminal.block.BlockTerminalOptions
+import org.jetbrains.plugins.terminal.block.completion.TerminalCommandCompletionShowingMode
 import org.jetbrains.plugins.terminal.block.prompt.TerminalPromptStyle
 import org.jetbrains.plugins.terminal.settings.TerminalLocalOptions
 
 internal class TerminalSettingsStateCollector : ApplicationUsagesCollector() {
-  private val GROUP = EventLogGroup("terminalShell.settings", 3)
+  private val GROUP = EventLogGroup("terminalShell.settings", 5)
 
   private val NON_DEFAULT_OPTIONS = GROUP.registerEvent(
     "non.default.options",
@@ -26,6 +25,10 @@ internal class TerminalSettingsStateCollector : ApplicationUsagesCollector() {
   )
   private val NON_DEFAULT_SHELL = GROUP.registerEvent("non.default.shell", "User modified the default shell path")
   private val NON_DEFAULT_TAB_NAME = GROUP.registerEvent("non.default.tab.name", "User modified the default terminal tab name")
+  private val NON_DEFAULT_ENGINE = GROUP.registerEvent(
+    "non.default.engine",
+    EventFields.Enum<TerminalEngine>("engine")
+  )
   private val NON_DEFAULT_CURSOR_SHAPE = GROUP.registerEvent(
     "non.default.cursor.shape",
     EventFields.Enum<TerminalUiSettingsManager.CursorShape>("shape")
@@ -33,6 +36,11 @@ internal class TerminalSettingsStateCollector : ApplicationUsagesCollector() {
   private val NON_DEFAULT_PROMPT_STYLE = GROUP.registerEvent(
     "non.default.prompt.style",
     EventFields.Enum<TerminalPromptStyle>("style")
+  )
+  private val NON_DEFAULT_COMMAND_COMPLETION_MODE = GROUP.registerEvent(
+    "non.default.command.completion.mode",
+    EventFields.Enum<TerminalCommandCompletionMode>("mode"),
+    "Users preference of showing completion popup automatically"
   )
   private val NON_DEFAULT_FONT_NAME = GROUP.registerEvent(
     "non.default.font.name",
@@ -62,6 +70,13 @@ internal class TerminalSettingsStateCollector : ApplicationUsagesCollector() {
 
     addIfNotDefault(
       metrics,
+      NON_DEFAULT_ENGINE,
+      curValue = TerminalOptionsProvider.instance.terminalEngine,
+      defaultValue = TerminalOptionsProvider.State().terminalEngine
+    )
+
+    addIfNotDefault(
+      metrics,
       NON_DEFAULT_CURSOR_SHAPE,
       curValue = TerminalOptionsProvider.instance.cursorShape,
       defaultValue = TerminalOptionsProvider.State().cursorShape
@@ -72,6 +87,13 @@ internal class TerminalSettingsStateCollector : ApplicationUsagesCollector() {
       NON_DEFAULT_PROMPT_STYLE,
       curValue = BlockTerminalOptions.getInstance().promptStyle,
       defaultValue = BlockTerminalOptions.State().promptStyle
+    )
+
+    addIfNotDefault(
+      metrics,
+      NON_DEFAULT_COMMAND_COMPLETION_MODE,
+      curValue = TerminalCommandCompletionMode.fromSettings(TerminalOptionsProvider.instance.state),
+      defaultValue = TerminalCommandCompletionMode.default()
     )
 
     addIfNotDefault(
@@ -126,8 +148,8 @@ internal class TerminalSettingsStateCollector : ApplicationUsagesCollector() {
     addIfNotDefault(
       metrics,
       BooleanOptions.RUN_COMMANDS_USING_IDE,
-      curValue = PropertiesComponent.getInstance().getBoolean(Constants.TERMINAL_CUSTOM_COMMAND_EXECUTION, Constants.TERMINAL_CUSTOM_COMMAND_EXECUTION_DEFAULT),
-      defaultValue = Constants.TERMINAL_CUSTOM_COMMAND_EXECUTION_DEFAULT
+      curValue = RunCommandUsingIdeUtil.isEnabled,
+      defaultValue = RunCommandUsingIdeUtil.DEFAULT_VALUE
     )
   }
 
@@ -179,5 +201,30 @@ internal class TerminalSettingsStateCollector : ApplicationUsagesCollector() {
     USE_OPTION_AS_META("use_option_as_meta"),
     RUN_COMMANDS_USING_IDE("run_commands_using_ide"),
     SHOW_SEPARATORS_BETWEEN_COMMANDS("show_separators_between_commands"),
+  }
+}
+
+/**
+ * Use the single enum for reporting the mode of command completion.
+ * As reporting separate [TerminalOptionsProvider.showCompletionPopupAutomatically] and [TerminalOptionsProvider.commandCompletionShowingMode]
+ * looks not suitable for further analysis.
+ */
+private enum class TerminalCommandCompletionMode {
+  ALWAYS,
+  ONLY_PARAMETERS,
+  NEVER;
+
+  companion object {
+    fun fromSettings(state: TerminalOptionsProvider.State): TerminalCommandCompletionMode {
+      return when {
+        !state.showCompletionPopupAutomatically -> NEVER
+        state.commandCompletionShowingMode == TerminalCommandCompletionShowingMode.ONLY_PARAMETERS -> ONLY_PARAMETERS
+        else -> ALWAYS
+      }
+    }
+
+    fun default(): TerminalCommandCompletionMode {
+      return fromSettings(TerminalOptionsProvider.State())
+    }
   }
 }

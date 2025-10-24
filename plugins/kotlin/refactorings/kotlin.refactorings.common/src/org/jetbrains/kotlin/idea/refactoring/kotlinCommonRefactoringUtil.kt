@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.kotlin.idea.refactoring
 
 import com.intellij.lang.java.JavaLanguage
@@ -14,6 +14,10 @@ import com.intellij.usageView.UsageInfo
 import com.intellij.util.containers.MultiMap
 import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.kotlin.analysis.api.KaSession
+import org.jetbrains.kotlin.analysis.api.components.isFunctionType
+import org.jetbrains.kotlin.analysis.api.components.isFunctionalInterface
+import org.jetbrains.kotlin.analysis.api.components.isSuspendFunctionType
+import org.jetbrains.kotlin.analysis.api.components.resolveToCall
 import org.jetbrains.kotlin.analysis.api.resolution.*
 import org.jetbrains.kotlin.analysis.api.types.KaType
 import org.jetbrains.kotlin.analysis.api.types.KaTypeParameterType
@@ -85,6 +89,11 @@ fun KtDeclaration.isAbstract(): Boolean = when {
     this is KtProperty -> initializer == null && delegate == null && accessors.isEmpty()
     this is KtNamedFunction -> !hasBody()
     else -> false
+}
+
+fun KtNamedDeclaration.isCompanionMemberOf(klass: KtClassOrObject): Boolean {
+    val containingObject = containingClassOrObject as? KtObjectDeclaration ?: return false
+    return containingObject.isCompanion() && containingObject.containingClassOrObject == klass
 }
 
 fun KtCallExpression.getLastLambdaExpression(): KtLambdaExpression? {
@@ -205,7 +214,7 @@ fun <ListType : KtElement> replaceListPsiAndKeepDelimiters(
     return originalList
 }
 
-context(KaSession)
+context(_: KaSession)
 @ApiStatus.Internal
 fun KtCallExpression.canMoveLambdaOutsideParentheses(
     skipComplexCalls: Boolean = true
@@ -306,7 +315,7 @@ fun PsiElement.getAllExtractionContainers(strict: Boolean = true): List<KtElemen
     val parents = if (strict) parents else parentsWithSelf
     for (element in parents) {
         val isValidContainer = when (element) {
-            is KtFile -> true
+            is KtFile -> !element.isScript()
             is KtClassBody -> !objectOrNonInnerNestedClassFound || element.parent is KtObjectDeclaration
             is KtBlockExpression -> !objectOrNonInnerNestedClassFound
             else -> false
@@ -419,5 +428,20 @@ fun BuilderByPattern<KtExpression>.appendCallOrQualifiedExpression(
     call.lambdaArguments.firstOrNull()?.let {
         if (it.getArgumentExpression() is KtLabeledExpression) appendFixedText(" ")
         appendNonFormattedText(it.text)
+    }
+}
+
+@ApiStatus.Internal
+fun PsiElement.removeOverrideModifier() {
+    when (this) {
+        is KtNamedFunction, is KtProperty -> {
+            (this as KtModifierListOwner).modifierList?.getModifier(KtTokens.OVERRIDE_KEYWORD)?.delete()
+        }
+
+        is PsiMethod -> {
+            modifierList.annotations.firstOrNull { annotation ->
+                annotation.qualifiedName == "java.lang.Override"
+            }?.delete()
+        }
     }
 }

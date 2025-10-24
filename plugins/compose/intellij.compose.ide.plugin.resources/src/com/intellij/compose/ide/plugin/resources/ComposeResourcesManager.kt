@@ -15,7 +15,6 @@ import com.intellij.openapi.project.Project
 import org.jetbrains.plugins.gradle.util.GradleConstants.SYSTEM_ID
 import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicReference
-import kotlin.io.path.pathString
 
 /**
  * Manage Compose resource directories across modules in a project.
@@ -35,8 +34,8 @@ internal class ComposeResourcesManager(private val project: Project) {
   }
 
   /** if the path is inside a composeResources dir, return the dir, otherwise null */
-  fun findComposeResourcesDirFor(path: String): ComposeResourcesDir? =
-    composeResources.firstOrNull { path.startsWith(it.directoryPath.pathString) }
+  fun findComposeResourcesDirFor(path: Path): ComposeResourcesDir? =
+    composeResources.firstOrNull { path.startsWith(it.directoryPath) }
 
   /** Retrieves all `ComposeResourcesModel` data nodes associated with the current project
    * in case of multiple modules having compose resources */
@@ -53,10 +52,16 @@ internal class ComposeResourcesManager(private val project: Project) {
   private fun loadComposeResources(): Map<String, ComposeResources> =
     composeResourcesModels.associateNotNull { node ->
       val moduleName = (node.parent?.data as? ModuleData)?.moduleName ?: return@associateNotNull null
-      val dirs = node.data.customComposeResourcesDirs.mapValues { (sourceSetName, directoryPath) ->
-        ComposeResourcesDir(moduleName, sourceSetName, Path.of(directoryPath))
+      val dirs = node.data.customComposeResourcesDirs.mapValues { (sourceSetName, customDirectoryPath) ->
+        val (directoryPath, isCustom) = customDirectoryPath
+        ComposeResourcesDir(moduleName, sourceSetName, Path.of(directoryPath), isCustom)
       }
-      moduleName to ComposeResources(moduleName, dirs)
+      moduleName to ComposeResources(
+        moduleName = moduleName,
+        directoriesBySourceSetName = dirs,
+        isPublicResClass = node.data.isPublicResClass,
+        nameOfResClass = node.data.nameOfResClass,
+      )
     }
 
   /** Refresh Compose resources directories after project import */

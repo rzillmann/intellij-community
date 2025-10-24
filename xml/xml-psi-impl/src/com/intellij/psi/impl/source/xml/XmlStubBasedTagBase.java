@@ -7,8 +7,8 @@ import com.intellij.psi.impl.meta.MetaRegistry;
 import com.intellij.psi.impl.source.tree.TreeElement;
 import com.intellij.psi.impl.source.xml.stub.XmlTagStub;
 import com.intellij.psi.meta.PsiMetaData;
-import com.intellij.psi.stubs.IStubElementType;
 import com.intellij.psi.stubs.PsiFileStub;
+import com.intellij.psi.tree.IElementType;
 import com.intellij.psi.util.CachedValueProvider.Result;
 import com.intellij.psi.util.CachedValuesManager;
 import com.intellij.psi.util.PsiModificationTracker;
@@ -17,9 +17,9 @@ import com.intellij.ui.IconManager;
 import com.intellij.ui.PlatformIcons;
 import com.intellij.util.ArrayUtil;
 import com.intellij.util.IncorrectOperationException;
-import com.intellij.util.indexing.FileBasedIndex;
 import com.intellij.xml.XmlElementDescriptor;
 import com.intellij.xml.XmlNSDescriptor;
+import com.intellij.xml.util.InclusionProvider;
 import com.intellij.xml.util.XmlUtil;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NonNls;
@@ -39,7 +39,7 @@ public class XmlStubBasedTagBase<StubT extends XmlTagStub<?>>
   private volatile XmlTagValue myValue;
   private volatile XmlAttribute[] myAttributes;
 
-  XmlStubBasedTagBase(@NotNull StubT stub, @NotNull IStubElementType nodeType) {
+  XmlStubBasedTagBase(@NotNull StubT stub, @NotNull IElementType nodeType) {
     super(stub, nodeType);
   }
 
@@ -161,17 +161,13 @@ public class XmlStubBasedTagBase<StubT extends XmlTagStub<?>>
 
   @Override
   public XmlTag @NotNull [] getSubTags() {
-    return getSubTags(shouldProcessIncludesNow());
+    return getSubTags(InclusionProvider.getInstance().shouldProcessIncludesNow());
   }
 
   private XmlTag[] getSubTags(boolean processIncludes) {
     return getImpl().getSubTags(processIncludes);
   }
 
-  public static boolean shouldProcessIncludesNow() {
-    return FileBasedIndex.getInstance().getFileBeingCurrentlyIndexed() == null &&
-           !XmlUtil.isStubBuilding(); // todo the first condition should be enough
-  }
 
   @Override
   public XmlTag @NotNull [] findSubTags(@NotNull String name) {
@@ -280,6 +276,11 @@ public class XmlStubBasedTagBase<StubT extends XmlTagStub<?>>
     else {
       visitor.visitElement(this);
     }
+  }
+
+  @Override
+  public IElementType getIElementType() {
+    return getElementTypeImpl();
   }
 
   @Override

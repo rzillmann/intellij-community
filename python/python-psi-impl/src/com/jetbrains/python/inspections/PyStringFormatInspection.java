@@ -31,6 +31,7 @@ import java.util.stream.Collectors;
 
 import static com.jetbrains.python.PyStringFormatParser.*;
 import static com.jetbrains.python.psi.PyUtil.as;
+import static com.jetbrains.python.psi.types.PyNoneTypeKt.isNoneType;
 
 public final class PyStringFormatInspection extends PyInspection {
 
@@ -85,7 +86,46 @@ public final class PyStringFormatInspection extends PyInspection {
         final PyResolveContext resolveContext = PyResolveContext.defaultContext(myTypeEvalContext);
 
         final String s = myFormatSpec.get("1");
-        if (PsiTreeUtil.instanceOf(rightExpression, SIMPLE_RHS_EXPRESSIONS)) {
+        if (rightExpression instanceof PySubscriptionExpression subscription &&
+            subscription.getIndexExpression() instanceof PySliceItem sliceItem &&
+            s != null) {
+          final PyType type = myTypeEvalContext.getType(subscription.getOperand());
+          final PyType stringType = PyBuiltinCache.getInstance(rightExpression).getStringType(LanguageLevel.forElement(rightExpression));
+          final PyType listType = PyBuiltinCache.getInstance(rightExpression).getListType();
+
+          if (type == null) return -1;
+          if (PyTypeChecker.match(listType, type, myTypeEvalContext)
+              || PyTypeChecker.match(stringType, type, myTypeEvalContext)) {
+            checkTypeCompatible(problemTarget, builtinCache.getStrType(),
+                                PyTypeParser.getTypeByName(problemTarget, s, myTypeEvalContext));
+            return 1;
+          }
+          PyExpression lower = sliceItem.getLowerBound();
+          PyExpression upper = sliceItem.getUpperBound();
+          PyExpression stride = sliceItem.getStride();
+          if (upper instanceof PyNumericLiteralExpression) {
+            BigInteger lowerVal;
+            if (lower instanceof PyNumericLiteralExpression) {
+              lowerVal = ((PyNumericLiteralExpression)lower).getBigIntegerValue();
+            }
+            else {
+              lowerVal = BigInteger.ZERO;
+            }
+            int count = (((PyNumericLiteralExpression)upper).getBigIntegerValue().subtract(lowerVal)).intValue();
+            int strideVal;
+            if (stride instanceof PyNumericLiteralExpression) {
+              strideVal = ((PyNumericLiteralExpression)stride).getBigIntegerValue().intValue();
+            }
+            else {
+              strideVal = 1;
+            }
+            int res = count / strideVal;
+            int residue = count % strideVal == 0 ? 0 : 1;
+            return res + residue;
+          }
+          return -1;
+        }
+        else if (PsiTreeUtil.instanceOf(rightExpression, SIMPLE_RHS_EXPRESSIONS)) {
           if (s != null) {
             final PyType rightType = myTypeEvalContext.getType(rightExpression);
             if (rightType instanceof PyTupleType tupleType) {
@@ -158,46 +198,6 @@ public final class PyStringFormatInspection extends PyInspection {
                                 PyTypeParser.getTypeByName(problemTarget, s, myTypeEvalContext));
             return 1;
           }
-        }
-        else if (rightExpression instanceof PySliceExpression && s != null) {
-          final PyType type = myTypeEvalContext.getType(((PySliceExpression)rightExpression).getOperand());
-          final PyType stringType = PyBuiltinCache.getInstance(rightExpression).getStringType(LanguageLevel.forElement(rightExpression));
-          final PyType listType = PyBuiltinCache.getInstance(rightExpression).getListType();
-
-          if (type == null) return -1;
-          if (PyTypeChecker.match(listType, type, myTypeEvalContext)
-              || PyTypeChecker.match(stringType, type, myTypeEvalContext)) {
-            checkTypeCompatible(problemTarget, builtinCache.getStrType(),
-                                PyTypeParser.getTypeByName(problemTarget, s, myTypeEvalContext));
-            return 1;
-          }
-          PySliceItem sliceItem = ((PySliceExpression)rightExpression).getSliceItem();
-          if (sliceItem != null) {
-            PyExpression lower = sliceItem.getLowerBound();
-            PyExpression upper = sliceItem.getUpperBound();
-            PyExpression stride = sliceItem.getStride();
-            if (upper instanceof PyNumericLiteralExpression) {
-              BigInteger lowerVal;
-              if (lower instanceof PyNumericLiteralExpression) {
-                lowerVal = ((PyNumericLiteralExpression)lower).getBigIntegerValue();
-              }
-              else {
-                lowerVal = BigInteger.ZERO;
-              }
-              int count = (((PyNumericLiteralExpression)upper).getBigIntegerValue().subtract(lowerVal)).intValue();
-              int strideVal;
-              if (stride instanceof PyNumericLiteralExpression) {
-                strideVal = ((PyNumericLiteralExpression)stride).getBigIntegerValue().intValue();
-              }
-              else {
-                strideVal = 1;
-              }
-              int res = count / strideVal;
-              int residue = count % strideVal == 0 ? 0 : 1;
-              return res + residue;
-            }
-          }
-          return -1;
         }
         return -1;
       }
@@ -613,23 +613,23 @@ public final class PyStringFormatInspection extends PyInspection {
         .collect(
           Collectors.summarizingInt(
             callType -> {
-              if (callType instanceof PyNoneType) {
+              if (isNoneType(callType)) {
                 return 1;
               }
               else if (callType instanceof PyClassType) {
                 return countElements(evalContext, (PyClassType)callType);
               }
-              else if (callType instanceof PyUnionType) {
+              else if (callType instanceof PyUnionType unionType) {
                 int maxNumber = 1;
                 boolean allForSure = true;
-                for (PyType member : ((PyUnionType)callType).getMembers()) {
+                for (PyType member : unionType.getMembers()) {
                   PyClassType classType = as(member, PyClassType.class);
                   if (classType != null) {
                     int elementsCount = countElements(evalContext, classType);
                     allForSure = allForSure && elementsCount != -1;
                     maxNumber = Math.max(maxNumber, elementsCount);
                   }
-                  else if (!(member instanceof PyNoneType)) {
+                  else if (!isNoneType(member)) {
                     allForSure = false;
                   }
                 }

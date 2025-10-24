@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 @file:JvmName("AppJavaExecutorUtil")
 @file:OptIn(ExperimentalCoroutinesApi::class)
 
@@ -8,7 +8,6 @@ import com.intellij.codeWithMe.ClientId
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.ComponentManagerEx
-import com.intellij.openapi.progress.blockingContext
 import com.intellij.openapi.progress.runBlockingMaybeCancellable
 import com.intellij.openapi.util.Disposer
 import com.intellij.platform.util.coroutines.childScope
@@ -19,7 +18,6 @@ import org.jetbrains.annotations.ApiStatus.Internal
 import org.jetbrains.annotations.TestOnly
 import java.util.concurrent.Executor
 import java.util.concurrent.TimeUnit
-import kotlin.Throws
 
 /**
  * Only for Java clients and only if you cannot rewrite in Kotlin and use coroutines (as you should).
@@ -48,6 +46,17 @@ fun executeOnPooledIoThread(coroutineScope: CoroutineScope, task: Runnable) {
  */
 @Internal
 @ApiStatus.Obsolete
+fun executeOnPooledCpuThread(coroutineScope: CoroutineScope, task: Runnable) {
+  coroutineScope.launch {
+    task.run()
+  }
+}
+
+/**
+ * Only for Java clients and only if you cannot rewrite in Kotlin and use coroutines (as you should).
+ */
+@Internal
+@ApiStatus.Obsolete
 fun CoroutineScope.awaitCancellationAndDispose(disposable: Disposable) {
   awaitCancellationAndInvoke {
     Disposer.dispose(disposable)
@@ -59,25 +68,27 @@ fun CoroutineScope.awaitCancellationAndDispose(disposable: Disposable) {
 fun createBoundedTaskExecutor(
   name: String,
   coroutineScope: CoroutineScope,
-  parallelism: Int = 1,
+  concurrency: Int = 1,
 ): CoroutineDispatcherBackedExecutor {
-  return CoroutineDispatcherBackedExecutor(coroutineScope = coroutineScope, name = name, parallelism = parallelism)
+  return CoroutineDispatcherBackedExecutor(coroutineScope = coroutineScope, name = name, concurrency = concurrency)
 }
 
 // TODO expose interface if ever goes public
 @Internal
 @OptIn(ExperimentalCoroutinesApi::class)
-class CoroutineDispatcherBackedExecutor(coroutineScope: CoroutineScope, name: String, parallelism: Int) : Executor {
-  private val childScope = coroutineScope.childScope(name, Dispatchers.IO.limitedParallelism(parallelism = parallelism))
+class CoroutineDispatcherBackedExecutor(coroutineScope: CoroutineScope, name: String, concurrency: Int) : Executor {
+  private val childScope = coroutineScope.childScope(name, Dispatchers.IO.limitedParallelism(parallelism = concurrency))
 
   fun isEmpty(): Boolean = childScope.coroutineContext.job.children.none()
 
   override fun execute(command: Runnable) {
     childScope.coroutineContext.ensureActive()
-    childScope.launch(ClientId.coroutineContext()) {
-      blockingContext {
-        command.run()
-      }
+    executeSuspending { command.run() }
+  }
+
+  fun <T> executeSuspending(action: suspend () -> T): Deferred<T> {
+    return childScope.async(ClientId.coroutineContext()) {
+      action()
     }
   }
 

@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.util
 
 import com.intellij.icons.AllIcons
@@ -27,6 +27,7 @@ import com.intellij.ui.scale.ScaleType
 import com.intellij.ui.svg.paintIconWithSelection
 import com.intellij.util.IconUtil.ICON_FLAG_IGNORE_MASK
 import com.intellij.util.IconUtil.computeFileIcon
+import com.intellij.util.IconUtil.scale
 import com.intellij.util.ui.*
 import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.annotations.ApiStatus.Internal
@@ -439,18 +440,23 @@ object IconUtil {
     return scaleByIcon(icon = icon, ancestor = ancestor, defaultIcon = defaultIcon) { it.iconWidth }
   }
 
+  /**
+   * @param keepGray if false - the saturation is fully taken from [color]
+   * @param keepBrightness if false - the brightness is fully taken from [color].
+   *                       If left true - 'gray color + gray icon' will produce a nearly black resulting icon.
+   */
   @JvmOverloads
   @JvmStatic
-  fun colorize(source: Icon, color: Color, keepGray: Boolean = false): Icon {
+  fun colorize(source: Icon, color: Color, keepGray: Boolean = false, keepBrightness: Boolean = true): Icon {
     return filterIcon(icon = source, filterSupplier = object : RgbImageFilterSupplier {
-      override fun getFilter() = ColorFilter(color = color, keepGray = keepGray)
+      override fun getFilter() = ColorFilter(color = color, keepGray = keepGray, keepBrightness = keepBrightness)
     })
   }
 
   @JvmOverloads
   @JvmStatic
-  fun colorize(g: Graphics2D?, source: Icon, color: Color, keepGray: Boolean = false): Icon {
-    return filterIcon(g = g, source = source, filter = ColorFilter(color = color, keepGray = keepGray))
+  fun colorize(g: Graphics2D?, source: Icon, color: Color, keepGray: Boolean = false, keepBrightness: Boolean = true): Icon {
+    return filterIcon(g = g, source = source, filter = ColorFilter(color = color, keepGray = keepGray, keepBrightness = keepBrightness))
   }
 
   @JvmStatic
@@ -503,7 +509,12 @@ object IconUtil {
   fun addText(base: Icon, text: String): Icon {
     val icon = LayeredIcon(2)
     icon.setIcon(base, 0)
-    icon.setIcon(textToIcon(text, JLabel(), scale(6.0f)), 1, SwingConstants.SOUTH_EAST)
+    val component = if (EDT.isCurrentThreadEdt()) {
+      JLabel()
+    } else {
+      object : Component() {}
+    }
+    icon.setIcon(textToIcon(text, component, scale(6.0f)), 1, SwingConstants.SOUTH_EAST)
     return icon
   }
 
@@ -650,7 +661,7 @@ class CropIcon internal constructor(val sourceIcon: Icon, val crop: Rectangle) :
 }
 
 @Internal
-class ColorFilter(val color: Color, val keepGray: Boolean) : RGBImageFilter() {
+class ColorFilter(val color: Color, val keepGray: Boolean, val keepBrightness: Boolean) : RGBImageFilter() {
   private val base = Color.RGBtoHSB(color.red, color.green, color.blue, null)
 
   override fun filterRGB(x: Int, y: Int, rgba: Int): Int {
@@ -659,7 +670,9 @@ class ColorFilter(val color: Color, val keepGray: Boolean) : RGBImageFilter() {
     val b = rgba and 0xff
     val hsb = FloatArray(3)
     Color.RGBtoHSB(r, g, b, hsb)
-    val rgb = Color.HSBtoRGB(base[0], base[1] * if (keepGray) hsb[1] else 1.0f, base[2] * hsb[2])
+    val rgb = Color.HSBtoRGB(base[0],
+                             base[1] * if (keepGray) hsb[1] else 1.0f,
+                             base[2] * if (keepBrightness) hsb[2] else 1.0f)
     return rgba and -0x1000000 or (rgb and 0xffffff)
   }
 }
@@ -798,7 +811,7 @@ private fun filterIcon(g: Graphics2D?, source: Icon, filter: ColorFilter): Icon 
   }
   return object : ImageIcon(image) {
     override fun paintIcon(c: Component?, g: Graphics, x: Int, y: Int) {
-      drawImage(g = g, image = image, x = x, y = y, observer = imageObserver ?: c)
+      StartupUiUtil.drawImage(g, image, x, y, imageObserver ?: c)
     }
 
     override fun getIconWidth(): Int = ImageUtil.getUserWidth(image)

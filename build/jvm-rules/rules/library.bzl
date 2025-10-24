@@ -1,11 +1,17 @@
 load("@rules_java//java:defs.bzl", _JavaInfo = "JavaInfo")
-load("@rules_kotlin//kotlin/internal:defs.bzl", _KtJvmInfo = "KtJvmInfo", _KtCompilerPluginInfo = "KtCompilerPluginInfo", "KtPluginConfiguration")
+load("@rules_kotlin//kotlin/internal:defs.bzl", "KtPluginConfiguration", _KtCompilerPluginInfo = "KtCompilerPluginInfo", _KtJvmInfo = "KtJvmInfo")
 load("//:rules/common-attrs.bzl", "add_dicts", "common_attr", "common_outputs", "common_toolchains")
 load("//:rules/impl/compile.bzl", "kt_jvm_produce_jar_actions")
+load("//:rules/impl/transitions.bzl", "jvm_platform_transition")
+load("//:rules/resource.bzl", "ResourceGroupInfo")
 
 visibility("private")
 
-def _make_providers(ctx, providers):
+def _jvm_library(ctx):
+    if ctx.attr.neverlink and ctx.attr.runtime_deps:
+        fail("runtime_deps and neverlink is nonsensical.", attr = "runtime_deps")
+
+    providers = kt_jvm_produce_jar_actions(ctx, False)
     files = [ctx.outputs.jar]
     return [
         providers.java,
@@ -22,21 +28,20 @@ def _make_providers(ctx, providers):
         ),
     ]
 
-def _jvm_library(ctx):
-    if ctx.attr.neverlink and ctx.attr.runtime_deps:
-        fail("runtime_deps and neverlink is nonsensical.", attr = "runtime_deps")
-
-    return _make_providers(ctx, kt_jvm_produce_jar_actions(ctx, "kt_jvm_library"))
-
 jvm_library = rule(
-    doc = """This rule compiles and links Kotlin and Java sources into a .jar file.""",
+    doc = """This rule compiles and links Kotlin and Java sources, and packages the resources into a .jar file.""",
     attrs = add_dicts(common_attr, {
         "srcs": attr.label_list(
             doc = """The list of source files that are processed to create the target, this can contain both Java and Kotlin
                      files. Java analysis occurs first so Kotlin classes may depend on Java classes in the same compilation unit.""",
             default = [],
-            allow_files = [".kt", ".java"],
+            allow_files = [".kt", ".java", ".form"],
             mandatory = True,
+        ),
+        "resources": attr.label_list(
+            doc = """The list of resource groups to create the target.""",
+            default = [],
+            providers = [ResourceGroupInfo],
         ),
         "exported_compiler_plugins": attr.label_list(
             doc = """\
@@ -46,7 +51,7 @@ jvm_library = rule(
     of any targets that directly depend on this target. Unlike `java_plugin`s exported_plugins,
     this is not transitive""",
             default = [],
-            providers = [[_KtCompilerPluginInfo], [KtPluginConfiguration]],
+            providers = [[_KtCompilerPluginInfo]],
         ),
         "exports": attr.label_list(
             doc = """\
@@ -74,4 +79,5 @@ jvm_library = rule(
     host_fragments = ["java"],  # required fragments of the host configuration
     implementation = _jvm_library,
     provides = [_JavaInfo, _KtJvmInfo],
+    cfg = jvm_platform_transition,
 )

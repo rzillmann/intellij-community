@@ -2,11 +2,20 @@
 package org.jetbrains.kotlin.idea.grazie
 
 import com.intellij.grazie.GrazieTestBase
+import com.intellij.grazie.jlanguage.Lang
 import com.intellij.grazie.text.TextContent
 import com.intellij.grazie.text.TextContentTest
 import com.intellij.grazie.text.TextExtractor
+import org.jetbrains.kotlin.idea.base.plugin.KotlinPluginMode
+import org.jetbrains.kotlin.idea.test.ExpectedPluginModeProvider
+import org.jetbrains.kotlin.idea.test.setUpWithKotlinPlugin
 
-class KotlinGrazieSupportTest28 : GrazieTestBase() {
+class KotlinGrazieSupportTest28 : GrazieTestBase(), ExpectedPluginModeProvider {
+    override val pluginMode: KotlinPluginMode = KotlinPluginMode.K1
+    override fun setUp() {
+        setUpWithKotlinPlugin { super.setUp() }
+    }
+
     override val additionalEnabledRules: Set<String> = setOf("UPPERCASE_SENTENCE_START")
 
     override fun runHighlightTestForFile(file: String) {
@@ -21,11 +30,17 @@ class KotlinGrazieSupportTest28 : GrazieTestBase() {
     }
 
     fun `test grammar check in docs`() {
+        enableProofreadingFor(setOf(Lang.GERMANY_GERMAN, Lang.RUSSIAN))
         runHighlightTestForFile("grazie/Docs.kt")
     }
 
     fun `test grammar check in string literals`() {
         runHighlightTestForFile("grazie/StringLiterals.kt")
+    }
+
+    fun `test umlauts doesn't produce false positives`() {
+        enableProofreadingFor(setOf(Lang.GERMANY_GERMAN))
+        runHighlightTestForFile("grazie/Umlauts.kt")
     }
 
     fun `test text extraction in string literals`() {

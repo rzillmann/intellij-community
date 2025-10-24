@@ -21,10 +21,7 @@ import com.intellij.psi.PsiElement;
 import com.intellij.util.ObjectUtils;
 import com.intellij.util.containers.ContainerUtil;
 import com.jetbrains.python.documentation.PythonDocumentationProvider;
-import com.jetbrains.python.psi.PyExpression;
-import com.jetbrains.python.psi.PyNamedParameter;
-import com.jetbrains.python.psi.PyParameter;
-import com.jetbrains.python.psi.PyUtil;
+import com.jetbrains.python.psi.*;
 import com.jetbrains.python.psi.impl.ParamHelper;
 import org.jetbrains.annotations.Nls;
 import org.jetbrains.annotations.NotNull;
@@ -162,6 +159,16 @@ public final class PyCallableParameterImpl implements PyCallableParameter {
   }
 
   @Override
+  public boolean isPositionOnlySeparator() {
+    return myElement instanceof PySlashParameter;
+  }
+
+  @Override
+  public boolean isKeywordOnlySeparator() {
+    return myElement instanceof PySingleStarParameter;
+  }
+
+  @Override
   public @NotNull String getPresentableText(boolean includeDefaultValue, @Nullable TypeEvalContext context) {
     return getPresentableText(includeDefaultValue, context, Objects::isNull);
   }
@@ -178,7 +185,7 @@ public final class PyCallableParameterImpl implements PyCallableParameter {
         final PyType argumentType = getArgumentType(context);
         if (!typeFilter.test(argumentType)) {
           sb.append(": ");
-          sb.append(PythonDocumentationProvider.getTypeDescription(argumentType, context));
+          sb.append(PythonDocumentationProvider.getTypeName(argumentType, context));
           renderedAsTyped = true;
         }
       }

@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.codeInsight.daemon.impl.quickfix;
 
 import com.intellij.application.options.CodeStyle;
@@ -55,17 +55,22 @@ public abstract class ImportClassFixBase<T extends PsiElement, R extends PsiRefe
   private final PsiClass[] myClassesToImport;
   private final boolean myHasUnresolvedImportWhichCanImport;
   private final PsiFile myContainingPsiFile;
-  private boolean myInContent;
-  private ThreeState extensionsAllowToChangeFileSilently;
+  private final boolean myInContent;
+  private final ThreeState extensionsAllowToChangeFileSilently;
 
   @RequiresBackgroundThread
   @RequiresReadLock
   protected ImportClassFixBase(@NotNull T referenceElement, @NotNull R reference) {
     super(referenceElement.getProject());
+    ApplicationManager.getApplication().assertIsNonDispatchThread();
+    ApplicationManager.getApplication().assertReadAccessAllowed();
     myReferenceElement = referenceElement;
     myReference = reference;
     myContainingPsiFile = referenceElement.getContainingFile();
-    myClassesToImport = calcClassesToImport();
+    CalcInfo calcInfo = calcClassesToImport();
+    myClassesToImport = calcInfo.classesToImport();
+    myInContent = calcInfo.inContent();
+    extensionsAllowToChangeFileSilently = calcInfo.extensionsAllowToChangeFileSilently();
     String firstName;
     myHasUnresolvedImportWhichCanImport = myClassesToImport.length != 0
                                           && (firstName = myClassesToImport[0].getName()) != null
@@ -79,7 +84,7 @@ public abstract class ImportClassFixBase<T extends PsiElement, R extends PsiRefe
   }
 
   @Override
-  public boolean isAvailable(@NotNull Project project, Editor editor, @NotNull PsiFile file) {
+  public boolean isAvailable(@NotNull Project project, Editor editor, @NotNull PsiFile psiFile) {
     if (myClassesToImport.length == 0) return false;
     return isStillAvailable() && !getClassesToImport(true).isEmpty();
   }
@@ -91,7 +96,8 @@ public abstract class ImportClassFixBase<T extends PsiElement, R extends PsiRefe
     }
     // ok, something did change. but can we still import? (in case of auto-import there maybe multiple fixes wanting to be executed)
     List<? extends PsiClass> classesToImport = getClassesToImport(true);
-    return classesToImport.size() == 1 && !isClassDefinitelyPositivelyImportedAlready(myContainingPsiFile, classesToImport.get(0));
+    return myContainingPsiFile.isValid() && !classesToImport.isEmpty() && 
+           !isClassDefinitelyPositivelyImportedAlready(myContainingPsiFile, classesToImport.get(0));
   }
 
   /**
@@ -123,21 +129,23 @@ public abstract class ImportClassFixBase<T extends PsiElement, R extends PsiRefe
     return myReference;
   }
 
-  private PsiClass @NotNull [] calcClassesToImport() {
+  private record CalcInfo(@NotNull PsiClass @NotNull [] classesToImport, ThreeState extensionsAllowToChangeFileSilently, boolean inContent) {}
+  @RequiresBackgroundThread
+  private CalcInfo calcClassesToImport() {
     ApplicationManager.getApplication().assertIsNonDispatchThread();
     ApplicationManager.getApplication().assertReadAccessAllowed();
     PsiFile psiFile = myContainingPsiFile;
+    VirtualFile virtualFile = psiFile == null ? null : psiFile.getVirtualFile();
+    Project project = psiFile == null ? null : psiFile.getProject();
+    boolean myInContent = virtualFile != null && ModuleUtilCore.projectContainsFile(project, virtualFile, false);
+    ThreeState extensionsAllowToChangeFileSilently = virtualFile == null ? ThreeState.UNSURE : SilentChangeVetoer.extensionsAllowToChangeFileSilently(project, virtualFile);
+    CalcInfo empty = new CalcInfo(PsiClass.EMPTY_ARRAY, extensionsAllowToChangeFileSilently, myInContent);
     if (psiFile == null) {
-      return PsiClass.EMPTY_ARRAY;
+      return empty;
     }
-    VirtualFile virtualFile = psiFile.getVirtualFile();
-    myInContent = virtualFile != null && ModuleUtilCore.projectContainsFile(psiFile.getProject(), virtualFile, false);
-
-    extensionsAllowToChangeFileSilently = virtualFile == null ? ThreeState.UNSURE : SilentChangeVetoer.extensionsAllowToChangeFileSilently(psiFile.getProject(), virtualFile);
-
     PsiElement referenceElement;
     if (!myReferenceElement.isValid() || (referenceElement = myReference.getElement()) != myReferenceElement && !referenceElement.isValid()) {
-      return PsiClass.EMPTY_ARRAY;
+      return empty;
     }
     if (myReference instanceof PsiJavaReference ref) {
       JavaResolveResult result = ref.advancedResolve(true);
@@ -145,40 +153,34 @@ public abstract class ImportClassFixBase<T extends PsiElement, R extends PsiRefe
       // already imported
       // can happen when e.g., class name happened to be in a method position
       if (element instanceof PsiClass && (result.isValidResult() || result.getCurrentFileResolveScope() instanceof PsiImportStatement)) {
-        return PsiClass.EMPTY_ARRAY;
+        return empty;
       }
     }
 
     String name = getReferenceName(myReference);
-    if (name == null) {
-      return PsiClass.EMPTY_ARRAY;
-    }
-
-    if (!canReferenceClass(myReference)) {
-      return PsiClass.EMPTY_ARRAY;
-    }
-
-    Project project = psiFile.getProject();
-
     PsiElement parent = myReferenceElement.getParent();
-    if (parent instanceof PsiNewExpression newExpression && newExpression.getQualifier() != null) {
-      return PsiClass.EMPTY_ARRAY;
+    if (name == null ||
+        !canReferenceClass(myReference) ||
+        parent instanceof PsiNewExpression newExpression && newExpression.getQualifier() != null) {
+      return empty;
     }
 
     if (parent instanceof PsiReferenceExpression ref) {
       PsiExpression expression = ref.getQualifierExpression();
       if (expression != null && expression != myReferenceElement) {
-        return PsiClass.EMPTY_ARRAY;
+        return empty;
       }
     }
 
     if (psiFile instanceof PsiJavaCodeReferenceCodeFragment ref && !ref.isClassesAccepted()) {
-      return PsiClass.EMPTY_ARRAY;
+      return empty;
     }
 
     GlobalSearchScope scope = psiFile.getResolveScope();
     PsiClass[] classes = PsiShortNamesCache.getInstance(project).getClassesByName(name, scope);
-    if (classes.length == 0) return PsiClass.EMPTY_ARRAY;
+    if (classes.length == 0) {
+      return empty;
+    }
     List<PsiClass> classList = new ArrayList<>(classes.length);
     boolean isAnnotationReference = myReferenceElement.getParent() instanceof PsiAnnotation;
     for (PsiClass aClass : classes) {
@@ -207,16 +209,17 @@ public abstract class ImportClassFixBase<T extends PsiElement, R extends PsiRefe
     filterAlreadyImportedButUnresolved(classList, psiFile);
 
     if (classList.isEmpty() || isReferenceNameForbiddenForAutoImport()) {
-      return PsiClass.EMPTY_ARRAY;
+      classes = PsiClass.EMPTY_ARRAY;
     }
+    else {
+      if (classList.size() > 1) {
+        reduceSuggestedClassesBasedOnDependencyRuleViolation(classList, psiFile);
+      }
 
-    if (classList.size() > 1) {
-      reduceSuggestedClassesBasedOnDependencyRuleViolation(classList, psiFile);
+      classes = classList.toArray(PsiClass.EMPTY_ARRAY);
+      CodeInsightUtil.sortIdenticalShortNamedMembers(classes, myReference);
     }
-
-    PsiClass[] array = classList.toArray(PsiClass.EMPTY_ARRAY);
-    CodeInsightUtil.sortIdenticalShortNamedMembers(array, myReference);
-    return array;
+    return new CalcInfo(classes, extensionsAllowToChangeFileSilently, myInContent);
   }
 
   public static boolean qualifiedNameAllowsAutoImport(@NotNull PsiFile placeFile, @NotNull PsiClass aClass) {
@@ -231,11 +234,11 @@ public abstract class ImportClassFixBase<T extends PsiElement, R extends PsiRefe
     return false;
   }
 
-  private void filterByPackageName(@NotNull Collection<PsiClass> classList, @NotNull PsiFile file) {
+  private void filterByPackageName(@NotNull Collection<PsiClass> classList, @NotNull PsiFile psiFile) {
     String qualifiedName = getQualifiedName(myReferenceElement);
     String packageName = StringUtil.getPackageName(qualifiedName);
     if (!packageName.isEmpty() &&
-        file instanceof PsiJavaFile javaFile &&
+        psiFile instanceof PsiJavaFile javaFile &&
         !ImportUtils.createImplicitImportChecker(javaFile).isImplicitlyImported(qualifiedName, false)) {
       classList.removeIf(aClass -> {
         String classQualifiedName = aClass.getQualifiedName();
@@ -443,10 +446,10 @@ public abstract class ImportClassFixBase<T extends PsiElement, R extends PsiRefe
     if (isQualified(myReference)) {
       return false;
     }
-    PsiFile file = myReferenceElement.isValid() && myContainingPsiFile != null && myContainingPsiFile.isValid() ? myContainingPsiFile : null;
-    if (file == null) return false;
+    PsiFile psiFile = myReferenceElement.isValid() && myContainingPsiFile != null && myContainingPsiFile.isValid() ? myContainingPsiFile : null;
+    if (psiFile == null) return false;
 
-    Result result = doFix(editor, true, false, ShowAutoImportPass.mayAutoImportNow(file, myInContent, extensionsAllowToChangeFileSilently));
+    Result result = doFix(editor, true, false, ShowAutoImportPass.mayAutoImportNow(psiFile, myInContent, extensionsAllowToChangeFileSilently));
     return result == Result.POPUP_SHOWN || result == Result.CLASS_AUTO_IMPORTED;
   }
 
@@ -467,14 +470,14 @@ public abstract class ImportClassFixBase<T extends PsiElement, R extends PsiRefe
 
   protected abstract boolean hasUnresolvedImportWhichCanImport(@NotNull PsiFile psiFile, @NotNull String name);
 
-  private static void reduceSuggestedClassesBasedOnDependencyRuleViolation(@NotNull List<PsiClass> classes, @NotNull PsiFile file) {
-    Project project = file.getProject();
+  private static void reduceSuggestedClassesBasedOnDependencyRuleViolation(@NotNull List<PsiClass> classes, @NotNull PsiFile psiFile) {
+    Project project = psiFile.getProject();
     DependencyValidationManager validationManager = DependencyValidationManager.getInstance(project);
     for (int i = classes.size() - 1; i >= 0; i--) {
       PsiClass psiClass = classes.get(i);
       PsiFile targetFile = psiClass.getContainingFile();
       if (targetFile == null) continue;
-      DependencyRule[] violated = validationManager.getViolatorDependencyRules(file, targetFile);
+      DependencyRule[] violated = validationManager.getViolatorDependencyRules(psiFile, targetFile);
       // remove class with violated dependency except the only remaining
       if (violated.length != 0 && (i!=0 || classes.size()>1)) {
         classes.remove(i);
@@ -492,8 +495,8 @@ public abstract class ImportClassFixBase<T extends PsiElement, R extends PsiRefe
   }
 
   @Override
-  public void invoke(@NotNull Project project, Editor editor, PsiFile file) {
-    if (!FileModificationService.getInstance().prepareFileForWrite(file)) return;
+  public void invoke(@NotNull Project project, Editor editor, PsiFile psiFile) {
+    if (!FileModificationService.getInstance().prepareFileForWrite(psiFile)) return;
     ApplicationManager.getApplication().runWriteAction(() -> {
       if (!isStillAvailable()) return;
       PsiClass[] classes = getClassesToImport(true).toArray(PsiClass.EMPTY_ARRAY);

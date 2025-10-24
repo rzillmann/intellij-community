@@ -59,6 +59,11 @@ public abstract class NativeLinuxK2HighlightingMetaInfoTestGenerated extends Abs
         public void testMppIsNotEnabled() throws Exception {
             runTest("../../idea/tests/testData/highlighterMetaInfo/diagnostics/mppIsNotEnabled.kt");
         }
+
+        @TestMetadata("uselessCast.kt")
+        public void testUselessCast() throws Exception {
+            runTest("../../idea/tests/testData/highlighterMetaInfo/diagnostics/uselessCast.kt");
+        }
     }
 
     @RunWith(JUnit3RunnerWithInners.class)
@@ -138,11 +143,6 @@ public abstract class NativeLinuxK2HighlightingMetaInfoTestGenerated extends Abs
             KotlinTestUtils.runTest(this::doTest, this, testDataFilePath);
         }
 
-        @TestMetadata("script.kts")
-        public void testScript() throws Exception {
-            runTest("../../idea/tests/testData/highlighterMetaInfo/focusMode/script.kts");
-        }
-
         @TestMetadata("SimpleClass.kt")
         public void testSimpleClass() throws Exception {
             runTest("../../idea/tests/testData/highlighterMetaInfo/focusMode/SimpleClass.kt");
@@ -202,6 +202,11 @@ public abstract class NativeLinuxK2HighlightingMetaInfoTestGenerated extends Abs
             runTest("../../idea/tests/testData/highlighterMetaInfo/smartCasts/ImplicitAndExplicit_properties.kt");
         }
 
+        @TestMetadata("Implicit_intersection.kt")
+        public void testImplicit_intersection() throws Exception {
+            runTest("../../idea/tests/testData/highlighterMetaInfo/smartCasts/Implicit_intersection.kt");
+        }
+
         @TestMetadata("Implicit_stable.kt")
         public void testImplicit_stable() throws Exception {
             runTest("../../idea/tests/testData/highlighterMetaInfo/smartCasts/Implicit_stable.kt");
@@ -210,6 +215,21 @@ public abstract class NativeLinuxK2HighlightingMetaInfoTestGenerated extends Abs
         @TestMetadata("Invokes.kt")
         public void testInvokes() throws Exception {
             runTest("../../idea/tests/testData/highlighterMetaInfo/smartCasts/Invokes.kt");
+        }
+
+        @TestMetadata("kt77707.kt")
+        public void testKt77707() throws Exception {
+            runTest("../../idea/tests/testData/highlighterMetaInfo/smartCasts/kt77707.kt");
+        }
+
+        @TestMetadata("Redundant.kt")
+        public void testRedundant() throws Exception {
+            runTest("../../idea/tests/testData/highlighterMetaInfo/smartCasts/Redundant.kt");
+        }
+
+        @TestMetadata("RedundantWithExpectedType.kt")
+        public void testRedundantWithExpectedType() throws Exception {
+            runTest("../../idea/tests/testData/highlighterMetaInfo/smartCasts/RedundantWithExpectedType.kt");
         }
 
         @TestMetadata("Unstable_explicitReceiver.kt")
@@ -311,6 +331,21 @@ public abstract class NativeLinuxK2HighlightingMetaInfoTestGenerated extends Abs
             runTest("../../idea/tests/testData/highlighterMetaInfo/Labels.kt");
         }
 
+        @TestMetadata("mismatchPackageDirectory.kt")
+        public void testMismatchPackageDirectory() throws Exception {
+            runTest("../../idea/tests/testData/highlighterMetaInfo/mismatchPackageDirectory.kt");
+        }
+
+        @TestMetadata("mismatchPackageDirectoryFileLevelProblem.kt")
+        public void testMismatchPackageDirectoryFileLevelProblem() throws Exception {
+            runTest("../../idea/tests/testData/highlighterMetaInfo/mismatchPackageDirectoryFileLevelProblem.kt");
+        }
+
+        @TestMetadata("mismatchPackageDirectoryFileLevelProblemDeclarations.kt")
+        public void testMismatchPackageDirectoryFileLevelProblemDeclarations() throws Exception {
+            runTest("../../idea/tests/testData/highlighterMetaInfo/mismatchPackageDirectoryFileLevelProblemDeclarations.kt");
+        }
+
         @TestMetadata("NamedArguments.kt")
         public void testNamedArguments() throws Exception {
             runTest("../../idea/tests/testData/highlighterMetaInfo/NamedArguments.kt");
@@ -326,6 +361,11 @@ public abstract class NativeLinuxK2HighlightingMetaInfoTestGenerated extends Abs
             runTest("../../idea/tests/testData/highlighterMetaInfo/Object.kt");
         }
 
+        @TestMetadata("Parameters.kt")
+        public void testParameters() throws Exception {
+            runTest("../../idea/tests/testData/highlighterMetaInfo/Parameters.kt");
+        }
+
         @TestMetadata("PropertiesWithPropertyDeclarations.kt")
         public void testPropertiesWithPropertyDeclarations() throws Exception {
             runTest("../../idea/tests/testData/highlighterMetaInfo/PropertiesWithPropertyDeclarations.kt");
@@ -334,11 +374,6 @@ public abstract class NativeLinuxK2HighlightingMetaInfoTestGenerated extends Abs
         @TestMetadata("PropertiesWithPropertyDeclarationsInDumbMode.kt")
         public void testPropertiesWithPropertyDeclarationsInDumbMode() throws Exception {
             runTest("../../idea/tests/testData/highlighterMetaInfo/PropertiesWithPropertyDeclarationsInDumbMode.kt");
-        }
-
-        @TestMetadata("script.kts")
-        public void testScript() throws Exception {
-            runTest("../../idea/tests/testData/highlighterMetaInfo/script.kts");
         }
 
         @TestMetadata("Suspend.kt")

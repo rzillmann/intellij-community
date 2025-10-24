@@ -1,26 +1,27 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.java.refactoring.inline;
 
 import com.intellij.JavaTestUtil;
 import com.intellij.codeInsight.TargetElementUtil;
-import com.intellij.java.refactoring.LightRefactoringTestCase;
 import com.intellij.lang.refactoring.InlineActionHandler;
 import com.intellij.openapi.projectRoots.Sdk;
 import com.intellij.openapi.ui.TestDialog;
 import com.intellij.openapi.ui.TestDialogManager;
 import com.intellij.pom.java.LanguageLevel;
 import com.intellij.psi.*;
+import com.intellij.psi.codeStyle.JavaCodeStyleSettings;
 import com.intellij.refactoring.BaseRefactoringProcessor;
 import com.intellij.refactoring.inline.InlineMethodHandler;
 import com.intellij.refactoring.inline.InlineMethodProcessor;
 import com.intellij.refactoring.util.CommonRefactoringUtil;
 import com.intellij.refactoring.util.InlineUtil;
 import com.intellij.testFramework.IdeaTestUtil;
+import com.intellij.testFramework.LightJavaCodeInsightTestCase;
 import com.intellij.util.containers.ContainerUtil;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 
-public class InlineMethodTest extends LightRefactoringTestCase {
+public class InlineMethodTest extends LightJavaCodeInsightTestCase {
   @NotNull
   @Override
   protected String getTestDataPath() {
@@ -103,8 +104,10 @@ public class InlineMethodTest extends LightRefactoringTestCase {
   public void testChainingConstructor() { doTest(); }
 
   public void testChainingConstructor1() {
-    BaseRefactoringProcessor.ConflictsInTestsException.withIgnoredConflicts(()->doTest());
+    BaseRefactoringProcessor.ConflictsInTestsException.withIgnoredConflicts(() -> doTest());
   }
+  
+  public void testChainingVarargConstructor() { doTest(); }
 
   public void testNestedCall() { doTest(); }
 
@@ -197,6 +200,15 @@ public class InlineMethodTest extends LightRefactoringTestCase {
   public void testParamNameConflictsWithLocalVar() {
     doTest();
   }
+  
+  public void testVariablePrefixesSuffixes() {
+    JavaCodeStyleSettings settings = JavaCodeStyleSettings.getInstance(getProject());
+    settings.LOCAL_VARIABLE_NAME_PREFIX = "l_";
+    settings.LOCAL_VARIABLE_NAME_SUFFIX = "_v";
+    settings.PARAMETER_NAME_PREFIX = "p_";
+    settings.PARAMETER_NAME_SUFFIX = "_r";
+    doTest();
+  }
 
   public void testArrayTypeInferenceFromVarargs() {
     doTest();
@@ -267,8 +279,9 @@ public class InlineMethodTest extends LightRefactoringTestCase {
   }
 
   public void testInSuperCall() {
-    doTestConflict("Inline cannot be applied to multiline method in constructor call");
-    IdeaTestUtil.withLevel(getModule(), LanguageLevel.JDK_22_PREVIEW, () -> doTest());
+    IdeaTestUtil.withLevel(getModule(), LanguageLevel.JDK_21, () -> doTestConflict("Inline cannot be applied to multiline method in constructor call"));
+    IdeaTestUtil.withLevel(getModule(), LanguageLevel.JDK_22_PREVIEW, this::doTest);
+    IdeaTestUtil.withLevel(getModule(), LanguageLevel.JDK_25, this::doTest);
   }
 
   public void testMethodReferenceInsideMethodCall() {
@@ -394,7 +407,8 @@ public class InlineMethodTest extends LightRefactoringTestCase {
   }
 
   public void testUnableToInlineCodeBlockToSuper() {
-    doTestConflict("Inline cannot be applied to multiline method in constructor call");
+    IdeaTestUtil.withLevel(getModule(), LanguageLevel.JDK_21,
+                           () -> doTestConflict("Inline cannot be applied to multiline method in constructor call"));
   }
 
   public void testRedundantCastOnMethodReferenceToLambda() {
@@ -642,7 +656,16 @@ public class InlineMethodTest extends LightRefactoringTestCase {
     doTest();
   }
   
+  public void testInlineNullInForEach() {
+    doTest();
+  }
+  
   public void testAutomaticGetterSetterUse() {
+    TestDialogManager.setTestDialog(TestDialog.YES, getTestRootDisposable());
+    BaseRefactoringProcessor.ConflictsInTestsException.withIgnoredConflicts(() -> doTest());
+  }
+
+  public void testAutomaticGetterUsePreferRecordAccessor() {
     TestDialogManager.setTestDialog(TestDialog.YES, getTestRootDisposable());
     BaseRefactoringProcessor.ConflictsInTestsException.withIgnoredConflicts(() -> doTest());
   }
@@ -696,7 +719,7 @@ public class InlineMethodTest extends LightRefactoringTestCase {
 
   private void performAction(final boolean inlineThisOnly, final boolean nonCode) {
     final PsiReference ref = getFile().findReferenceAt(getEditor().getCaretModel().getOffset());
-    PsiReferenceExpression refExpr = ref instanceof PsiReferenceExpression ? (PsiReferenceExpression)ref : null;
+    PsiReferenceExpression refExpr = ref instanceof PsiReferenceExpression expression ? expression : null;
     PsiMethod method = findMethod();
     final boolean condition = InlineMethodProcessor.checkBadReturns(method) && !InlineUtil.allUsagesAreTailCalls(method);
     assertFalse("Bad returns found", condition);

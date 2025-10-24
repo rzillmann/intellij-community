@@ -2,12 +2,10 @@ import java.net.URI
 
 plugins {
     jewel
-    `jewel-publish`
     `jewel-check-public-api`
-    `ide-version-checker`
     alias(libs.plugins.composeDesktop)
     alias(libs.plugins.compose.compiler)
-    alias(libs.plugins.ideaPluginBase)
+    alias(libs.plugins.ideaPluginModule)
 }
 
 // Because we need to define IJP dependencies, the dependencyResolutionManagement
@@ -39,3 +37,5 @@ dependencies {
     testImplementation(compose.desktop.uiTestJUnit4)
     testImplementation(compose.desktop.currentOs) { exclude(group = "org.jetbrains.compose.material") }
 }
+
+sourceSets { test { kotlin { srcDirs("ide-laf-bridge-tests/src/test/kotlin") } } }

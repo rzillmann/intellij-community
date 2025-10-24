@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.openapi.roots.impl
 
 import com.intellij.configurationStore.BatchUpdateListener
@@ -14,7 +14,6 @@ import com.intellij.openapi.fileTypes.FileTypeEvent
 import com.intellij.openapi.fileTypes.FileTypeListener
 import com.intellij.openapi.fileTypes.FileTypeManager
 import com.intellij.openapi.module.ModuleManager
-import com.intellij.openapi.module.impl.ModuleEx
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.ProjectManager
 import com.intellij.openapi.project.ProjectManagerListener
@@ -35,6 +34,10 @@ import com.intellij.openapi.vfs.pointers.VirtualFilePointer
 import com.intellij.openapi.vfs.pointers.VirtualFilePointerListener
 import com.intellij.openapi.vfs.pointers.VirtualFilePointerManager
 import com.intellij.platform.backend.workspace.WorkspaceModel
+import com.intellij.platform.backend.workspace.WorkspaceModelChangeListener
+import com.intellij.platform.backend.workspace.WorkspaceModelTopics
+import com.intellij.platform.workspace.jps.entities.ProjectSettingsEntity
+import com.intellij.platform.workspace.storage.VersionedStorageChange
 import com.intellij.platform.workspace.storage.WorkspaceEntity
 import com.intellij.project.stateStore
 import com.intellij.util.concurrency.annotations.RequiresReadLock
@@ -43,7 +46,6 @@ import com.intellij.util.indexing.EntityIndexingService
 import com.intellij.util.indexing.ProjectEntityIndexingService
 import com.intellij.util.indexing.roots.WorkspaceIndexingRootsBuilder
 import com.intellij.workspaceModel.core.fileIndex.EntityStorageKind
-import com.intellij.workspaceModel.core.fileIndex.WorkspaceFileIndex
 import com.intellij.workspaceModel.core.fileIndex.WorkspaceFileIndexContributor
 import com.intellij.workspaceModel.core.fileIndex.impl.PlatformInternalWorkspaceFileIndexContributor
 import com.intellij.workspaceModel.core.fileIndex.impl.WorkspaceFileIndexEx
@@ -183,8 +185,15 @@ open class ProjectRootManagerComponent(
         }
       }
     }
-    AdditionalLibraryRootsProvider.EP_NAME.addChangeListener(rootsExtensionPointListener, this)
-    OrderEnumerationHandler.EP_NAME.addChangeListener(rootsExtensionPointListener, this)
+    AdditionalLibraryRootsProvider.EP_NAME.addChangeListener(coroutineScope, rootsExtensionPointListener)
+    OrderEnumerationHandler.EP_NAME.addChangeListener(coroutineScope, rootsExtensionPointListener)
+    connection.subscribe(WorkspaceModelTopics.CHANGED, object : WorkspaceModelChangeListener {
+      override fun changed(event: VersionedStorageChange) {
+        if (event.getChanges(ProjectSettingsEntity::class.java).isNotEmpty()) {
+          projectJdkChanged()
+        }
+      }
+    })
   }
 
   protected open fun projectClosed() {
@@ -240,7 +249,7 @@ open class ProjectRootManagerComponent(
     try {
       @Suppress("UsagesOfObsoleteApi")
       (DirectoryIndex.getInstance(project) as? DirectoryIndexImpl)?.reset()
-      (WorkspaceFileIndex.getInstance(project) as WorkspaceFileIndexEx).indexData.resetCustomContributors()
+      WorkspaceFileIndexEx.getInstance(project).indexData.resetCustomContributors()
       project.messageBus.syncPublisher(ModuleRootListener.TOPIC).beforeRootsChange(ModuleRootEventImpl(project, fileTypes))
     }
     finally {
@@ -253,7 +262,7 @@ open class ProjectRootManagerComponent(
     try {
       @Suppress("UsagesOfObsoleteApi")
       (DirectoryIndex.getInstance(project) as? DirectoryIndexImpl)?.reset()
-      (WorkspaceFileIndex.getInstance(project) as WorkspaceFileIndexEx).indexData.resetCustomContributors()
+      WorkspaceFileIndexEx.getInstance(project).indexData.resetCustomContributors()
 
       val isFromWorkspaceOnly = EntityIndexingService.getInstance().isFromWorkspaceOnly(indexingInfos)
       project.messageBus.syncPublisher(ModuleRootListener.TOPIC)
@@ -276,8 +285,8 @@ open class ProjectRootManagerComponent(
     val projectFilePath = store.projectFilePath
     val directoryStorePath = store.directoryStorePath
     if (directoryStorePath == null || !projectFilePath.startsWith(directoryStorePath)) {
-      flatPaths += projectFilePath.invariantSeparatorsPathString
-      flatPaths += store.workspacePath.invariantSeparatorsPathString
+      flatPaths.add(projectFilePath.invariantSeparatorsPathString)
+      flatPaths.add(store.workspacePath.invariantSeparatorsPathString)
       WATCH_ROOTS_LOG.trace { "  project store: ${flatPaths}" }
     }
 
@@ -315,7 +324,7 @@ open class ProjectRootManagerComponent(
     }
 
     // module roots already fire validity change events, see usages of ProjectRootManagerComponent.getRootsValidityChangedListener
-    collectModuleWatchRoots(recursivePaths, flatPaths, true)
+    collectModuleWatchRoots(recursivePaths = recursivePaths, flatPaths = flatPaths, logAllowed = true)
 
     collectCustomWorkspaceWatchRoots(recursivePaths)
 
@@ -336,14 +345,17 @@ open class ProjectRootManagerComponent(
       }
 
       if (logRoots) {
-        WATCH_ROOTS_LOG.trace { "    ${logDescriptor()}: ${recursive}, ${flat}" }
+        WATCH_ROOTS_LOG.trace { "    ${logDescriptor()}: $recursive, $flat" }
         recursivePaths += recursive
-        flatPaths += flat
+        flatPaths.addAll(flat)
       }
     }
 
     for (module in ModuleManager.getInstance(project).modules) {
-      if (logRoots) WATCH_ROOTS_LOG.trace { "  module ${module}" }
+      if (logRoots) {
+        WATCH_ROOTS_LOG.trace { "  module ${module}" }
+      }
+
       val rootManager = ModuleRootManager.getInstance(module)
       collectUrls(rootManager.contentRootUrls) { "content" }
       rootManager.orderEntries().withoutModuleSourceEntries().withoutDepModules().forEach { entry ->
@@ -385,6 +397,9 @@ open class ProjectRootManagerComponent(
       register(roots.nonRecursiveRoots, "non-recursive external roots")
       register(roots.nonRecursiveSourceRoots, "non-recursive external source roots")
     }
+    builder.forEachNonIndexableRoots { roots ->
+      register(roots, "non-indexable roots")
+    }
   }
 
   override fun clearScopesCaches() {
@@ -397,7 +412,7 @@ open class ProjectRootManagerComponent(
     super.clearScopesCachesForModules()
 
     for (module in ModuleManager.getInstance(project).modules) {
-      (module as ModuleEx).clearScopesCache()
+      module.clearScopesCache()
     }
   }
 

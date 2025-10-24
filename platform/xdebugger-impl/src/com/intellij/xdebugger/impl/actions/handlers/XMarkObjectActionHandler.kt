@@ -1,17 +1,18 @@
 // Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.xdebugger.impl.actions.handlers
 
+import com.intellij.ide.ui.colors.rpcId
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.PlatformCoreDataKeys
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.project.Project
+import com.intellij.platform.debugger.impl.rpc.XDebuggerValueMarkupApi
+import com.intellij.platform.debugger.impl.rpc.XValueMarkerDto
 import com.intellij.ui.ComponentUtil
 import com.intellij.xdebugger.impl.actions.MarkObjectActionHandler
+import com.intellij.xdebugger.impl.frame.XDebugManagerProxy
 import com.intellij.xdebugger.impl.frame.XDebugSessionProxy
 import com.intellij.xdebugger.impl.frame.XValueMarkers
-import com.intellij.xdebugger.impl.rpc.XDebuggerValueMarkupApi
-import com.intellij.xdebugger.impl.rpc.XValueMarkerDto
-import com.intellij.xdebugger.impl.rpc.withId
 import com.intellij.xdebugger.impl.ui.DebuggerUIUtil
 import com.intellij.xdebugger.impl.ui.tree.ValueMarkerPresentationDialog
 import com.intellij.xdebugger.impl.ui.tree.XDebuggerTreeState
@@ -49,7 +50,7 @@ internal class XMarkObjectActionHandler : MarkObjectActionHandler() {
     if (markers == null) return false
 
     val value = XDebuggerTreeActionBase.getSelectedValue(event.dataContext)
-    return value != null && markers.canMarkValue(value)
+    return value != null && markers.canMarkValue(value) && XDebugManagerProxy.getInstance().hasBackendCounterpart(value)
   }
 
   override fun isMarked(project: Project, event: AnActionEvent): Boolean {
@@ -80,7 +81,7 @@ private suspend fun performMarkObject(
 
   val existing = markers.getMarkup(value)
   if (existing != null) {
-    withId(value, proxy) { xValueId ->
+    XDebugManagerProxy.getInstance().withId(value, proxy) { xValueId ->
       XDebuggerValueMarkupApi.getInstance().unmarkValue(xValueId)
     }
   }
@@ -96,8 +97,8 @@ private suspend fun performMarkObject(
     if (!dialog.isOK || markup == null) {
       return false
     }
-    withId(value, proxy) { xValueId ->
-      val marker = XValueMarkerDto(markup.text, markup.color, markup.toolTipText)
+    XDebugManagerProxy.getInstance().withId(value, proxy) { xValueId ->
+      val marker = XValueMarkerDto(markup.text, markup.color.rpcId(), markup.toolTipText)
       XDebuggerValueMarkupApi.getInstance().markValue(xValueId, marker)
     }
   }

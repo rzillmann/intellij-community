@@ -40,7 +40,10 @@ import com.intellij.util.*;
 import com.intellij.util.indexing.IndexingDataKeys;
 import com.intellij.util.text.CharArrayUtil;
 import com.intellij.util.text.CharSequenceSubSequence;
-import org.jetbrains.annotations.*;
+import org.jetbrains.annotations.ApiStatus;
+import org.jetbrains.annotations.NonNls;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
 import java.util.*;
@@ -301,7 +304,7 @@ public abstract class PsiFileImpl extends ElementBase implements PsiFileEx, PsiF
 
     if (contentLeaf instanceof FileElement) {
       treeElement = (FileElement)contentLeaf;
-      if (getUserData(IndexingDataKeys.VIRTUAL_FILE) != null) {
+      if (isIndexingFileCopy()) {
         treeElement.setCharTable(NON_INTERNING_CHAR_TABLE);
       }
     }
@@ -333,10 +336,7 @@ public abstract class PsiFileImpl extends ElementBase implements PsiFileEx, PsiF
     }
     String string = getViewProvider().getContents().toString();
     if (tree != null && string.length() != tree.getTextLength()) {
-      throw new AssertionError("File text mismatch: tree.length=" + tree.getTextLength() +
-                               "; psi.length=" + string.length() +
-                               "; this=" + this +
-                               "; vp=" + getViewProvider());
+      PsiConsistencyAssertions.assertNoFileTextMismatch(this, getFileDocument(), string);
     }
     return string;
   }
@@ -1146,5 +1146,10 @@ public abstract class PsiFileImpl extends ElementBase implements PsiFileEx, PsiF
         !(myViewProvider instanceof FreeThreadedFileViewProvider)) {
       CheckUtil.checkWritable(this);
     }
+  }
+
+  @ApiStatus.Internal
+  public boolean isIndexingFileCopy() {
+    return getUserData(IndexingDataKeys.VIRTUAL_FILE) != null;
   }
 }

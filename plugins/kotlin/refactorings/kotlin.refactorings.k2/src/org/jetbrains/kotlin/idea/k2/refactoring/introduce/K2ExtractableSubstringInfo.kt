@@ -3,6 +3,9 @@ package org.jetbrains.kotlin.idea.k2.refactoring.introduce
 
 import org.jetbrains.kotlin.analysis.api.KaSession
 import org.jetbrains.kotlin.analysis.api.analyze
+import org.jetbrains.kotlin.analysis.api.components.DefaultTypeClassIds
+import org.jetbrains.kotlin.analysis.api.components.builtinTypes
+import org.jetbrains.kotlin.analysis.api.types.KaClassType
 import org.jetbrains.kotlin.analysis.api.types.KaType
 import org.jetbrains.kotlin.idea.refactoring.introduce.ExtractableSubstringInfo
 import org.jetbrains.kotlin.psi.KtLiteralStringTemplateEntry
@@ -20,7 +23,7 @@ class K2ExtractableSubstringInfo(
     isStr: Boolean? = null
 ) : ExtractableSubstringInfo(startEntry, endEntry, prefix, suffix) {
 
-    context(KaSession)
+    context(_: KaSession)
     fun guessLiteralType(): KaType {
         val stringType = builtinTypes.string
 
@@ -34,11 +37,21 @@ class K2ExtractableSubstringInfo(
 
         val expr = factory.createExpressionCodeFragment(content, startEntry).getContentElement() ?: return stringType
 
-        val value = expr.evaluate()
+        val selectedConstantId = analyze(expr) {
+            (expr.takeIf { expr.evaluate() != null }?.expressionType as? KaClassType)?.classId
+        }
 
-        if (value == null) return stringType
-
-        return expr.expressionType ?: stringType
+        return when (selectedConstantId) {
+            DefaultTypeClassIds.INT -> builtinTypes.int
+            DefaultTypeClassIds.BOOLEAN -> builtinTypes.boolean
+            DefaultTypeClassIds.BYTE -> builtinTypes.byte
+            DefaultTypeClassIds.CHAR -> builtinTypes.char
+            DefaultTypeClassIds.SHORT -> builtinTypes.short
+            DefaultTypeClassIds.LONG -> builtinTypes.long
+            DefaultTypeClassIds.FLOAT -> builtinTypes.float
+            DefaultTypeClassIds.DOUBLE -> builtinTypes.double
+            else -> stringType
+        }
     }
 
     override val isString: Boolean = isStr ?: analyze(startEntry) { guessLiteralType().isStringType }

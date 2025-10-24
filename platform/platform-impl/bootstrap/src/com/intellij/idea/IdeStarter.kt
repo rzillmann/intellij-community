@@ -1,4 +1,6 @@
 // Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+@file:Suppress("ReplaceGetOrSet")
+
 package com.intellij.idea
 
 import com.intellij.accessibility.enableScreenReaderSupportIfNeeded
@@ -34,6 +36,7 @@ import com.intellij.openapi.util.registry.RegistryManager
 import com.intellij.openapi.util.registry.migrateRegistryToAdvSettings
 import com.intellij.openapi.util.text.HtmlBuilder
 import com.intellij.openapi.util.text.HtmlChunk
+import com.intellij.openapi.wm.ex.findNoProjectStateHandler
 import com.intellij.openapi.wm.impl.welcomeScreen.WelcomeFrame
 import com.intellij.platform.diagnostic.telemetry.impl.span
 import com.intellij.platform.ide.CoreUiCoroutineScopeHolder
@@ -44,12 +47,11 @@ import com.intellij.util.io.URLUtil.SCHEME_SEPARATOR
 import kotlinx.coroutines.*
 import org.jetbrains.annotations.ApiStatus
 import java.nio.file.Path
-import java.util.*
 import javax.swing.JOptionPane
 
 open class IdeStarter : ModernApplicationStarter() {
   companion object {
-    private var filesToLoad: List<Path> = Collections.emptyList()
+    private var filesToLoad: List<Path> = emptyList()
     private var uriToOpen: String? = null
 
     fun openFilesOnLoading(value: List<Path>) {
@@ -81,20 +83,20 @@ open class IdeStarter : ModernApplicationStarter() {
       val lifecyclePublisher = app.messageBus.syncPublisher(AppLifecycleListener.TOPIC)
 
       val openProjectBlock: suspend CoroutineScope.() -> Unit = {
-        openProjectIfNeeded(args = args, app = app, cs = this, publisher = lifecyclePublisher)
-        // update "open projects" state to whichever projects were decided to be opened in openProjectIfNeeded (=which are open now)
+        openProjectIfNeeded(args = args, app = app, coroutineScope = this, publisher = lifecyclePublisher)
+        // update an "open projects" state to whichever projects were decided to be opened in openProjectIfNeeded (=which are open now)
         serviceAsync<RecentProjectsManager>().updateLastProjectPath()
       }
 
       val starter = FUSProjectHotStartUpMeasurer.getStartUpContextElementIntoIdeStarter(close = isHeadless || !shouldRunFusStartUpMeasurer())
-      if (starter != null) {
+      if (starter == null) {
+        openProjectBlock()
+      }
+      else {
         if ((app as ApplicationEx).isLightEditMode) {
           FUSProjectHotStartUpMeasurer.lightEditProjectFound()
         }
         withContext(starter, openProjectBlock)
-      }
-      else {
-        openProjectBlock()
       }
 
       app.serviceAsync<PerformanceWatcher>()
@@ -113,12 +115,17 @@ open class IdeStarter : ModernApplicationStarter() {
       }.getOrLogException(thisLogger())
 
       if (!app.isHeadlessEnvironment) {
-        postOpenUiTasks()
+        postOpenUiTasks(scope = this)
       }
     }
   }
 
-  protected open suspend fun openProjectIfNeeded(args: List<String>, app: Application, cs: CoroutineScope, publisher: AppLifecycleListener) {
+  protected open suspend fun openProjectIfNeeded(
+    args: List<String>,
+    app: Application,
+    coroutineScope: CoroutineScope,
+    publisher: AppLifecycleListener,
+  ) {
     var willReopenRecentProjectOnStart = false
     lateinit var recentProjectManager: RecentProjectsManager
     val isOpenProjectNeeded = span("isOpenProjectNeeded") {
@@ -134,7 +141,7 @@ open class IdeStarter : ModernApplicationStarter() {
         return@span false
       }
 
-      cs.launch {
+      coroutineScope.launch {
         LifecycleUsageTriggerCollector.onIdeStart()
       }
 
@@ -147,7 +154,18 @@ open class IdeStarter : ModernApplicationStarter() {
       recentProjectManager = serviceAsync<RecentProjectsManager>()
       willReopenRecentProjectOnStart = recentProjectManager.willReopenProjectOnStart()
       val willOpenProject = willReopenRecentProjectOnStart || !args.isEmpty() || !filesToLoad.isEmpty()
-      willOpenProject || showWelcomeFrame(publisher)
+      if (willOpenProject) {
+        return@span true
+      }
+
+      val customHandler = findNoProjectStateHandler()
+      if (customHandler == null) {
+        return@span showWelcomeFrame(publisher)
+      }
+      else {
+        customHandler()
+        return@span false
+      }
     }
 
     if (!isOpenProjectNeeded) {
@@ -222,7 +240,12 @@ open class IdeStarter : ModernApplicationStarter() {
   }
 
   internal class StandaloneLightEditStarter : IdeStarter() {
-    override suspend fun openProjectIfNeeded(args: List<String>, app: Application, cs: CoroutineScope, publisher: AppLifecycleListener) {
+    override suspend fun openProjectIfNeeded(
+      args: List<String>,
+      app: Application,
+      coroutineScope: CoroutineScope,
+      publisher: AppLifecycleListener,
+    ) {
       val project = when {
         filesToLoad.isNotEmpty() -> ProjectUtil.openOrImportFilesAsync(list = filesToLoad, location = "MacMenu")
         args.isNotEmpty() -> loadProjectFromExternalCommandLine(args)
@@ -236,15 +259,13 @@ open class IdeStarter : ModernApplicationStarter() {
       val recentProjectManager = serviceAsync<RecentProjectsManager>()
       val isOpened = (if (recentProjectManager.willReopenProjectOnStart()) recentProjectManager.reopenLastProjectsOnStart() else true)
       if (!isOpened) {
-        cs.launch(Dispatchers.EDT) {
-          LightEditService.getInstance().showEditorWindow()
+        coroutineScope.launch(Dispatchers.EDT) {
+          serviceAsync<LightEditService>().showEditorWindow()
         }
       }
     }
 
-    override fun shouldRunFusStartUpMeasurer(): Boolean {
-      return javaClass == StandaloneLightEditStarter::class.java
-    }
+    override fun shouldRunFusStartUpMeasurer(): Boolean = javaClass == StandaloneLightEditStarter::class.java
   }
 }
 
@@ -262,39 +283,40 @@ private suspend fun loadProjectFromExternalCommandLine(commandLineArgs: List<Str
   return result.project
 }
 
-private fun CoroutineScope.postOpenUiTasks() {
+private fun postOpenUiTasks(scope: CoroutineScope) {
   if (PluginManagerCore.isRunningFromSources()) {
     updateAppWindowIcon(JOptionPane.getRootFrame())
   }
 
   if (SystemInfoRt.isMac) {
-    launch(CoroutineName("mac touchbar on app init")) {
+    @Suppress("GrazieInspection")
+    scope.launch(CoroutineName("mac touchbar on app init")) {
       TouchbarSupport.onApplicationLoaded()
     }
   }
-  else if (SystemInfoRt.isUnix && !SystemInfoRt.isMac && SystemInfo.isJetBrainsJvm) {
-    launch(CoroutineName("input method disabling on Linux")) {
+  else if (SystemInfoRt.isUnix && SystemInfo.isJetBrainsJvm) {
+    scope.launch(CoroutineName("input method disabling on Linux")) {
       disableInputMethodsIfPossible()
     }
   }
 
-  launch {
+  scope.launch {
     migrateRegistryToAdvSettings()
   }
 
-  launch {
+  scope.launch {
     SystemHealthMonitor.start()
   }
 
-  launch {
+  scope.launch {
     FUSProjectHotStartUpMeasurer.startWritingStatistics()
   }
 
-  launch {
+  scope.launch {
     serviceAsync<IconDbMaintainer>()
   }
 
-  launch {
+  scope.launch {
     enableScreenReaderSupportIfNeeded()
   }
 }
@@ -307,12 +329,12 @@ private suspend fun reportPluginErrors() {
 
   withContext(Dispatchers.EDT + ModalityState.nonModal().asContextElement()) {
     val title = IdeBundle.message("title.plugin.error")
-    val pluginErrorMessages = pluginErrors.map { it.get() }.toMutableList()
+    val pluginErrorMessages = pluginErrors.map { it.htmlMessage }.toMutableList()
     val actions = linksToActions(pluginErrorMessages)
     val content = HtmlBuilder().appendWithSeparators(HtmlChunk.p(), pluginErrorMessages).toString()
     @Suppress("DEPRECATION")
-    NotificationGroupManager.getInstance().getNotificationGroup(
-      "Plugin Error").createNotification(title, content, NotificationType.ERROR)
+    serviceAsync<NotificationGroupManager>().getNotificationGroup("Plugin Error")
+      .createNotification(title, content, NotificationType.ERROR)
       .setListener { notification, event ->
         notification.expire()
         PluginManagerMain.onEvent(event.description)
@@ -328,7 +350,7 @@ private fun linksToActions(errors: MutableList<HtmlChunk>): Collection<AnAction>
 
   while (!errors.isEmpty()) {
     val builder = StringBuilder()
-    errors[errors.lastIndex].appendTo(builder)
+    errors.get(errors.lastIndex).appendTo(builder)
     val error = builder.toString()
 
     if (error.startsWith(link)) {

@@ -21,14 +21,12 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.diagnostic.debug
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.fileTypes.FileType
+import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.text.Strings
-import com.intellij.openapi.vfs.VfsUtilCore
-import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.PsiFile
 import com.intellij.psi.codeStyle.CodeStyleConstraints
 import com.intellij.psi.codeStyle.CodeStyleSettings
-import com.intellij.psi.codeStyle.CodeStyleSettingsManager
 import com.intellij.psi.codeStyle.LanguageCodeStyleSettingsProvider
 import com.intellij.psi.codeStyle.modifier.CodeStyleSettingsModifier
 import com.intellij.psi.codeStyle.modifier.CodeStyleStatusBarUIContributor
@@ -37,7 +35,7 @@ import kotlinx.coroutines.TimeoutCancellationException
 import org.ec4j.core.ResourceProperties
 import org.editorconfig.EditorConfigNotifier
 import org.editorconfig.Utils
-import org.editorconfig.configmanagement.EditorConfigNavigationActionsFactory
+import org.editorconfig.configmanagement.EditorConfigActionUtil
 import org.editorconfig.configmanagement.EditorConfigUsagesCollector.logEditorConfigUsed
 import org.editorconfig.plugincomponents.EditorConfigPropertiesService
 import org.editorconfig.settings.EditorConfigSettings
@@ -53,49 +51,63 @@ class EditorConfigCodeStyleSettingsModifier : CodeStyleSettingsModifier {
   private val reportedErrorIds: MutableSet<String> = HashSet()
 
   override fun modifySettings(settings: TransientCodeStyleSettings, psiFile: PsiFile): Boolean {
-    val file = psiFile.virtualFile
-    if (!Utils.isFullIntellijSettingsSupport() ||
-        file == null ||
-        (!Handler.isEnabledInTests() && ApplicationManager.getApplication().isUnitTestMode)) {
+    // nether called
+    return false
+  }
+
+  private fun isAcceptable(psiFile: PsiFile): Boolean {
+    return Utils.isFullIntellijSettingsSupport()
+           && psiFile.virtualFile != null
+           && (Handler.isEnabledInTests() || !ApplicationManager.getApplication().isUnitTestMode)
+           && !psiFile.project.isDisposed
+  }
+
+  override fun modifySettingsAndUiCustomization(settings: TransientCodeStyleSettings, psiFile: PsiFile): Boolean {
+    if (!isAcceptable(psiFile)) {
       return false
     }
 
     val project = psiFile.project
-    if (project.isDisposed || !Utils.isEnabled(settings)) {
-      return false
-    }
+    val (properties, editorConfigs) = Utils.processEditorConfig(project, psiFile.virtualFile) // caching `editorConfigs` for the psiFile  
 
-    return doModifySettings(psiFile, settings, project)
-  }
+    if (Utils.isEnabled(settings)) {
+      try {
+        // Get editorconfig settings
+        if (editorConfigs.isEmpty()) {
+          LOG.debug { "Project has no any `.editorconfig` for ${psiFile.name}" }
+          return false
+        }
 
-  private fun doModifySettings(psiFile: PsiFile, settings: TransientCodeStyleSettings, project: Project): Boolean {
-    try {
-      // Get editorconfig settings
-      val (properties, editorConfigs) = processEditorConfig(project, psiFile)
-      // Apply editorconfig settings for the current editor
-      if (applyCodeStyleSettings(settings, properties, psiFile)) {
-        settings.addDependencies(editorConfigs)
-        val navigationFactory = EditorConfigNavigationActionsFactory.getInstance(psiFile)
-        navigationFactory?.updateEditorConfigFilePaths(editorConfigs.map { it.path })
-        LOG.debug { "Modified for ${psiFile.name}" }
-        return true
+        settings.setModifier(this)
+        settings.addDependency(EditorConfigPropertiesService.getInstance(project))
+
+        // Apply editorconfig settings for the current editor
+        if (applyCodeStyleSettings(settings, properties, psiFile)) {
+          LOG.debug { "Modified for ${psiFile.name}" }
+          return true
+        }
+        else {
+          LOG.debug { "No changes for ${psiFile.name}" }
+          return false
+        }
       }
-      else {
-        LOG.debug { "No changes for ${psiFile.name}" }
-        return false
+      catch (e: TimeoutCancellationException) {
+        LOG.warn(e)
+        if (!ApplicationManager.getApplication().isHeadlessEnvironment) {
+          error(project, "timeout",
+                message("error.timeout"),
+                DumbAwareAction.create(message("action.disable")) {
+                  EditorConfigActionUtil.setEditorConfigEnabled(project, false)
+                },
+                true)
+        }
       }
-    }
-    catch (e: TimeoutCancellationException) {
-      LOG.warn(e)
-      if (!ApplicationManager.getApplication().isHeadlessEnvironment) {
-        error(project, "timeout", message("error.timeout"), DisableEditorConfigAction(project), true)
+      catch (e: CancellationException) {
+        throw e
       }
-    }
-    catch (e: CancellationException) {
-      throw e
-    }
-    catch (e: Exception) {
-      LOG.error(e)
+      catch (e: Exception) {
+        LOG.error(e)
+      }
     }
     return false
   }
@@ -123,15 +135,6 @@ class EditorConfigCodeStyleSettingsModifier : CodeStyleSettingsModifier {
       )
     }
     Notifications.Bus.notify(notification, project)
-  }
-
-  private class DisableEditorConfigAction(private val myProject: Project) : AnAction(message("action.disable")) {
-    override fun actionPerformed(e: AnActionEvent) {
-      CodeStyle.getSettings(myProject).getCustomSettings(EditorConfigSettings::class.java).apply {
-        ENABLED = false
-      }
-      CodeStyleSettingsManager.getInstance(myProject).notifyCodeStyleSettingsChanged()
-    }
   }
 
   override fun getStatusBarUiContributor(transientSettings: TransientCodeStyleSettings): CodeStyleStatusBarUIContributor {
@@ -346,17 +349,4 @@ private fun applyCodeStyleSettings(settings: TransientCodeStyleSettings, propert
     logEditorConfigUsed(file, properties)
   }
   return isModified
-}
-
-private fun processEditorConfig(project: Project, psiFile: PsiFile): Pair<ResourceProperties, List<VirtualFile>> {
-  val file = psiFile.virtualFile
-  val filePath = Utils.getFilePath(project, file)
-  if (filePath != null) {
-    return EditorConfigPropertiesService.getInstance(project).getPropertiesAndEditorConfigs(file)
-  }
-  else if (VfsUtilCore.isBrokenLink(file)) {
-    LOG.warn("${file.presentableUrl} is a broken link")
-  }
-  LOG.debug { "null filepath for ${psiFile.name}" }
-  return Pair(ResourceProperties.Builder().build(), emptyList())
 }

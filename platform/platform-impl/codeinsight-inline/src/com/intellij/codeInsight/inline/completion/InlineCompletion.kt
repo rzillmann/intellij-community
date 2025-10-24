@@ -2,11 +2,15 @@
 package com.intellij.codeInsight.inline.completion
 
 import com.intellij.codeInsight.inline.completion.listeners.InlineCompletionFocusListener
+import com.intellij.codeInsight.inline.completion.listeners.InlineCompletionSelectionListener
 import com.intellij.codeInsight.inline.completion.listeners.InlineEditorMouseListener
 import com.intellij.codeInsight.inline.completion.listeners.typing.InlineCompletionDocumentListener
+import com.intellij.codeInsight.inline.completion.listeners.typing.InlineCompletionTypingSessionTracker
 import com.intellij.codeInsight.inline.completion.logs.InlineCompletionUsageTracker.ShownEvents.FinishType
 import com.intellij.codeInsight.inline.completion.logs.TypingSpeedTracker
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.diagnostic.logger
+import com.intellij.openapi.diagnostic.trace
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.ex.EditorEx
 import com.intellij.openapi.editor.ex.util.EditorUtil
@@ -16,7 +20,6 @@ import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.Key
 import com.intellij.platform.util.coroutines.childScope
 import com.intellij.util.application
-import fleet.util.logging.logger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.cancel
 import java.util.concurrent.atomic.AtomicReference
@@ -63,8 +66,14 @@ object InlineCompletion {
     editor.addEditorMouseListener(InlineEditorMouseListener(), disposable)
     editor.addFocusListener(InlineCompletionFocusListener(), disposable)
     editor.contentComponent.addKeyListener(disposable, TypingSpeedTracker.KeyListener())
+    editor.selectionModel.addSelectionListener(InlineCompletionSelectionListener(), disposable)
+    editor.caretModel.addCaretListener(InlineCompletionTypingSessionTracker.TypingSessionCaretListener(), disposable)
 
     application.messageBus.syncPublisher(InlineCompletionInstallListener.TOPIC).handlerInstalled(editor, handler)
+
+    disposable.whenDisposed {
+      workingScope.cancel()
+    }
 
     LOG.trace { "[Inline Completion] Handler is installed for $editor." }
   }

@@ -1,5 +1,4 @@
 // Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
-
 package com.intellij.diagnostic.logging;
 
 import com.intellij.execution.ExecutionBundle;
@@ -19,6 +18,7 @@ import com.intellij.openapi.actionSystem.*;
 import com.intellij.openapi.actionSystem.ex.CustomComponentAction;
 import com.intellij.openapi.actionSystem.impl.ActionButton;
 import com.intellij.openapi.application.ApplicationManager;
+import com.intellij.openapi.application.ModalityState;
 import com.intellij.openapi.application.WriteIntentReadAction;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.editor.Document;
@@ -43,14 +43,13 @@ import com.intellij.ui.components.panels.FlowLayoutWrapper;
 import com.intellij.ui.components.panels.HorizontalLayout;
 import com.intellij.ui.components.panels.NonOpaquePanel;
 import com.intellij.util.Alarm;
-import com.intellij.util.ArrayUtilRt;
 import com.intellij.util.containers.ContainerUtil;
+import com.intellij.util.ui.EDT;
 import com.intellij.util.ui.JBEmptyBorder;
+import com.intellij.util.ui.UIUtil;
 import com.intellij.util.ui.accessibility.AccessibleContextUtil;
 import com.intellij.util.ui.accessibility.ScreenReader;
-import org.jetbrains.annotations.CalledInAny;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.*;
 
 import javax.swing.*;
 import java.awt.*;
@@ -62,6 +61,7 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.Reader;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.function.BiConsumer;
 
@@ -76,7 +76,8 @@ public abstract class LogConsoleBase extends AdditionalTabComponent implements L
   private ConsoleView myConsole;
   private final LightProcessHandler myProcessHandler = new LightProcessHandler();
   private ReaderThread myReaderThread;
-  private StringBuffer myOriginalDocument = null;
+  private final LinkedList<String> myLogLines = new LinkedList<>();
+  private int myCurrentLogLength = 0;
   private String myLineUnderSelection = null;
   private int myLineOffset = -1;
   private final Project myProject;
@@ -129,6 +130,8 @@ public abstract class LogConsoleBase extends AdditionalTabComponent implements L
     TextConsoleBuilder builder = TextConsoleBuilderFactory.getInstance().createBuilder(project, scope);
     builder.setViewer(true);
     myConsole = builder.getConsole();
+    // remove the left border from console view
+    UIUtil.removeScrollBorder(myConsole.getComponent());
     myConsole.attachToProcess(myProcessHandler);
     myDisposed = false;
     myModel.addFilterListener(this);
@@ -377,7 +380,6 @@ public abstract class LogConsoleBase extends AdditionalTabComponent implements L
     myConsole = null;
     myFilter.dispose();
     myFilter = null;
-    myOriginalDocument = null;
   }
 
   private void stopRunning(boolean checkActive) {
@@ -427,10 +429,30 @@ public abstract class LogConsoleBase extends AdditionalTabComponent implements L
         myProcessHandler.notifyTextAvailable(formattedMessage + "\n", key);
       }
     }
-    myOriginalDocument = getOriginalDocument();
-    if (myOriginalDocument != null) {
-      myOriginalDocument.append(text).append("\n");
+
+    if (myLogLines.isEmpty() && getEditor() != null) {
+      myLogLines.add(getEditor().getDocument().getText());
+      myCurrentLogLength = myLogLines.getFirst().length();
     }
+
+    if (ConsoleBuffer.useCycleBuffer()) {
+      if (text.length() > ConsoleBuffer.getCycleBufferSize()) {
+        final String cutText = text.substring(text.length() - ConsoleBuffer.getCycleBufferSize());
+        myLogLines.clear();
+        myLogLines.add(cutText);
+        myCurrentLogLength = cutText.length();
+
+        return;
+      }
+      else {
+        while (myCurrentLogLength + text.length() > ConsoleBuffer.getCycleBufferSize() && !myLogLines.isEmpty()) {
+          myCurrentLogLength -= myLogLines.removeFirst().length();
+        }
+      }
+    }
+
+    myLogLines.add(text);
+    myCurrentLogLength += text.length();
   }
 
   public void attachStopLogConsoleTrackingListener(final ProcessHandler process) {
@@ -439,43 +461,27 @@ public abstract class LogConsoleBase extends AdditionalTabComponent implements L
         @Override
         public void processTerminated(final @NotNull ProcessEvent event) {
           process.removeProcessListener(this);
-          WriteIntentReadAction.run((Runnable)() ->stopRunning(true));
+          if (EDT.isCurrentThreadEdt()) {
+            WriteIntentReadAction.run((Runnable)() -> stopRunning(true));
+          }
+          else {
+            ApplicationManager.getApplication().invokeAndWait(() -> {
+              stopRunning(true);
+            }, ModalityState.any());
+          }
         }
       };
       process.addProcessListener(stopListener);
     }
   }
 
+  /**
+   * @deprecated No longer necessary for buffering, preserved for API compatibility.
+   */
   @CalledInAny
+  @Deprecated
   public @Nullable StringBuffer getOriginalDocument() {
-    if (myOriginalDocument == null) {
-      Editor editor = getEditor();
-      if (editor != null) {
-        myOriginalDocument = new StringBuffer(editor.getDocument().getText());
-      }
-    }
-    else {
-      if (ConsoleBuffer.useCycleBuffer()) {
-        resizeBuffer(myOriginalDocument, ConsoleBuffer.getCycleBufferSize());
-      }
-    }
-    return myOriginalDocument;
-  }
-
-  static void resizeBuffer(@NotNull StringBuffer buffer, int size) {
-    final int toRemove = buffer.length() - size;
-    if (toRemove > 0) {
-
-      int indexOfNewline = buffer.indexOf("\n", toRemove);
-
-      if (indexOfNewline == -1) {
-        buffer.delete(0, toRemove);
-      }
-      else {
-        buffer.delete(0, indexOfNewline + 1);
-      }
-    }
-
+    return null;
   }
 
   @CalledInAny
@@ -488,33 +494,30 @@ public abstract class LogConsoleBase extends AdditionalTabComponent implements L
     return CommonDataKeys.EDITOR.getData(dataContext);
   }
 
-  private void filterConsoleOutput() {
+  protected void filterConsoleOutput() {
     ApplicationManager.getApplication().invokeLater(() -> computeSelectedLineAndFilter());
   }
 
   private void computeSelectedLineAndFilter() {
     // we have to do this in dispatch thread, because ConsoleViewImpl can flush something to document otherwise
-    myOriginalDocument = getOriginalDocument();
-    if (myOriginalDocument != null) {
-      final Editor editor = getEditor();
-      LOG.assertTrue(editor != null);
-      final Document document = editor.getDocument();
-      final int caretOffset = editor.getCaretModel().getOffset();
-      myLineUnderSelection = null;
-      myLineOffset = -1;
-      if (caretOffset > -1 && caretOffset < document.getTextLength()) {
-        int line;
-        try {
-          line = document.getLineNumber(caretOffset);
-        }
-        catch (IllegalStateException e) {
-          throw new IllegalStateException("document.length=" + document.getTextLength() + ", caret offset = " + caretOffset + "; " + e.getMessage(), e);
-        }
-        if (line > -1 && line < document.getLineCount()) {
-          final int startOffset = document.getLineStartOffset(line);
-          myLineUnderSelection = document.getText().substring(startOffset, document.getLineEndOffset(line));
-          myLineOffset = caretOffset - startOffset;
-        }
+    final Editor editor = getEditor();
+    LOG.assertTrue(editor != null);
+    final Document document = editor.getDocument();
+    final int caretOffset = editor.getCaretModel().getOffset();
+    myLineUnderSelection = null;
+    myLineOffset = -1;
+    if (caretOffset > -1 && caretOffset < document.getTextLength()) {
+      int line;
+      try {
+        line = document.getLineNumber(caretOffset);
+      }
+      catch (IllegalStateException e) {
+        throw new IllegalStateException("document.length=" + document.getTextLength() + ", caret offset = " + caretOffset + "; " + e.getMessage(), e);
+      }
+      if (line > -1 && line < document.getLineCount()) {
+        final int startOffset = document.getLineStartOffset(line);
+        myLineUnderSelection = document.getText().substring(startOffset, document.getLineEndOffset(line));
+        myLineOffset = caretOffset - startOffset;
       }
     }
     ApplicationManager.getApplication().executeOnPooledThread(() -> doFilter());
@@ -528,12 +531,11 @@ public abstract class LogConsoleBase extends AdditionalTabComponent implements L
     console.clear();
     myModel.processingStarted();
 
-    final String[] lines = myOriginalDocument != null ? myOriginalDocument.toString().split("\n") : ArrayUtilRt.EMPTY_STRING_ARRAY;
     int offset = 0;
     boolean caretPositioned = false;
     AnsiEscapeDecoder decoder = new AnsiEscapeDecoder();
 
-    for (String line : lines) {
+    for (String line : myLogLines) {
       @SuppressWarnings("CodeBlock2Expr")
       final int printed = printMessageToConsole(line, (text, key) -> {
         decoder.escapeText(text, key, (chunk, attributes) -> {
@@ -588,7 +590,7 @@ public abstract class LogConsoleBase extends AdditionalTabComponent implements L
    * If we get the assertion then it is a time to revisit logic of caller ;)
    */
 
-  private @NotNull ConsoleView getConsoleNotNull() {
+  public @NotNull ConsoleView getConsoleNotNull() {
     final ConsoleView console = getConsole();
     assert console != null: "it looks like console has been disposed";
     return console;
@@ -621,7 +623,7 @@ public abstract class LogConsoleBase extends AdditionalTabComponent implements L
 
   public void clear() {
     getConsoleNotNull().clear();
-    myOriginalDocument = null;
+    myLogLines.clear();
   }
 
   @Override

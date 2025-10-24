@@ -1,15 +1,14 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.platform.workspace.storage.testEntities.entities.currentVersion.impl
 
 import com.intellij.platform.workspace.storage.ConnectionId
 import com.intellij.platform.workspace.storage.EntitySource
-import com.intellij.platform.workspace.storage.EntityType
 import com.intellij.platform.workspace.storage.GeneratedCodeApiVersion
 import com.intellij.platform.workspace.storage.GeneratedCodeImplVersion
+import com.intellij.platform.workspace.storage.WorkspaceEntityBuilder
 import com.intellij.platform.workspace.storage.MutableEntityStorage
 import com.intellij.platform.workspace.storage.WorkspaceEntity
 import com.intellij.platform.workspace.storage.WorkspaceEntityInternalApi
-import com.intellij.platform.workspace.storage.annotations.Open
 import com.intellij.platform.workspace.storage.impl.ModifiableWorkspaceEntityBase
 import com.intellij.platform.workspace.storage.impl.WorkspaceEntityBase
 import com.intellij.platform.workspace.storage.impl.WorkspaceEntityData
@@ -18,9 +17,10 @@ import com.intellij.platform.workspace.storage.instrumentation.EntityStorageInst
 import com.intellij.platform.workspace.storage.metadata.model.EntityMetadata
 import com.intellij.platform.workspace.storage.testEntities.entities.currentVersion.SubsetSealedClass
 import com.intellij.platform.workspace.storage.testEntities.entities.currentVersion.SubsetSealedClassEntity
+import com.intellij.platform.workspace.storage.testEntities.entities.currentVersion.SubsetSealedClassEntityBuilder
 
 @GeneratedCodeApiVersion(3)
-@GeneratedCodeImplVersion(6)
+@GeneratedCodeImplVersion(7)
 @OptIn(WorkspaceEntityInternalApi::class)
 internal class SubsetSealedClassEntityImpl(private val dataSource: SubsetSealedClassEntityData) : SubsetSealedClassEntity, WorkspaceEntityBase(
   dataSource) {
@@ -51,7 +51,7 @@ internal class SubsetSealedClassEntityImpl(private val dataSource: SubsetSealedC
 
 
   internal class Builder(result: SubsetSealedClassEntityData?) : ModifiableWorkspaceEntityBase<SubsetSealedClassEntity, SubsetSealedClassEntityData>(
-    result), SubsetSealedClassEntity.Builder {
+    result), SubsetSealedClassEntityBuilder {
     internal constructor() : this(SubsetSealedClassEntityData())
 
     override fun applyToBuilder(builder: MutableEntityStorage) {
@@ -128,7 +128,7 @@ internal class SubsetSealedClassEntityData : WorkspaceEntityData<SubsetSealedCla
 
   internal fun isSomeDataInitialized(): Boolean = ::someData.isInitialized
 
-  override fun wrapAsModifiable(diff: MutableEntityStorage): WorkspaceEntity.Builder<SubsetSealedClassEntity> {
+  override fun wrapAsModifiable(diff: MutableEntityStorage): WorkspaceEntityBuilder<SubsetSealedClassEntity> {
     val modifiable = SubsetSealedClassEntityImpl.Builder(null)
     modifiable.diff = diff
     modifiable.id = createEntityId()
@@ -155,7 +155,7 @@ internal class SubsetSealedClassEntityData : WorkspaceEntityData<SubsetSealedCla
     return SubsetSealedClassEntity::class.java
   }
 
-  override fun createDetachedEntity(parents: List<WorkspaceEntity.Builder<*>>): WorkspaceEntity.Builder<*> {
+  override fun createDetachedEntity(parents: List<WorkspaceEntityBuilder<*>>): WorkspaceEntityBuilder<*> {
     return SubsetSealedClassEntity(someData, entitySource) {
     }
   }

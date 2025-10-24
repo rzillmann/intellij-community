@@ -417,9 +417,19 @@ public abstract class K2IntroduceParameterTestGenerated extends AbstractK2Introd
                 runTest("../../idea/tests/testData/refactoring/introduceParameter/overrideFunction.kt");
             }
 
+            @TestMetadata("parametersInExtraction.kt")
+            public void testParametersInExtraction() throws Exception {
+                runTest("../../idea/tests/testData/refactoring/introduceParameter/parametersInExtraction.kt");
+            }
+
             @TestMetadata("partialSubstitution.kt")
             public void testPartialSubstitution() throws Exception {
                 runTest("../../idea/tests/testData/refactoring/introduceParameter/partialSubstitution.kt");
+            }
+
+            @TestMetadata("primaryConstructorWithJava.kt")
+            public void testPrimaryConstructorWithJava() throws Exception {
+                runTest("../../idea/tests/testData/refactoring/introduceParameter/primaryConstructorWithJava.kt");
             }
 
             @TestMetadata("propertyAccessor.kt")
@@ -537,6 +547,11 @@ public abstract class K2IntroduceParameterTestGenerated extends AbstractK2Introd
                 runTest("../../idea/tests/testData/refactoring/introduceParameter/throw.kt");
             }
 
+            @TestMetadata("unusedContextParameter.kt")
+            public void testUnusedContextParameter() throws Exception {
+                runTest("../../idea/tests/testData/refactoring/introduceParameter/unusedContextParameter.kt");
+            }
+
             @TestMetadata("unusedDispatchReceiver.kt")
             public void testUnusedDispatchReceiver() throws Exception {
                 runTest("../../idea/tests/testData/refactoring/introduceParameter/unusedDispatchReceiver.kt");
@@ -545,6 +560,11 @@ public abstract class K2IntroduceParameterTestGenerated extends AbstractK2Introd
             @TestMetadata("unusedExtensionReceiver.kt")
             public void testUnusedExtensionReceiver() throws Exception {
                 runTest("../../idea/tests/testData/refactoring/introduceParameter/unusedExtensionReceiver.kt");
+            }
+
+            @TestMetadata("usedContextParameter.kt")
+            public void testUsedContextParameter() throws Exception {
+                runTest("../../idea/tests/testData/refactoring/introduceParameter/usedContextParameter.kt");
             }
 
             @TestMetadata("valueAtCallSite.kt")

@@ -9,14 +9,10 @@ import org.jetbrains.plugins.gradle.tooling.annotation.TargetVersions
 import org.junit.Test
 import java.io.BufferedReader
 import java.nio.file.Path
+import java.nio.file.Paths
 import kotlin.io.path.listDirectoryEntries
 
 class GradleInstallationManagerIoTest : GradleInstallationManagerTestCase() {
-
-  override fun setUp() {
-    super.setUp()
-    overrideGradleUserHome("guh")
-  }
 
   @Test
   fun testGetGradleHome(): Unit = runBlocking {
@@ -25,7 +21,7 @@ class GradleInstallationManagerIoTest : GradleInstallationManagerTestCase() {
         .withJavaPlugin()
         .generate()
     )
-    val actualGradleHome = GradleInstallationManager.getInstance().getGradleHomePath(project, projectPath)
+    val actualGradleHome = GradleInstallationManager.getInstance().getGradleHomePath(myProject, projectPath)
     assertThat(calculateGradleDistributionRoot()).contains(actualGradleHome)
   }
 
@@ -36,8 +32,8 @@ class GradleInstallationManagerIoTest : GradleInstallationManagerTestCase() {
         .withJavaPlugin()
         .generate()
     )
-    val gradleJvmPath = GradleInstallationManager.getInstance().getGradleJvmPath(project, projectPath)
-    assertEquals(gradleJdkHome, gradleJvmPath)
+    val gradleJvmPath = GradleInstallationManager.getInstance().getGradleJvmPath(myProject, projectPath)
+    assertEquals(Paths.get(gradleJdkHome!!), Paths.get(gradleJvmPath!!))
   }
 
   @Test

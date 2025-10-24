@@ -27,6 +27,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import org.intellij.lang.annotations.Language
 import org.jetbrains.jewel.foundation.BorderColors
+import org.jetbrains.jewel.foundation.DisabledAppearanceValues
 import org.jetbrains.jewel.foundation.GlobalColors
 import org.jetbrains.jewel.foundation.GlobalMetrics
 import org.jetbrains.jewel.foundation.OutlineColors
@@ -47,6 +48,8 @@ import org.jetbrains.jewel.markdown.processing.MarkdownProcessor
 import org.jetbrains.jewel.markdown.rendering.DefaultInlineMarkdownRenderer
 import org.jetbrains.jewel.markdown.rendering.InlinesStyling
 import org.jetbrains.jewel.markdown.rendering.MarkdownStyling
+import org.jetbrains.jewel.markdown.rendering.MarkdownStyling.List.Ordered.NumberFormatStyles.NumberFormatStyle
+import org.jetbrains.jewel.markdown.rendering.MarkdownStyling.List.Unordered.BulletCharStyles
 import org.jetbrains.jewel.ui.component.styling.DividerMetrics
 import org.jetbrains.jewel.ui.component.styling.DividerStyle
 import org.jetbrains.jewel.ui.component.styling.LocalDividerStyle
@@ -327,6 +330,94 @@ public class ScrollingSynchronizerTest {
             assertTrue(rBracketTop > printlnTop)
 
             synchronizer.scrollToLine(3)
+            assertEquals(emptyLineTop, scrollState.value)
+
+            assertSameDistance(
+                distance = CODE_TEXT_SIZE + 2,
+                packageTop,
+                emptyLineTop,
+                mainTop,
+                printlnTop,
+                rBracketTop,
+            )
+        }
+    }
+
+    @Test
+    public fun `HTML list`() {
+        @Language("Markdown")
+        val markdown =
+            """
+            |Items:
+            |<ul>
+            |  <li>item 1
+            |    <ul>
+            |      <li>subitem A</li>
+            |    </ul>
+            |  </li>
+            |  <li>item 2</li>
+            |  <li>item 3</li>
+            |</ul>
+            """
+                .trimMargin()
+        doTest(markdown) { scrollState, synchronizer ->
+            synchronizer.scrollToLine(2)
+            val i1Top = scrollState.value
+            assertTrue(i1Top >= 0)
+
+            synchronizer.scrollToLine(4)
+            val siATop = scrollState.value
+            assertTrue(siATop >= i1Top)
+
+            synchronizer.scrollToLine(7)
+            val i2Top = scrollState.value
+            assertTrue(i2Top >= siATop)
+
+            synchronizer.scrollToLine(8)
+            val i3Top = scrollState.value
+            assertTrue(i3Top >= i2Top)
+
+            synchronizer.scrollToLine(4)
+            assertEquals(siATop, scrollState.value)
+        }
+    }
+
+    @Test
+    public fun `HTML code block`() {
+        @Language("Markdown")
+        val markdown =
+            """
+            |<pre>
+            |package my.awesome.pkg
+            |
+            |fun main() {
+            |    println("Hello world")
+            |}
+            |</pre>
+            """
+                .trimMargin()
+        doTest(markdown) { scrollState, synchronizer ->
+            synchronizer.scrollToLine(1)
+            val packageTop = scrollState.value
+            assertTrue(packageTop >= 0)
+
+            synchronizer.scrollToLine(2)
+            val emptyLineTop = scrollState.value
+            assertTrue(emptyLineTop > packageTop)
+
+            synchronizer.scrollToLine(3)
+            val mainTop = scrollState.value
+            assertTrue(mainTop > emptyLineTop)
+
+            synchronizer.scrollToLine(4)
+            val printlnTop = scrollState.value
+            assertTrue(printlnTop > mainTop)
+
+            synchronizer.scrollToLine(5)
+            val rBracketTop = scrollState.value
+            assertTrue(rBracketTop > printlnTop)
+
+            synchronizer.scrollToLine(2)
             assertEquals(emptyLineTop, scrollState.value)
 
             assertSameDistance(
@@ -640,6 +731,41 @@ public class ScrollingSynchronizerTest {
     }
 
     @OptIn(ExperimentalTestApi::class)
+    @Test
+    public fun `identical items`() {
+        val markdown =
+            """
+                |Items:
+                |- item
+                |
+                |Another items:
+                |- item
+                        """
+                .trimMargin()
+        doTest(markdown) { scrollState, synchronizer ->
+            synchronizer.scrollToLine(1)
+            val l1Top = scrollState.value
+            assertTrue(l1Top > 0)
+
+            synchronizer.scrollToLine(2)
+            val sl1Top = scrollState.value
+            assertTrue(sl1Top > l1Top)
+
+            synchronizer.scrollToLine(3)
+            val emptyTop = scrollState.value
+            assertTrue(emptyTop == sl1Top)
+
+            synchronizer.scrollToLine(4)
+            val l2Top = scrollState.value
+            assertTrue(l2Top > emptyTop)
+
+            synchronizer.scrollToLine(4)
+            val sl2Top = scrollState.value
+            assertTrue(sl2Top == l2Top)
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
     private fun doTest(
         firstRun: String,
         secondRun: String,
@@ -658,6 +784,7 @@ public class ScrollingSynchronizerTest {
         doTest(yieldBlocks = { processMarkdownDocument(markdown) }, action = action)
     }
 
+    @Suppress("ImplicitUnitReturnType")
     @OptIn(ExperimentalTestApi::class)
     private fun doTest(
         yieldBlocks: MarkdownProcessor.() -> List<MarkdownBlock>,
@@ -668,7 +795,8 @@ public class ScrollingSynchronizerTest {
         val markdownStyling: MarkdownStyling = createMarkdownStyling()
         val renderer =
             ScrollSyncMarkdownBlockRenderer(markdownStyling, emptyList(), DefaultInlineMarkdownRenderer(emptyList()))
-        val processor = MarkdownProcessor(markdownMode = MarkdownMode.EditorPreview(synchronizer))
+        val processor =
+            MarkdownProcessor(markdownMode = MarkdownMode.EditorPreview(synchronizer), parseEmbeddedHtml = true)
         var scope: CoroutineScope? = null
 
         setContent {
@@ -750,10 +878,13 @@ public class ScrollingSynchronizerTest {
                             normal = Color.Black,
                             selected = Color.Black,
                             disabled = Color.Black,
+                            disabledSelected = Color.Black,
                             info = Color.Black,
                             error = Color.Black,
+                            warning = Color.Black,
                         ),
                     panelBackground = Color.White,
+                    toolwindowBackground = Color.White,
                 ),
             globalMetrics = GlobalMetrics(outlineWidth = 10.dp, rowHeight = 24.dp),
             defaultTextStyle = TextStyle.Default,
@@ -762,6 +893,7 @@ public class ScrollingSynchronizerTest {
             contentColor = Color.Black,
             colorPalette = ThemeColorPalette.Empty,
             iconData = ThemeIconData.Empty,
+            disabledAppearanceValues = DisabledAppearanceValues(brightness = 33, contrast = -35, alpha = 100),
         )
     }
 
@@ -841,6 +973,8 @@ public class ScrollingSynchronizerTest {
                             itemVerticalSpacing = 4.dp,
                             itemVerticalSpacingTight = 2.dp,
                             padding = PaddingValues(4.dp),
+                            numberFormatStyles =
+                                MarkdownStyling.List.Ordered.NumberFormatStyles(firstLevel = NumberFormatStyle.Decimal),
                         ),
                     unordered =
                         MarkdownStyling.List.Unordered(
@@ -850,6 +984,8 @@ public class ScrollingSynchronizerTest {
                             itemVerticalSpacing = 4.dp,
                             itemVerticalSpacingTight = 2.dp,
                             padding = PaddingValues(4.dp),
+                            markerMinWidth = 16.dp,
+                            bulletCharStyles = BulletCharStyles(),
                         ),
                 ),
             image =

@@ -1,24 +1,27 @@
 ### auto-generated section `build intellij.platform.vcs.dvcs.impl.shared` start
-load("@rules_jvm//:jvm.bzl", "jvm_library", "jvm_resources")
+load("@rules_jvm//:jvm.bzl", "jvm_library", "resourcegroup")
 
-jvm_resources(
-  name = "vcs-dvcs-impl-shared_resources",
-  files = glob(["resources/**/*"]),
+resourcegroup(
+  name = "shared_resources",
+  srcs = glob(["resources/**/*"]),
   strip_prefix = "resources"
 )
 
 jvm_library(
-  name = "vcs-dvcs-impl-shared",
+  name = "shared",
   module_name = "intellij.platform.vcs.dvcs.impl.shared",
   visibility = ["//visibility:public"],
-  srcs = glob(["src/**/*.kt", "src/**/*.java"], allow_empty = True),
+  srcs = glob(["src/**/*.kt", "src/**/*.java", "src/**/*.form"], allow_empty = True),
+  resources = [":shared_resources"],
   deps = [
     "//platform/core-api:core",
     "//platform/util",
     "@lib//:kotlin-stdlib",
     "//platform/projectModel-api:projectModel",
     "//platform/editor-ui-api:editor-ui",
-  ],
-  runtime_deps = [":vcs-dvcs-impl-shared_resources"]
+    "//platform/core-ui",
+    "//platform/util:util-ui",
+    "//platform/platform-impl:ide-impl",
+  ]
 )
 ### auto-generated section `build intellij.platform.vcs.dvcs.impl.shared` end

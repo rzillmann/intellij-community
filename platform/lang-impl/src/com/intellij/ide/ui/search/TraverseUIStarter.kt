@@ -16,6 +16,7 @@ import com.intellij.ide.plugins.IdeaPluginDescriptorImpl
 import com.intellij.ide.plugins.PluginManagerConfigurable
 import com.intellij.ide.plugins.PluginManagerCore
 import com.intellij.ide.plugins.cl.PluginAwareClassLoader
+import com.intellij.ide.plugins.contentModuleName
 import com.intellij.ide.ui.search.SearchableOptionsRegistrar.SEARCHABLE_OPTIONS_XML_NAME
 import com.intellij.idea.AppMode
 import com.intellij.l10n.LocalizationUtil
@@ -40,7 +41,6 @@ import com.intellij.openapi.util.io.NioFiles
 import com.intellij.util.ReflectionUtil
 import kotlinx.coroutines.*
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.jdom.IllegalDataException
 import org.jetbrains.annotations.Nls
@@ -323,9 +323,9 @@ private fun processKeymap(): Map<OptionSetId, Set<SearchableOptionEntry>> {
 
 private fun getActionToPluginId(actionManager: ActionManagerImpl): Map<String, PluginId> {
   val actionToPluginId = HashMap<String, PluginId>()
-  for (id in PluginId.getRegisteredIds()) {
-    for (action in actionManager.getPluginActions(id)) {
-      actionToPluginId.put(action, id)
+  for (pluginId in PluginManagerCore.getPluginSet().buildPluginIdMap().keys) {
+    for (action in actionManager.getPluginActions(pluginId)) {
+      actionToPluginId.put(action, pluginId)
     }
   }
   return actionToPluginId
@@ -342,7 +342,7 @@ private suspend fun getModuleByAction(rootAction: AnAction, actionToPluginId: Ma
       return module
     }
     if (action is ActionGroup) {
-      actions.addAll(session.childrenSuspend(action))
+      actions.addAll(session.childrenEx(action))
     }
   }
 
@@ -365,7 +365,7 @@ private fun getSetIdByPluginDescriptor(pluginDescriptor: PluginDescriptor): Opti
   else {
     return OptionSetId(
       pluginId = pluginDescriptor.pluginId,
-      moduleName = (pluginDescriptor as IdeaPluginDescriptorImpl).moduleName?.takeIf { !it.contains('/') },
+      moduleName = (pluginDescriptor as IdeaPluginDescriptorImpl).contentModuleName?.takeIf { !it.contains('/') },
     )
   }
 }

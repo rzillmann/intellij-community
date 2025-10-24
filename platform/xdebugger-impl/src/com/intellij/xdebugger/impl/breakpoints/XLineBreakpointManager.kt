@@ -4,10 +4,13 @@ package com.intellij.xdebugger.impl.breakpoints
 import com.intellij.execution.impl.ConsoleViewUtil
 import com.intellij.ide.DataManager
 import com.intellij.ide.ui.UISettings.Companion.getInstance
+import com.intellij.internal.statistic.collectors.fus.actions.persistence.ActionsCollectorImpl
 import com.intellij.openapi.actionSystem.*
-import com.intellij.openapi.actionSystem.ex.ActionUtil.performActionDumbAwareWithCallbacks
+import com.intellij.openapi.actionSystem.ex.ActionUtil
 import com.intellij.openapi.actionSystem.impl.SimpleDataContext
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.diagnostic.debug
+import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.diff.impl.DiffUtil
 import com.intellij.openapi.editor.Document
 import com.intellij.openapi.editor.Editor
@@ -29,10 +32,7 @@ import com.intellij.openapi.util.registry.Registry
 import com.intellij.openapi.util.registry.RegistryValue
 import com.intellij.openapi.util.registry.RegistryValueListener
 import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.openapi.vfs.VirtualFileEvent
 import com.intellij.openapi.vfs.VirtualFileManager
-import com.intellij.openapi.vfs.VirtualFileUrlChangeAdapter
-import com.intellij.openapi.vfs.impl.BulkVirtualFileListenerAdapter
 import com.intellij.platform.util.coroutines.childScope
 import com.intellij.psi.PsiDocumentManager
 import com.intellij.ui.ExperimentalUI.Companion.isNewUI
@@ -44,17 +44,25 @@ import com.intellij.util.containers.MultiMap
 import com.intellij.util.ui.EDT
 import com.intellij.util.ui.update.MergingUpdateQueue
 import com.intellij.util.ui.update.Update
+import com.intellij.xdebugger.SplitDebuggerMode
 import com.intellij.xdebugger.XDebuggerUtil
 import com.intellij.xdebugger.breakpoints.XBreakpoint
-import com.intellij.xdebugger.impl.breakpoints.InlineBreakpointInlayManager.Companion.getInstance
-import com.intellij.xdebugger.impl.frame.XDebugManagerProxy
+import com.intellij.xdebugger.impl.actions.ToggleLineBreakpointAction
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.cancel
-import org.jetbrains.annotations.ApiStatus.Internal
+import org.jetbrains.annotations.ApiStatus
+import org.jetbrains.annotations.TestOnly
 import java.awt.event.MouseEvent
 
-@Internal
-class XLineBreakpointManager(private val project: Project, coroutineScope: CoroutineScope, private val isEnabled: Boolean) {
+private val log = logger<XLineBreakpointManager>()
+
+@ApiStatus.Internal
+class XLineBreakpointManager(
+  private val project: Project,
+  coroutineScope: CoroutineScope,
+  isEnabled: Boolean,
+  private val manager: XBreakpointManagerProxy,
+) {
   private val cs = coroutineScope.childScope("XLineBreakpointManager")
 
   private val myBreakpoints = MultiMap.createConcurrent<String, XLineBreakpointProxy>()
@@ -67,29 +75,16 @@ class XLineBreakpointManager(private val project: Project, coroutineScope: Corou
   private var myDragDetected = false
 
   init {
-    val busConnection = project.messageBus.connect(cs)
+    val disposable = cs.asDisposable()
+    val busConnection = project.messageBus.connect(disposable)
 
     if (!project.isDefault) {
       val editorEventMulticaster = EditorFactory.getInstance().eventMulticaster
-      editorEventMulticaster.addDocumentListener(MyDocumentListener(), cs.asDisposable())
-      editorEventMulticaster.addEditorMouseListener(MyEditorMouseListener(), cs.asDisposable())
-      editorEventMulticaster.addEditorMouseMotionListener(MyEditorMouseMotionListener(), cs.asDisposable())
+      editorEventMulticaster.addDocumentListener(MyDocumentListener(), disposable)
+      editorEventMulticaster.addEditorMouseListener(MyEditorMouseListener(), disposable)
+      editorEventMulticaster.addEditorMouseMotionListener(MyEditorMouseMotionListener(), disposable)
 
       busConnection.subscribe(XDependentBreakpointListener.TOPIC, MyDependentBreakpointListener())
-      busConnection.subscribe(VirtualFileManager.VFS_CHANGES, BulkVirtualFileListenerAdapter(object : VirtualFileUrlChangeAdapter() {
-        override fun fileUrlChanged(oldUrl: String, newUrl: String) {
-          myBreakpoints.values().forEach { breakpoint ->
-            val url = breakpoint.getFile()?.url ?: breakpoint.getFileUrl()
-            if (FileUtil.startsWith(url, oldUrl)) {
-              breakpoint.setFileUrl(newUrl + url.substring(oldUrl.length))
-            }
-          }
-        }
-
-        override fun fileDeleted(event: VirtualFileEvent) {
-          removeBreakpoints(myBreakpoints[event.file.url])
-        }
-      }))
 
       Registry.get(XDebuggerUtil.INLINE_BREAKPOINTS_KEY).addListener(object : RegistryValueListener {
         override fun afterValueChanged(value: RegistryValue) {
@@ -101,7 +96,7 @@ class XLineBreakpointManager(private val project: Project, coroutineScope: Corou
             updateBreakpoints(document)
           }
         }
-      }, cs.asDisposable())
+      }, disposable)
     }
 
     // Update breakpoints colors if global color schema was changed
@@ -116,6 +111,21 @@ class XLineBreakpointManager(private val project: Project, coroutineScope: Corou
 
     if (!isEnabled) {
       cs.cancel()
+    }
+  }
+
+  @ApiStatus.Internal
+  fun onFileDeleted(url: String) {
+    removeBreakpoints(myBreakpoints[url])
+  }
+
+  @ApiStatus.Internal
+  fun onFileUrlChanged(oldUrl: String, newUrl: String) {
+    myBreakpoints.values().forEach { breakpoint ->
+      val url = breakpoint.getFile()?.url ?: breakpoint.getFileUrl()
+      if (FileUtil.startsWith(url, oldUrl)) {
+        breakpoint.setFileUrl(newUrl + url.substring(oldUrl.length))
+      }
     }
   }
 
@@ -136,11 +146,15 @@ class XLineBreakpointManager(private val project: Project, coroutineScope: Corou
     if (initUI) {
       updateBreakpointNow(breakpoint)
     }
-    myBreakpoints.putValue(breakpoint.getFile()?.url ?: breakpoint.getFileUrl(), breakpoint)
+    val fileUrl = breakpoint.getFile()?.url ?: breakpoint.getFileUrl()
+    log.debug { "Register line breakpoint ${breakpoint.id} ${breakpoint.javaClass.simpleName}: $fileUrl" }
+    myBreakpoints.putValue(fileUrl, breakpoint)
   }
 
   fun unregisterBreakpoint(breakpoint: XLineBreakpointProxy) {
-    myBreakpoints.remove(breakpoint.getFile()?.url ?: breakpoint.getFileUrl(), breakpoint)
+    val fileUrl = breakpoint.getFile()?.url ?: breakpoint.getFileUrl()
+    val removed = myBreakpoints.remove(fileUrl, breakpoint)
+    log.debug { "Unregister line breakpoint ${breakpoint.id} [removed=$removed] ${breakpoint.javaClass.simpleName}: $fileUrl" }
   }
 
   fun getDocumentBreakpointProxies(document: Document): Collection<XLineBreakpointProxy> {
@@ -152,11 +166,13 @@ class XLineBreakpointManager(private val project: Project, coroutineScope: Corou
     return getDocumentBreakpointProxies(document).filterIsInstance<XLineBreakpointProxy.Monolith>().map { it.breakpoint }
   }
 
+  @TestOnly
+  fun getAllBreakpoints(): Collection<XLineBreakpointProxy> {
+    return myBreakpoints.values()
+  }
+
   @RequiresEdt
   private fun updateBreakpoints(document: Document) {
-    if (!isEnabled) {
-      return
-    }
     val breakpoints = getDocumentBreakpointProxies(document)
 
     if (breakpoints.isEmpty() || ApplicationManager.getApplication().isUnitTestMode) {
@@ -165,13 +181,28 @@ class XLineBreakpointManager(private val project: Project, coroutineScope: Corou
     SlowOperations.knownIssue("IJPL-162343").use {
       breakpoints.forEach { it.updatePosition() }
     }
+    cleanUpBreakpoints(document)
+  }
 
-    // Check if two or more breakpoints occurred at the same position and remove duplicates.
-    val (valid, invalid) = breakpoints.partition {
-      val highlighter = it.getHighlighter()
-      highlighter != null && highlighter.isValid
+  private fun cleanUpBreakpoints(document: Document) {
+    val breakpoints = getDocumentBreakpointProxies(document)
+    val valid = mutableListOf<XLineBreakpointProxy>()
+    val invalid = mutableListOf<XLineBreakpointProxy>()
+    for (breakpoint in breakpoints) {
+      val highlighter = breakpoint.getHighlighter()
+      if (highlighter == null) {
+        // Breakpoint is uninitialized yet
+        continue
+      }
+      if (highlighter.isValid) {
+        valid.add(breakpoint)
+      }
+      else {
+        invalid.add(breakpoint)
+      }
     }
     removeBreakpoints(invalid)
+    // Check if two or more breakpoints occurred at the same position and remove duplicates.
     val areInlineBreakpoints = XDebuggerUtil.areInlineBreakpointsEnabled(FileDocumentManager.getInstance().getFile(document))
     val duplicates = valid
       .groupBy { b ->
@@ -179,9 +210,17 @@ class XLineBreakpointManager(private val project: Project, coroutineScope: Corou
           // We cannot show multiple breakpoints of the same type at the same position.
           // Note that highlightRange might be null, so we still have to add line as an identity element.
           SlowOperations.knownIssue("IJPL-162343").use {
-            Triple(b.type, b.getLine(), b.getHighlightRange()?.startOffset)
+            val startOffset = when (val range = b.getHighlightRange()) {
+              is XLineBreakpointHighlighterRange.Available -> range.range?.startOffset
+              is XLineBreakpointHighlighterRange.Unavailable -> {
+                scheduleBreakpointsCleanUp(document)
+                return
+              }
+            }
+            Triple(b.type, b.getLine(), startOffset)
           }
-        } else {
+        }
+        else {
           // We cannot show multiple breakpoints of any type at the same line.
           b.getLine()
         }
@@ -193,13 +232,12 @@ class XLineBreakpointManager(private val project: Project, coroutineScope: Corou
   }
 
   private fun removeBreakpoints(toRemove: Collection<XBreakpointProxy>?) {
-    val manager = XDebugManagerProxy.getInstance().getBreakpointManagerProxy(project)
     for (breakpoint in toRemove.orEmpty()) {
       manager.removeBreakpoint(breakpoint)
     }
   }
 
-  fun breakpointChanged(breakpoint: XLineBreakpointProxy) {
+  fun breakpointChanged(breakpoint: XLightLineBreakpointProxy) {
     if (EDT.isCurrentThreadEdt()) {
       updateBreakpointNow(breakpoint)
     }
@@ -215,6 +253,7 @@ class XLineBreakpointManager(private val project: Project, coroutineScope: Corou
     }
   }
 
+  @Deprecated("Use queueBreakpointUpdateCallback(XLightLineBreakpointProxy, Runnable)")
   fun queueBreakpointUpdateCallback(breakpoint: XLineBreakpointImpl<*>?, callback: Runnable) {
     breakpointUpdateQueue.queue(object : Update(breakpoint) {
       override fun run() {
@@ -223,7 +262,7 @@ class XLineBreakpointManager(private val project: Project, coroutineScope: Corou
     })
   }
 
-  fun queueBreakpointUpdateCallback(breakpoint: XLineBreakpointProxy, callback: Runnable) {
+  fun queueBreakpointUpdateCallback(breakpoint: XLightLineBreakpointProxy, callback: Runnable) {
     breakpointUpdateQueue.queue(object : Update(breakpoint) {
       override fun run() {
         callback.run()
@@ -232,12 +271,12 @@ class XLineBreakpointManager(private val project: Project, coroutineScope: Corou
   }
 
   // Skip waiting 300ms in myBreakpointsUpdateQueue (good for sync updates like enable/disable or create new breakpoint)
-  private fun updateBreakpointNow(breakpoint: XLineBreakpointProxy) {
+  private fun updateBreakpointNow(breakpoint: XLightLineBreakpointProxy) {
     queueBreakpointUpdate(breakpoint)
     breakpointUpdateQueue.sendFlush()
   }
 
-  private fun queueBreakpointUpdate(breakpoint: XLineBreakpointProxy, callOnUpdate: Runnable? = null) {
+  private fun queueBreakpointUpdate(breakpoint: XLightLineBreakpointProxy, callOnUpdate: Runnable? = null) {
     breakpointUpdateQueue.queue(object : Update(breakpoint) {
       override fun run() {
         breakpoint.doUpdateUI {
@@ -250,7 +289,9 @@ class XLineBreakpointManager(private val project: Project, coroutineScope: Corou
   fun queueAllBreakpointsUpdate() {
     breakpointUpdateQueue.queue(object : Update("all breakpoints") {
       override fun run() {
-        myBreakpoints.values().forEach { it.doUpdateUI() }
+        for (breakpoint in myBreakpoints.values()) {
+          breakpoint.doUpdateUI()
+        }
       }
     })
     // skip waiting
@@ -262,17 +303,33 @@ class XLineBreakpointManager(private val project: Project, coroutineScope: Corou
       val document = e.document
       val breakpoints = getDocumentBreakpointProxies(document)
       if (!breakpoints.isEmpty()) {
-        breakpointUpdateQueue.queue(object : Update(document) {
-          override fun run() {
-            ApplicationManager.getApplication().invokeLater {
-              updateBreakpoints(document)
-            }
-          }
-        })
+        // Update position immediately to avoid races with doUpdateUI
+        breakpoints.forEach { it.fastUpdatePosition() }
+        scheduleDocumentUpdate(document)
 
-        getInstance(project).redrawDocument(e)
+        InlineBreakpointInlayManager.getInstance(project).redrawDocument(e)
       }
     }
+  }
+
+  private fun scheduleDocumentUpdate(document: Document) {
+    breakpointUpdateQueue.queue(object : Update("update" to document) {
+      override fun run() {
+        ApplicationManager.getApplication().invokeLater {
+          updateBreakpoints(document)
+        }
+      }
+    })
+  }
+
+  private fun scheduleBreakpointsCleanUp(document: Document) {
+    breakpointUpdateQueue.queue(object : Update("clean up" to document) {
+      override fun run() {
+        ApplicationManager.getApplication().invokeLater {
+          cleanUpBreakpoints(document)
+        }
+      }
+    })
   }
 
   private inner class MyEditorMouseMotionListener : EditorMouseMotionListener {
@@ -310,7 +367,22 @@ class XLineBreakpointManager(private val project: Project, coroutineScope: Corou
         val dataContext = SimpleDataContext.getSimpleContext(BREAKPOINT_LINE_KEY, line,
                                                              DataManager.getInstance().getDataContext(mouseEvent.component))
         val event = AnActionEvent.createFromAnAction(action, mouseEvent, ActionPlaces.EDITOR_GUTTER, dataContext)
-        performActionDumbAwareWithCallbacks(action, event)
+        // TODO IJPL-185322 Introduce a better way to handle actions in the frontend
+        // TODO We actually want to call the action directly, but dispatch it on frontend if possible
+        if (SplitDebuggerMode.isSplitDebugger()) {
+          // Call handler directly so that it will be called on frontend
+          val handler = ToggleLineBreakpointAction.ourHandler
+          if (handler.isEnabled(project, event)) {
+            handler.perform(project, event)
+            // statistics reporting
+            ActionsCollectorImpl.onAfterActionInvoked(action, event, AnActionResult.PERFORMED)
+          }
+        }
+        else {
+          // Cannot call the handler directly in case of LUX split.
+          // Call the action so that it is delegated to the backend action.
+          ActionUtil.performAction(action, event)
+        }
       }
     }
 

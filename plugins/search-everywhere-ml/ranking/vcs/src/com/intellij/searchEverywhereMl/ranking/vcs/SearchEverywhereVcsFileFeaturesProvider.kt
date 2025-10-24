@@ -2,6 +2,7 @@ package com.intellij.searchEverywhereMl.ranking.vcs
 
 import com.intellij.ide.actions.searcheverywhere.FileSearchEverywhereContributor
 import com.intellij.ide.actions.searcheverywhere.PSIPresentationBgRendererWrapper
+import com.intellij.ide.actions.searcheverywhere.SearchEverywhereSpellCheckResult
 import com.intellij.internal.statistic.eventLog.events.EventField
 import com.intellij.internal.statistic.eventLog.events.EventFields
 import com.intellij.internal.statistic.eventLog.events.EventPair
@@ -13,7 +14,7 @@ import com.intellij.searchEverywhereMl.ranking.vcs.SearchEverywhereVcsFileFeatur
 import com.intellij.searchEverywhereMl.ranking.vcs.SearchEverywhereVcsFileFeaturesProvider.Fields.IS_CHANGED_DATA_KEY
 import com.intellij.searchEverywhereMl.ranking.vcs.SearchEverywhereVcsFileFeaturesProvider.Fields.IS_IGNORED_DATA_KEY
 
-internal class SearchEverywhereVcsFileFeaturesProvider : SearchEverywhereElementFeaturesProvider(FileSearchEverywhereContributor::class.java) {
+class SearchEverywhereVcsFileFeaturesProvider : SearchEverywhereElementFeaturesProvider(FileSearchEverywhereContributor::class.java) {
   object Fields {
     val IS_IGNORED_DATA_KEY = EventFields.Boolean("isIgnored")
     val IS_CHANGED_DATA_KEY = EventFields.Boolean("isChanged")
@@ -38,7 +39,8 @@ internal class SearchEverywhereVcsFileFeaturesProvider : SearchEverywhereElement
                                   currentTime: Long,
                                   searchQuery: String,
                                   elementPriority: Int,
-                                  cache: FeaturesProviderCache?): List<EventPair<*>> {
+                                  cache: FeaturesProviderCache?,
+                                  correction: SearchEverywhereSpellCheckResult): List<EventPair<*>> {
     val item = when (element) {
       is PSIPresentationBgRendererWrapper.PsiItemWithPresentation -> (element.item as? PsiFileSystemItem) ?: return emptyList()
       is PsiFileSystemItem -> element

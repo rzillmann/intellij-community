@@ -215,35 +215,6 @@ class ProjectRule(
 }
 
 /**
- * Encouraged using on static fields to avoid a project creating for each test.
- * Project created on request, so could be used as a bare (only application).
- */
-@Suppress("DEPRECATION")
-class ProjectExtension(val runPostStartUpActivities: Boolean = false, val preloadServices: Boolean = false) : ApplicationExtension() {
-  private var projectObject: ProjectObject? = null
-
-  override fun beforeAll(context: ExtensionContext) {
-    super.beforeAll(context)
-    projectObject = ProjectObject(runPostStartUpActivities, preloadServices, null).also {
-      it.testClassName = sanitizeFileName(context.testClass.map(Class<*>::getSimpleName).orElse(context.displayName).substringAfterLast('.'))
-      it.projectTracker = (ProjectManager.getInstance() as TestProjectManager).startTracking()
-    }
-  }
-
-  override fun afterAll(context: ExtensionContext) {
-    checkNotNull(projectObject).catchAndRethrow {
-      super.afterAll(context)
-    }
-    projectObject = null
-  }
-
-  val project: ProjectEx
-    get() = checkNotNull(projectObject).project
-  val module: Module
-    get() = checkNotNull(projectObject).module
-}
-
-/**
  * rules: outer, middle, inner
  * out:
  * starting outer rule
@@ -291,7 +262,7 @@ inline fun statement(crossinline runnable: () -> Unit): Statement = object : Sta
 
 /**
  * Do not optimize test load speed.
- * @see IProjectStore.setOptimiseTestLoadSpeed
+ * @see IProjectStore.isOptimiseTestLoadSpeed
  */
 @Target(AnnotationTarget.FUNCTION, AnnotationTarget.CLASS)
 annotation class RunsInActiveStoreMode
@@ -329,7 +300,7 @@ inline fun <T> Project.runInLoadComponentStateMode(task: () -> T): T {
 /**
  * Closes a project after [action].
  */
-fun <T> Project.useProject(save: Boolean = false, action: (Project) -> T): T {
+inline fun <T> Project.useProject(save: Boolean = false, action: (Project) -> T): T {
   try {
     return action(this)
   }
@@ -394,7 +365,8 @@ private inline fun <R> closeOpenedProjectsIfFailImpl(closeProject: Project.() ->
   }
 }
 
-private fun Project.closeProject(save: Boolean = false) {
+@PublishedApi
+internal fun Project.closeProject(save: Boolean = false) {
   invokeAndWaitIfNeeded {
     if (save) {
       saveWorkspaceModel()

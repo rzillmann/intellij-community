@@ -2,13 +2,12 @@
 package git4idea.ignore
 
 import com.intellij.openapi.Disposable
-import com.intellij.openapi.application.readAction
 import com.intellij.openapi.application.edtWriteAction
+import com.intellij.openapi.application.readAction
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.openapi.components.serviceAsync
 import com.intellij.openapi.diagnostic.logger
-import com.intellij.openapi.progress.blockingContext
 import com.intellij.openapi.progress.runBlockingMaybeCancellable
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.startup.ProjectActivity
@@ -36,7 +35,6 @@ import git4idea.GitVcs
 import git4idea.i18n.GitBundle
 import git4idea.index.GitIndexUtil
 import git4idea.repo.GitRepositoryFiles.GITIGNORE
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import org.jetbrains.annotations.SystemIndependent
@@ -53,11 +51,7 @@ private class GitIgnoreInStoreDirGeneratorActivity : ProjectActivity {
       return
     }
 
-    val completableDeferred = CompletableDeferred<Unit>()
-    project.serviceAsync<ProjectLevelVcsManager>().runAfterInitialization {
-      completableDeferred.complete(Unit)
-    }
-    completableDeferred.join()
+    project.serviceAsync<ProjectLevelVcsManager>().awaitInitialization()
     project.service<GitIgnoreInStoreDirGenerator>().run()
   }
 }
@@ -158,7 +152,7 @@ internal class GitIgnoreInStoreDirGenerator(private val project: Project, privat
       return
     }
 
-    if (blockingContext { skipGeneration(project, projectConfigDirVFile, projectConfigDirPath) }) {
+    if (skipGeneration(project, projectConfigDirVFile, projectConfigDirPath)) {
       return
     }
 
@@ -216,9 +210,8 @@ internal class GitIgnoreInStoreDirGenerator(private val project: Project, privat
       }
 
       val ignoredGroupDescription = gitIgnoreContentProvider.buildIgnoreGroupDescription(ignoredFileProvider)
-      blockingContext {
-        addNewElementsToIgnoreBlock(project, gitIgnoreFile, ignoredGroupDescription, gitVcsKey, *ignoresInStoreDir.toTypedArray())
-      }
+      addNewElementsToIgnoreBlock(project, gitIgnoreFile, ignoredGroupDescription, gitVcsKey,
+                                  *ignoresInStoreDir.toTypedArray<IgnoredFileDescriptor>())
     }
 
     markGenerated(project, projectConfigDirVFile)

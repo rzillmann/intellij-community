@@ -21,6 +21,7 @@ import git4idea.GitCommit
 import git4idea.GitLocalBranch
 import git4idea.GitNotificationIdsHolder
 import git4idea.branch.GitBranchUiHandler.DeleteRemoteBranchDecision
+import git4idea.branch.GitBranchUtil.getTrackInfo
 import git4idea.branch.GitBranchUtil.getTrackInfoForBranch
 import git4idea.branch.GitDeleteBranchOperation.*
 import git4idea.branch.GitSmartOperationDialog.Choice.*
@@ -125,9 +126,9 @@ class GitBranchWorkerTest : GitPlatformTest() {
       }
     })
 
-    assertCurrentBranch(first, "feature")
-    assertCurrentBranch(second, "master")
-    assertCurrentBranch(last, "master")
+    first.assertCurrentBranch("feature")
+    second.assertCurrentBranch("master")
+    last.assertCurrentBranch("master")
   }
 
   fun `test checkout without problems`() {
@@ -188,9 +189,9 @@ class GitBranchWorkerTest : GitPlatformTest() {
       override fun showUnmergedFilesMessageWithRollback(operationName: String, rollbackProposal: String) = false
     })
 
-    assertCurrentBranch(first, "feature")
-    assertCurrentBranch(second, "master")
-    assertCurrentBranch(last, "master")
+    first.assertCurrentBranch("feature")
+    second.assertCurrentBranch("master")
+    last.assertCurrentBranch("master")
   }
 
   fun `test checkout revision checkout branch with complete success`() {
@@ -227,7 +228,7 @@ class GitBranchWorkerTest : GitPlatformTest() {
 
     checkoutRevision("feature", TestUiHandler(project))
 
-    assertCurrentBranch(last, "master")
+    last.assertCurrentBranch("master")
     assertDetachedState(first, "feature")
     assertDetachedState(second, "feature")
 
@@ -309,6 +310,37 @@ class GitBranchWorkerTest : GitPlatformTest() {
     `check operation with local changes overwritten by should show smart checkout dialog`("merge", 1)
   }
 
+  fun `test merge with several local changes overwritten by merge should show smart merge dialog`() {
+    `check operation with local changes overwritten by should show smart checkout dialog`("merge", 3)
+  }
+
+  /**
+   * IJPL-200234
+   * In this scenario the error output is the following:
+   * Your local changes to the following files would be overwritten by merge:
+   * <2 whitespaces>dir/other test
+   */
+  fun `test merge with local changes printing paths in a single line`() {
+    val repo = first
+    val fileName = "test"
+    val anotherFileName = "dir/other"
+    val branchName = "feature"
+
+    cd(repo)
+    repo.file(fileName).create("line").addCommit("init")
+
+    repo.git("checkout -b $branchName")
+    repo.file(fileName).write("test").addCommit("alt-branch")
+    repo.git("checkout master")
+    repo.file(fileName).write("content").addCommit("back to master")
+    repo.file(fileName).write("!!!").add()
+    repo.file(anotherFileName).write("test").add()
+    updateChangeListManager()
+
+    val changedPaths = tryMergeAndGetChangedPaths(branchName, repo)
+    assertSameElements(changedPaths, setOf(fileName, anotherFileName))
+  }
+
   // IJPL-173728
   fun `test merge with trailing whitespace changes overwritten by checkout should show smart merge dialog`() {
     val repo = first
@@ -326,13 +358,18 @@ class GitBranchWorkerTest : GitPlatformTest() {
     repo.file(anotherFileName).create().add()
     updateChangeListManager()
 
+    val changedPaths = tryMergeAndGetChangedPaths(branchName, repo)
+    assertSameElements(changedPaths, setOf(fileName, anotherFileName))
+  }
+
+  private fun tryMergeAndGetChangedPaths(branchName: String, repo: GitRepository): MutableList<String> {
     val changedPaths = mutableListOf<String>()
     mergeBranch(branchName, object : TestUiHandler(this.project) {
       override fun showSmartOperationDialog(
         project: Project, changes: List<Change>,
         paths: Collection<String>,
         operation: String,
-        forceButton: String?
+        forceButton: String?,
       ): GitSmartOperationDialog.Choice {
         changes.forEach {
           changedPaths.add(getRelativePath(repo.root.path, it.afterRevision!!.file.path, '/')!!)
@@ -340,7 +377,7 @@ class GitBranchWorkerTest : GitPlatformTest() {
         return CANCEL
       }
     })
-    assertSameElements(changedPaths, setOf(fileName, anotherFileName))
+    return changedPaths
   }
 
   private fun `check operation with local changes overwritten by should show smart checkout dialog`(operation: String, numFiles: Int) {
@@ -478,9 +515,9 @@ class GitBranchWorkerTest : GitPlatformTest() {
 
   fun `test deny to smart checkout in second repo should show rollback proposal`() {
     `check deny to smart operation in second repo should show rollback proposal`("checkout")
-    assertCurrentBranch(first, "feature")
-    assertCurrentBranch(second, "master")
-    assertCurrentBranch(last, "master")
+    first.assertCurrentBranch("feature")
+    second.assertCurrentBranch("master")
+    last.assertCurrentBranch("master")
   }
 
   fun `test deny to smart merge in second repo should show rollback proposal`() {
@@ -869,9 +906,9 @@ class GitBranchWorkerTest : GitPlatformTest() {
       }
     })
 
-    assertCurrentBranch(last, "feature")
-    assertCurrentBranch(first, "newbranch")
-    assertCurrentBranch(second, "master")
+    last.assertCurrentBranch("feature")
+    first.assertCurrentBranch("newbranch")
+    second.assertCurrentBranch("master")
   }
 
   fun `test delete remote branch`() {
@@ -926,6 +963,75 @@ class GitBranchWorkerTest : GitPlatformTest() {
     myRepositories.forEach { assertBranchExists(it, "feature") }
   }
 
+  fun `test rename branch unset upstream should remove upstream`() {
+    val oldBranchName = "old-name"
+    val newBranchName = "new-name"
+
+    prepareLocalAndRemoteBranch(oldBranchName, track = true)
+
+    val brancher = GitBranchWorker(project, git, TestUiHandler(project))
+    brancher.renameBranchAndUnsetUpstream(oldBranchName, newBranchName, myRepositories)
+
+    myRepositories.forEach { repo ->
+      assertBranchDeleted(repo, oldBranchName)
+      assertBranchExists(repo, newBranchName)
+
+      val newTrackInfo = getTrackInfo(repo, newBranchName)
+      assertNull("Renamed branch should lose its upstream", newTrackInfo)
+    }
+
+    assertSuccessfulNotification("Branch ${bold(code(oldBranchName))} was renamed to ${bold(code(newBranchName))}")
+  }
+
+  fun `test rename branch should keep upstream`() {
+    val oldBranchName = "old-name"
+    val newBranchName = "new-name"
+
+    prepareLocalAndRemoteBranch(oldBranchName, track = true)
+
+    myRepositories.forEach { it.update() }
+    val upstreamBranches = GitUpstreamBranches(myRepositories, oldBranchName, git)
+
+    val brancher = GitBranchWorker(project, git, TestUiHandler(project))
+    brancher.renameBranch(oldBranchName, newBranchName, myRepositories)
+
+    myRepositories.forEach { repo ->
+      assertBranchDeleted(repo, oldBranchName)
+      assertBranchExists(repo, newBranchName)
+
+      val newTrackInfo = getTrackInfo(repo, newBranchName)
+      assertEquals("Renamed branch should keep its upstream", upstreamBranches.get()[repo], newTrackInfo?.remoteBranch)
+    }
+
+    assertSuccessfulNotification("Branch ${bold(code(oldBranchName))} was renamed to ${bold(code(newBranchName))}")
+  }
+
+  fun `test failed rename branch unset upstream can be rolled back`() {
+    val oldBranchName = "old-name"
+    val newBranchName = "new-name"
+
+    prepareLocalAndRemoteBranch(oldBranchName, track = true)
+
+    myRepositories.forEach { it.update() }
+    val upstreamBranches = GitUpstreamBranches(myRepositories, oldBranchName, git)
+
+    second.branch(newBranchName) // To fail rename
+
+    val brancher = GitBranchWorker(project, git, object : TestUiHandler(project) {
+      override fun notifyErrorWithRollbackProposal(title: String, message: String, rollbackProposal: String): Boolean {
+        return true
+      }
+    })
+    brancher.renameBranchAndUnsetUpstream(oldBranchName, newBranchName, myRepositories)
+
+    myRepositories.forEach { repo ->
+      assertBranchExists(repo, oldBranchName)
+
+      val newTrackInfo = getTrackInfo(repo, oldBranchName)
+      assertEquals("Rolled back branch should restore its upstream", upstreamBranches.get()[repo], newTrackInfo?.remoteBranch)
+    }
+  }
+
   private fun prepareLocalAndRemoteBranch(name: String, track: Boolean) {
     val parentRoot = testNioRoot.resolve("parentRoot")
     Files.createDirectories(parentRoot)
@@ -953,13 +1059,13 @@ class GitBranchWorkerTest : GitPlatformTest() {
 
   private fun assertCurrentBranch(name: String) {
     for (repository in myRepositories) {
-      assertCurrentBranch(repository, name)
+      repository.assertCurrentBranch(name)
     }
   }
 
   private fun assertCurrentRevision(reference: String) {
     for (repository in myRepositories) {
-      assertCurrentRevision(repository, reference)
+      repository.assertCurrentRevision(reference)
     }
   }
 
@@ -1094,6 +1200,10 @@ class GitBranchWorkerTest : GitPlatformTest() {
     return "<code>$s</code>"
   }
 
+  private fun bold(s: String): String {
+    return "<b>$s</b>"
+  }
+
   private fun newGitVersion(): Boolean {
     return !GitVersionSpecialty.OLD_STYLE_OF_UNTRACKED_AND_LOCAL_CHANGES_WOULD_BE_OVERWRITTEN.existsIn(GitVersion.parse(git("version")))
   }
@@ -1104,19 +1214,8 @@ class GitBranchWorkerTest : GitPlatformTest() {
   }
 
   private fun assertDetachedState(repository: GitRepository, reference: String) {
-    assertCurrentRevision(repository, reference)
+    repository.assertCurrentRevision(reference)
     assertEquals("Repository should be in the detached HEAD state", Repository.State.DETACHED, repository.state)
-  }
-
-  private fun assertCurrentBranch(repository: GitRepository, name: String) {
-    assertEquals("Current branch is incorrect in ${repository}", name, repository.currentBranchName)
-  }
-
-  private fun assertCurrentRevision(repository: GitRepository, reference: String) {
-    val expectedRef = repository.git("rev-parse HEAD")
-    val currentRef = repository.git("rev-parse $reference")
-
-    assertEquals("Current revision is incorrect in ${repository}", expectedRef, currentRef)
   }
 
   private fun assertBranchDeleted(repo: GitRepository, branch: String) {

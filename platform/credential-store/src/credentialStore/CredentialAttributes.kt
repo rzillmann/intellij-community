@@ -53,10 +53,6 @@ data class CredentialAttributes(
   constructor(serviceName: String, userName: String?, requestor: Class<*>?, isPasswordMemoryOnly: Boolean, i: Int, m: kotlin.jvm.internal.DefaultConstructorMarker?)
     : this(serviceName, userName, isPasswordMemoryOnly, cacheDeniedItems = true)
 
-  @Deprecated("use one of (service name [, ...]) constructors", level = DeprecationLevel.ERROR)
-  @Suppress("unused")
-  constructor(serviceName: String, userName: String?, requestor: Class<*>?, isPasswordMemoryOnly: Boolean, cacheDeniedItems: Boolean, i: Int, m: kotlin.jvm.internal.DefaultConstructorMarker?) :
-    this(serviceName, userName, isPasswordMemoryOnly, cacheDeniedItems)
 }
 
 /**

@@ -11,7 +11,6 @@ import com.intellij.driver.sdk.ui.components.UiComponent
 import com.intellij.driver.sdk.ui.components.common.IdeaFrameUI
 import com.intellij.driver.sdk.ui.components.elements.*
 import com.intellij.driver.sdk.waitFor
-import com.intellij.openapi.util.SystemInfoRt
 import java.awt.Window
 import java.awt.event.KeyEvent
 import javax.swing.JButton
@@ -33,7 +32,7 @@ open class FindInPathPopupUi(data: ComponentData): DialogUiComponent(data) {
 
   val matchesFoundLabel = x { contains(byAccessibleName("matches in")) }
   val fileMaskCheckBox = checkBox { byAccessibleName("File mask:") }
-  val fileMaskComboBox = x { byType("com.intellij.openapi.ui.DialogPanel") }.comboBox()
+  val fileMaskComboBox = x { byType("com.intellij.openapi.ui.DialogPanel") }.accessibleComboBox()
   val filterSearchResultsActionButton = actionButton { byAccessibleName("Filter Search Results") }
   val pinWindowButton = actionButton { byAccessibleName("Pin Window") }
 
@@ -52,10 +51,10 @@ open class FindInPathPopupUi(data: ComponentData): DialogUiComponent(data) {
   val scopeActionButton = actionButton { and(byType("com.intellij.openapi.actionSystem.impl.ActionButton"), byAccessibleName("Scope")) }
 
   val directoryChooser = x { byType("com.intellij.find.impl.FindPopupDirectoryChooser") }.textField()
-  val browseButton = x { byTooltip(if (SystemInfoRt.isMac) "⇧⏎" else "Shift+Enter") }
+  val browseButton = x { byVisibleText("...") }
   val searchRecursivelyActionButton = actionButton { byAccessibleName("Search recursively in subdirectories") }
 
-  val scopeChooserComboBox = x { byType("com.intellij.ide.util.scopeChooser.ScopeChooserCombo") }.comboBox()
+  val scopeChooserComboBox = x { byAccessibleName( "Scope selection") }.accessibleComboBox()
 
   val openResultsInNewTabCheckBox = checkBox { byAccessibleName("Open results in new tab") }
   val openInFindWindowButton = x { byAccessibleName("Open in Find Window") }
@@ -71,6 +70,7 @@ open class FindInPathPopupUi(data: ComponentData): DialogUiComponent(data) {
     driver.withContext(OnDispatcher.EDT) {
       service(ActionManager::class).tryToExecute(action, null, findPopupPanel.component, null, true)
     }
+
   }
 
   fun showSearchHistoryPopup() {
@@ -92,9 +92,9 @@ open class FindInPathPopupUi(data: ComponentData): DialogUiComponent(data) {
     val selectedItem: String? get() = getSelectedRow().let { if (it != -1) items[it] else null }
 
     init {
-      replaceCellRendererReader(
-        driver.new(AccessibleNameCellRendererReader::class, rdTarget = (fixture as? RefWrapper)?.getRef()?.rdTarget ?: RdTarget.DEFAULT)
-      )
+      replaceCellRendererReader {
+        driver.new(AccessibleNameCellRendererReader::class, rdTarget = (it as? RefWrapper)?.getRef()?.rdTarget ?: RdTarget.DEFAULT)
+      }
     }
 
     fun rightClickItemAtRow(row: Int) {

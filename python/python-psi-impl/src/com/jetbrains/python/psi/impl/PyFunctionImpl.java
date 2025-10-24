@@ -35,7 +35,7 @@ import com.jetbrains.python.psi.stubs.PyClassStub;
 import com.jetbrains.python.psi.stubs.PyFunctionStub;
 import com.jetbrains.python.psi.stubs.PyTargetExpressionStub;
 import com.jetbrains.python.psi.types.*;
-import com.jetbrains.python.sdk.PythonSdkUtil;
+import com.jetbrains.python.sdk.legacy.PythonSdkUtil;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -155,10 +155,10 @@ public class PyFunctionImpl extends PyBaseElementImpl<PyFunctionStub> implements
         return PyTypingTypeProvider.removeNarrowedTypeIfNeeded(derefType(returnTypeRef, typeProvider));
       }
     }
-    
+
     return getInferredReturnType(context);
   }
-  
+
   @Override
   public @Nullable PyType getInferredReturnType(@NotNull TypeEvalContext context) {
     PyType inferredType = null;
@@ -172,6 +172,7 @@ public class PyFunctionImpl extends PyBaseElementImpl<PyFunctionStub> implements
         inferredType = returnType;
       }
     }
+    inferredType = PyNeverType.toNoReturnIfNeeded(inferredType);
     return PyTypingTypeProvider.removeNarrowedTypeIfNeeded(PyTypingTypeProvider.toAsyncIfNeeded(this, inferredType));
   }
 
@@ -222,11 +223,20 @@ public class PyFunctionImpl extends PyBaseElementImpl<PyFunctionStub> implements
     if (PyTypeChecker.hasGenerics(type, context)) {
       final var substitutions = PyTypeChecker.unifyGenericCall(receiver, parameters, context);
       if (substitutions != null) {
-        PyClass containingClass = getContainingClass();
-        if (containingClass != null && type instanceof PySelfType) {
-          PyType genericType = PyTypeChecker.findGenericDefinitionType(containingClass, context);
-          if (genericType != null) {
-            type = genericType;
+        // Special handling for __new__ constructor and factory methods of generic classes returning Self:
+        //
+        // class C[T]:
+        //     def __new__(cls, x: T) -> Self:
+        //         ...
+        //
+        // C(42)  # expected C[int], not just C
+        if (getModifier() == CLASSMETHOD || PyUtil.isNewMethod(this)) {
+          PyClass containingClass = getContainingClass();
+          if (containingClass != null && type instanceof PySelfType) {
+            PyType genericType = PyTypeChecker.findGenericDefinitionType(containingClass, context);
+            if (genericType != null) {
+              type = genericType;
+            }
           }
         }
         final var substitutionsWithUnresolvedReturnGenerics =
@@ -308,14 +318,14 @@ public class PyFunctionImpl extends PyBaseElementImpl<PyFunctionStub> implements
     }
     return false;
   }
-  
+
   public static class YieldCollector extends PyRecursiveElementVisitor {
     public List<PyYieldExpression> getYieldExpressions() {
       return myYieldExpressions;
     }
 
     private final List<PyYieldExpression> myYieldExpressions = new ArrayList<>();
-    
+
     @Override
     public void visitPyYieldExpression(@NotNull PyYieldExpression node) {
       myYieldExpressions.add(node);
@@ -329,6 +339,11 @@ public class PyFunctionImpl extends PyBaseElementImpl<PyFunctionStub> implements
     @Override
     public void visitPyLambdaExpression(@NotNull PyLambdaExpression node) {
       // Ignore nested lambdas
+    }
+
+    @Override
+    public void visitPyClass(@NotNull PyClass node) {
+      // Ignore nested classes
     }
   }
 
@@ -361,16 +376,16 @@ public class PyFunctionImpl extends PyBaseElementImpl<PyFunctionStub> implements
       if (point instanceof PyReturnStatement returnStatement) {
         hasReturn = true;
         final PyExpression expr = returnStatement.getExpression();
-        types.add(expr != null ? context.getType(expr) : PyNoneType.INSTANCE);
-      } 
+        types.add(expr != null ? context.getType(expr) : PyBuiltinCache.getInstance(this).getNoneType());
+      }
       else {
-        types.add(PyNoneType.INSTANCE);
+        types.add(PyBuiltinCache.getInstance(this).getNoneType());
       }
     }
 
     if ((isGeneratedStub() || PyKnownDecoratorUtil.hasAbstractDecorator(this, context)) && !hasReturn) {
       if (PyUtil.isInitMethod(this)) {
-        return PyNoneType.INSTANCE;
+        return PyBuiltinCache.getInstance(this).getNoneType();
       }
       return null;
     }
@@ -379,8 +394,8 @@ public class PyFunctionImpl extends PyBaseElementImpl<PyFunctionStub> implements
 
   @Override
   public @NotNull List<PyStatement> getReturnPoints(@NotNull TypeEvalContext context) {
-    final Instruction[] flow = ControlFlowCache.getControlFlow(this).getInstructions();
-    final PyDataFlow dataFlow = ControlFlowCache.getDataFlow(this, context);
+    final PyDataFlow dataFlow = ControlFlowCache.getDataFlow(this, new FlowContext(context, false));
+    final Instruction[] flow = dataFlow.getInstructions();
 
     class ReturnPointCollector {
       final List<PyStatement> returnPoints = new ArrayList<>();
@@ -420,12 +435,12 @@ public class PyFunctionImpl extends PyBaseElementImpl<PyFunctionStub> implements
         }
         return ControlFlowUtil.Operation.CONTINUE;
       }
-      
+
       void walkCFG(int startInstruction) {
         ControlFlowUtil.iteratePrev(startInstruction, flow, this::checkInstruction);
       }
     }
-    
+
     ReturnPointCollector collector = new ReturnPointCollector();
     collector.walkCFG(flow.length - 1);
     return collector.returnPoints;
@@ -637,6 +652,16 @@ public class PyFunctionImpl extends PyBaseElementImpl<PyFunctionStub> implements
         }
 
         @Override
+        public void visitPyLambdaExpression(@NotNull PyLambdaExpression node) {
+          // Ignore lambdas
+        }
+
+        @Override
+        public void visitPyClass(@NotNull PyClass node) {
+          // Ignore nested classes
+        }
+
+        @Override
         public void visitElement(@NotNull PsiElement element) {
           if (!containsYield.get()) {
             super.visitElement(element);
@@ -765,6 +790,14 @@ public class PyFunctionImpl extends PyBaseElementImpl<PyFunctionStub> implements
     return getStubOrPsiChild(PyStubElementTypes.ANNOTATION);
   }
 
+  /**
+   * is `function` a method or a classmethod
+   */
+  public static boolean isMethod(PyFunction function) {
+    final var isMethod = ScopeUtil.getScopeOwner(function) instanceof PyClass;
+    final var modifier = function.getModifier();
+    return (isMethod && modifier == null) || modifier == CLASSMETHOD;
+  }
 
   /**
    * @param self should be this

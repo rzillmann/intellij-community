@@ -6,7 +6,10 @@ import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.util.text.StringUtilRt;
 import com.intellij.openapi.vfs.*;
 import com.intellij.openapi.vfs.impl.VirtualFilePointerManagerImpl.NodeToUpdate;
-import com.intellij.openapi.vfs.newvfs.*;
+import com.intellij.openapi.vfs.newvfs.ArchiveFileSystem;
+import com.intellij.openapi.vfs.newvfs.ManagingFS;
+import com.intellij.openapi.vfs.newvfs.NewVirtualFile;
+import com.intellij.openapi.vfs.newvfs.NewVirtualFileSystem;
 import com.intellij.openapi.vfs.newvfs.events.VFileEvent;
 import com.intellij.openapi.vfs.newvfs.impl.NullVirtualFile;
 import com.intellij.openapi.vfs.newvfs.impl.VirtualFileSystemEntry;
@@ -16,10 +19,7 @@ import com.intellij.util.PathUtilRt;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.containers.MultiMap;
 import com.intellij.util.io.URLUtil;
-import org.jetbrains.annotations.ApiStatus;
-import org.jetbrains.annotations.Contract;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.*;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -42,7 +42,6 @@ public final class FilePartNodeRoot extends FilePartNode {
   CharSequence getName() {
     return "";
   }
-
 
   @NotNull
   NodeToUpdate findOrCreateByFile(@NotNull VirtualFile file) {
@@ -159,7 +158,7 @@ public final class FilePartNodeRoot extends FilePartNode {
       currentFS = fs;
       relativePathInsideJar = "";
     }
-    VfsImplUtil.PathFromRoot pair = VfsImplUtil.extractRootFromPath(currentFS, path);
+    NewVirtualFileSystem.PathFromRoot pair = NewVirtualFileSystem.extractRootFromPath(currentFS, path);
     String pathFromRoot = pair == null ? path : pair.pathFromRoot();
     pathFromRoot += relativePathInsideJar;
     List<String> names = splitNames(pathFromRoot);
@@ -330,7 +329,7 @@ public final class FilePartNodeRoot extends FilePartNode {
   }
 
   void removePointer(@NotNull VirtualFilePointerImpl pointer) {
-    FilePartNode node = pointer.getNode();
+    FilePartNode node = pointer.myNode;
     int remainingLeaves = node.removeLeaf(pointer);
     if (remainingLeaves == 0) {
       VirtualFile file = fileOrNull(node.fileOrUrl);
@@ -350,7 +349,8 @@ public final class FilePartNodeRoot extends FilePartNode {
     }
   }
 
-  static @NotNull FilePartNodeRoot createFakeRoot(@NotNull NewVirtualFileSystem fs) {
+  @VisibleForTesting
+  public static @NotNull FilePartNodeRoot createFakeRoot(@NotNull NewVirtualFileSystem fs) {
     return new FilePartNodeRoot(fs);
   }
 }

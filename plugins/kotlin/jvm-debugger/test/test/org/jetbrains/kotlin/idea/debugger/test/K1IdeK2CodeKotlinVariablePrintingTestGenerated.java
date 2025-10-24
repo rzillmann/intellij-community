@@ -30,6 +30,11 @@ public class K1IdeK2CodeKotlinVariablePrintingTestGenerated extends AbstractK1Id
         KotlinTestUtils.runTest(this::doTest, this, testDataFilePath);
     }
 
+    @TestMetadata("defaultArgAndInlineLambda.kt")
+    public void testDefaultArgAndInlineLambda() throws Exception {
+        runTest("testData/variables/defaultArgAndInlineLambda.kt");
+    }
+
     @TestMetadata("extractCapturesFromSuspendLambdas.kt")
     public void testExtractCapturesFromSuspendLambdas() throws Exception {
         runTest("testData/variables/extractCapturesFromSuspendLambdas.kt");
@@ -68,6 +73,11 @@ public class K1IdeK2CodeKotlinVariablePrintingTestGenerated extends AbstractK1Id
     @TestMetadata("reentrantInlineFunctions.kt")
     public void testReentrantInlineFunctions() throws Exception {
         runTest("testData/variables/reentrantInlineFunctions.kt");
+    }
+
+    @TestMetadata("scopeVariablesInInlineSuspendBlock.kt")
+    public void testScopeVariablesInInlineSuspendBlock() throws Exception {
+        runTest("testData/variables/scopeVariablesInInlineSuspendBlock.kt");
     }
 
     @TestMetadata("spilledCapturedVariables.kt")

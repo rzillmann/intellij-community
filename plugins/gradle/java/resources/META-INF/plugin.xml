@@ -21,7 +21,7 @@
   <depends optional="true" config-file="gradle-toml-integration.xml">org.toml.lang</depends>
   <depends optional="true" config-file="gradle-performance-plugin-support.xml">com.jetbrains.performancePlugin</depends>
 
-  <content>
+  <content namespace="jetbrains">
     <module name="intellij.gradle.profiler"/>
     <module name="intellij.gradle.java.maven"/>
     <module name="intellij.gradle.analysis"/>
@@ -56,12 +56,15 @@
     <projectResolve implementation="org.jetbrains.plugins.gradle.service.project.JavaGradleProjectResolver"/>
     <projectResolve implementation="org.jetbrains.plugins.gradle.service.project.MavenRepositoriesProjectResolver"/>
     <projectResolve implementation="org.jetbrains.plugins.gradle.service.project.JavaGradleManifestResolver"/>
+    <projectResolve implementation="org.jetbrains.plugins.gradle.service.project.ProjectRepositoriesResolver"/>
     <executionEnvironmentProvider implementation="org.jetbrains.plugins.gradle.execution.build.GradleApplicationEnvironmentProvider"/>
 
     <settingsControlProvider implementation="org.jetbrains.plugins.gradle.service.settings.JavaGradleSettingsControlProvider"/>
     <frameworkSupport implementation="org.jetbrains.plugins.gradle.frameworkSupport.GradleJavaFrameworkSupportProvider"/>
     <kotlinDslFrameworkSupport implementation="org.jetbrains.plugins.gradle.frameworkSupport.KotlinDslGradleJavaFrameworkSupportProvider" />
     <targetEnvironmentAware implementation="org.jetbrains.plugins.gradle.execution.target.GradleServerDebugAware" />
+
+    <externallyHandledExtensions implementation="org.jetbrains.plugins.gradle.service.resolve.GradleWsmVersionCatalogHandler" order="first"/>
   </extensions>
 
   <extensions defaultExtensionNs="com.intellij">
@@ -105,8 +108,6 @@
     <runConfigurationProducer implementation="org.jetbrains.plugins.gradle.execution.test.runner.PatternGradleConfigurationProducer"
                               order="last"/>
 
-    <externalSystemCoordinateContributor implementation="org.jetbrains.plugins.gradle.service.project.JavaGradleCoordinateContributor"/>
-
     <externalProjectDataService implementation="org.jetbrains.plugins.gradle.service.project.data.ExternalAnnotationsDataService"/>
     <externalProjectDataService implementation="org.jetbrains.plugins.gradle.service.project.data.ExternalAnnotationsModuleLibrariesService"/>
     <externalProjectDataService implementation="org.jetbrains.plugins.gradle.service.project.data.MavenRepositoriesDataService"/>
@@ -128,6 +129,10 @@
                  description="Specifies port at which Gradle target server process will wait for debugger connections. -1 means disabled feature."/>
     <registryKey key="gradle.refresh.project.outputs" defaultValue="true"
                  description="After a Gradle task, do a shallow refresh of modules outputs in VFS"/>
+    <registryKey key="android.gradle.project.startup.activity.disabled" defaultValue="false"
+                 description="Disable Gradle post-startup activity for Android projects"/>
+    <registryKey key="android.sdk.local.properties.update.disabled" defaultValue="false"
+                 description="Disable update android sdk for local.properties"/>
 
     <localInspection language="UAST" groupPath="Gradle" shortName="ConfigurationAvoidance"
                      bundle="messages.GradleInspectionBundle"

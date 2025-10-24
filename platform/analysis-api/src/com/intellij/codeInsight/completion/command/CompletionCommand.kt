@@ -22,16 +22,12 @@ import javax.swing.Icon
  * This class is marked as experimental and may change in future releases.
  */
 abstract class CompletionCommand : UserDataHolderBase() {
-  /**
-   * Represents the name which is used as a main lookup string
-   */
-  abstract val name: String
 
   /**
-   * Represents a localized, human-readable name for the command, used in tail lookup string
+   * Represents a localized, human-readable name for the command, used as a main lookup string
    */
-  abstract val i18nName: @Nls String
-  abstract val icon: Icon?
+  abstract val presentableName: @Nls String
+  open val icon: Icon? = null
 
   /**
    * Defines the priority of the command in the code completion system.
@@ -72,7 +68,7 @@ abstract class CompletionCommand : UserDataHolderBase() {
   abstract fun execute(offset: Int, psiFile: PsiFile, editor: Editor?)
 
   override fun toString(): String {
-    return "CompletionCommand(name='$name', class='${this::class.simpleName}')"
+    return "CompletionCommand(presentableName='$presentableName', class='${this::class.simpleName}')"
   }
 
 
@@ -91,6 +87,11 @@ abstract class CompletionCommand : UserDataHolderBase() {
    * @return a list of strings representing synonyms. If no synonyms are found, returns an empty list.
    */
   open val synonyms: List<String> = emptyList()
+
+  /**
+   * Retrieves a preview for the command.
+   */
+  open fun getPreview(): IntentionPreviewInfo = IntentionPreviewInfo.EMPTY
 }
 
 /**
@@ -110,14 +111,6 @@ data class HighlightInfoLookup(
   val attributesKey: TextAttributesKey,
   val priority: Int, //higher is on the top
 )
-
-
-/**
- * Represents a command for code completion with a preview feature.
- */
-interface CompletionCommandWithPreview {
-  fun getPreview(): IntentionPreviewInfo?
-}
 
 @JvmField
 val KEY_FORCE_CARET_OFFSET: Key<ForceOffsetData> = Key.create("completion.command.force.caret.offset")

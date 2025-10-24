@@ -19,15 +19,13 @@
   <!--Included and not module to preserve compatibility (plugin classes/action must be available externally-->
   <xi:include href="intellij.vcs.git.xml"/>
 
-  <content>
+  <content namespace="jetbrains">
     <module name="intellij.vcs.git/localHistory"/>
-    <module name="intellij.vcs.git/newUiOnboarding"/>
     <module name="intellij.vcs.git/terminal"/>
     <module name="intellij.vcs.git.coverage"/>
     <!--It makes sense to reconsider this dependency in the future
     by moving intellij.vcs.git to intellij.vcs.git.backend and making content of this module shared-->
     <module name="intellij.vcs.git.shared" loading="embedded"/>
     <module name="intellij.vcs.git.frontend"/>
-    <module name="intellij.vcs.git.frontend.split"/>
   </content>
 </idea-plugin>

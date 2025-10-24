@@ -24,6 +24,7 @@ import com.intellij.util.ui.UIUtil;
 import com.intellij.util.ui.VcsSynchronousProgressWrapper;
 import com.intellij.vcs.AnnotationProviderEx;
 import com.intellij.vcs.commit.CommitMode;
+import com.intellij.vcs.git.GitDisplayName;
 import com.intellij.vcs.log.VcsUserRegistry;
 import git4idea.annotate.GitAdvancedSettingsListener;
 import git4idea.annotate.GitAnnotationProvider;
@@ -33,9 +34,10 @@ import git4idea.changes.GitCommittedChangeListProvider;
 import git4idea.changes.GitOutgoingChangesProvider;
 import git4idea.checkin.GitCheckinEnvironment;
 import git4idea.checkin.GitCommitAndPushExecutor;
-import git4idea.checkout.GitCheckoutProvider;
 import git4idea.commit.GitStagingAreaCommitMode;
-import git4idea.config.*;
+import git4idea.config.GitExecutableManager;
+import git4idea.config.GitVcsApplicationSettings;
+import git4idea.config.GitVersion;
 import git4idea.diff.GitDiffProvider;
 import git4idea.history.GitHistoryProvider;
 import git4idea.i18n.GitBundle;
@@ -48,7 +50,6 @@ import git4idea.stash.ui.GitStashContentProviderKt;
 import git4idea.status.GitChangeProvider;
 import git4idea.update.GitUpdateEnvironment;
 import git4idea.vfs.GitVFSListener;
-import kotlin.coroutines.EmptyCoroutineContext;
 import kotlinx.coroutines.CoroutineScope;
 import kotlinx.coroutines.CoroutineScopeKt;
 import org.jetbrains.annotations.*;
@@ -60,16 +61,13 @@ import java.util.Objects;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
-import java.util.function.Supplier;
 
-import static com.intellij.platform.util.coroutines.CoroutineScopeKt.childScope;
 import static com.intellij.util.concurrency.AppJavaExecutorUtil.executeOnPooledIoThread;
 
 /**
  * Git VCS implementation
  */
 public final class GitVcs extends AbstractVcs {
-  public static final Supplier<@Nls String> DISPLAY_NAME = GitBundle.messagePointer("git4idea.vcs.name");
   public static final @NonNls String NAME = "Git";
   public static final @NonNls String ID = "git";
 
@@ -142,7 +140,7 @@ public final class GitVcs extends AbstractVcs {
 
   @Override
   public @NotNull String getDisplayName() {
-    return DISPLAY_NAME.get();
+    return GitDisplayName.NAME;
   }
 
   @Override
@@ -198,8 +196,7 @@ public final class GitVcs extends AbstractVcs {
 
   @Override
   protected void activate() {
-    CoroutineScope globalScope = GitDisposable.getInstance(myProject).getCoroutineScope();
-    CoroutineScope activeScope = childScope(globalScope, "GitVcs", EmptyCoroutineContext.INSTANCE, true);
+    CoroutineScope activeScope = GitDisposable.getInstance(myProject).childScope("GitVcs");
 
     // workaround the race between 'activate' and 'deactivate'
     CoroutineScope oldScope = myActiveScope.getAndSet(activeScope);
@@ -289,15 +286,6 @@ public final class GitVcs extends AbstractVcs {
     return Collections.singletonList(myProject.getService(GitCommitAndPushExecutor.class));
   }
 
-
-  /**
-   * @deprecated Use {@link GitExecutableManager#identifyVersion(String)} and {@link GitExecutableProblemsNotifier}.
-   */
-  @Deprecated(forRemoval = true)
-  public @NotNull GitExecutableValidator getExecutableValidator() {
-    return new GitExecutableValidator(myProject);
-  }
-
   @Override
   public boolean fileListenerIsSynchronous() {
     return false;
@@ -312,11 +300,6 @@ public final class GitVcs extends AbstractVcs {
         new GitIntegrationEnabler(GitVcs.this, targetDirectory).detectAndEnable();
       }
     }.queue();
-  }
-
-  @Override
-  public CheckoutProvider getCheckoutProvider() {
-    return new GitCheckoutProvider();
   }
 
   @Override
@@ -365,7 +348,7 @@ public final class GitVcs extends AbstractVcs {
   @Override
   public boolean isWithCustomShelves() {
     return GitVcsApplicationSettings.getInstance().isCombinedStashesAndShelvesTabEnabled() &&
-           GitStashContentProviderKt.isStashTabAvailable();
+           GitStashContentProviderKt.stashToolWindowRegistryOption().asBoolean();
   }
 
   @Override

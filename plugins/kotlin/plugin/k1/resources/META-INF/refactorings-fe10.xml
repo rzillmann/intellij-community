@@ -87,10 +87,28 @@
             language="JAVA"
             order="first"
             implementationClass="org.jetbrains.kotlin.idea.refactoring.pullUp.JavaToKotlinPullUpHelperFactory"/>
+    <applicationService
+            serviceInterface="org.jetbrains.kotlin.idea.refactoring.pullUp.KotlinPullUpConflictSearcher"
+            serviceImplementation="org.jetbrains.kotlin.idea.refactoring.pullUp.K1PullUpConflictSearcher"/>
+    <applicationService
+            serviceInterface="org.jetbrains.kotlin.idea.refactoring.memberInfo.KotlinMemberInfoStorageSupport"
+            serviceImplementation="org.jetbrains.kotlin.idea.refactoring.memberInfo.K1MemberInfoStorageSupport"/>
+
+    <applicationService
+            serviceInterface="org.jetbrains.kotlin.idea.refactoring.pushDown.KotlinPushDownProcessorProvider"
+            serviceImplementation="org.jetbrains.kotlin.idea.refactoring.pushDown.K1PushDownProcessorProvider"/>
 
     <refactoring.pushDown
             language="kotlin"
             implementationClass="org.jetbrains.kotlin.idea.refactoring.pushDown.JavaToKotlinPushDownDelegate"/>
+
+    <applicationService
+            serviceInterface="org.jetbrains.kotlin.idea.refactoring.introduce.extractClass.KotlinExtractSuperConflictSearcher"
+            serviceImplementation="org.jetbrains.kotlin.idea.refactoring.introduce.extractClass.K1ExtractSuperConflictSearcher"/>
+
+    <applicationService
+            serviceInterface="org.jetbrains.kotlin.idea.refactoring.introduce.extractClass.KotlinExtractSuperRefactoring"
+            serviceImplementation="org.jetbrains.kotlin.idea.refactoring.introduce.extractClass.K1ExtractSuperRefactoring"/>
 
     <moveFileHandler
             implementation="org.jetbrains.kotlin.idea.refactoring.move.moveFilesOrDirectories.MoveKotlinFileHandler"/>
@@ -101,8 +119,6 @@
 
     <applicationService serviceImplementation="org.jetbrains.kotlin.idea.refactoring.rename.K1RenameRefactoringSupport"
                         serviceInterface="org.jetbrains.kotlin.idea.refactoring.rename.KotlinRenameRefactoringSupport"/>
-
-    <automaticRenamerFactory implementation="org.jetbrains.kotlin.idea.refactoring.rename.KotlinAutomaticTestRenamerFactory"/>
 
     <inlineActionHandler implementation="org.jetbrains.kotlin.idea.refactoring.inline.KotlinInlinePropertyHandler"/>
     <inlineActionHandler implementation="org.jetbrains.kotlin.idea.refactoring.inline.KotlinInlineNamedFunctionHandler"/>

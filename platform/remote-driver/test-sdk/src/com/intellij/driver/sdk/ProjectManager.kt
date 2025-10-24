@@ -11,8 +11,8 @@ interface ProjectManager {
   fun getDefaultProject(): Project
 }
 
-fun Driver.getOpenProjects(): List<Project> {
-  return service<ProjectManager>().getOpenProjects().toList()
+fun Driver.getOpenProjects(rdTarget: RdTarget = RdTarget.DEFAULT): List<Project> {
+  return service<ProjectManager>(rdTarget).getOpenProjects().toList()
 }
 
 fun Driver.getDefaultProject(): Project {
@@ -20,9 +20,7 @@ fun Driver.getDefaultProject(): Project {
 }
 
 fun Driver.singleProject(rdTarget: RdTarget = RdTarget.DEFAULT): Project {
-  val project = withContext {
-    service<ProjectManager>(rdTarget).getOpenProjects().singleOrNull() ?: service<LightEditService>().getProject()
-  }
+  val project = service<ProjectManager>(rdTarget).getOpenProjects().singleOrNull() ?: service<LightEditService>().getProject()
   if (project == null) {
     throw IllegalStateException("No projects are opened")
   }
@@ -30,13 +28,10 @@ fun Driver.singleProject(rdTarget: RdTarget = RdTarget.DEFAULT): Project {
 }
 
 fun Driver.isProjectOpened(project: Project? = null): Boolean {
-  return withContext {
-    val projectToCheck = project ?: getOpenProjects().singleOrNull() ?: service<LightEditService>().getProject()
-
-    if (projectToCheck?.isInitialized() == true) {
-      val ideFrame = getIdeFrame(projectToCheck)
-      return@withContext ideFrame?.getComponent()?.isShowing() == true
-    }
-    return@withContext false
+  val projectToCheck = project ?: getOpenProjects().singleOrNull() ?: service<LightEditService>().getProject()
+  if (projectToCheck?.isInitialized() == true) {
+    val ideFrame = getIdeFrame(projectToCheck)
+    return ideFrame?.getComponent()?.isShowing() == true
   }
+  return false
 }

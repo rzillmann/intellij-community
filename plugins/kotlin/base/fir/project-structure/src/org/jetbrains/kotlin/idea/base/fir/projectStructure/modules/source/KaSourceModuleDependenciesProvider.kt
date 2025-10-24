@@ -11,13 +11,16 @@ import com.intellij.platform.workspace.jps.entities.*
 import org.jetbrains.kotlin.analysis.api.projectStructure.KaLibraryModule
 import org.jetbrains.kotlin.analysis.api.projectStructure.KaModule
 import org.jetbrains.kotlin.analysis.api.projectStructure.KaSourceModule
-import org.jetbrains.kotlin.caches.project.cacheByClassInvalidatingOnRootModifications
+import org.jetbrains.kotlin.caches.project.cacheByClass
 import org.jetbrains.kotlin.idea.base.facet.additionalVisibleModules
 import org.jetbrains.kotlin.idea.base.facet.implementedModules
+import org.jetbrains.kotlin.idea.base.facet.isHMPPEnabled
 import org.jetbrains.kotlin.idea.base.fir.projectStructure.KotlinExportedDependenciesCollector
 import org.jetbrains.kotlin.idea.base.fir.projectStructure.modules.library.KaLibraryModuleImpl
+import org.jetbrains.kotlin.idea.base.fir.projectStructure.provider.K2IDEProjectStructureProviderCache
 import org.jetbrains.kotlin.idea.base.projectStructure.*
 import org.jetbrains.kotlin.idea.base.projectStructure.kmp.HmppSourceModuleDependencyFilter
+import org.jetbrains.kotlin.idea.base.projectStructure.kmp.NonHmppSourceModuleDependenciesFilter
 import org.jetbrains.kotlin.idea.base.projectStructure.kmp.SourceModuleDependenciesFilterCandidate
 import org.jetbrains.kotlin.konan.library.KONAN_STDLIB_NAME
 import org.jetbrains.kotlin.utils.addIfNotNull
@@ -82,14 +85,25 @@ internal class KaSourceModuleDependenciesProvider(private val project: Project) 
         kind: KaSourceModuleKind,
         cacheKey: Class<*>,
     ): Set<KaModule> {
+        val projectStructureProviderCache = K2IDEProjectStructureProviderCache.getInstance(project)
         return when (kind) {
-            KaSourceModuleKind.PRODUCTION -> openapiModule.cacheByClassInvalidatingOnRootModifications(cacheKey) {
-                openapiModule.additionalVisibleModules
-                    .mapNotNullTo(mutableSetOf()) { it.toKaSourceModuleForProduction() }
-                    .ifEmpty { emptySet() }
+            KaSourceModuleKind.PRODUCTION -> {
+                openapiModule.cacheByClass(
+                    cacheKey,
+                    projectStructureProviderCache.getCacheSourcesTracker(),
+                    projectStructureProviderCache.getCacheSdkAndLibrariesTracker()
+                    ) {
+                    openapiModule.additionalVisibleModules
+                        .mapNotNullTo(mutableSetOf()) { it.toKaSourceModuleForProduction() }
+                        .ifEmpty { emptySet() }
+                }
             }
 
-            KaSourceModuleKind.TEST -> openapiModule.cacheByClassInvalidatingOnRootModifications(cacheKey) {
+            KaSourceModuleKind.TEST -> openapiModule.cacheByClass(
+                cacheKey,
+                projectStructureProviderCache.getCacheSourcesTracker(),
+                projectStructureProviderCache.getCacheSdkAndLibrariesTracker()
+            ) {
                 val result = linkedSetOf<KaModule>()
                 result.addIfNotNull(openapiModule.toKaSourceModuleForProduction())
                 TestModuleProperties.getInstance(openapiModule).productionModule?.let {
@@ -108,7 +122,6 @@ internal class KaSourceModuleDependenciesProvider(private val project: Project) 
                     val productionModule = additionalVisibleModule.toKaSourceModuleForProduction()
                     if (productionModule != null) {
                         result.add(productionModule)
-                        continue
                     }
                     val originalModuleHasTestRoot = openapiModule.toKaSourceModuleForTest() != null
                     if (originalModuleHasTestRoot) {
@@ -160,6 +173,17 @@ internal class KaSourceModuleDependenciesProvider(private val project: Project) 
     }
 
     private fun ModuleDependency.collectExportedDependencies(kind: KaSourceModuleKind, to: MutableCollection<KaModule>) {
+        val exportedDependenciesAvailable = when (scope) {
+            DependencyScope.COMPILE,
+            DependencyScope.PROVIDED -> true
+
+            DependencyScope.TEST -> kind == KaSourceModuleKind.TEST
+
+            DependencyScope.RUNTIME -> false
+        }
+
+        if (!exportedDependenciesAvailable) return
+
         for (dependency in KotlinExportedDependenciesCollector.getInstance(project).getExportedDependencies(this)) {
             when (dependency) {
                 is LibraryDependency -> {
@@ -202,7 +226,10 @@ internal class KaSourceModuleDependenciesProvider(private val project: Project) 
     }
 
     private fun KaSourceModuleBase.canDependOn(other: KaModule): Boolean {
-        val dependencyFilter = HmppSourceModuleDependencyFilter(targetPlatform)
+        val dependencyFilter = when {
+            module.isHMPPEnabled -> HmppSourceModuleDependencyFilter(targetPlatform)
+            else -> NonHmppSourceModuleDependenciesFilter(targetPlatform)
+        }
         return dependencyFilter.isSupportedDependency(other.toDependencyCandidate())
     }
 

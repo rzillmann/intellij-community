@@ -1,8 +1,8 @@
-// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.ide;
 
 import com.intellij.openapi.actionSystem.Shortcut;
-import com.intellij.openapi.application.WriteIntentReadAction;
+import com.intellij.openapi.application.CoroutineSupport.UiDispatcherKind;
 import com.intellij.openapi.keymap.KeymapUtil;
 import com.intellij.openapi.ui.popup.ComponentPopupBuilder;
 import com.intellij.openapi.ui.popup.JBPopup;
@@ -131,7 +131,8 @@ public class HelpTooltip {
   private BooleanSupplier masterPopupOpenCondition;
 
   private JBPopup myPopup;
-  private final SingleEdtTaskScheduler popupAlarm = SingleEdtTaskScheduler.createSingleEdtTaskScheduler();
+  // todo use strict when Editor will be fixed (EditorImpl.logicalPositionToOffset requires read action)
+  private final SingleEdtTaskScheduler popupAlarm = SingleEdtTaskScheduler.createSingleEdtTaskScheduler(UiDispatcherKind.RELAX);
   private boolean isOverPopup;
   private boolean isMultiline;
   private int myInitialDelay = -1;
@@ -315,6 +316,26 @@ public class HelpTooltip {
     return this;
   }
 
+  @ApiStatus.Internal
+  public @Nullable Supplier<@NotNull String> getTitle() {
+    return title;
+  }
+
+  @ApiStatus.Internal
+  public @Nullable String getDescription() {
+    return description;
+  }
+
+  @ApiStatus.Internal
+  public @Nullable ActionLink getLink() {
+    return link;
+  }
+
+  @ApiStatus.Internal
+  public int getHideDelay() {
+    return myHideDelay;
+  }
+
   @Override
   public boolean equals(Object that) {
     if (this == that) return true;
@@ -378,6 +399,10 @@ public class HelpTooltip {
     installMouseListeners(component);
   }
 
+  protected boolean shouldForceHiding() {
+    return link == null;
+  }
+
   protected final void createMouseListeners() {
     myMouseListener = new MouseAdapter() {
       @Override public void mouseEntered(MouseEvent e) {
@@ -397,7 +422,7 @@ public class HelpTooltip {
         if (delay == -1) {
           delay = Registry.intValue("ide.tooltip.initialDelay.highlighter", 150);
         }
-        scheduleHide(link == null, delay);
+        scheduleHide(shouldForceHiding(), delay);
       }
 
       @Override public void mouseMoved(MouseEvent e) {
@@ -417,25 +442,36 @@ public class HelpTooltip {
       addUserData(PopupCornerType.RoundedTooltip);
   }
 
-  private @NotNull MouseListener createIsOverTipMouseListener() {
-    return new MouseAdapter() {
-      @Override
-      public void mouseEntered(MouseEvent e) {
-        isOverPopup = true;
-      }
+  @NotNull
+  protected MouseListener createIsOverTipMouseListener() {
+    return new OverTipMouseListener();
+  }
 
-      @Override
-      public void mouseExited(MouseEvent e) {
-        if (link == null || !link.getBounds().contains(e.getPoint())) {
-          isOverPopup = false;
-          hidePopup(false);
-        }
+  protected class OverTipMouseListener extends MouseAdapter {
+    protected void doEnter() {
+      isOverPopup = true;
+    }
+
+    protected void doExit() {
+      isOverPopup = false;
+      hidePopup(false);
+    }
+
+    @Override
+    public void mouseEntered(MouseEvent e) {
+      doEnter();
+    }
+
+    @Override
+    public void mouseExited(MouseEvent e) {
+      if (link == null || !link.getBounds().contains(e.getPoint())) {
+        doExit();
       }
-    };
+    }
   }
 
   @ApiStatus.Internal
-  public final @NotNull JPanel createTipPanel() {
+  public @NotNull JPanel createTipPanel() {
     JPanel tipPanel = new JPanel();
     tipPanel.setLayout(new VerticalLayout(JBUI.getInt("HelpTooltip.verticalGap", 4)));
     tipPanel.setBackground(UIUtil.getToolTipBackground());
@@ -601,7 +637,7 @@ public class HelpTooltip {
       return;
     }
 
-    popupAlarm.request(delay, () -> WriteIntentReadAction.run((Runnable)() ->{
+    popupAlarm.request(delay, () -> {
       initialShowScheduled = false;
       if (masterPopupOpenCondition != null && !masterPopupOpenCondition.getAsBoolean()) {
         return;
@@ -611,12 +647,15 @@ public class HelpTooltip {
       String text = owner instanceof JComponent ? ((JComponent)owner).getToolTipText(e) : null;
       if (myPopup != null && !myPopup.isDisposed()) {
         if (Strings.isEmpty(text) && Strings.isEmpty(myToolTipText)) {
-          return; // do nothing if a tooltip becomes empty
+          // do nothing if a tooltip becomes empty
+          return;
         }
         if (Objects.equals(text, myToolTipText)) {
-          return; // do nothing if a tooltip is not changed
+          // do nothing if a tooltip is not changed
+          return;
         }
-        myPopup.cancel(); // cancel the previous popup before showing a new one
+        // cancel the previous popup before showing a new one
+        myPopup.cancel();
       }
 
       myToolTipText = text;
@@ -630,7 +669,7 @@ public class HelpTooltip {
         int dismissDelay = Registry.intValue(isMultiline ? "ide.helptooltip.full.dismissDelay" : "ide.helptooltip.regular.dismissDelay");
         scheduleHide(true, dismissDelay);
       }
-    }));
+    });
   }
 
   private void scheduleHide(boolean force, int delay) {

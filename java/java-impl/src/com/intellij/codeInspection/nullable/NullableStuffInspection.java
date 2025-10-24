@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.codeInspection.nullable;
 
 import com.intellij.codeInsight.intention.preview.IntentionPreviewInfo;
@@ -44,6 +44,9 @@ public class NullableStuffInspection extends NullableStuffInspectionBase {
       checkbox("REPORT_NOTNULL_PARAMETERS_OVERRIDES_NOT_ANNOTATED", JavaBundle.message("inspection.nullable.problems.notnull.overrides.option")),
       checkbox("REPORT_NOT_ANNOTATED_GETTER", JavaBundle.message("inspection.nullable.problems.not.annotated.getters.for.annotated.fields")),
       checkbox("REPORT_NULLS_PASSED_TO_NOT_NULL_PARAMETER", JavaBundle.message("inspection.nullable.problems.notnull.parameters.with.null.literal.option")),
+      checkbox("REPORT_NULLABILITY_ANNOTATION_ON_LOCALS", JavaBundle.message("inspection.nullable.problems.nullability.on.locals")),
+      checkbox("REPORT_NOT_NULL_TO_NULLABLE_CONFLICTS_IN_ASSIGNMENTS", JavaBundle.message(
+        "inspection.nullable.problems.notnull.to.nullable.assignment.conflicts")),
       JavaInspectionControls.button(JavaInspectionButtons.ButtonKind.NULLABILITY_ANNOTATIONS)
     );
   }
@@ -70,7 +73,7 @@ public class NullableStuffInspection extends NullableStuffInspectionBase {
     }
 
     @Override
-    public void invoke(@NotNull Project project, @NotNull PsiFile file, @NotNull PsiElement startElement, @NotNull PsiElement endElement) {
+    public void invoke(@NotNull Project project, @NotNull PsiFile psiFile, @NotNull PsiElement startElement, @NotNull PsiElement endElement) {
       PsiParameter p = (PsiParameter)startElement;
       final PsiMethod method = PsiTreeUtil.getParentOfType(p, PsiMethod.class);
       if (method == null) return;

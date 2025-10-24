@@ -3,21 +3,23 @@ package org.jetbrains.plugins.terminal
 
 import com.intellij.application.options.EditorFontsConstants
 import com.intellij.ide.ui.UISettingsUtils
+import com.intellij.ide.util.RunOnceUtil
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.components.State
 import com.intellij.openapi.components.Storage
 import com.intellij.openapi.components.service
+import com.intellij.openapi.editor.colors.EditorColorsManager
 import com.intellij.openapi.editor.colors.FontPreferences
-import com.intellij.openapi.editor.colors.impl.AppConsoleFontOptions
 import com.intellij.openapi.editor.colors.impl.AppEditorFontOptions
 import com.intellij.openapi.editor.colors.impl.AppFontOptions
 import com.intellij.openapi.editor.colors.impl.FontPreferencesImpl
 import com.intellij.openapi.editor.impl.FontFamilyService
 import com.intellij.openapi.util.Disposer
+import kotlinx.coroutines.CoroutineScope
 import org.jetbrains.annotations.ApiStatus
-import java.util.*
+import org.jetbrains.plugins.terminal.block.ui.updateFrontendSettingsAndSync
+import org.jetbrains.plugins.terminal.util.TerminalSettingsFloatValueImpl
 import java.util.concurrent.CopyOnWriteArrayList
-import kotlin.math.pow
 import kotlin.math.roundToInt
 
 @State(
@@ -25,7 +27,7 @@ import kotlin.math.roundToInt
   storages = [Storage("terminal-font.xml")],
 )
 @ApiStatus.Internal
-class TerminalFontSettingsService : AppFontOptions<TerminalFontSettingsState>() {
+class TerminalFontSettingsService(private val coroutineScope: CoroutineScope) : AppFontOptions<TerminalFontSettingsState>() {
   companion object {
     @JvmStatic fun getInstance(): TerminalFontSettingsService = service<TerminalFontSettingsService>()
 
@@ -45,35 +47,16 @@ class TerminalFontSettingsService : AppFontOptions<TerminalFontSettingsState>() 
 
   @ApiStatus.Internal // for Java
   @JvmName("getSettings")
-  internal fun getSettings(): TerminalFontSettings {
-    val preferences = fontPreferences
-    return TerminalFontSettings(
-      fontFamily = preferences.fontFamily,
-      fontSize = TerminalFontSize.ofFloat(preferences.getSize2D(preferences.fontFamily)),
-      lineSpacing = TerminalLineSpacing.ofFloat(preferences.lineSpacing),
-      columnSpacing = columnSpacing,
-    )
-  }
+  internal fun getSettings(): TerminalFontSettings = TerminalFontSettings(fontPreferences, columnSpacing)
 
   internal fun setSettings(settings: TerminalFontSettings) {
     val oldSettings = getSettings()
 
     val newPreferences = FontPreferencesImpl()
     // start with the console preferences as the default
-    AppConsoleFontOptions.getInstance().fontPreferences.copyTo(newPreferences)
+    getConsoleFontPreferences().copyTo(newPreferences)
     // then overwrite the subset that the terminal settings provide
-    newPreferences.clearFonts()
-    newPreferences.addFontFamily(settings.fontFamily)
-    // These two are not really used by the terminal at the moment,
-    // but are needed so that the families are saved,
-    // otherwise migration in com.intellij.openapi.editor.colors.impl.AppFontOptions.copyState
-    // will be triggered, and that can mess up the saved settings completely (IJPL-184027).
-    val regularSubFamily = FontFamilyService.getRecommendedSubFamily(settings.fontFamily)
-    newPreferences.regularSubFamily = regularSubFamily
-    val boldSubFamily = FontFamilyService.getRecommendedBoldSubFamily(settings.fontFamily, regularSubFamily)
-    newPreferences.boldSubFamily = boldSubFamily
-    newPreferences.setFontSize(settings.fontFamily, settings.fontSize.floatValue)
-    newPreferences.lineSpacing = settings.lineSpacing.floatValue
+    settings.copyTo(newPreferences)
     // then apply the settings that aren't a part of FontPreferences
     columnSpacing = settings.columnSpacing
     // apply the FontPreferences part, the last line because it invokes incModificationCount()
@@ -84,6 +67,16 @@ class TerminalFontSettingsService : AppFontOptions<TerminalFontSettingsState>() 
     }
   }
 
+  override fun getFontPreferences(): FontPreferences {
+    val result = super.getFontPreferences()
+    // The default fallback family isn't serialized, but we need to explicitly add it anyway if we're not using the default font.
+    // Otherwise, if the explicitly set font is missing some characters, the default font won't be used as a fallback.
+    if (result.effectiveFontFamilies.size == 1 && result.fontFamily != FontPreferences.DEFAULT_FONT_NAME) {
+      (result as FontPreferencesImpl).register(FontPreferences.DEFAULT_FONT_NAME, result.getSize2D(result.fontFamily))
+    }
+    return result
+  }
+
   override fun createFontState(fontPreferences: FontPreferences): TerminalFontSettingsState =
     TerminalFontSettingsState(fontPreferences).also {
       it.COLUMN_SPACING = columnSpacing.floatValue
@@ -91,7 +84,10 @@ class TerminalFontSettingsService : AppFontOptions<TerminalFontSettingsState>() 
 
   override fun loadState(state: TerminalFontSettingsState) {
     columnSpacing = TerminalColumnSpacing.ofFloat(state.COLUMN_SPACING)
-    super.loadState(state)
+
+    if (!resetNonMonospacedFontsOnce(state)) {
+      super.loadState(state)
+    }
 
     // In the case of RemDev settings are synced from backend to frontend using `loadState` method.
     // So, notify the listeners on every `loadState` to not miss the change.
@@ -100,7 +96,8 @@ class TerminalFontSettingsService : AppFontOptions<TerminalFontSettingsState>() 
 
   override fun noStateLoaded() {
     // the state is mostly inherited from the console settings
-    val defaultState = TerminalFontSettingsState(AppConsoleFontOptions.getInstance().fontPreferences)
+    val consolePreferences = getConsoleFontPreferences()
+    val defaultState = TerminalFontSettingsState(consolePreferences)
     // except the line spacing: it is only inherited if it's different from the default, otherwise we use our own default
     val userSetConsoleLineSpacing = TerminalLineSpacing.ofFloat(defaultState.LINE_SPACING)
     val defaultConsoleLineSpacing = TerminalLineSpacing.ofFloat(FontPreferences.DEFAULT_LINE_SPACING)
@@ -108,6 +105,35 @@ class TerminalFontSettingsService : AppFontOptions<TerminalFontSettingsState>() 
       defaultState.LINE_SPACING = DEFAULT_TERMINAL_LINE_SPACING.floatValue
     }
     loadState(defaultState)
+  }
+
+  private fun getConsoleFontPreferences(): FontPreferences {
+    val colorsManager = EditorColorsManager.getInstance()
+    val currentScheme = colorsManager.activeVisibleScheme ?: colorsManager.defaultScheme
+    return currentScheme.consoleFontPreferences
+  }
+
+  /**
+   * Because of initial misconfiguration of the settings (IJPL-188621), non-monospaced fonts may be stored in the [storedState].
+   * This logic is intended to reset the font to the default value (from console settings) in this case.
+   * This reset will be performed only once, further calls will do nothing.
+   *
+   * @return whether reset was performed during this call.
+   */
+  fun resetNonMonospacedFontsOnce(storedState: TerminalFontSettingsState): Boolean {
+    return RunOnceUtil.runOnceForApp("TerminalFontSettingsService.fixStoredNonMonospacedFonts") {
+      updateFrontendSettingsAndSync(coroutineScope) {
+        val adjustedState = if (!FontFamilyService.isMonospaced(storedState.FONT_FAMILY)) {
+          val newState = TerminalFontSettingsState(getConsoleFontPreferences())
+          newState.FONT_SIZE_2D = storedState.FONT_SIZE_2D
+          newState.LINE_SPACING = storedState.LINE_SPACING
+          newState
+        }
+        else storedState
+
+        super.loadState(adjustedState)
+      }
+    }
   }
 
   private fun fireListeners() {
@@ -203,49 +229,6 @@ internal sealed class TerminalColumnSpacing {
   }
 }
 
-/**
- * A container for floating-point values with equality support and sensible precision.
- */
-private data class TerminalSettingsFloatValueImpl(
-  private val rawIntValue: Int,
-  private val digits: Int,
-) {
-  companion object {
-    fun ofFloat(value: Float, digits: Int): TerminalSettingsFloatValueImpl =
-      TerminalSettingsFloatValueImpl(rawIntValue = (value * multiplier(digits)).roundToInt(), digits = digits)
-
-    fun parse(value: String, defaultValue: Float, digits: Int): TerminalSettingsFloatValueImpl =
-      try {
-        ofFloat(value.toFloat(), digits)
-      }
-      catch (_: Exception) {
-        ofFloat(defaultValue, digits)
-      }
-
-    private fun multiplier(digits: Int): Float = 10f.pow(digits)
-  }
-
-  private val multiplier: Float = multiplier(digits)
-
-  private val actualDigits: Int
-    get() {
-      var actualDigits = digits
-      var value = rawIntValue
-      while (actualDigits > 1 && value % 10 == 0) {
-        --actualDigits
-        value /= 10
-      }
-      return actualDigits
-    }
-
-  fun coerceIn(range: ClosedFloatingPointRange<Float>): TerminalSettingsFloatValueImpl =
-    ofFloat(toFloat().coerceIn(range), digits)
-
-  fun toFloat(): Float = rawIntValue.toFloat() / multiplier
-
-  fun toFormattedString(): String = String.format(Locale.ROOT, "%.${actualDigits}f", toFloat())
-}
-
 @ApiStatus.Internal
 interface TerminalFontSettingsListener {
   fun fontSettingsChanged()
@@ -272,16 +255,62 @@ interface TerminalFontSettingsListener {
 
 internal data class TerminalFontSettings(
   val fontFamily: String,
+  val fallbackFontFamily: String,
   val fontSize: TerminalFontSize,
   val lineSpacing: TerminalLineSpacing,
   val columnSpacing: TerminalColumnSpacing,
-)
+) {
+  constructor(preferences: FontPreferences, columnSpacing: TerminalColumnSpacing) : this(
+    fontFamily = preferences.fontFamily,
+    fallbackFontFamily = preferences.effectiveFontFamilies.getOrNull(1) ?: FontPreferences.DEFAULT_FONT_NAME,
+    fontSize = TerminalFontSize.ofFloat(preferences.getSize2D(preferences.fontFamily)),
+    lineSpacing = TerminalLineSpacing.ofFloat(preferences.lineSpacing),
+    columnSpacing = columnSpacing,
+  )
+
+  fun copyTo(preferences: FontPreferencesImpl) {
+    preferences.clearFonts()
+    copyMainFont(this, preferences)
+    copyFallbackFont(this, preferences)
+    copyFontSize(this, preferences)
+    copyLineSpacing(this, preferences)
+  }
+}
+
+private fun copyMainFont(settings: TerminalFontSettings, preferences: FontPreferencesImpl) {
+  preferences.addFontFamily(settings.fontFamily)
+  // These two are not really used by the terminal at the moment,
+  // but are needed so that the families are saved,
+  // otherwise migration in com.intellij.openapi.editor.colors.impl.AppFontOptions.copyState
+  // will be triggered, and that can mess up the saved settings completely (IJPL-184027).
+  val regularSubFamily = FontFamilyService.getRecommendedSubFamily(settings.fontFamily)
+  preferences.regularSubFamily = regularSubFamily
+  val boldSubFamily = FontFamilyService.getRecommendedBoldSubFamily(settings.fontFamily, regularSubFamily)
+  preferences.boldSubFamily = boldSubFamily
+}
+
+private fun copyFallbackFont(settings: TerminalFontSettings, preferences: FontPreferencesImpl) {
+  if (settings.fallbackFontFamily != settings.fontFamily) {
+    preferences.addFontFamily(settings.fallbackFontFamily)
+  }
+}
+
+private fun copyFontSize(settings: TerminalFontSettings, preferences: FontPreferencesImpl) {
+  for (fontFamily in preferences.effectiveFontFamilies) {
+    preferences.setFontSize(fontFamily, settings.fontSize.floatValue)
+  }
+}
+
+private fun copyLineSpacing(settings: TerminalFontSettings, preferences: FontPreferencesImpl) {
+  preferences.lineSpacing = settings.lineSpacing.floatValue
+}
 
 @ApiStatus.Internal
 class TerminalFontSettingsState: AppEditorFontOptions.PersistentFontPreferences {
   @Suppress("unused") // for serialization
   constructor(): super() {
     LINE_SPACING = DEFAULT_TERMINAL_LINE_SPACING.floatValue // to ensure that values different from OUR default are saved
+    SECONDARY_FONT_FAMILY = FontPreferences.DEFAULT_FONT_NAME
   }
 
   constructor(fontPreferences: FontPreferences): super(fontPreferences)

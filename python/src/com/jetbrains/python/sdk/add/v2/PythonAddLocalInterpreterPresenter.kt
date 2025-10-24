@@ -5,7 +5,9 @@ import com.intellij.openapi.projectRoots.Sdk
 import com.intellij.openapi.util.io.toNioPathOrNull
 import com.jetbrains.python.Result
 import com.jetbrains.python.errorProcessing.ErrorSink
+import com.jetbrains.python.errorProcessing.emit
 import com.jetbrains.python.sdk.ModuleOrProject
+import com.jetbrains.python.sdk.add.collector.PythonNewInterpreterAddedCollector
 import com.jetbrains.python.sdk.rootManager
 import com.jetbrains.python.sdk.service.PySdkService.Companion.pySdkService
 import com.jetbrains.python.venvReader.VirtualEnvReader
@@ -35,14 +37,16 @@ class PythonAddLocalInterpreterPresenter(val moduleOrProject: ModuleOrProject, v
   private val _sdkShared = MutableSharedFlow<Sdk>(1)
   val sdkCreatedFlow: Flow<Sdk> = _sdkShared.asSharedFlow()
 
-  suspend fun okClicked(addEnvironment: PythonAddEnvironment) {
-    when (val r = addEnvironment.getOrCreateSdk(moduleOrProject)) {
+  suspend fun okClicked(addEnvironment: PythonAddEnvironment<PathHolder.Eel>) {
+    when (val r = addEnvironment.getOrCreateSdkWithModal(moduleOrProject)) {
       is Result.Failure -> {
-        errorSink.emit(r.error)
+        errorSink.emit(r.error, moduleOrProject.project)
         return
       }
       is Result.Success -> {
         moduleOrProject.project.pySdkService.persistSdk(r.result)
+        val isPreviouslyConfigured = addEnvironment.createStatisticsInfo(PythonInterpreterCreationTargets.LOCAL_MACHINE).previouslyConfigured
+        PythonNewInterpreterAddedCollector.logPythonNewInterpreterAdded(r.result, isPreviouslyConfigured)
         _sdkShared.emit(r.result)
       }
     }

@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.execution.wsl;
 
 import com.intellij.execution.ExecutionException;
@@ -13,9 +13,7 @@ import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vfs.impl.wsl.WslConstants;
 import com.intellij.util.containers.ContainerUtil;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
-import org.jetbrains.annotations.TestOnly;
+import org.jetbrains.annotations.*;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -23,10 +21,7 @@ import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.List;
+import java.util.*;
 import java.util.regex.Pattern;
 
 import static com.intellij.openapi.util.NullableLazyValue.lazyNullable;
@@ -145,7 +140,12 @@ public final class WSLUtil {
   // To be removed when old WSL installations (without wsl.exe) are gone.
   private static int getVersionByUname(@NotNull WSLDistribution distribution) {
     try {
-      ProcessOutput output = distribution.executeOnWsl(WSLDistribution.DEFAULT_TIMEOUT, "uname", "-v");
+      ProcessOutput output = distribution.executeOnWsl(
+        Arrays.asList("uname", "-v"),
+        new WSLCommandLineOptions().setLaunchWithWslExe(true),
+        WSLDistribution.DEFAULT_TIMEOUT,
+        null
+      );
       if (output.checkSuccess(LOG)) {
         return output.getStdout().contains("Microsoft") ? 1 : 2;
       }
@@ -204,7 +204,9 @@ public final class WSLUtil {
     }
   }
 
-  static @NotNull String getUncPrefix() {
+  @VisibleForTesting
+  @ApiStatus.Internal
+  public static @NotNull String getUncPrefix() {
     return SystemInfo.isWin11OrNewer ? DEFAULT_UNC_PREFIX : WslConstants.UNC_PREFIX;
   }
 
@@ -218,7 +220,7 @@ public final class WSLUtil {
    * <li>Windows 10</li>
    * It's available since Windows 10 Insider Preview Build 21354.
    * <a href="https://blogs.windows.com/windows-insider/2021/04/07/announcing-windows-10-insider-preview-build-21354/"></a>
-   * This preview was included in Windows 10 Version 21H2 (November 2021 Update).
+   * This preview was included in Windows 10 Version 21H2 (November 2021 Update), OS Build 19044.*
    */
   static final String DEFAULT_UNC_PREFIX = "\\\\wsl.localhost\\";
 }

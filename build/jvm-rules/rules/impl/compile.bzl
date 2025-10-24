@@ -16,21 +16,23 @@ load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("@rules_java//java:defs.bzl", "JavaInfo", "java_common")
 load(
     "@rules_kotlin//kotlin/internal:defs.bzl",
-    _JAVA_TOOLCHAIN_TYPE = "JAVA_TOOLCHAIN_TYPE",
+    "JAVA_TOOLCHAIN_TYPE",
+    KotlinInfo = "KtJvmInfo",
     _KtCompilerPluginInfo = "KtCompilerPluginInfo",
-    _KtJvmInfo = "KtJvmInfo",
     _KtPluginConfiguration = "KtPluginConfiguration",
 )
-load("@rules_kotlin//kotlin/internal:opts.bzl", "JavacOptions")
 load("//:rules/common-attrs.bzl", "add_dicts")
 load("//:rules/impl/associates.bzl", "get_associates")
 load("//:rules/impl/builder-args.bzl", "init_builder_args")
+load("//:rules/impl/compiler-plugins.bzl", "collect_compiler_plugins_for_export", "compiler_plugins_from", "exported_compiler_plugins_from")
+load("//:rules/impl/javac-options.bzl", "JavacOptions")
 load("//:rules/impl/kotlinc-options.bzl", "KotlincOptions")
+load("//:rules/resource.bzl", "ResourceGroupInfo")
+
+visibility("private")
 
 def find_java_toolchain(ctx, target):
-    if _JAVA_TOOLCHAIN_TYPE in ctx.toolchains:
-        return ctx.toolchains[_JAVA_TOOLCHAIN_TYPE].java
-    return target[java_common.JavaToolchainInfo]
+    return ctx.toolchains[JAVA_TOOLCHAIN_TYPE].java if JAVA_TOOLCHAIN_TYPE in ctx.toolchains else target[java_common.JavaToolchainInfo]
 
 def _java_info(target):
     return target[JavaInfo] if JavaInfo in target else None
@@ -38,17 +40,21 @@ def _java_info(target):
 def _partitioned_srcs(srcs):
     kt_srcs = []
     java_srcs = []
+    form_srcs = []
 
     for f in srcs:
         if f.path.endswith(".kt"):
             kt_srcs.append(f)
         elif f.path.endswith(".java"):
             java_srcs.append(f)
+        elif f.path.endswith(".form"):
+            form_srcs.append(f)
 
     return struct(
         kt = kt_srcs,
         java = java_srcs,
-        all_srcs = kt_srcs + java_srcs,
+        forms = form_srcs,
+        all_srcs = kt_srcs + java_srcs + form_srcs,
         src_jars = [],
     )
 
@@ -75,7 +81,7 @@ def _jvm_deps(ctx, associated_targets, deps, runtime_deps):
 
     # reduced classpath, exclude transitive deps from compilation
     #prune_transitive_deps = toolchains.kt.experimental_prune_transitive_deps and "kt_experimental_prune_transitive_deps_incompatible" not in ctx.attr.tags
-    prune_transitive_deps = False and "kt_experimental_prune_transitive_deps_incompatible" not in ctx.attr.tags
+    prune_transitive_deps = True and "kt_experimental_prune_transitive_deps_incompatible" not in ctx.attr.tags
     transitive = _compute_transitive_jars(dep_infos, prune_transitive_deps)
 
     return struct(
@@ -84,101 +90,11 @@ def _jvm_deps(ctx, associated_targets, deps, runtime_deps):
         runtime_deps = [_java_info(d) for d in runtime_deps],
     )
 
-def _exported_plugins(deps):
-    """Encapsulates compiler dependency metadata."""
-    plugins = []
-    for dep in deps:
-        if _KtJvmInfo in dep and dep[_KtJvmInfo] != None:
-            plugins.extend(dep[_KtJvmInfo].exported_compiler_plugins.to_list())
-    return plugins
-
-def _collect_plugins_for_export(local, exports):
-    """Collects into a depset. """
-    return depset(
-        local,
-        transitive = [
-            e[_KtJvmInfo].exported_compiler_plugins
-            for e in exports
-            if _KtJvmInfo in e and e[_KtJvmInfo]
-        ],
-    )
-
-def _new_plugins_from(targets):
-    """Returns a struct containing the plugin metadata for the given targets.
-
-    Args:
-        targets: A list of targets.
-    Returns:
-        A struct containing the plugins for the given targets in the format:
-        {
-            stubs_phase = {
-                classpath = depset,
-                options= List[KtCompilerPluginOption],
-            ),
-            compile = {
-                classpath = depset,
-                options = List[KtCompilerPluginOption],
-            },
-        }
-    """
-
-    all_plugins = {}
-    plugins_without_phase = []
-    for t in targets:
-        if _KtCompilerPluginInfo not in t:
-            continue
-        plugin = t[_KtCompilerPluginInfo]
-        if not (plugin.stubs or plugin.compile):
-            plugins_without_phase.append("%s: %s" % (t.label, plugin.id))
-        if plugin.id in all_plugins:
-            fail("has multiple plugins with the same id: %s." % plugin.id)
-        all_plugins[plugin.id] = plugin
-
-    if plugins_without_phase:
-        fail("has plugin without a phase defined: %s" % cfgs_without_plugin)
-
-    plugin_id_to_configuration = {}
-    cfgs_without_plugin = []
-    for t in targets:
-        if _KtPluginConfiguration not in t:
-            continue
-        cfg = t[_KtPluginConfiguration]
-        if cfg.id not in all_plugins:
-            cfgs_without_plugin.append("%s: %s" % (t.label, cfg.id))
-        plugin_id_to_configuration[cfg.id] = cfg
-
-    if cfgs_without_plugin:
-        fail("has plugin configurations without corresponding plugins: %s" % cfgs_without_plugin)
-
-    return struct(
-        stubs_phase = [],
-        compile_phase = _new_plugin_from(plugin_id_to_configuration, [p for p in all_plugins.values() if p.compile]),
-    )
-
-def _new_plugin_from(plugin_id_to_configuration, plugins_for_phase):
-    classpath = {}
-    options = {}
-    for p in plugins_for_phase:
-        if p.id in plugin_id_to_configuration:
-            cfg = plugin_id_to_configuration[p.id]
-            classpath[p.id] = depset(transitive = p.classpath + cfg.classpath)
-            options[p.id] = p.options + cfg.options
-        else:
-            classpath[p.id] = p.classpath
-            if p.options:
-                options[p.id] = p.options
-
-    return struct(
-        classpath = classpath,
-        options = options,
-    )
-
-def kt_jvm_produce_jar_actions(ctx, rule_kind):
-    """This macro sets up a compile action for a Kotlin jar.
+def kt_jvm_produce_jar_actions(ctx, isTest = False):
+    """Sets up a compile action for a jar.
 
     Args:
         ctx: Invoking rule ctx, used for attr, actions, and label.
-        rule_kind: The rule kind --e.g., `kt_jvm_library`.
     Returns:
         A struct containing the providers JavaInfo (`java`) and `kt` (KtJvmInfo). This struct is not intended to be
         used as a legacy provider -- rather the caller should transform the result.
@@ -193,7 +109,7 @@ def kt_jvm_produce_jar_actions(ctx, rule_kind):
     )
 
     perTargetPlugins = ctx.attr.plugins if hasattr(ctx.attr, "plugins") else []
-    plugins = _new_plugins_from(perTargetPlugins + _exported_plugins(deps = ctx.attr.deps))
+    plugins = compiler_plugins_from(perTargetPlugins + exported_compiler_plugins_from(ctx.attr.deps))
 
     output_jar = ctx.actions.declare_file(ctx.label.name + ".jar")
 
@@ -204,8 +120,8 @@ def kt_jvm_produce_jar_actions(ctx, rule_kind):
     compile_jar = _run_jvm_builder(
         ctx = ctx,
         output_jar = output_jar,
-        rule_kind = rule_kind,
         srcs = srcs,
+        resources = [r[ResourceGroupInfo] for r in ctx.attr.resources],
         associates = associates,
         compile_deps = compile_deps,
         transitiveInputs = transitiveInputs,
@@ -232,14 +148,11 @@ def kt_jvm_produce_jar_actions(ctx, rule_kind):
 
     return struct(
         java = java_info,
-        kt = _KtJvmInfo(
+        kt = KotlinInfo(
             srcs = ctx.files.srcs,
             module_name = associates.module_name,
             module_jars = associates.jars,
-            exported_compiler_plugins = _collect_plugins_for_export(
-                getattr(ctx.attr, "exported_compiler_plugins", []),
-                getattr(ctx.attr, "exports", []),
-            ),
+            exported_compiler_plugins = collect_compiler_plugins_for_export(ctx.attr.exported_compiler_plugins, ctx.attr.exports) if not isTest else depset(),
             # intellij aspect needs this
             outputs = struct(
                 jars = [struct(
@@ -257,8 +170,8 @@ def kt_jvm_produce_jar_actions(ctx, rule_kind):
 def _run_jvm_builder(
         ctx,
         output_jar,
-        rule_kind,
         srcs,
+        resources,
         associates,
         compile_deps,
         transitiveInputs,
@@ -275,7 +188,7 @@ def _run_jvm_builder(
         kotlin_inc_threshold = kotlinc_options.inc_threshold
     java_inc_threshold = ctx.attr._java_inc_threshold[BuildSettingInfo].value
 
-    args = init_builder_args(ctx, rule_kind, associates, transitiveInputs, plugins = plugins, compile_deps = compile_deps)
+    args = init_builder_args(ctx, srcs, resources, associates, transitiveInputs, plugins = plugins, compile_deps = compile_deps)
     args.add("--out", output_jar)
 
     outputs = [output_jar]
@@ -287,6 +200,8 @@ def _run_jvm_builder(
     javac_opts = ctx.attr.javac_opts[JavacOptions] if ctx.attr.javac_opts else None
     if javac_opts and javac_opts.add_exports:
         args.add_all("--add-export", javac_opts.add_exports)
+    if javac_opts and javac_opts.no_proc:
+        args.add("--no-proc")
 
     isIncremental = (kotlin_inc_threshold != -1 and len(srcs.kt) >= kotlin_inc_threshold) or (java_inc_threshold != -1 and len(srcs.java) >= java_inc_threshold)
     if not isIncremental:
@@ -294,15 +209,20 @@ def _run_jvm_builder(
 
     javaCount = len(srcs.java)
     args.add("--java-count", javaCount)
+
+    all_resources = [f for r in resources for f in r.files]
+
+    java_runtime = ctx.attr._tool_java_runtime[java_common.JavaRuntimeInfo]
+
     ctx.actions.run(
         mnemonic = "JvmCompile",
         env = {
             "MALLOC_ARENA_MAX": "2",
         },
-        inputs = depset(srcs.all_srcs, transitive = transitiveInputs),
-        use_default_shell_env = True,
+        inputs = depset(srcs.all_srcs + all_resources, transitive = transitiveInputs),
         outputs = outputs,
-        executable = ctx.attr._jvm_builder.files_to_run.executable,
+        tools = [ctx.file._jvm_builder_launcher, ctx.file.jvm_builder],
+        executable = java_runtime.java_executable_exec_path,
         execution_requirements = {
             "supports-workers": "1",
             "supports-multiplex-workers": "1",
@@ -310,7 +230,11 @@ def _run_jvm_builder(
             "supports-path-mapping": "1",
             "supports-multiplex-sandboxing": "1",
         },
-        arguments = [args],
+        arguments = ctx.attr._jvm_builder_jvm_flags[BuildSettingInfo].value + [
+            ctx.file._jvm_builder_launcher.path,
+            ctx.file.jvm_builder.path,
+            args,
+        ],
         progress_message = "compile %%{label} (kt: %d, java: %d%s}" % (len(srcs.kt), javaCount, "" if isIncremental else ", non-incremental"),
     )
 

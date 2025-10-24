@@ -2,25 +2,21 @@ package com.intellij.python.hatch.runtime
 
 import com.intellij.platform.eel.EelApi
 import com.intellij.platform.eel.provider.localEel
-import com.intellij.python.community.execService.EelProcessInteractiveHandler
-import com.intellij.python.community.execService.ExecOptions
-import com.intellij.python.community.execService.ExecService
-import com.intellij.python.community.execService.ProcessOutputTransformer
-import com.intellij.python.community.execService.WhatToExec.Binary
+import com.intellij.python.community.execService.*
 import com.intellij.python.hatch.*
 import com.intellij.python.hatch.cli.HatchCli
 import com.jetbrains.python.PythonBinary
 import com.jetbrains.python.PythonHomePath
 import com.jetbrains.python.Result
-import com.jetbrains.python.errorProcessing.ExecError
 import com.jetbrains.python.errorProcessing.PyResult
-import com.jetbrains.python.resolvePythonBinary
+import com.jetbrains.python.sdk.impl.resolvePythonBinary
 import java.nio.file.Path
 import kotlin.io.path.isDirectory
 import kotlin.io.path.isExecutable
+import kotlin.time.Duration.Companion.minutes
 
 class HatchRuntime(
-  val hatchBinary: Binary,
+  val hatchBinary: BinOnEel,
   val execOptions: ExecOptions,
   private val execService: ExecService = ExecService(),
 ) {
@@ -39,8 +35,8 @@ class HatchRuntime(
     }
 
     val runtime = HatchRuntime(
-      hatchBinary = this.hatchBinary,
-      execOptions = this.execOptions.copy(workingDirectory = workDirectoryPath)
+      hatchBinary = this.hatchBinary.copy(workDir = workDirectoryPath),
+      execOptions = this.execOptions
     )
     return Result.success(runtime)
   }
@@ -58,18 +54,21 @@ class HatchRuntime(
    * Pure execution of [hatchBinary] with command line [arguments] and [execOptions] by [execService]
    * Doesn't make any validation of stdout/stderr content.
    */
-  internal suspend fun <T> execute(vararg arguments: String, processOutputTransformer: ProcessOutputTransformer<T>): Result<T, ExecError> {
-    return execService.execute(hatchBinary, arguments.toList(), execOptions, processOutputTransformer)
+  internal suspend fun <T> execute(vararg arguments: String, processOutputTransformer: ProcessOutputTransformer<T>): PyResult<T> {
+    return execService.execute(hatchBinary, Args(*arguments), execOptions, processOutputTransformer = processOutputTransformer)
   }
 
-  internal suspend fun <T> executeInteractive(vararg arguments: String, eelProcessInteractiveHandler: EelProcessInteractiveHandler<T>): Result<T, ExecError> {
-    return execService.executeInteractive(hatchBinary, arguments.toList(), execOptions, eelProcessInteractiveHandler)
+  internal suspend fun <T> executeInteractive(vararg arguments: String, processSemiInteractiveFun: ProcessSemiInteractiveFun<T>): PyResult<T> {
+    return execService.executeAdvanced(hatchBinary, Args(*arguments), execOptions, processSemiInteractiveHandler(code = processSemiInteractiveFun))
   }
 
   internal suspend fun resolvePythonVirtualEnvironment(pythonHomePath: PythonHomePath): PyResult<PythonVirtualEnvironment> {
     val pythonVersion = pythonHomePath.takeIf { it.isDirectory() }?.resolvePythonBinary()?.let { pythonBinaryPath ->
-      execService.execGetStdout(Binary(pythonBinaryPath), listOf("--version")).getOr { return it }.trim()
+      execService.execGetStdout(pythonBinaryPath, Args("--version"),
+                                ExecOptions(timeout = 20.minutes),
+                                procListener = null).getOr { return it }.trim()
     }
+
     val pythonVirtualEnvironment = when {
       pythonVersion == null -> PythonVirtualEnvironment.NotExisting(pythonHomePath)
       else -> PythonVirtualEnvironment.Existing(pythonHomePath, pythonVersion)
@@ -102,10 +101,9 @@ suspend fun createHatchRuntime(
   val actualEnvVars = defaultVariables + envVars
 
   val runtime = HatchRuntime(
-    hatchBinary = Binary(actualHatchExecutable),
+    hatchBinary = BinOnEel(actualHatchExecutable, workingDirectoryPath),
     execOptions = ExecOptions(
       env = actualEnvVars,
-      workingDirectory = workingDirectoryPath
     )
   )
   return Result.success(runtime)

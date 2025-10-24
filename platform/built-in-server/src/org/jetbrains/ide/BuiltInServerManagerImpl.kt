@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.ide
 
 import com.intellij.ide.ApplicationActivity
@@ -31,7 +31,6 @@ import java.io.IOException
 import java.net.InetAddress
 import java.net.NetworkInterface
 import java.net.URLConnection
-import java.util.*
 
 private const val PORTS_COUNT = 20
 private const val PROPERTY_RPC_PORT = "rpc.port"
@@ -40,7 +39,6 @@ private const val PROPERTY_DISABLED = "idea.builtin.server.disabled"
 private val LOG = logger<BuiltInServerManager>()
 
 class BuiltInServerManagerImpl(private val coroutineScope: CoroutineScope) : BuiltInServerManager() {
-  private val authService = service<BuiltInWebServerAuth>()
   private var serverStartFuture: Job? = null
   private var server: BuiltInServer? = null
   private var portOverride: Int? = null
@@ -61,8 +59,6 @@ class BuiltInServerManagerImpl(private val coroutineScope: CoroutineScope) : Bui
     }
   }
 
-  override fun createClientBootstrap(): Bootstrap = NettyUtil.nioClientBootstrap(server!!.childEventLoopGroup)
-
   companion object {
     internal const val NOTIFICATION_GROUP = "Built-in Server"
 
@@ -80,7 +76,7 @@ class BuiltInServerManagerImpl(private val coroutineScope: CoroutineScope) : Bui
         return false
       }
 
-      val host = authority.substring(0, portIndex)
+      val host = authority.take(portIndex)
       if (NetUtils.isLocalhost(host)) {
         return true
       }
@@ -96,6 +92,8 @@ class BuiltInServerManagerImpl(private val coroutineScope: CoroutineScope) : Bui
       }
     }
   }
+
+  override fun createClientBootstrap(): Bootstrap = NettyUtil.nioClientBootstrap(server!!.childEventLoopGroup)
 
   fun createServerBootstrap(): ServerBootstrap = server!!.createServerBootstrap()
 
@@ -131,7 +129,7 @@ class BuiltInServerManagerImpl(private val coroutineScope: CoroutineScope) : Bui
       server = BuiltInServer.start(firstPort = getDefaultPort(), portsCount = PORTS_COUNT, tryAnyPort = true)
       bindCustomPorts(server!!)
     }
-    catch (_: CancellationException) {
+    catch (@Suppress("IncorrectCancellationExceptionHandling") _: CancellationException) {
       return
     }
     catch (e: Throwable) {
@@ -151,7 +149,7 @@ class BuiltInServerManagerImpl(private val coroutineScope: CoroutineScope) : Bui
 
   override fun addAuthToken(url: Url): Url = when {
     url.parameters != null -> url  // the built-in server URL contains a query only if a token is specified
-    else -> Urls.newUrl(url.scheme!!, url.authority!!, url.path, Collections.singletonMap(TOKEN_PARAM_NAME, authService.acquireToken()))
+    else -> Urls.newUrl(url.scheme!!, url.authority!!, url.path, mapOf(TOKEN_PARAM_NAME to service<BuiltInWebServerAuth>().acquireToken()))
   }
 
   override fun overridePort(port: Int?) {
@@ -161,7 +159,7 @@ class BuiltInServerManagerImpl(private val coroutineScope: CoroutineScope) : Bui
   }
 
   override fun configureRequestToWebServer(connection: URLConnection) {
-    connection.setRequestProperty(TOKEN_HEADER_NAME, authService.acquireToken())
+    connection.setRequestProperty(TOKEN_HEADER_NAME, service<BuiltInWebServerAuth>().acquireToken())
   }
 
   // the default port will be occupied by the main IDE instance - define the custom default to avoid searching for a free port
@@ -183,7 +181,7 @@ class BuiltInServerManagerImpl(private val coroutineScope: CoroutineScope) : Bui
 /**
  * Instead of preloading too early, we explicitly start the server at the end of the application boot sequence.
  */
-internal class BuiltInServerManagerLauncher : ApplicationActivity {
+private class BuiltInServerManagerLauncher : ApplicationActivity {
   override suspend fun execute() {
     serviceAsync<BuiltInServerManager>()
   }

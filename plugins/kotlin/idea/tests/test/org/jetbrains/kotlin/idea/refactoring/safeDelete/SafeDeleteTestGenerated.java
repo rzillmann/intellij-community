@@ -554,6 +554,11 @@ public abstract class SafeDeleteTestGenerated extends AbstractSafeDeleteTest {
         public void testPropertyInLocalObject2() throws Exception {
             runTest("testData/refactoring/safeDelete/deleteProperty/kotlinProperty/propertyInLocalObject2.kt");
         }
+
+        @TestMetadata("when.kt")
+        public void testWhen() throws Exception {
+            runTest("testData/refactoring/safeDelete/deleteProperty/kotlinProperty/when.kt");
+        }
     }
 
     @RunWith(JUnit3RunnerWithInners.class)
@@ -1129,6 +1134,21 @@ public abstract class SafeDeleteTestGenerated extends AbstractSafeDeleteTest {
             runTest("testData/refactoring/safeDelete/deleteValueParameter/kotlinValueParameter/unusedContextParametersInFunction.kt");
         }
 
+        @TestMetadata("unusedContextParametersInFunction1.kt")
+        public void testUnusedContextParametersInFunction1() throws Exception {
+            runTest("testData/refactoring/safeDelete/deleteValueParameter/kotlinValueParameter/unusedContextParametersInFunction1.kt");
+        }
+
+        @TestMetadata("unusedContextParametersInFunctionChildInHierarchy.kt")
+        public void testUnusedContextParametersInFunctionChildInHierarchy() throws Exception {
+            runTest("testData/refactoring/safeDelete/deleteValueParameter/kotlinValueParameter/unusedContextParametersInFunctionChildInHierarchy.kt");
+        }
+
+        @TestMetadata("unusedContextParametersInFunctionHierarchy.kt")
+        public void testUnusedContextParametersInFunctionHierarchy() throws Exception {
+            runTest("testData/refactoring/safeDelete/deleteValueParameter/kotlinValueParameter/unusedContextParametersInFunctionHierarchy.kt");
+        }
+
         @TestMetadata("unusedContextParametersInFunctionMultipleParameters.kt")
         public void testUnusedContextParametersInFunctionMultipleParameters() throws Exception {
             runTest("testData/refactoring/safeDelete/deleteValueParameter/kotlinValueParameter/unusedContextParametersInFunctionMultipleParameters.kt");
@@ -1142,6 +1162,16 @@ public abstract class SafeDeleteTestGenerated extends AbstractSafeDeleteTest {
         @TestMetadata("unusedContextParametersInProperty.kt")
         public void testUnusedContextParametersInProperty() throws Exception {
             runTest("testData/refactoring/safeDelete/deleteValueParameter/kotlinValueParameter/unusedContextParametersInProperty.kt");
+        }
+
+        @TestMetadata("unusedContextParametersInPropertyChildHierarchy.kt")
+        public void testUnusedContextParametersInPropertyChildHierarchy() throws Exception {
+            runTest("testData/refactoring/safeDelete/deleteValueParameter/kotlinValueParameter/unusedContextParametersInPropertyChildHierarchy.kt");
+        }
+
+        @TestMetadata("unusedContextParametersInPropertyHierarchy.kt")
+        public void testUnusedContextParametersInPropertyHierarchy() throws Exception {
+            runTest("testData/refactoring/safeDelete/deleteValueParameter/kotlinValueParameter/unusedContextParametersInPropertyHierarchy.kt");
         }
 
         @TestMetadata("usedContextParametersInFunction.kt")

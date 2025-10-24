@@ -3,7 +3,8 @@ package com.intellij.ide.plugins.newui
 
 import com.intellij.icons.AllIcons
 import com.intellij.ide.IdeBundle
-import com.intellij.ide.plugins.PluginNode
+import com.intellij.ide.plugins.LinkPanel
+import com.intellij.openapi.util.IntellijInternalApi
 import com.intellij.ui.ContextHelpLabel
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.panels.ListLayout
@@ -15,8 +16,9 @@ import javax.swing.JPanel
  * @author Alexander Lobas
  */
 @ApiStatus.Internal
+@IntellijInternalApi
 class VendorInfoPanel : JPanel(ListLayout.horizontal(JBUI.scale(5))) {
-  private val name = JBLabel()
+  private val name = LinkPanel(this, false, false, null, null)
   private val verifiedIcon = ContextHelpLabel.create(IdeBundle.message("plugin.verified.organization"))
   private val traderStatus = JBLabel()
   private val traderIcon = ContextHelpLabel.create(IdeBundle.message("plugin.vendor.trader.status"))
@@ -25,26 +27,44 @@ class VendorInfoPanel : JPanel(ListLayout.horizontal(JBUI.scale(5))) {
   init {
     verifiedIcon.icon = AllIcons.Debugger.ThreadStates.Idle
 
-    name.foreground = ListPluginComponent.GRAY_COLOR
     traderStatus.foreground = ListPluginComponent.GRAY_COLOR
 
     traderStatus.border = JBUI.Borders.emptyLeft(15)
 
     isOpaque = false
 
-    add(name)
     add(verifiedIcon)
     add(traderStatus)
     add(traderIcon)
     add(nonTraderIcon)
   }
 
-  fun show(node: PluginNode) {
-    name.text = IdeBundle.message("plugin.vendor.info.label", node.verifiedName)
-    verifiedIcon.isVisible = node.isVerified
-    traderStatus.text = IdeBundle.message(if (node.isTrader) "plugin.vendor.trader.label" else "plugin.vendor.non.trader.label")
-    traderIcon.isVisible = node.isTrader
-    nonTraderIcon.isVisible = !node.isTrader
-    isVisible = node.verifiedName != null
+  fun show(node: PluginUiModel) {
+    val vendorDetails = node.vendorDetails
+
+    if (vendorDetails == null) {
+      name.hide()
+      isVisible = false
+      traderIcon.isVisible = false
+      nonTraderIcon.isVisible = false
+      verifiedIcon.isVisible = false
+      return
+    }
+
+    if (vendorDetails.url != null) {
+      name.showWithBrowseUrl(
+        IdeBundle.message("plugin.vendor.info.label", ""),
+        vendorDetails.name,
+        false
+      ) { vendorDetails.url }
+    } else {
+      name.show(IdeBundle.message("plugin.vendor.info.label", vendorDetails.name), null)
+    }
+
+    verifiedIcon.isVisible = vendorDetails.isVerified()
+    traderStatus.text = IdeBundle.message(if (vendorDetails.isTrader()) "plugin.vendor.trader.label" else "plugin.vendor.non.trader.label")
+    traderIcon.isVisible = vendorDetails.isTrader()
+    nonTraderIcon.isVisible = vendorDetails.isTrader().not()
+    isVisible = true
   }
 }

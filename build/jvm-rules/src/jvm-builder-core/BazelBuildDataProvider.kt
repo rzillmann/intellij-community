@@ -5,7 +5,6 @@ package org.jetbrains.bazel.jvm.worker.core
 
 import androidx.collection.ScatterMap
 import org.apache.arrow.memory.RootAllocator
-import org.jetbrains.bazel.jvm.worker.state.DependencyStateStorage
 import org.jetbrains.bazel.jvm.worker.state.SourceDescriptor
 import org.jetbrains.bazel.jvm.util.emptyStringArray
 import org.jetbrains.jps.builders.BuildTarget
@@ -25,8 +24,7 @@ class BazelBuildDataProvider(
   private val sourceToDescriptor: ScatterMap<Path, SourceDescriptor>,
   @JvmField val storeFile: Path,
   @JvmField val allocator: RootAllocator,
-  @JvmField val isCleanBuild: Boolean,
-  @JvmField val libRootManager: DependencyStateStorage,
+  @JvmField val dependencyFileToDigest: ScatterMap<Path, ByteArray>,
 ) : BuildDataProvider {
   @JvmField
   val stampStorage = BazelStampStorage(sourceToDescriptor)
@@ -113,7 +111,7 @@ class BazelStampStorage(private val map: ScatterMap<Path, SourceDescriptor>) : S
     }
   }
 
-  override fun getCurrentStampIfUpToDate(file: Path, buildTarget: BuildTarget<*>?, attrs: BasicFileAttributes?): ByteArray? {
+  override fun getCurrentStampIfUpToDate(file: Path, buildTarget: BuildTarget<*>?, attrs: BasicFileAttributes?): ByteArray {
     throw UnsupportedOperationException("Must not be used")
   }
 }
@@ -209,7 +207,7 @@ class BazelSourceToOutputMapping(
 
   fun getAndClearOutputs(sourceFile: Path): Array<String>? {
     synchronized(map) {
-      // must be not null - probably, later we should add warning here
+      // must be not null - probably, later we should add a warning here
       val descriptor = map.get(sourceFile) ?: return null
       val result = descriptor.outputs.takeIf { it.isNotEmpty() } ?: return null
       descriptor.outputs = emptyStringArray

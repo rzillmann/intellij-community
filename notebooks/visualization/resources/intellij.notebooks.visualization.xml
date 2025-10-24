@@ -1,7 +1,8 @@
-<idea-plugin package="com.intellij.notebooks.visualization">
+<idea-plugin visibility="internal" package="com.intellij.notebooks.visualization">
   <dependencies>
     <module name="intellij.notebooks.ui"/>
     <plugin id="org.intellij.plugins.markdown"/>
+    <module name="intellij.notebooks.jupyter.core"/>
   </dependencies>
 
   <extensionPoints>
@@ -21,10 +22,6 @@
       <with attribute="implementationClass" implements="com.intellij.notebooks.visualization.NotebookIntervalPointerFactoryProvider"/>
     </extensionPoint>
 
-    <extensionPoint qualifiedName="org.jetbrains.plugins.notebooks.notebookCellInlayController"
-                    interface="com.intellij.notebooks.visualization.NotebookCellInlayController$Factory"
-                    dynamic="true"/>
-
     <extensionPoint qualifiedName="org.jetbrains.plugins.notebooks.notebookCellSelfManagedController"
                     interface="com.intellij.notebooks.visualization.controllers.selfUpdate.SelfManagedControllerFactory"
                     dynamic="true"/>
@@ -35,7 +32,7 @@
 
 
     <extensionPoint qualifiedName="org.jetbrains.plugins.notebooks.inputFactory"
-                    interface="com.intellij.notebooks.visualization.NotebookCellInlayController$InputFactory"
+                    interface="com.intellij.notebooks.visualization.EditorCellInputFactory"
                     dynamic="true"/>
   </extensionPoints>
 
@@ -83,6 +80,10 @@
       qualifiedName="org.jetbrains.plugins.notebooks.editor.outputs.notebookOutputComponentWrapper"
       interface="com.intellij.notebooks.visualization.outputs.NotebookOutputComponentWrapper"
       dynamic="true"/>
+    <extensionPoint
+      qualifiedName="org.jetbrains.plugins.notebooks.editor.outputs.editorCellOutputsPreprocessor"
+      interface="com.intellij.notebooks.visualization.ui.EditorCellOutputsPreprocessor"
+      dynamic="true"/>
   </extensionPoints>
 
   <extensions defaultExtensionNs="com.intellij">
@@ -102,6 +103,8 @@
     <notebookCellSelfManagedController
       implementation="com.intellij.notebooks.visualization.ui.cell.runCell.EditorCellRunGutterControllerFactory"/>
 
+    <notebookCellSelectionModelProvider language="Python"
+                                        implementationClass="com.intellij.notebooks.visualization.PythonCellSelectionModelProvider"/>
   </extensions>
 
   <extensions defaultExtensionNs="org.intellij.markdown">

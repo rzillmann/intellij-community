@@ -1,4 +1,4 @@
-<idea-plugin package="mypackage">
+<idea-plugin <error descr="Package attribute usage is discouraged and deprecated, content modules should be packaged into separate jars under `lib/modules/`. Refer to attribute documentation for details.">package="mypackage"</error>>
   <id>com.intellij.myPlugin</id>
   <vendor>JetBrains</vendor>
   <version>1.0</version>
@@ -6,7 +6,7 @@
   <dependencies>
     <module name="anotherModule"/>
     <module name="anotherModule/secondary-descriptor"/>
-    <module name="<error descr="Cannot resolve module descriptor 'invalid.module.xml' in source roots of module 'invalid.module'">invalid.module</error>"/>
+    <module name="<error descr="Cannot resolve module descriptor 'invalid.module.xml' in source and library roots">invalid.module</error>"/>
     <module name="anotherModule/secondary-descriptor2" <error descr="Attribute loading is not allowed here">loading</error>="required"/>
 
   <plugin id="anotherModule.plugin.id"/>

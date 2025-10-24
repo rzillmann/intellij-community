@@ -22,14 +22,16 @@ class ScratchFileAutoRunnerK2(private val project: Project, private val scope: C
 
     init {
         scope.launch {
-            flow.debounce(ScratchFileAutoRunner.Companion.AUTO_RUN_DELAY_MS).collect {
+            flow.debounce(ScratchFileAutoRunner.AUTO_RUN_DELAY_MS).collect {
                 it.executor.execute()
             }
         }
     }
 
-    suspend fun submitRun(file: K2KotlinScratchFile) {
-        flow.emit(file)
+    fun submitRun(file: K2KotlinScratchFile) {
+        scope.launch {
+            flow.emit(file)
+        }
     }
 
     override fun documentChanged(event: DocumentEvent) {

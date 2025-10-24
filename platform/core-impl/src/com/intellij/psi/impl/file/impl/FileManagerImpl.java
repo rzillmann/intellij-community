@@ -34,10 +34,7 @@ import com.intellij.util.concurrency.annotations.RequiresReadLock;
 import com.intellij.util.concurrency.annotations.RequiresWriteLock;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.messages.MessageBusConnection;
-import org.jetbrains.annotations.ApiStatus;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
-import org.jetbrains.annotations.TestOnly;
+import org.jetbrains.annotations.*;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentMap;
@@ -67,6 +64,15 @@ public final class FileManagerImpl implements FileManagerEx {
   public FileManagerImpl(@NotNull PsiManagerImpl manager, @NotNull NotNullLazyValue<? extends FileIndexFacade> fileIndex) {
     myManager = manager;
     myFileIndex = fileIndex;
+
+    myVFileToViewProviderMap = CodeInsightContexts.isSharedSourceSupportEnabled(manager.getProject())
+                               ? new MultiverseFileViewProviderCache()
+                               : new ClassicFileViewProviderCache();
+
+    myTempProviders = CodeInsightContexts.isSharedSourceSupportEnabled(manager.getProject())
+                      ? new ClassicTemporaryProviderStorage()
+                      : new MultiverseTemporaryProviderStorage();
+
     myConnection = manager.getProject().getMessageBus().connect(manager);
 
     LowMemoryWatcher.register(this::processQueue, manager);
@@ -82,12 +88,6 @@ public final class FileManagerImpl implements FileManagerEx {
         processFileTypesChanged(false);
       }
     });
-    myVFileToViewProviderMap = CodeInsightContexts.isSharedSourceSupportEnabled(manager.getProject())
-                               ? new MultiverseFileViewProviderCache()
-                               : new ClassicFileViewProviderCache();
-    myTempProviders = CodeInsightContexts.isSharedSourceSupportEnabled(manager.getProject())
-                      ? new ClassicTemporaryProviderStorage()
-                      : new MultiverseTemporaryProviderStorage();
   }
 
   @Override
@@ -98,6 +98,8 @@ public final class FileManagerImpl implements FileManagerEx {
   private @NotNull ConcurrentMap<VirtualFile, PsiDirectory> getVFileToPsiDirMap() {
     ConcurrentMap<VirtualFile, PsiDirectory> map = myVFileToPsiDirMap.get();
     if (map == null) {
+      //TODO RC: This map keeps many VirtualFiles from being collected by GC.
+      //         Could we use softKeys_SoftValues map instead of just softValues?
       map = ConcurrencyUtil.cacheOrGet(myVFileToPsiDirMap, ContainerUtil.createConcurrentSoftValueMap());
     }
     return map;
@@ -146,7 +148,7 @@ public final class FileManagerImpl implements FileManagerEx {
     if (viewProviders.isEmpty()) {
       return;
     }
-    if (!FileViewProviderUtil.isEventSystemEnabled(viewProviders)) {
+    if (!CodeInsightContextUtil.isEventSystemEnabled(viewProviders)) {
       setViewProvider(vFile, null);
       return;
     }
@@ -297,7 +299,7 @@ public final class FileManagerImpl implements FileManagerEx {
                                                             : viewProvider.getPsi(viewProvider.getBaseLanguage());
   }
 
-  private @NotNull List<FileViewProvider> getRawCachedViewProviders(@NotNull VirtualFile vFile) {
+  private @NotNull @Unmodifiable List<FileViewProvider> getRawCachedViewProviders(@NotNull VirtualFile vFile) {
     List<FileViewProvider> providers = myVFileToViewProviderMap.getAllProviders(vFile);
     if (!providers.isEmpty()) {
       if (providers.size() == 1) {
@@ -814,6 +816,11 @@ public final class FileManagerImpl implements FileManagerEx {
     }
     myTempProviders.put(file, context, null);
     try {
+      if (!isContextRelevant(file, context)) {
+        // invalid PsiFile if its context is not associated with the file anymore
+        return false;
+      }
+
       FileViewProvider recreated = createFileViewProvider(file, true);
       myTempProviders.put(file, context, recreated);
       return areViewProvidersEquivalent(viewProvider, recreated) &&
@@ -825,6 +832,24 @@ public final class FileManagerImpl implements FileManagerEx {
         DebugUtil.performPsiModification("invalidate temp view provider", ((AbstractFileViewProvider)temp)::markInvalidated);
       }
     }
+  }
+
+  /**
+   * @return true if `context` is still relevant for the `file`. It's relevant if {@link CodeInsightContextManager#getCodeInsightContexts)}
+   *         contain `context` or if `context` is `default` or `any`.
+   */
+  @RequiresReadLock
+  private boolean isContextRelevant(@NotNull VirtualFile file, @NotNull CodeInsightContext context) {
+    if (!CodeInsightContexts.isSharedSourceSupportEnabled(myManager.getProject())) {
+      return true;
+    }
+
+    if (context == CodeInsightContexts.anyContext()) {
+      return true;
+    }
+
+    List<@NotNull CodeInsightContext> contexts = CodeInsightContextManager.getInstance(myManager.getProject()).getCodeInsightContexts(file);
+    return contexts.contains(context);
   }
 
   private static boolean isValidOriginal(@NotNull PsiFile file) {
@@ -880,7 +905,7 @@ public final class FileManagerImpl implements FileManagerEx {
   }
 
   @SuppressWarnings("UsagesOfObsoleteApi")
-  private static <T, R> List<R> mapNotNull(@NotNull List<T> list, @NotNull Function<? super T, ? extends R> mapper) {
+  private static <T, R> @Unmodifiable List<R> mapNotNull(@NotNull List<T> list, @NotNull Function<? super T, ? extends R> mapper) {
     if (list.size() == 1) {
       return ContainerUtil.createMaybeSingletonList(mapper.apply(list.get(0)));
     }

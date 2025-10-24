@@ -49,11 +49,14 @@ import com.intellij.psi.codeStyle.CodeStyleManager;
 import com.intellij.psi.util.PsiUtilCore;
 import com.intellij.ui.JBColor;
 import com.intellij.ui.JBSplitter;
+import com.intellij.ui.OnePixelSplitter;
 import com.intellij.ui.TitlePanel;
+import com.intellij.ui.components.JBScrollPane;
 import com.intellij.ui.content.Content;
 import com.intellij.ui.popup.AbstractPopup;
 import com.intellij.util.TimeoutUtil;
 import com.intellij.util.messages.MessageBusConnection;
+import com.intellij.util.ui.JBUI;
 import com.intellij.util.ui.UIUtil;
 import com.intellij.xdebugger.impl.frame.XStandaloneVariablesView;
 import com.intellij.xdebugger.impl.ui.tree.nodes.XDebuggerTreeNode;
@@ -114,8 +117,6 @@ public class PythonConsoleView extends LanguageConsoleImpl implements Observable
   private JBPopup myCommandQueue;
   private Dimension commandQueueDimension;
   private boolean isShowQueue;
-
-  private @Nullable OnClearCallback myOnClearCallback;
 
   private ActionToolbar myToolbar;
   private boolean myIsToolwindowHorizontal = true;
@@ -394,7 +395,7 @@ public class PythonConsoleView extends LanguageConsoleImpl implements Observable
     if (myTestMode) {
       text = PyTestsSharedKt.processTCMessage(text);
     }
-    detectIPython(text, outputType);
+    detectIPython(text);
     if (PyConsoleUtil.detectIPythonEnd(text)) {
       myIsIPythonOutput = false;
       mySourceHighlighter = null;
@@ -427,9 +428,9 @@ public class PythonConsoleView extends LanguageConsoleImpl implements Observable
     }
   }
 
-  public void detectIPython(String text, final ConsoleViewContentType outputType) {
+  public void detectIPython(String text) {
     VirtualFile file = getVirtualFile();
-    if (PyConsoleUtil.detectIPythonImported(text, outputType)) {
+    if (PyConsoleUtil.detectIPythonImported(text)) {
       PyConsoleUtil.markIPython(file);
       PythonConsoleExecuteActionHandler handler = getExecuteActionHandler();
       if (handler != null) {
@@ -498,6 +499,13 @@ public class PythonConsoleView extends LanguageConsoleImpl implements Observable
       }
     });
     mySplitView = view;
+
+
+    JBScrollPane scrollPane = (JBScrollPane)SwingUtilities.getAncestorOfClass(JBScrollPane.class, mySplitView.getMainComponent());
+    if (scrollPane != null) {
+      scrollPane.setBorder(JBUI.Borders.empty());
+    }
+
     Disposer.register(this, view);
     splitWindow();
     consoleCommunication.notifyViewCreated(view);
@@ -617,7 +625,7 @@ public class PythonConsoleView extends LanguageConsoleImpl implements Observable
   private void splitWindow() {
     Component console = getComponent(0);
     removeAll();
-    JBSplitter p = new JBSplitter(!myIsToolwindowHorizontal, 2f / 3);
+    OnePixelSplitter p = new OnePixelSplitter(!myIsToolwindowHorizontal, 2f / 3);
     p.setFirstComponent((JComponent)console);
     p.setSecondComponent(mySplitView.getPanel());
     p.setShowDividerControls(true);
@@ -679,10 +687,6 @@ public class PythonConsoleView extends LanguageConsoleImpl implements Observable
     isShowQueue = showQueue;
   }
 
-  public void whenInitialized(Runnable runnable) {
-    myInitialized.doWhenDone(runnable);
-  }
-
   public void setRunner(PydevConsoleRunner runner) {
     myRunner = runner;
   }
@@ -694,19 +698,6 @@ public class PythonConsoleView extends LanguageConsoleImpl implements Observable
   @TestOnly
   public @Nullable XDebuggerTreeNode getDebuggerTreeRootNode() {
     return mySplitView.getTree().getRoot();
-  }
-
-  public void setOnClearCallback(@Nullable OnClearCallback onClearCallback) {
-    myOnClearCallback = onClearCallback;
-  }
-
-  @Override
-  public void clear() {
-    super.clear();
-    OnClearCallback onClearCallback = myOnClearCallback;
-    if (onClearCallback != null) {
-      onClearCallback.onClear();
-    }
   }
 
   @Override
@@ -748,17 +739,5 @@ public class PythonConsoleView extends LanguageConsoleImpl implements Observable
     if (counterMap != null) {
       counterMap.put(counter, lineNumber);
     }
-  }
-
-  public @Nullable Integer getExecutionCounterLineNumber(int counter) {
-    Map<Integer, Integer> counterMap = getHistoryViewer().getUserData(COUNTER_LINE_NUMBER);
-    if (counterMap != null) {
-      return counterMap.getOrDefault(counter, null);
-    }
-    return null;
-  }
-
-  public interface OnClearCallback {
-    void onClear();
   }
 }

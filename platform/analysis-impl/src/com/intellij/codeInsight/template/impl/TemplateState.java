@@ -106,7 +106,7 @@ public final class TemplateState extends TemplateStateBase implements Disposable
     myEditorDocumentListener = new DocumentListener() {
       @Override
       public void beforeDocumentChange(@NotNull DocumentEvent e) {
-        if (CommandProcessor.getInstance().getCurrentCommand() != null && !isUndoOrRedoInProgress()) {
+        if (CommandProcessor.getInstance().isCommandInProgress() && !isUndoOrRedoInProgress()) {
           myDocumentChanged = true;
         }
       }
@@ -771,12 +771,11 @@ public final class TemplateState extends TemplateStateBase implements Disposable
 
     replaceString(StringUtil.notNullize(result.toString()), start, end, segmentNumber);
 
-    if (result instanceof RecalculatableResult) {
+    if (result instanceof RecalculatableResult recalc) {
       IntList indices = initEmptyVariables();
       shortenReferences();
       PsiDocumentManager.getInstance(myProject).commitDocument(getDocument());
-      ((RecalculatableResult)result)
-        .handleRecalc(psiFile, getDocument(), getSegments().getSegmentStart(segmentNumber), getSegments().getSegmentEnd(segmentNumber));
+      recalc.handleRecalc(psiFile, getDocument(), getSegments().getSegmentStart(segmentNumber), getSegments().getSegmentEnd(segmentNumber));
       restoreEmptyVariables(indices);
     }
   }
@@ -1106,8 +1105,8 @@ public final class TemplateState extends TemplateStateBase implements Disposable
         if (getTemplate().getVariableNameAt(j).equals(name)) {
           Expression e = getTemplate().getExpressionAt(j);
           String marker = "a";
-          if (e instanceof MacroCallNode) {
-            marker = ((MacroCallNode)e).getMacro().getDefaultValue();
+          if (e instanceof MacroCallNode macro) {
+            marker = macro.getMacro().getDefaultValue();
           }
           changes.add(new TemplateDocumentChange(marker, getSegments().getSegmentStart(i), getSegments().getSegmentEnd(i), i));
           indices.add(i);

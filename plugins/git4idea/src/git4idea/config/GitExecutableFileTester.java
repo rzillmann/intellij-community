@@ -1,15 +1,20 @@
-// Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package git4idea.config;
 
-import com.intellij.execution.configurations.PathEnvironmentVariableUtil;
 import com.intellij.execution.wsl.WSLDistribution;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.progress.EmptyProgressIndicator;
 import com.intellij.openapi.progress.ProcessCanceledException;
 import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.openapi.progress.util.ProgressIndicatorUtils;
+import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Ref;
 import com.intellij.openapi.util.SystemInfo;
+import com.intellij.platform.eel.EelApi;
+import com.intellij.platform.eel.EelOsFamily;
+import com.intellij.platform.eel.provider.EelNioBridgeServiceKt;
+import com.intellij.platform.eel.provider.LocalEelDescriptor;
+import com.intellij.platform.ide.impl.wsl.WslEelDescriptor;
 import com.intellij.util.concurrency.AppJavaExecutorUtil;
 import git4idea.commands.Git;
 import git4idea.commands.GitCommand;
@@ -19,12 +24,10 @@ import git4idea.i18n.GitBundle;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import java.io.File;
-import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.Collections;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.Semaphore;
@@ -38,15 +41,15 @@ class GitExecutableFileTester {
   private final ReentrantLock LOCK = new ReentrantLock();
   private final @NotNull ConcurrentMap<GitExecutable, TestResult> myTestMap = new ConcurrentHashMap<>();
 
-  final @NotNull TestResult getResultFor(@NotNull GitExecutable executable) {
+  final @NotNull TestResult getResultFor(@Nullable Project project, @NotNull GitExecutable executable) {
     return ProgressIndicatorUtils.computeWithLockAndCheckingCanceled(LOCK, 50, TimeUnit.MILLISECONDS, () -> {
       TestResult result = myTestMap.get(executable);
       long currentLastModificationDate = 0L;
 
       try {
-        currentLastModificationDate = getModificationTime(executable);
+        currentLastModificationDate = executable.getModificationTime(); executable.getModificationTime();
         if (result == null || result.getFileLastModifiedTimestamp() != currentLastModificationDate) {
-          result = new TestResult(testOrAbort(executable), currentLastModificationDate);
+          result = new TestResult(testOrAbort(project, executable), currentLastModificationDate);
           myTestMap.put(executable, result);
         }
       }
@@ -64,46 +67,7 @@ class GitExecutableFileTester {
     });
   }
 
-  private static long getModificationTime(@NotNull GitExecutable executable) throws IOException {
-    if (executable instanceof GitExecutable.Unknown) {
-      return 0;
-    }
-
-    if (executable instanceof GitExecutable.Local) {
-      String filePath = executable.getExePath();
-      if (!filePath.contains(File.separator)) {
-        File exeFile = PathEnvironmentVariableUtil.findInPath(filePath);
-        if (exeFile != null) filePath = exeFile.getPath();
-      }
-
-      Path executablePath = Paths.get(filePath);
-      long modificationTime = getModificationTime(executablePath);
-
-      for (Path dependencyPath : GitExecutableDetector.getDependencyPaths(executablePath)) {
-        try {
-          long depTime = getModificationTime(dependencyPath);
-          modificationTime = Math.max(modificationTime, depTime);
-        }
-        catch (IOException ignore) {
-        }
-      }
-
-      return modificationTime;
-    }
-
-    if (executable instanceof GitExecutable.Wsl) {
-      return 0;
-    }
-
-    LOG.error("Can't get modification time for " + executable);
-    return 0;
-  }
-
-  private static long getModificationTime(@NotNull Path filePath) throws IOException {
-    return Files.getLastModifiedTime(filePath).toMillis();
-  }
-
-  private static @NotNull GitVersion testOrAbort(@NotNull GitExecutable executable) throws Exception {
+  private static @NotNull GitVersion testOrAbort(@Nullable Project project, @NotNull GitExecutable executable) throws Exception {
     int maxAttempts = 1;
 
     // IDEA-248193 Apple Git might hang with timeout after hibernation. Do several attempts.
@@ -113,7 +77,7 @@ class GitExecutableFileTester {
 
     int attempt = 0;
     while (attempt < maxAttempts) {
-      GitVersion result = runTestWithTimeout(executable);
+      GitVersion result = runTestWithTimeout(project, executable);
       if (result != null) return result;
       attempt++;
     }
@@ -122,7 +86,7 @@ class GitExecutableFileTester {
       GitBundle.message("git.executable.validation.error.no.response.in.n.attempts.message", maxAttempts), null);
   }
 
-  private static @Nullable GitVersion runTestWithTimeout(@NotNull GitExecutable executable) throws Exception {
+  private static @Nullable GitVersion runTestWithTimeout(@Nullable Project project, @NotNull GitExecutable executable) throws Exception {
     EmptyProgressIndicator indicator = new EmptyProgressIndicator();
     Ref<Exception> exceptionRef = new Ref<>();
     Ref<GitVersion> resultRef = new Ref<>();
@@ -132,7 +96,7 @@ class GitExecutableFileTester {
     AppJavaExecutorUtil.executeOnPooledIoThread(() -> {
       ProgressManager.getInstance().executeProcessUnderProgress(() -> {
         try {
-          resultRef.set(testExecutable(executable));
+          resultRef.set(testExecutable(project, executable));
         }
         catch (Exception e) {
           exceptionRef.set(e);
@@ -171,21 +135,36 @@ class GitExecutableFileTester {
     myTestMap.clear();
   }
 
-  private static @NotNull GitVersion testExecutable(@NotNull GitExecutable executable) throws Exception {
+  private static @NotNull GitVersion testExecutable(@Nullable Project project, @NotNull GitExecutable executable) throws Exception {
     GitVersion.Type type = null;
-    File workingDirectory = new File(".");
+    var workingDirectory = Optional.ofNullable(project)
+      .map(Project::getBasePath)
+      .map(Path::of)
+      .map(p -> Files.exists(p) ? p : null)
+      .orElse(Path.of("."));
+
     if (executable instanceof GitExecutable.Unknown) {
       type = GitVersion.Type.UNDEFINED;
     }
     else if (executable instanceof GitExecutable.Wsl) {
       WSLDistribution distribution = ((GitExecutable.Wsl)executable).getDistribution();
       type = distribution.getVersion() == 1 ? GitVersion.Type.WSL1 : GitVersion.Type.WSL2;
-      workingDirectory = new File(distribution.getWindowsPath("/"));
+      workingDirectory = Path.of(distribution.getWindowsPath("/"));
+    } else if (executable instanceof GitExecutable.Eel) {
+      EelApi eelApi = ((GitExecutable.Eel)executable).getEel();
+      if (eelApi.getDescriptor() instanceof WslEelDescriptor) {
+        WSLDistribution distribution = ((WslEelDescriptor) eelApi.getDescriptor()).getDistribution();
+        type = distribution.getVersion() == 1 ? GitVersion.Type.WSL1 : GitVersion.Type.WSL2;
+      }
+      else if (eelApi.getDescriptor() instanceof LocalEelDescriptor && eelApi.getPlatform().getOsFamily().equals(EelOsFamily.Posix)) {
+        type = GitVersion.Type.UNIX;
+      }
+      workingDirectory = EelNioBridgeServiceKt.asNioPath(eelApi.getUserInfo().getHome());
     }
 
     LOG.debug("Acquiring git version for " + executable);
     GitLineHandler handler = new GitLineHandler(null,
-                                                workingDirectory,
+                                                workingDirectory.toFile(),
                                                 executable,
                                                 GitCommand.VERSION,
                                                 Collections.emptyList());

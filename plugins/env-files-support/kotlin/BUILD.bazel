@@ -1,21 +1,23 @@
 ### auto-generated section `build intellij.dotenv.kotlin` start
-load("@rules_jvm//:jvm.bzl", "jvm_library", "jvm_resources")
+load("@rules_jvm//:jvm.bzl", "jvm_library", "resourcegroup")
 
-jvm_resources(
-  name = "dotenv-kotlin_resources",
-  files = glob(["resources/**/*"]),
+resourcegroup(
+  name = "kotlin_resources",
+  srcs = glob(["resources/**/*"]),
   strip_prefix = "resources"
 )
 
 jvm_library(
-  name = "dotenv-kotlin",
+  name = "kotlin",
   module_name = "intellij.dotenv.kotlin",
   visibility = ["//visibility:public"],
-  srcs = glob(["src/**/*.kt", "src/**/*.java"], allow_empty = True),
+  srcs = glob(["src/**/*.kt", "src/**/*.java", "src/**/*.form"], allow_empty = True),
+  resources = [":kotlin_resources"],
   deps = [
     "//plugins/env-files-support:dotenv",
+    "//platform/core-api:core",
     "//platform/util",
-    "//plugins/env-files-support/java:dotenv-java",
+    "//plugins/env-files-support/java",
     "//platform/editor-ui-api:editor-ui",
     "//platform/analysis-api:analysis",
     "//platform/core-ui",
@@ -23,7 +25,6 @@ jvm_library(
     "//platform/projectModel-api:projectModel",
     "//java/java-psi-api:psi",
     "@lib//:kotlinc-kotlin-compiler-common-provided",
-  ],
-  runtime_deps = [":dotenv-kotlin_resources"]
+  ]
 )
 ### auto-generated section `build intellij.dotenv.kotlin` end

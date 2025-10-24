@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.openapi.vfs.newvfs.persistent;
 
 import com.intellij.util.io.CleanableStorage;
@@ -76,12 +76,20 @@ public interface PersistentFSRecordsStorage extends IPersistentFSRecordsStorage,
   long getTimestamp() throws IOException;
 
   /**
-   * @return true if storage was closed properly (i.e. by {@link #close()} in a last session, or false if last session was
-   * finished without calling {@link #close()} -- storage content may be inconsistent or corrupted.
-   * The property describes events in a _previous_ session, so it is immutable during current session: changes to storage
-   * doesn't affect this property's value
+   * @return true if storage was closed properly (i.e., by {@link #close()}) <b>in a last session</b>, or false if last session
+   * was finished without calling {@link #close()} -- storage content may be inconsistent or corrupted.
+   * The property describes events in a _previous_ session, so it is immutable during the current session: changes to storage
+   * don't affect this property's value, but the value will be reset during the next IDE restart.
    */
   boolean wasClosedProperly() throws IOException;
+
+  /**
+   * @return true if storage was _always_ closed properly (i.e., by {@link #close()}) in its lifetime, or false if
+   * _some_ VFS session, maybe not the last one, wasn't properly closed.
+   */
+  default boolean wasAlwaysClosedProperly() throws IOException {
+    return !getFlag(PersistentFSHeaders.Flags.FLAGS_WAS_NOT_PROPERLY_CLOSED_ONCE);
+  }
 
   int getErrorsAccumulated() throws IOException;
 
@@ -90,6 +98,25 @@ public interface PersistentFSRecordsStorage extends IPersistentFSRecordsStorage,
   void setVersion(int version) throws IOException;
 
   int getVersion() throws IOException;
+
+  /**
+   * Additional bit-flags
+   * Values are from {@linkplain PersistentFSHeaders.Flags} FLAGS_XXX constants
+   */
+  int getFlags() throws IOException;
+
+  default boolean getFlag(int flagMask) throws IOException {
+    return (getFlags() & flagMask) != 0;
+  }
+
+  /**
+   * flags values are from {@linkplain PersistentFSHeaders} FLAGS_XXX constants
+   *
+   * @return true if flags actually changed, or false if current flags are the same as were attempted to set
+   * (i.e. current flags already contain all of flagsToAdd and none of flagsToRemove)
+   */
+  boolean updateFlags(int flagsToAdd,
+                      int flagsToRemove) throws IOException;
 
   int getGlobalModCount();
 

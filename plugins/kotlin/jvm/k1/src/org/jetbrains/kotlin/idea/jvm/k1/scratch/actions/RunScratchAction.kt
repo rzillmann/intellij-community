@@ -9,8 +9,7 @@ import com.intellij.openapi.keymap.KeymapUtil
 import com.intellij.openapi.project.DumbService
 import com.intellij.task.ProjectTaskManager
 import com.intellij.task.impl.ProjectTaskManagerImpl
-import org.jetbrains.kotlin.idea.core.script.ScriptConfigurationManager
-import org.jetbrains.kotlin.idea.core.script.configuration.CompositeScriptConfigurationManager
+import org.jetbrains.kotlin.idea.core.script.k1.ScriptConfigurationManager
 import org.jetbrains.kotlin.idea.jvm.k1.scratch.K1KotlinScratchFile
 import org.jetbrains.kotlin.idea.jvm.k1.scratch.SequentialScratchExecutor
 import org.jetbrains.kotlin.idea.jvm.shared.KotlinJvmBundle
@@ -18,11 +17,10 @@ import org.jetbrains.kotlin.idea.jvm.shared.scratch.actions.ScratchAction
 import org.jetbrains.kotlin.idea.jvm.shared.scratch.actions.ScratchCompilationSupport
 import org.jetbrains.kotlin.idea.jvm.shared.scratch.printDebugMessage
 import org.jetbrains.kotlin.utils.addToStdlib.UnsafeCastFunction
-import org.jetbrains.kotlin.utils.addToStdlib.cast
 import org.jetbrains.kotlin.idea.jvm.shared.scratch.LOG as log
 
 class RunScratchAction : ScratchAction(
-    KotlinJvmBundle.getLazyMessage("scratch.run.button"), AllIcons.Actions.Execute
+    KotlinJvmBundle.messagePointer("scratch.run.button"), AllIcons.Actions.Execute
 ) {
     init {
         KeymapManager.getInstance().activeKeymap.getShortcuts("Kotlin.RunScratch").firstOrNull()?.let {
@@ -59,10 +57,8 @@ class RunScratchAction : ScratchAction(
             val isMakeBeforeRun = scratchFile.options.isMakeBeforeRun
             log.printDebugMessage("Run Action: isMakeBeforeRun = $isMakeBeforeRun")
 
-            ScriptConfigurationManager.getInstance(project).cast<CompositeScriptConfigurationManager>()
-                .updateScriptDependenciesIfNeeded(scratchFile.file)
-
-            val module = scratchFile.module
+            ScriptConfigurationManager.getInstance(project).updateScriptDependenciesIfNeeded(scratchFile.virtualFile)
+            val module = scratchFile.currentModule
             log.printDebugMessage("Run Action: module = ${module?.name}")
 
             if (!isAutoRun && module != null && isMakeBeforeRun) {

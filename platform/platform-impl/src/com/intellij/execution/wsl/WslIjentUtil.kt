@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 @file:JvmName("WslIjentUtil")
 @file:Suppress("RAW_RUN_BLOCKING")  // These functions are called by different legacy code, a ProgressIndicator is not always available.
 @file:ApiStatus.Internal
@@ -12,20 +12,20 @@ import com.intellij.execution.process.LocalPtyOptions
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.diagnostic.debug
 import com.intellij.openapi.progress.runBlockingCancellable
+import com.intellij.openapi.progress.runBlockingMaybeCancellable
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.io.FileUtil
 import com.intellij.platform.eel.EelExecApi
-import com.intellij.platform.eel.EelResult
-import com.intellij.platform.eel.execute
+import com.intellij.platform.eel.EelProcess
 import com.intellij.platform.eel.path.EelPath
-import com.intellij.platform.ijent.IjentChildProcess
+import com.intellij.platform.eel.spawnProcess
+import com.intellij.platform.ijent.IjentPosixApi
 import com.intellij.util.concurrency.annotations.RequiresBackgroundThread
 import com.intellij.util.concurrency.annotations.RequiresBlockingContext
 import com.intellij.util.suspendingLazy
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.DelicateCoroutinesApi
 import org.jetbrains.annotations.ApiStatus
-import java.io.IOException
 
 /**
  * An adapter for [com.intellij.platform.ijent.IjentExecApi.fetchLoginShellEnvVariables] for Java.
@@ -38,8 +38,8 @@ fun fetchLoginShellEnv(
   project: Project?,
   rootUser: Boolean,
 ): Map<String, String> =
-  runBlockingCancellable {
-    wslIjentManager.getIjentApi(wslDistribution, project, rootUser).exec.fetchLoginShellEnvVariables()
+  runBlockingMaybeCancellable {
+    wslIjentManager.getIjentApi(null, wslDistribution, project, rootUser).exec.fetchLoginShellEnvVariables()
   }
 
 /**
@@ -67,7 +67,7 @@ fun runProcessBlocking(
   options: WSLCommandLineOptions,
   ptyOptions: LocalPtyOptions?,
 ): Process = runBlockingCancellable {
-  val ijentApi = wslIjentManager.getIjentApi(wslDistribution, project, options.isSudo)
+  val ijentApi: IjentPosixApi = wslIjentManager.getIjentApi(null, wslDistribution, project, options.isSudo)
 
   val args = processBuilder.command().toMutableList()
 
@@ -122,9 +122,9 @@ fun runProcessBlocking(
 
   val exePath = FileUtil.toSystemIndependentName(args.removeFirst())
 
-  val ptyOrStdErrSettings = when {
+  val interactionOptions = when {
     ptyOptions != null -> with(ptyOptions) { EelExecApi.Pty(initialColumns, initialRows, !consoleMode) }
-    processBuilder.redirectErrorStream() -> EelExecApi.RedirectStdErr
+    processBuilder.redirectErrorStream() -> EelExecApi.RedirectStdErr(to = EelExecApi.RedirectTo.STDOUT)
     else -> null
   }
 
@@ -137,23 +137,19 @@ fun runProcessBlocking(
   }
 
   val scope = @OptIn(DelicateCoroutinesApi::class) (wslIjentManager.processAdapterScope)
-  when (val processResult = ijentApi.exec.execute(exePath)
-                                                    .args(args)
-                                                    .env(explicitEnvironmentVariables)
-                                                    .ptyOrStdErrSettings(ptyOrStdErrSettings)
-                                                    .workingDirectory(workingDirectory?.let { EelPath.parse(it, ijentApi.descriptor) })
-                                                    .eelIt()
-  ) {
-    is EelResult.Ok ->
-      (processResult.value as IjentChildProcess).toProcess(
-        coroutineScope = scope,
-        isPty = ptyOrStdErrSettings != null,
-      )
-    is EelResult.Error -> throw IOException(processResult.error.message)
-  }
+  ijentApi.exec.spawnProcess(exePath)
+    .args(args)
+    .env(explicitEnvironmentVariables)
+    .interactionOptions(interactionOptions)
+    .workingDirectory(workingDirectory?.let { EelPath.parse(it, ijentApi.descriptor) })
+    .eelIt()
+    .toProcess(
+      coroutineScope = scope,
+      isPty = interactionOptions != null,
+    )
 }
 
-private fun IjentChildProcess.toProcess(
+private fun EelProcess.toProcess(
   coroutineScope: CoroutineScope,
   isPty: Boolean,
 ): Process =

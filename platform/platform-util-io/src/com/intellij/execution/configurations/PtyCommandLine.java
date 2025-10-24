@@ -1,8 +1,8 @@
 // Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.execution.configurations;
 
-import com.intellij.execution.process.LocalPtyOptions;
 import com.intellij.execution.process.LocalProcessService;
+import com.intellij.execution.process.LocalPtyOptions;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.PathManager;
 import com.intellij.openapi.diagnostic.Logger;
@@ -18,6 +18,7 @@ import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.LongConsumer;
 
 /**
  * A flavor of GeneralCommandLine to start processes with Pseudo-Terminal (PTY).
@@ -28,7 +29,7 @@ import java.util.Map;
  * Works for Linux, macOS, and Windows.
  * On Windows, PTY is emulated by creating an invisible console window (see Pty4J and WinPty implementation).
  */
-public class PtyCommandLine extends GeneralCommandLine {
+public class PtyCommandLine extends GeneralCommandLine implements CommandLineWithSuspendedProcessCallback {
   private static final Logger LOG = Logger.getInstance(PtyCommandLine.class);
   private static final String RUN_PROCESSES_WITH_PTY = "run.processes.with.pty";
 
@@ -76,6 +77,16 @@ public class PtyCommandLine extends GeneralCommandLine {
   public PtyCommandLine withOptions(@NotNull LocalPtyOptions options) {
     myOptionsBuilder.set(options);
     return this;
+  }
+
+  @Override
+  public void withWinSuspendedProcessCallback(@NotNull LongConsumer callback) {
+    myOptionsBuilder.winSuspendedProcessCallback(callback);
+  }
+
+  @Override
+  public @Nullable LongConsumer getWinSuspendedProcessCallback() {
+    return myOptionsBuilder.winSuspendedProcessCallback();
   }
 
   /**
@@ -134,6 +145,20 @@ public class PtyCommandLine extends GeneralCommandLine {
 
   @ApiStatus.Internal
   public @NotNull Process startProcessWithPty(@NotNull List<String> commands) throws IOException {
+    Map<String, String> env = getPreparedEnvironment();
+    Path workingDirectory = getWorkingDirectory();
+    LocalPtyOptions options = getPtyOptions();
+    return LocalProcessService.getInstance().startPtyProcess(
+      commands,
+      workingDirectory != null ? workingDirectory.toString() : null,
+      env,
+      options,
+      isRedirectErrorStream()
+    );
+  }
+
+  @ApiStatus.Internal
+  protected @NotNull Map<String, String> getPreparedEnvironment() {
     Map<String, String> env = new HashMap<>();
     setupEnvironment(env);
     if (!SystemInfo.isWindows) {
@@ -145,16 +170,7 @@ public class PtyCommandLine extends GeneralCommandLine {
         env.put("TERM", "xterm-256color");
       }
     }
-
-    Path workingDirectory = getWorkingDirectory();
-    LocalPtyOptions options = getPtyOptions();
-    return LocalProcessService.getInstance().startPtyProcess(
-      commands,
-      workingDirectory != null ? workingDirectory.toString() : null,
-      env,
-      options,
-      isRedirectErrorStream()
-    );
+    return env;
   }
 
   @ApiStatus.Internal

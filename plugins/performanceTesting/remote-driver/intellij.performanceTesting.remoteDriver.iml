@@ -12,19 +12,21 @@
     <orderEntry type="module" module-name="intellij.performanceTesting" />
     <orderEntry type="library" name="assertJ" level="project" />
     <orderEntry type="library" name="assertj-swing" level="project" />
+    <orderEntry type="module" module-name="intellij.platform.editor.ui" />
     <orderEntry type="module" module-name="intellij.platform.ide.util.netty" />
     <orderEntry type="module" module-name="intellij.platform.builtInServer" />
     <orderEntry type="module" module-name="intellij.platform.builtInServer.impl" />
     <orderEntry type="library" name="netty-buffer" level="project" />
     <orderEntry type="library" name="netty-codec-http" level="project" />
     <orderEntry type="module" module-name="intellij.platform.core" />
-    <orderEntry type="module" module-name="intellij.driver.model" exported="" />
+    <orderEntry type="module" module-name="intellij.driver.model" />
     <orderEntry type="module" module-name="intellij.platform.ide" />
-    <orderEntry type="library" name="jsoup" level="project" />
+    <orderEntry type="module" module-name="intellij.libraries.jsoup" />
     <orderEntry type="module" module-name="intellij.driver.impl" exported="" />
     <orderEntry type="module" module-name="intellij.driver.client" exported="" />
-    <orderEntry type="library" name="jcef" level="project" />
+    <orderEntry type="module" module-name="intellij.libraries.jcef" />
     <orderEntry type="module" module-name="intellij.platform.ide.impl" />
     <orderEntry type="module" module-name="intellij.platform.ui.jcef" />
+    <orderEntry type="module" module-name="intellij.platform.core.ui" />
   </component>
 </module>

@@ -57,10 +57,9 @@ public final class FileTypeAssocTable<T> {
   }
 
   public FileTypeAssocTable() {
-    this(FileTypeAssocTable::createCharSequenceConcurrentMap);
+    this((source, caseSensitive) -> createCharSequenceConcurrentMap(source, caseSensitive));
   }
 
-  @ApiStatus.Internal
   public boolean isAssociatedWith(@NotNull T type, @NotNull FileNameMatcher matcher) {
     if (matcher instanceof ExtensionFileNameMatcher || matcher instanceof ExactFileNameMatcher) {
       return type.equals(findAssociatedFileType(matcher));
@@ -112,17 +111,14 @@ public final class FileTypeAssocTable<T> {
     return Pair.getSecond(previousAssociation);
   }
 
-  @ApiStatus.Internal
   public void addHashBangPattern(@NotNull String hashBang, @NotNull T type) {
     myHashBangMap.put(hashBang, type);
   }
 
-  @ApiStatus.Internal
   public void removeHashBangPattern(@NotNull String hashBang, @NotNull T type) {
     myHashBangMap.remove(hashBang, type);
   }
 
-  @ApiStatus.Internal
   public void removeAssociation(@NotNull FileNameMatcher matcher, @Nullable T type) {
     if (matcher instanceof ExtensionFileNameMatcher) {
       String extension = ((ExtensionFileNameMatcher)matcher).getExtension();
@@ -145,7 +141,6 @@ public final class FileTypeAssocTable<T> {
     myMatchingMappings.removeIf(assoc -> matcher.equals(assoc.getFirst()) && (type == null || type.equals(assoc.getSecond())));
   }
 
-  @ApiStatus.Internal
   public void removeAllAssociations(@NotNull T type) {
     removeAllAssociations(bean -> bean.equals(type));
   }
@@ -204,7 +199,7 @@ public final class FileTypeAssocTable<T> {
     return myExtensionMappings.get(extension);
   }
 
-  String @NotNull [] getAssociatedExtensions(@NotNull T type) {
+  public String @NotNull [] getAssociatedExtensions(@NotNull T type) {
     List<String> extensions = new ArrayList<>();
     for (Map.Entry<CharSequence, T> entry : myExtensionMappings.entrySet()) {
       if (type.equals(entry.getValue())) {
@@ -325,9 +320,15 @@ public final class FileTypeAssocTable<T> {
   // todo drop it, when ConcurrentCollectionFactory will be available in the classpath
   private static @NotNull <T> Map<CharSequence, T> createCharSequenceConcurrentMap(@NotNull Map<? extends CharSequence, ? extends T> source,
                                                                                    boolean caseSensitive) {
-    Map<CharSequence, T> map = CollectionFactory.createCharSequenceMap(caseSensitive, source.size(), 0.5f);
-    map.putAll(source);
-    return Collections.synchronizedMap(map);
+    Map<CharSequence, T> map;
+    if (caseSensitive) {
+      map = new ConcurrentHashMap<>(source);
+    }
+    else {
+      map = Collections.synchronizedMap(CollectionFactory.createCharSequenceMap(false, source.size(), 0.5f));
+      map.putAll(source);
+    }
+    return map;
   }
 
   @ApiStatus.Internal
@@ -349,6 +350,7 @@ public final class FileTypeAssocTable<T> {
   }
 
   @TestOnly
+  @ApiStatus.Internal
   public void clear() {
     myHashBangMap.clear();
     myMatchingMappings.clear();

@@ -21,17 +21,6 @@ class CodeReviewCreateReviewLayoutBuilder @Internal constructor() {
 
   private val componentsWithConstraints = mutableListOf<ComponentWithConstrains>()
 
-  @Internal
-  @Deprecated("Use a separate method without MigLayout constraints")
-  fun addComponent(component: JComponent,
-                   cc: CC,
-                   withoutBorder: Boolean = false,
-                   withListBackground: Boolean = true): CodeReviewCreateReviewLayoutBuilder {
-    componentsWithConstraints.add(ComponentWithConstrains(component, cc))
-    setupBorderAndBackground(component, withoutBorder, withListBackground)
-    return this
-  }
-
   fun addComponent(component: JComponent,
                    zeroMinWidth: Boolean = false,
                    stretchYWithWeight: Float? = null,

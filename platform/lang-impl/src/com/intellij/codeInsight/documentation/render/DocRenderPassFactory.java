@@ -22,7 +22,6 @@ import com.intellij.util.text.CharArrayUtil;
 import org.jetbrains.annotations.Nls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import org.jsoup.Jsoup;
 
 import java.util.*;
 
@@ -94,7 +93,7 @@ public final class DocRenderPassFactory implements TextEditorHighlightingPassFac
     return items;
   }
 
-  static boolean isValidRange(@NotNull Document document, @NotNull TextRange range) {
+  private static boolean isValidRange(@NotNull Document document, @NotNull TextRange range) {
     int startOffset = range.getStartOffset();
     int endOffset = range.getEndOffset();
     int textLength = document.getTextLength();
@@ -124,7 +123,7 @@ public final class DocRenderPassFactory implements TextEditorHighlightingPassFac
   }
 
   private static @NlsSafe String preProcess(@Nls String text) {
-    var document = Jsoup.parse(text);
+    var document = DocumentationHtmlUtil.parseHtml(text);
     DocumentationHtmlUtil.removeEmptySections$intellij_platform_lang_impl(document);
     DocumentationHtmlUtil.addParagraphsIfNeeded$intellij_platform_lang_impl(
       document, "table." + CLASS_SECTIONS + " td[valign=top]");

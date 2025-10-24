@@ -18,6 +18,7 @@ package com.jetbrains.python;
 import com.intellij.lang.injection.InjectedLanguageManager;
 import com.intellij.openapi.util.Pair;
 import com.intellij.openapi.util.TextRange;
+import com.intellij.openapi.util.registry.Registry;
 import com.intellij.psi.PsiElement;
 import com.intellij.psi.PsiLanguageInjectionHost;
 import com.intellij.psi.util.PsiTreeUtil;
@@ -247,7 +248,7 @@ public class PyTypingTest extends PyTestCase {
   }
 
   public void testAnyStrForUnknown() {
-    doTest("str | bytes | Any",
+    doTest("UnsafeUnion[str | bytes, Any]",
            """
              from typing import AnyStr
 
@@ -1699,7 +1700,7 @@ public class PyTypingTest extends PyTestCase {
 
   // PY-31004
   public void testRecursiveTypeAliasInAnotherFile() {
-    doMultiFileStubAwareTest("list | int",
+    doMultiFileStubAwareTest("list[Any] | int",
                              """
                                from other import MyType
 
@@ -1979,7 +1980,9 @@ public class PyTypingTest extends PyTestCase {
 
   // PY-79861
   public void testWalrusCallable() {
-    doTest("type[Callable]",
+    // should actually be `(...) -> object` ... should actually be `Literal[42] & (...) -> object ... should actually be `Never`
+    //  but we don't support this case yet
+    doTest("int",
            """
              if callable(a := 42):
                  expr = a""");
@@ -2512,7 +2515,7 @@ public class PyTypingTest extends PyTestCase {
 
   // PY-53105
   public void testGenericVariadicStarArgsPrefixSuffix() {
-    doTest("tuple[str, list, dict, bool, int]",
+    doTest("tuple[str, list[Any], dict[Any, Any], bool, int]",
            """
              from typing import TypeVarTuple, Tuple
 
@@ -3611,6 +3614,52 @@ public class PyTypingTest extends PyTestCase {
             expr = receiver.get()""");
   }
 
+  // PY-24834
+  // It works incorrectly due to PY-83119 (the information about unresolved union member attributes
+  // being lost during type inference).
+  public void testGenericUnionMemberMethodCallSomeMembersDoNotOwnIt() {
+    doTest("str",  // Should be `str | Any`
+           """
+            class Box[T]:
+                def get(self) -> T:
+                    pass
+            r: int | Box[str] = ...
+            expr = r.get()
+            """);
+  }
+
+  // PY-24834
+  // This version doesn't work now properly because of lacking constraint solving.
+  // We can't match `Box[T]` for `self` with `Box[int] | Box[str]`.
+  public void testGenericUnionMemberCallAllMembersAreSameClassParameterizations() {
+    doTest("Any",  // Should be `int | str`
+           """
+            class Box[T]:
+                def get(self) -> T:
+                    pass
+
+            r: Box[int] | Box[str] = ...
+            expr = r.get()
+            """);
+  }
+
+  // PY-24834
+  public void testGenericUnionMemberCallAllMembersOwnIt() {
+    doTest("int | str",
+           """
+            class Box1[T]:
+                def get(self) -> T:
+                    pass
+
+            class Box2[T]:
+                def get(self) -> T:
+                    pass
+            
+            r: Box1[int] | Box2[str] = ...
+            expr = r.get()
+            """);
+  }
+
   public void testGenericClassTypeHintedInDocstrings() {
     doTest("int",
            """
@@ -4233,7 +4282,7 @@ public class PyTypingTest extends PyTestCase {
 
   // PY-61883
   public void testRecursiveTypeAliasInAnotherFilePEP695Syntax() {
-    doMultiFileStubAwareTest("list | int",
+    doMultiFileStubAwareTest("list[Any] | int",
                              """
                                from a import MyType
 
@@ -4524,7 +4573,7 @@ public class PyTypingTest extends PyTestCase {
 
   // PY-36444
   public void testTextIOInferredWithContextManagerDecorator() {
-    doTest("TextIOWrapper",
+    doTest("TextIOWrapper[_WrappedBuffer]",
            """
              from contextlib import contextmanager
                              
@@ -4721,7 +4770,7 @@ public class PyTypingTest extends PyTestCase {
 
   // PY-71002
   public void testTypeVarDefaultsClassWithInitMethodReference() {
-    doTest("type[Bar[Any, list]]", """
+    doTest("type[Bar[Any, list[Any]]]", """
       from typing import TypeVar, Generic
       Z1 = TypeVar("Z1")
       ListDefaultT = TypeVar("ListDefaultT", default=list[Z1])
@@ -4733,7 +4782,7 @@ public class PyTypingTest extends PyTestCase {
 
   // PY-71002
   public void testTypeVarDefaultsClassWithInitMethodReferenceNewSyntax() {
-    doTest("type[Bar[Any, list]]", """
+    doTest("type[Bar[Any, list[Any]]]", """
       from typing import TypeVar, Generic
       class Bar[Z1, ListDefaultT = list[Z1]]:
           def __init__(self, x: Z1, y: ListDefaultT): ...
@@ -5838,7 +5887,7 @@ public class PyTypingTest extends PyTestCase {
   }
 
   public void testDataclassTransformOwnKwOnlyOmittedAndTakenFromKwOnlyDefault() {
-    doTestExpressionUnderCaret("(Any, id: int, name: str) -> MyClass", """
+    doTestExpressionUnderCaret("(*, id: int, name: str) -> MyClass", """
       from typing import dataclass_transform, Callable
       
       
@@ -5858,7 +5907,7 @@ public class PyTypingTest extends PyTestCase {
   }
 
   public void testDataclassTransformFieldSpecifierKwOnlyDefaultOverridesDecoratorsKwOnly() {
-    doTestExpressionUnderCaret("(id: str, Any, addr: list[str]) -> Order", """
+    doTestExpressionUnderCaret("(id: str, *, addr: list[str]) -> Order", """
       from typing import Callable, dataclass_transform
       
       def my_field(kw_only=False):
@@ -5878,7 +5927,7 @@ public class PyTypingTest extends PyTestCase {
   }
 
   public void testDataclassTransformFieldSpecifierKwOnlyDefaultOverridesDecoratorsKwOnlyDefault() {
-    doTestExpressionUnderCaret("(id: str, Any, addr: list[str]) -> Order", """
+    doTestExpressionUnderCaret("(id: str, *, addr: list[str]) -> Order", """
       from typing import Callable, dataclass_transform
       
       def my_field(kw_only=False):
@@ -5898,7 +5947,7 @@ public class PyTypingTest extends PyTestCase {
   }
 
   public void testDataclassTransformFieldSpecifierKwOnlyOverridesDecoratorsKwOnly() {
-    doTestExpressionUnderCaret("(id: str, Any, addr: list[str]) -> Order", """
+    doTestExpressionUnderCaret("(id: str, *, addr: list[str]) -> Order", """
       from typing import Callable, dataclass_transform
       
       def my_field(kw_only=False):
@@ -5918,7 +5967,7 @@ public class PyTypingTest extends PyTestCase {
   }
 
   public void testDataclassTransformFieldSpecifierKwOnlyOverridesDecoratorsKwOnlyDefault() {
-    doTestExpressionUnderCaret("(id: str, Any, addr: list[str]) -> Order", """
+    doTestExpressionUnderCaret("(id: str, *, addr: list[str]) -> Order", """
       from typing import Callable, dataclass_transform
       
       def my_field(kw_only=False):
@@ -5935,6 +5984,17 @@ public class PyTypingTest extends PyTestCase {
       
       Ord<caret>er()
       """);
+  }
+
+  public void testDataclassTransformDecoratedFunctionType() {
+    doTest("(cls: Any) -> None","""
+             from typing import dataclass_transform
+             
+             @dataclass_transform()
+             def my_dataclass(cls): ...
+             
+             expr = my_dataclass
+             """);
   }
 
   // PY-76076
@@ -6413,6 +6473,335 @@ public class PyTypingTest extends PyTestCase {
                                b = B(a)
                                expr = b.b_attr
                                """);
+  }
+
+  // PY-79480
+  public void testInheritedAttributeWithTypeAnnotationInParentConstructor() {
+    doTest("str | None", """
+      import typing
+
+      class FakeBase:
+          def __init__(self):
+              self._some_var: typing.Optional[str] = ""
+
+      class Fake(FakeBase):
+          def __init__(self):
+              super().__init__()
+              self._some_var = None
+
+          def some_method(self):
+              expr = self._some_var
+      """);
+  }
+
+  public void testInheritedAttributeWithTypeAnnotationInParent() {
+    doTest("str | None", """
+      import typing
+
+      class FakeBase:
+          _some_var: typing.Optional[str]
+
+      class Fake(FakeBase):
+          def __init__(self):
+              super().__init__()
+              self._some_var = None
+
+          def some_method(self):
+              expr = self._some_var
+      """);
+  }
+
+  public void testInheritedAttributeWithTypeAnnotationInChild() {
+    doTest("str | None", """
+      import typing
+
+      class FakeBase:
+          def __init__(self):
+              self._some_var = 1
+
+      class Fake(FakeBase):
+          def __init__(self):
+              super().__init__()
+              self._some_var: typing.Optional[str] = None
+
+          def some_method(self):
+              expr = self._some_var
+      """);
+  }
+
+  // PY-80427
+  public void testNoneTypeType() {
+    doTest("type[None]",
+           "expr = type(None)");
+  }
+
+  // PY-76908
+  public void testSequenceUnpackedTuple() {
+    doTest("Sequence[int | str]",
+           """
+            from typing import Sequence, TypeVar
+            T = TypeVar("T")
+            def test_seq(x: Sequence[T]) -> Sequence[T]:
+                return x
+            def func(p: tuple[int, *tuple[str, ...]]):
+                expr = test_seq(p)
+            """);
+  }
+
+  // PY-76908
+  public void testSequenceDeepUnpackedTuple() {
+    doTest("Sequence[int | complex | str]",
+           """
+            from typing import Sequence, TypeVar
+            T = TypeVar("T")
+            def test_seq(x: Sequence[T]) -> Sequence[T]:
+                return x
+            def func(p: tuple[int, *tuple[complex, *tuple[str, ...]]]):
+                expr = test_seq(p)
+            """);
+  }
+
+  // PY-82454
+  public void testMethodReturningTypeParameterCalledOnNonParameterizedGenericWithDefault() {
+    doTest("str", """
+      class Box[T=str]:
+          def m(self) -> T:
+              ...
+      
+      def f() -> Box:
+          ...
+      
+      expr = f().m()
+      """);
+  }
+
+  // PY-82454
+  public void testAttributeOfTypeParameterTypeAccessedOnNonParameterizedGenericWithDefault() {
+    doTest("str", """
+      class Box[T=str]:
+          attr: T
+      
+      def f() -> Box:
+          ...
+      
+      expr = f().attr
+      """);
+  }
+
+  // PY-82454
+  public void testNonParameterizedGenericWithDefaultUsedInOtherType() {
+    doTest("list[Box[str]]", """
+      class Box[T=str]:
+          def m(self) -> T:
+              ...
+      
+      def f() -> list[Box]:
+          ...
+      
+      expr = f()
+      """);
+  }
+
+  // PY-82454
+  public void testMethodReturningSelfCalledOnNonParameterizedGenericWithDefault() {
+    doTest("Box[str]", """
+      from typing import Self
+      
+      class Box[T=str]:
+          def m(self) -> Self:
+              ...
+      
+      def f() -> Box:  # not parameterized, simulating open() -> TextIOWrapper
+          ...
+      
+      expr = f().m()
+      """);
+  }
+
+  // PY-82454
+  public void testMethodReturningTypeParameterizedWithSelfCalledOfNonParameterizedGenericWithDefault() {
+    doTest("list[Box[str]]", """
+      from typing import Self
+      
+      class Box[T=str]:
+          def m(self) -> list[Self]:
+              ...
+      
+      def f() -> Box:  # not parameterized, simulating open() -> TextIOWrapper
+          ...
+      
+      expr = f().m()
+      """);
+  }
+
+  // PY-82454
+  public void testMethodReturningSelfCalledOnNonParameterizedGenericWithDefaultAndBound() {
+    doTest("Box[str]", """
+      from typing import Self
+      
+      class Box[T : str = str]:
+          def m(self) -> Self:
+              ...
+      
+      def f() -> Box:  # not parameterized, simulating open() -> TextIOWrapper
+          ...
+      
+      expr = f().m()
+      """);
+  }
+
+  // PY-82486
+  public void testBogusAncestorTypeVarScopeOwnerInference() {
+    doTest("T | str", """
+      from typing import Generic, TypeVar
+      
+      T = TypeVar("T")
+      
+      class Box(Generic[T]): ...
+      class Box2(Box[T]): ...
+      
+      def unbox(x: Box[T]) -> T: ...
+      
+      def f(x: Box2[T] | None, y: T):
+          b: Box2[str]
+          expr = y or unbox(b)
+      """);
+  }
+
+  // PY-82500
+  public void testFunctionCallCannotBeUsedAsTypeHint() {
+    doTest("Any", """
+      def func() -> type[str]: ...
+      expr: func()
+      """);
+  }
+
+  // PY-82500
+  public void testOrdinarySubscriptionExpressionCannotBeUsedAsTypeHint() {
+    doTest("Any", """
+      xs: list[type[str]]
+      expr: xs[0]
+      """);
+  }
+
+  // PY-82500
+  public void testOrdinaryBinaryExpressionCannotBeUsedAsTypeHint() {
+    doTest("Any", """
+      class B:
+          def __add__(self, item: int) -> type[str]:
+              ...
+      x: B
+      expr: x + 1
+      """);
+  }
+
+
+  // PY-82833
+  public void testGenericClassDunderNewReturnsSelf() {
+    doTest("Box[str]", """
+      from typing import Self
+      
+      class Box[T]:
+          def __new__(cls, parm: T) -> Self:
+              ...
+      
+      expr = Box("foo")
+      """);
+  }
+
+  // PY-82833
+  public void testGenericClassClassMethodReturningSelfCalledOnRawClass() {
+    doTest("Box[str]", """
+      from typing import Self
+      
+      class Box[T]:
+          @classmethod
+          def create(cls, parm: T) -> Self:
+              ...
+      
+      expr = Box.create("foo")
+      """);
+  }
+
+  public void testGenericClassClassMethodReturningSelfCalledOnInstance() {
+    // Any because `str` doesn't match `int`, alternatively `Box[int]` can be retained
+    doTest("Any", """
+      from typing import Self
+      
+      class Box[T]:
+          @classmethod
+          def create(cls, parm: T) -> Self:
+              ...
+      
+      b: Box[int]
+      expr = b.create("foo")
+      """);
+  }
+
+  public void testGenericClassMethodReturningSelfCalledOnInstance() {
+    // Any because `str` doesn't match `int`, `Box[int]` can be retained
+    doTest("Any", """
+      from typing import Self
+      
+      class Box[T]:
+          def m(self, parm: T) -> Self:
+              ...
+      
+      b: Box[int]
+      expr = b.m("foo")
+      """);
+  }
+
+  public void testGenericClassGenericMethodReturningSelfCalledOnInstance() {
+    doTest("Box[int]", """
+      from typing import Self
+      
+      class Box[T]:
+          def m[S](self, parm: S) -> Self:
+              ...
+      
+      b: Box[int]
+      expr = b.m("foo")
+      """);
+  }
+
+  // PY-82869
+  public void testEscapedMultilineTypeHint() {
+    doTest("int | str", """
+      expr: '''
+        int |
+        str
+      '''
+      """);
+  }
+
+  // PY-82871
+  public void testConcatenateWithEllipsis() {
+    doTest("(Concatenate(int, ...)) -> str", """
+      from typing import Callable, Concatenate
+      
+      expr: Callable[Concatenate[int, ...], str]
+      """);
+  }
+
+  // See com.jetbrains.python.refactoring.PyExtractMethodTest.testTypedStatements
+  //
+  // This scenario changes depending on whether the strict unions are enabled.
+  // Without them, the inferred type is LiteralString | str | int, because due to special handling
+  // of unions containing literal types in PyTypeChecker, none of the candidate methods fully matches:
+  // `LiteralString | str | int` receiver is compatible with neither `LiteralString`, `str` nor `int` for `self`,
+  // so we infer a union of all possible return types.
+  // With strict unions, due to special handling of self in #processSelfParameter, only
+  // `__add__(self: str, other: str) -> str` overload remains.
+  // PY-24834 PY-83313
+  public void testUnionStrConcat() {
+    //Registry.get("python.typing.strict.unions").setValue(false, myFixture.getTestRootDisposable());
+    doTest("str", """
+      from typing import LiteralString
+      
+      x: LiteralString | str | int
+      expr = x + "foo"
+      """);
   }
 
   private void doTestNoInjectedText(@NotNull String text) {

@@ -19,11 +19,9 @@ import javax.swing.BoxLayout
 import javax.swing.JComponent
 import javax.swing.JPanel
 
-class CustomFoldingEditorCellViewComponent(
-  internal val component: JComponent,
-  private val editor: EditorEx,
-  private val cell: EditorCell,
-) : EditorCellViewComponent() {
+open class CustomFoldingEditorCellViewComponent(protected val cell: EditorCell, internal val component: JComponent)
+  : EditorCellViewComponent() {
+  private val editor: EditorEx = cell.editor
 
   private var foldingRegion: CustomFoldRegion? = null
 
@@ -50,7 +48,7 @@ class CustomFoldingEditorCellViewComponent(
   private fun updateGutterIcons(gutterAction: AnAction?) {
     editor.updateManager.update { ctx ->
       gutterActionRenderer = gutterAction?.let { ActionToGutterRendererAdapter(it) }
-      ctx.addFoldingOperation { modelEx ->
+      ctx.addFoldingOperation {
         foldingRegion?.update()
       }
     }
@@ -108,12 +106,11 @@ class CustomFoldingEditorCellViewComponent(
 
   override fun addInlayBelow(presentation: InlayPresentation) {
     val inlayComponent = object : JComponent() {
-
       init {
         enableEvents(MOUSE_EVENT_MASK or MOUSE_MOTION_EVENT_MASK)
       }
 
-      override fun getPreferredSize(): Dimension? {
+      override fun getPreferredSize(): Dimension {
         return Dimension(presentation.width, presentation.height)
       }
 

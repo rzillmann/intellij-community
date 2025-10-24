@@ -10,6 +10,8 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import org.jetbrains.annotations.ApiStatus
+import org.jetbrains.jewel.foundation.ExperimentalJewelApi
 import org.jetbrains.jewel.intui.markdown.bridge.styling.isLightTheme
 import org.jetbrains.jewel.markdown.extensions.github.alerts.AlertStyling
 import org.jetbrains.jewel.markdown.extensions.github.alerts.CautionAlertStyling
@@ -20,6 +22,8 @@ import org.jetbrains.jewel.markdown.extensions.github.alerts.TipAlertStyling
 import org.jetbrains.jewel.markdown.extensions.github.alerts.WarningAlertStyling
 import org.jetbrains.jewel.ui.icon.IconKey
 
+@ApiStatus.Experimental
+@ExperimentalJewelApi
 public fun AlertStyling.Companion.create(
     note: NoteAlertStyling = NoteAlertStyling.create(),
     tip: TipAlertStyling = TipAlertStyling.create(),
@@ -28,6 +32,8 @@ public fun AlertStyling.Companion.create(
     caution: CautionAlertStyling = CautionAlertStyling.create(),
 ): AlertStyling = AlertStyling(note, tip, important, warning, caution)
 
+@ApiStatus.Experimental
+@ExperimentalJewelApi
 public fun NoteAlertStyling.Companion.create(
     padding: PaddingValues = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
     lineWidth: Dp = 3.dp,
@@ -51,6 +57,8 @@ public fun NoteAlertStyling.Companion.create(
         textColor,
     )
 
+@ApiStatus.Experimental
+@ExperimentalJewelApi
 public fun TipAlertStyling.Companion.create(
     padding: PaddingValues = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
     lineWidth: Dp = 3.dp,
@@ -74,6 +82,8 @@ public fun TipAlertStyling.Companion.create(
         textColor,
     )
 
+@ApiStatus.Experimental
+@ExperimentalJewelApi
 public fun ImportantAlertStyling.Companion.create(
     padding: PaddingValues = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
     lineWidth: Dp = 3.dp,
@@ -97,6 +107,8 @@ public fun ImportantAlertStyling.Companion.create(
         textColor,
     )
 
+@ApiStatus.Experimental
+@ExperimentalJewelApi
 public fun WarningAlertStyling.Companion.create(
     padding: PaddingValues = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
     lineWidth: Dp = 3.dp,
@@ -120,6 +132,8 @@ public fun WarningAlertStyling.Companion.create(
         textColor,
     )
 
+@ApiStatus.Experimental
+@ExperimentalJewelApi
 public fun CautionAlertStyling.Companion.create(
     padding: PaddingValues = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
     lineWidth: Dp = 3.dp,

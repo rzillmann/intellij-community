@@ -18,13 +18,19 @@ import com.intellij.collaboration.ui.codereview.comment.CommentInputActionsCompo
 import com.intellij.collaboration.ui.codereview.comment.submitActionIn
 import com.intellij.collaboration.ui.codereview.timeline.comment.CommentTextFieldFactory
 import com.intellij.collaboration.ui.codereview.timeline.thread.CodeReviewResolvableItemViewModel
+import com.intellij.collaboration.ui.codereview.timeline.thread.CodeReviewTrackableItemViewModel
 import com.intellij.collaboration.ui.codereview.timeline.thread.TimelineThreadCommentsPanel
 import com.intellij.collaboration.ui.util.*
+import com.intellij.openapi.actionSystem.UiDataProvider
+import com.intellij.openapi.options.advanced.AdvancedSettings
 import com.intellij.openapi.ui.MessageDialogBuilder
 import com.intellij.ui.components.ActionLink
+import com.intellij.ui.components.panels.Wrapper
 import com.intellij.util.ui.JBUI
+import com.intellij.util.ui.launchOnShow
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.map
 import org.jetbrains.plugins.github.i18n.GithubBundle
 import org.jetbrains.plugins.github.pullrequest.ui.comment.GHPRCompactReviewThreadViewModel
@@ -36,6 +42,10 @@ import javax.swing.Action
 import javax.swing.JComponent
 
 internal object GHPRReviewEditorComponentsFactory {
+  private const val VERTICAL_INLAY_MARGIN = 8
+  private const val LEFT_INLAY_MARGIN = 34
+  private const val RIGHT_INLAY_MARGIN = 0
+
   fun createThreadIn(cs: CoroutineScope, vm: GHPRCompactReviewThreadViewModel): JComponent {
     val commentsPanel = ComponentListPanelFactory.createVertical(cs, vm.comments) { item ->
       val itemCs = this
@@ -53,7 +63,7 @@ internal object GHPRReviewEditorComponentsFactory {
       }
     }
 
-    return VerticalListPanel().apply {
+    return UiDataProvider.wrapComponent(VerticalListPanel().apply {
       name = "GitHub Thread in Editor Panel ${vm.id}"
       border = JBUI.Borders.empty(CodeReviewCommentUIUtil.getInlayPadding(CodeReviewChatItemUIUtil.ComponentType.COMPACT))
       add(commentsPanel)
@@ -68,8 +78,20 @@ internal object GHPRReviewEditorComponentsFactory {
           }
         }
       }
+
+      isFocusable = true
+
+      launchOnShow("focusRequests") {
+        vm.focusRequests.collectLatest { requestFocus(false) }
+      }
     }.let {
       CodeReviewCommentUIUtil.createEditorInlayPanel(it)
+    }, UiDataProvider { sink ->
+      sink[CodeReviewTrackableItemViewModel.TRACKABLE_ITEM_KEY] = vm
+    }).apply {
+      if (AdvancedSettings.getBoolean("show.review.threads.with.increased.margins")) {
+        border = JBUI.Borders.empty(VERTICAL_INLAY_MARGIN, LEFT_INLAY_MARGIN, VERTICAL_INLAY_MARGIN, RIGHT_INLAY_MARGIN)
+      }
     }
   }
 
@@ -148,11 +170,20 @@ internal object GHPRReviewEditorComponentsFactory {
       border = JBUI.Borders.empty(itemType.inputPaddingInsets)
     }
 
-    return CodeReviewCommentUIUtil.createEditorInlayPanel(editor)
+    return if (AdvancedSettings.getBoolean("show.review.threads.with.increased.margins")) {
+      Wrapper(CodeReviewCommentUIUtil.createEditorInlayPanel(editor)).apply {
+        border = JBUI.Borders.empty(VERTICAL_INLAY_MARGIN, LEFT_INLAY_MARGIN, VERTICAL_INLAY_MARGIN, RIGHT_INLAY_MARGIN)
+      }
+    }
+    else {
+      CodeReviewCommentUIUtil.createEditorInlayPanel(editor)
+    }
   }
 
-  private fun CoroutineScope.createUiAction(vm: GHPRReviewNewCommentEditorViewModel,
-                                            action: GHPRReviewNewCommentEditorViewModel.SubmitAction?): Action {
+  private fun CoroutineScope.createUiAction(
+    vm: GHPRReviewNewCommentEditorViewModel,
+    action: GHPRReviewNewCommentEditorViewModel.SubmitAction?,
+  ): Action {
     val cs = this
     return when (action) {
       is GHPRReviewNewCommentEditorViewModel.SubmitAction.CreateReview ->

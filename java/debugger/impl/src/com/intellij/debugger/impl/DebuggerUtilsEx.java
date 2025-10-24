@@ -128,7 +128,7 @@ public abstract class DebuggerUtilsEx extends DebuggerUtils {
    * Does not handle array types correctly
    * @deprecated use {@link DebuggerUtils#instanceOf(Type, String)}
    */
-  @Deprecated
+  @Deprecated(forRemoval = true)
   public static boolean isAssignableFrom(@NotNull String baseQualifiedName, @NotNull Type checkedType) {
     if (checkedType instanceof ReferenceType) {
       if (CommonClassNames.JAVA_LANG_OBJECT.equals(baseQualifiedName)) {
@@ -190,6 +190,9 @@ public abstract class DebuggerUtilsEx extends DebuggerUtils {
     catch (PatternSyntaxException e) {
       LOG.debug(e);
     }
+    catch (Exception e) {
+      LOG.error("Exception while matching ClassFilter \"" + classFilter.getPattern() + "\" with the input \"" + qName + "\"", e);
+    }
     return false;
   }
 
@@ -230,7 +233,7 @@ public abstract class DebuggerUtilsEx extends DebuggerUtils {
   /**
    * @deprecated Use {@link DebuggerSettingsUtils#filterEquals} directly
    */
-  @Deprecated
+  @Deprecated(forRemoval = true)
   public static boolean filterEquals(ClassFilter[] filters1, ClassFilter[] filters2) {
     return DebuggerSettingsUtils.filterEquals(filters1, filters2);
   }
@@ -347,6 +350,10 @@ public abstract class DebuggerUtilsEx extends DebuggerUtils {
                                              @Nullable XValueNodeImpl node) {
     XDebugProcess process = session.getDebugProcess();
     RunnerLayoutUi ui = session.getUI();
+    if (ui == null) {
+      // TODO [Debugger.RunnerLayoutUi]
+      return;
+    }
     String title = JavaDebuggerBundle.message("collection.history.tab.title", clsName + "." + fieldName);
     for (Content content : ui.getContents()) {
       if (title.equals(content.getDisplayName())) {

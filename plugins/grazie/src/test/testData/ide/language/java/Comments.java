@@ -3,9 +3,9 @@
 class ForMultiLanguageSupport {
   // The finally block always executes when the try block exits.
 
-    // er überprüfte die Rechnungen noch <TYPO descr="Typo: In word 'einal'">einal</TYPO>, um ganz <GRAMMAR_ERROR descr="COMPOUND_INFINITIV_RULE">sicher zu gehen</GRAMMAR_ERROR>.
+    // er überprüfte die Rechnungen noch <TYPO descr="Typo: In word 'einal'">einal</TYPO>, um <GRAMMAR_ERROR descr="COMPOUND_INFINITIV_RULE">sicher zu gehen</GRAMMAR_ERROR>.
     // das ist <GRAMMAR_ERROR descr="FUEHR_FUER">führ</GRAMMAR_ERROR> Dich!
-    // das <TYPO descr="Typo: In word 'daert'">daert</TYPO> geschätzt fünf <GRAMMAR_ERROR descr="MANNSTUNDE">Mannstunden</GRAMMAR_ERROR>.
+    // das <TYPO descr="Typo: In word 'daert'">daert</TYPO> geschätzt fünf <STYLE_SUGGESTION descr="MANNSTUNDE">Mannstunden</STYLE_SUGGESTION>.
 
   // Cover following cases
   // a) initially missing
@@ -37,13 +37,15 @@ class ForMultiLanguageSupport {
 
   // An iterable of bundle instances
 
+  // b'0' fill as usize is a mistake
+
   // Resolve '../' in paths (like real_path)
 
   // Thrown when an UPLOAD_ERR_CANT_WRITE error occurred with UploadedFile.
 
   // We don't use the PHP php_strip_whitespace() function
 
-  // If Content-Type is set to text/html, or is unset -> html
+  // If Content-Type is set to text/html, or is unset -> <GRAMMAR_ERROR descr="Grazie.RuleEngine.En.Spelling.PROPER_NAMES">html</GRAMMAR_ERROR>
 
   /*
   for(;;)
@@ -84,4 +86,27 @@ class ForMultiLanguageSupport {
   //        for (Person person : people) {
   //            System.out.println(person);
   //        }
+
+  // if the subject includes the
+  //    string '|6xX$\WG-C?|' or the author includes the string
+  //    '|^#=)A?mUi5|' ; this is however highly unlikely...
+
+  // if the subject includes the
+  //    string '|6xX$\WG-C?|' or the author includes the string
+  //    '|^#=(A?mUi5|' ; this is however highly unlikely...
+
+  // print(f'Hello world')
+  // print(f'
+  // print(f')
+  // print(f'      world')
+
+  // Українська. У мене хороші будинки.
+  // Граматична помилка: Поверталися на <GRAMMAR_ERROR descr="VYSHIDNYI_VYHIDNYI">висхідну</GRAMMAR_ERROR> позицію.
+  // Друкувати словом: У мене хороші <TYPO descr="Typo: In word 'будінки'">будінки</TYPO>.
+
+  // Беларускі. У мяне добры дом.
+  // Граматычная памылка: А <GRAMMAR_ERROR descr="pa_fakcie">па факту</GRAMMAR_ERROR> атрымалася, што сіл няма.
+  // Памылка друку ў word: У мяне добры <TYPO descr="Typo: In word 'домн'">домн</TYPO>.
+
+  // <TYPO descr="Typo: In word 'Timout'">Timout</TYPO>
 }

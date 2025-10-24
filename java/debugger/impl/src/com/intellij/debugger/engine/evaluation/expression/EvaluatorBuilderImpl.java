@@ -80,8 +80,10 @@ public final class EvaluatorBuilderImpl implements EvaluatorBuilder {
     private CodeFragmentEvaluator myCurrentFragmentEvaluator;
     private final Set<JavaCodeFragment> myVisitedFragments = new HashSet<>();
     private final @Nullable PsiClass myPositionPsiClass;
+    private final @Nullable PsiElement myPositionPsiElement;
 
     private Builder(@Nullable SourcePosition position) {
+      myPositionPsiElement = position != null ? position.getElementAt() : null;
       myPositionPsiClass = JVMNameUtil.getClassAt(position);
     }
 
@@ -131,23 +133,29 @@ public final class EvaluatorBuilderImpl implements EvaluatorBuilder {
       }
 
       IElementType assignmentType = expression.getOperationTokenType();
+      boolean compoundAssignment = assignmentType != JavaTokenType.EQ;
       PsiType rType = rExpression.getType();
-      if (!TypeConversionUtil.areTypesAssignmentCompatible(lType, rExpression) && rType != null) {
-        throw evaluateException(JavaDebuggerBundle.message("evaluation.error.incompatible.types", expression.getOperationSign().getText()));
+      if (!compoundAssignment && !TypeConversionUtil.areTypesAssignmentCompatible(lType, rExpression) && rType != null) {
+        throw evaluateException(
+          JavaDebuggerBundle.message("evaluation.error.incompatible.types", expression.getOperationSign().getText()));
       }
       lExpression.accept(this);
       Evaluator lEvaluator = myResult;
 
-      rEvaluator = handleAssignmentBoxingAndPrimitiveTypeConversions(lType, rType, rEvaluator, expression.getProject());
-
-      if (assignmentType != JavaTokenType.EQ) {
+      if (compoundAssignment) {
         IElementType opType = TypeConversionUtil.convertEQtoOperation(assignmentType);
         final PsiType typeForBinOp = TypeConversionUtil.calcTypeForBinaryExpression(lType, rType, opType, true);
         if (typeForBinOp == null || rType == null) {
           throw evaluateException(JavaDebuggerBundle.message("evaluation.error.unknown.expression.type", expression.getText()));
         }
+        if (!TypeConversionUtil.areTypesConvertible(typeForBinOp, lType)) {
+          throw evaluateException(
+            JavaDebuggerBundle.message("evaluation.error.incompatible.types", expression.getOperationSign().getText()));
+        }
         rEvaluator = createBinaryEvaluator(lEvaluator, lType, rEvaluator, rType, opType, typeForBinOp);
       }
+
+      rEvaluator = handleAssignmentBoxingAndPrimitiveTypeConversions(lType, rType, rEvaluator, expression.getProject());
       myResult = new AssignmentEvaluator(lEvaluator, rEvaluator);
     }
 
@@ -849,7 +857,7 @@ public final class EvaluatorBuilderImpl implements EvaluatorBuilder {
         PsiClass variableClass = getContainingClass(psiVar);
         final PsiClass positionClass = getPositionClass();
         if (Objects.equals(positionClass, variableClass)) {
-          PsiElement method = DebuggerUtilsEx.getContainingMethod(expression);
+          PsiElement method = DebuggerUtilsEx.getContainingMethod(myPositionPsiElement != null ? myPositionPsiElement : expression);
           boolean canScanFrames = method instanceof PsiLambdaExpression || ContextUtil.isJspImplicit(element);
           myResult = new LocalVariableEvaluator(localName, canScanFrames);
           return;
@@ -1310,8 +1318,17 @@ public final class EvaluatorBuilderImpl implements EvaluatorBuilder {
         mustBeVararg = psiMethod.isVarArgs();
       }
 
+      boolean lastArgumentIsNotArray = false;
+      if (mustBeVararg) {
+        PsiExpression element = ArrayUtil.getLastElement(argExpressions);
+        if (element != null) {
+          PsiType type = element.getType();
+          lastArgumentIsNotArray = !(type instanceof PsiArrayType || PsiTypes.nullType().equals(type));
+        }
+      }
+
       myResult = new MethodEvaluator(objectEvaluator, contextClass, methodExpr.getReferenceName(), signature,
-                                     argumentEvaluators, mustBeVararg);
+                                     argumentEvaluators, mustBeVararg, lastArgumentIsNotArray);
     }
 
     @Override
@@ -1492,7 +1509,7 @@ public final class EvaluatorBuilderImpl implements EvaluatorBuilder {
                 "MethodType mt = MethodType.fromMethodDescriptorString(\"" + JVMNameUtil.getJVMSignature(method) + "\", null);\n" +
                 "MethodHandle mh = MethodHandles.lookup()." + find + ";\n" +
                 bidStr +
-                "MethodHandleProxies.asInterfaceInstance(" + interfaceType.getCanonicalText() + ".class, mh);";
+                "MethodHandleProxies.asInterfaceInstance(" + interfaceType.getCanonicalText() + ".class, mh.asFixedArity());";
             }
           }
           else if (PsiUtil.isArrayClass(resolved)) {

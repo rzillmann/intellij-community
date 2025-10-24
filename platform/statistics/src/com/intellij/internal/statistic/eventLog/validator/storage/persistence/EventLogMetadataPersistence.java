@@ -6,11 +6,12 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 
+/**
+ * EventLogMetadataPersistence is only used for {@link com.intellij.internal.statistic.eventLog.validator.storage.ValidationTestRulesPersistedStorage}
+ */
 public class EventLogMetadataPersistence extends BaseEventLogMetadataPersistence {
   private static final String DEPRECATED_EVENTS_SCHEME_FILE = "white-list.json";
   public static final String EVENTS_SCHEME_FILE = "events-scheme.json";
@@ -42,43 +43,8 @@ public class EventLogMetadataPersistence extends BaseEventLogMetadataPersistence
       return Path.of(settings.getCustomPath());
     }
     else {
-      Path file = getDefaultFile();
-      if (!Files.exists(file)) {
-        initBuiltinMetadata(file);
-      }
-      return file;
+      return getDefaultFile();
     }
-  }
-
-  public void cacheEventsScheme(@NotNull String eventsSchemeJson, long lastModified) {
-    try {
-      Path file = getDefaultFile();
-      Files.createDirectories(file.getParent());
-      Files.writeString(file, eventsSchemeJson);
-      EventLogMetadataSettingsPersistence.getInstance().setLastModified(myRecorderId, lastModified);
-    }
-    catch (IOException e) {
-      LOG.error(e);
-    }
-  }
-
-  private void initBuiltinMetadata(@NotNull Path file) throws IOException {
-    try (InputStream stream = getClass().getClassLoader().getResourceAsStream(builtinEventSchemePath())) {
-      if (stream == null) {
-        return;
-      }
-
-      Files.createDirectories(file.getParent());
-      Files.copy(stream, file, StandardCopyOption.REPLACE_EXISTING);
-    }
-  }
-
-  private String builtinEventSchemePath() {
-    return "resources/" + FUS_METADATA_DIR + "/" + myRecorderId + "/" + EVENTS_SCHEME_FILE;
-  }
-
-  public long getLastModified() {
-    return EventLogMetadataSettingsPersistence.getInstance().getLastModified(myRecorderId);
   }
 
   public @NotNull Path getDefaultFile() throws IOException {

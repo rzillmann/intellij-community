@@ -9,12 +9,16 @@
     <extensionPoint name="moduleService" beanClass="com.intellij.openapi.components.ServiceDescriptor" dynamic="true"/>
     <extensionPoint name="virtualFileManagerListener" interface="com.intellij.openapi.vfs.VirtualFileManagerListener" dynamic="true"/>
     <extensionPoint name="vfs.asyncListener" interface="com.intellij.openapi.vfs.AsyncFileListener" dynamic="true"/>
+    <extensionPoint name="vfs.asyncListenerBackgroundable" interface="com.intellij.openapi.vfs.AsyncFileListener" dynamic="true"/>
 
     <!-- only bundled plugin can define initProjectActivity -->
     <extensionPoint name="initProjectActivity" interface="com.intellij.openapi.startup.InitProjectActivity" dynamic="false"/>
     <extensionPoint name="postStartupActivity" interface="com.intellij.openapi.startup.ProjectActivity" dynamic="true"/>
     <extensionPoint name="backgroundPostStartupActivity" interface="com.intellij.openapi.startup.ProjectActivity" dynamic="true"/>
     <extensionPoint name="requiredForSmartModeStartupActivity" interface="com.intellij.openapi.startup.StartupActivity$RequiredForSmartMode" dynamic="true"/>
+
+    <!-- only bundled plugin can define initProjectGeneratorActivity -->
+    <extensionPoint name="initProjectGeneratorActivity" interface="com.intellij.openapi.project.InitProjectGeneratorActivity" dynamic="false"/>
 
     <extensionPoint name="multiverseEnabler" interface="com.intellij.codeInsight.multiverse.MultiverseEnabler" dynamic="false"/>
     <extensionPoint name="multiverse.codeInsightContextProvider" interface="com.intellij.codeInsight.multiverse.CodeInsightContextProvider" dynamic="true"/>

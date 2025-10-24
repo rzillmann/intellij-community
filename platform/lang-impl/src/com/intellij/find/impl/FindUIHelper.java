@@ -16,6 +16,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
+import java.util.function.Consumer;
 
 @SuppressWarnings("WeakerAccess")
 public final class FindUIHelper implements Disposable {
@@ -23,11 +24,12 @@ public final class FindUIHelper implements Disposable {
   private @NotNull FindModel myModel;
   FindModel myPreviousModel;
   private @NotNull Runnable myOkHandler;
-  private @Nullable Runnable myStopHandler;
+  private @Nullable Consumer<Integer> myFinishHandler;
 
   FindUI myUI;
 
-  FindUIHelper(@NotNull Project project, @NotNull FindModel model, @NotNull Runnable okHandler) {
+  @ApiStatus.Internal
+  public FindUIHelper(@NotNull Project project, @NotNull FindModel model, @NotNull Runnable okHandler) {
     myProject = project;
     myModel = model;
     myOkHandler = okHandler;
@@ -171,14 +173,14 @@ public final class FindUIHelper implements Disposable {
   }
 
   @ApiStatus.Internal
-  public void setStopHandler(@Nullable Runnable stopHandler) {
-    myStopHandler = stopHandler;
+  public void setFinishHandler(@Nullable Consumer<Integer> finishHandler) {
+    myFinishHandler = finishHandler;
   }
 
   @ApiStatus.Internal
-  public void onSearchStop() {
-    if (myStopHandler != null) {
-      myStopHandler.run();
+  public void onSearchFinish(int count) {
+    if (myFinishHandler != null) {
+      myFinishHandler.accept(count);
     }
   }
 }

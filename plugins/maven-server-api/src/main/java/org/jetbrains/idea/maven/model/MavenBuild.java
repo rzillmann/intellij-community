@@ -15,18 +15,11 @@
  */
 package org.jetbrains.idea.maven.model;
 
-import org.jetbrains.annotations.NotNull;
-
 import java.io.Serializable;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
 
 public class MavenBuild extends MavenBuildBase implements Serializable {
   private String myOutputDirectory;
   private String myTestOutputDirectory;
-  private List<@NotNull String> mySources;
-  private List<@NotNull String> myTestSources;
 
   public String getOutputDirectory() {
     return myOutputDirectory;
@@ -42,31 +35,5 @@ public class MavenBuild extends MavenBuildBase implements Serializable {
 
   public void setTestOutputDirectory(String testOutputDirectory) {
     myTestOutputDirectory = testOutputDirectory;
-  }
-
-  public @NotNull List<@NotNull String> getSources() {
-    return mySources == null ? Collections.emptyList() : mySources;
-  }
-
-  public void setSources(@NotNull List<@NotNull String> sources) {
-    mySources = new ArrayList<>(sources);
-  }
-
-  public void addSource(@NotNull String source) {
-    if (mySources == null) mySources = new ArrayList<>();
-    mySources.add(source);
-  }
-
-  public @NotNull List<@NotNull String> getTestSources() {
-    return myTestSources == null ? Collections.emptyList() : myTestSources;
-  }
-
-  public void setTestSources(@NotNull List<@NotNull String> testSources) {
-    myTestSources = new ArrayList<>(testSources);
-  }
-
-  public void addTestSource(@NotNull String source) {
-    if (myTestSources == null) myTestSources = new ArrayList<>();
-    myTestSources.add(source);
   }
 }

@@ -6,11 +6,8 @@ import com.intellij.openapi.application.edtWriteAction
 import com.intellij.openapi.application.readAction
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.module.Module
-import com.intellij.openapi.module.ModuleUtilCore
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.projectRoots.JavaSdkVersion
-import com.intellij.openapi.util.io.FileUtil
-import com.intellij.openapi.util.io.toNioPathOrNull
+import com.intellij.openapi.util.io.FileUtilRt
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.vfs.findDocument
 import com.intellij.platform.ide.progress.withBackgroundProgress
@@ -18,138 +15,124 @@ import com.intellij.psi.PsiDocumentManager
 import com.intellij.util.PathUtil
 import com.intellij.util.io.awaitExit
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import org.jetbrains.kotlin.idea.base.plugin.artifacts.KotlinArtifactNames
+import kotlinx.coroutines.withContext
 import org.jetbrains.kotlin.idea.base.plugin.artifacts.KotlinArtifacts
 import org.jetbrains.kotlin.idea.base.psi.getLineNumber
 import org.jetbrains.kotlin.idea.compiler.configuration.KotlinPluginLayout
-import org.jetbrains.kotlin.idea.core.script.KotlinScratchScript
+import org.jetbrains.kotlin.idea.core.script.k2.definitions.KOTLIN_SCRATCH_EXPLAIN_FILE
+import org.jetbrains.kotlin.idea.core.script.k2.definitions.KotlinScratchScript
 import org.jetbrains.kotlin.idea.jvm.shared.KotlinJvmBundle
 import org.jetbrains.kotlin.idea.jvm.shared.scratch.ScratchExecutor
 import org.jetbrains.kotlin.idea.jvm.shared.scratch.output.ExplainInfo
+import org.jetbrains.kotlin.idea.jvm.shared.scratch.output.ScratchOutput
+import org.jetbrains.kotlin.idea.jvm.shared.scratch.output.ScratchOutputType
 import org.jetbrains.kotlin.idea.util.JavaParametersBuilder
-import org.jetbrains.kotlin.idea.util.application.isUnitTestMode
-import org.jetbrains.kotlin.idea.util.projectStructure.version
 import java.io.File
-import java.net.URLClassLoader
+import java.nio.file.Files
 import java.nio.file.Path
-import java.util.*
 import kotlin.io.path.absolutePathString
-import kotlin.io.path.exists
+import kotlin.io.path.readLines
 
-class K2ScratchExecutor(override val file: K2KotlinScratchFile, val project: Project, val scope: CoroutineScope) : ScratchExecutor(file) {
-
-    val tempDir: Path by lazy {
-        FileUtil.createTempDirectory("kotlin", "scratches").toPath()
-    }
-
+class K2ScratchExecutor(override val scratchFile: K2KotlinScratchFile, val project: Project, val scope: CoroutineScope) :
+    ScratchExecutor(scratchFile) {
     override fun execute() {
-        handler.onStart(file)
-
-        val scriptFile = file.file
-        val module = file.module
+        handler.onStart(scratchFile)
 
         scope.launch {
-            val document = readAction { scriptFile.findDocument() }
-            if (document != null) {
-                edtWriteAction {
-                    PsiDocumentManager.getInstance(project).commitDocument(document)
-                    FileDocumentManager.getInstance().saveDocument(document)
-                }
+            try {
+                processExecution(scratchFile.virtualFile)
+            } catch (e: Exception) {
+                handler.error(scratchFile, e.message ?: "Unknown error")
+            } finally {
+                handler.onFinish(scratchFile)
+            }
+        }
+    }
+
+    private suspend fun processExecution(scriptFile: VirtualFile) {
+        val document = readAction { scriptFile.findDocument() }
+        if (document == null) {
+            handler.error(scratchFile, "Cannot find document: ${scriptFile.path}")
+            return
+        }
+
+        edtWriteAction {
+            PsiDocumentManager.getInstance(project).commitDocument(document)
+            FileDocumentManager.getInstance().saveDocument(document)
+        }
+
+        val (code, stdout, stderr) = withBackgroundProgress(
+            project, title = KotlinJvmBundle.message("progress.title.compiling.kotlin.scratch")
+        ) {
+            val process = getJavaCommandLine(scratchFile.virtualFile, scratchFile.currentModule).createProcess()
+            process.awaitExit()
+            val stdout = withContext(Dispatchers.IO) {
+                process.inputStream.bufferedReader().use { it.readText() }
+            }
+            val stderr = withContext(Dispatchers.IO) {
+                process.errorStream.bufferedReader().use { it.readText() }
             }
 
-            val result = withBackgroundProgress(project, title = KotlinJvmBundle.message("progress.title.compiling.kotlin.scratch")) {
-                getJavaCommandLine(file.file, module).createProcess().awaitExit()
+            CompilationResult(process.exitValue(), stdout, stderr)
+        }
+
+        if (code == 0) {
+            if (stdout.isNotEmpty()) {
+                handler.handle(scratchFile, ScratchOutput(stdout, ScratchOutputType.OUTPUT))
             }
 
-            if (result != 0) {
-                handler.error(file, "Compilation failed with code $result")
-            } else {
-                runCatching {
-                    val explanations = runCompiledScript(scriptFile, module).map { (key, value) ->
-                        val leftBracketIndex = key.indexOf("(")
-                        val rightBracketIndex = key.indexOf(")")
-                        val commaIndex = key.indexOf(",")
+            val explanations = scriptFile.explainFilePath.readLines().associate {
+                it.substringBefore('=', "") to it.substringAfter('=')
+            }.filterKeys { it.isNotBlank() }.map { (key, value) ->
+                val leftBracketIndex = key.indexOf("(")
+                val rightBracketIndex = key.indexOf(")")
+                val commaIndex = key.indexOf(",")
 
-                        val offsets =
-                            key.substring(leftBracketIndex + 1, commaIndex).toInt() to key.substring(commaIndex + 2, rightBracketIndex)
-                                .toInt()
+                val offsets =
+                    key.substring(leftBracketIndex + 1, commaIndex).toInt() to key.substring(commaIndex + 2, rightBracketIndex)
+                        .toInt()
 
-                        ExplainInfo(
-                            key.substring(0, leftBracketIndex), offsets, value, file.getPsiFile()?.getLineNumber(offsets.second)
-                        )
-                    }
-
-                    handler.handle(file, explanations, scope)
-                }.onFailure {
-                    handler.error(file, it.message ?: "Unknown error")
-                }
+                ExplainInfo(
+                    key.substring(0, leftBracketIndex), offsets, value, scratchFile.getPsiFile()?.getLineNumber(offsets.second)
+                )
             }
 
-            handler.onFinish(file)
+            handler.handle(scratchFile, explanations, scope)
+        } else if (!scratchFile.options.isInteractiveMode) {
+            handler.error(scratchFile, "Compilation failed: $stderr")
         }
     }
 
     private fun getJavaCommandLine(scriptVirtualFile: VirtualFile, module: Module?): GeneralCommandLine {
-        val javaParameters =
-            JavaParametersBuilder(project).withSdkFrom(module ?: ModuleUtilCore.findModuleForFile(scriptVirtualFile, project), true)
-                .withMainClassName("org.jetbrains.kotlin.preloading.Preloader").build()
+        val javaParameters = JavaParametersBuilder(project)
+            .withSdkFrom(module)
+            .withMainClassName("org.jetbrains.kotlin.preloading.Preloader").build()
 
         javaParameters.charset = null
-        with(javaParameters.vmParametersList) {
-            if (isUnitTestMode() && javaParameters.jdk?.version?.isAtLeast(JavaSdkVersion.JDK_1_9) == true) { // TODO: Have to get rid of illegal access to java.util.ResourceBundle.setParent(java.util.ResourceBundle):
-                //  WARNING: Illegal reflective access by com.intellij.util.ReflectionUtil (file:...kotlin-ide/intellij/out/kotlinc-dist/kotlinc/lib/kotlin-compiler.jar) to method java.util.ResourceBundle.setParent(java.util.ResourceBundle)
-                //  WARNING: Please consider reporting this to the maintainers of com.intellij.util.ReflectionUtil
-                //  WARNING: Use --illegal-access=warn to enable warnings of further illegal reflective access operations
-                //  WARNING: All illegal access operations will be denied in a future release
-                add("--add-opens")
-                add("java.base/java.util=ALL-UNNAMED")
-            }
+        javaParameters.vmParametersList.add("-D$KOTLIN_SCRATCH_EXPLAIN_FILE=${scriptVirtualFile.explainFilePath}")
+
+        val classPath = buildSet {
+            add(ideaScriptingJar)
+            addAll(requiredKotlinArtifacts)
+            if (module != null) addAll(JavaParametersBuilder.getModuleDependencies(module))
         }
 
-        val ideScriptingClasses = PathUtil.getJarPathForClass(KotlinScratchScript::class.java)
-
-        // TODO: KTIJ-32993
-        val kotlincIdeLibDirectory = File(KotlinPluginLayout.kotlincIde, "lib")
-        val powerAssertLib = File(kotlincIdeLibDirectory, KotlinArtifactNames.POWER_ASSERT_COMPILER_PLUGIN)
-
-        // TODO: KTIJ-32993
-        val classPath = buildSet {
-            this += ideScriptingClasses
-            listOf( //KotlinArtifacts.kotlinCompiler,
-                File(kotlincIdeLibDirectory, KotlinArtifactNames.KOTLIN_COMPILER), //KotlinArtifacts.kotlinStdlib,
-                File(kotlincIdeLibDirectory, KotlinArtifactNames.KOTLIN_STDLIB), //KotlinArtifacts.kotlinReflect,
-                File(kotlincIdeLibDirectory, KotlinArtifactNames.KOTLIN_REFLECT), //KotlinArtifacts.kotlinScriptRuntime,
-                File(kotlincIdeLibDirectory, KotlinArtifactNames.KOTLIN_SCRIPT_RUNTIME), // KotlinArtifacts.trove4j,
-                File(kotlincIdeLibDirectory, KotlinArtifactNames.TROVE4J), // KotlinArtifacts.kotlinDaemon,
-                File(kotlincIdeLibDirectory, KotlinArtifactNames.KOTLIN_DAEMON), powerAssertLib, //KotlinArtifacts.kotlinScriptingCompiler,
-                File(kotlincIdeLibDirectory, KotlinArtifactNames.KOTLIN_SCRIPTING_COMPILER), //KotlinArtifacts.kotlinScriptingCompilerImpl,
-                File(kotlincIdeLibDirectory, KotlinArtifactNames.KOTLIN_SCRIPTING_COMPILER_IMPL), //KotlinArtifacts.kotlinScriptingCommon,
-                File(kotlincIdeLibDirectory, KotlinArtifactNames.KOTLIN_SCRIPTING_COMMON), //KotlinArtifacts.kotlinScriptingJvm,
-                File(kotlincIdeLibDirectory, KotlinArtifactNames.KOTLIN_SCRIPTING_JVM), KotlinArtifacts.jetbrainsAnnotations
-            ).mapTo(this) { it.toPath().absolutePathString() }
-
-            if (module != null) {
-                addAll(JavaParametersBuilder.getModuleDependencies(module))
-            }
-
-        }.toList()
-
-        javaParameters.classPath.add(File(kotlincIdeLibDirectory, KotlinArtifactNames.KOTLIN_PRELOADER).absolutePath)
+        javaParameters.classPath.add(KotlinArtifacts.kotlinPreloader.absolutePath)
         javaParameters.programParametersList.addAll(
             "-cp",
-            File(kotlincIdeLibDirectory, KotlinArtifactNames.KOTLIN_COMPILER).absolutePath,
+            KotlinArtifacts.kotlinCompiler.absolutePath,
             "org.jetbrains.kotlin.cli.jvm.K2JVMCompiler",
             "-cp",
             classPath.joinToString(File.pathSeparator),
             "-kotlin-home",
-            KotlinPluginLayout.kotlincIde.absolutePath,
+            KotlinPluginLayout.kotlinc.absolutePath,
+            "-script",
             scriptVirtualFile.path,
-            "-d",
-            getPathToScriptJar(scriptVirtualFile).absolutePathString(),
-            "-Xplugin=${powerAssertLib.absolutePath}",
-            "-script-templates",
-            KotlinScratchScript::class.java.name,
+            "-Xplugin=${KotlinArtifacts.powerAssertPlugin.absolutePath}",
+            "-P",
+            "plugin:kotlin.scripting:script-templates=${KotlinScratchScript::class.java.name}",
             "-Xuse-fir-lt=false",
             "-Xallow-any-scripts-in-source-roots",
             "-P",
@@ -157,43 +140,47 @@ class K2ScratchExecutor(override val file: K2KotlinScratchFile, val project: Pro
             "-P",
             "plugin:kotlin.scripting:disable-standard-script=true",
             "-P",
-            "plugin:kotlin.scripting:enable-script-explanation=true"
+            "plugin:kotlin.scripting:enable-script-explanation=true",
         )
 
         return javaParameters.toCommandLine()
     }
 
-    private fun runCompiledScript(scriptFile: VirtualFile, module: Module?): MutableMap<String, Any> {
-        val pathToJar = getPathToScriptJar(scriptFile)
-        val kotlinPluginJar = Path.of(PathUtil.getJarPathForClass(KotlinScratchScript::class.java))
-
-        val moduleClassPath = module?.let {
-            JavaParametersBuilder.getModuleDependencies(it)
-        }?.mapNotNull { it.toNioPathOrNull() }?.filter {
-            it.exists()
-        }?.toSet() ?: emptySet()
-
-        val urls = (moduleClassPath + listOf(
-            kotlinPluginJar,
-            pathToJar,
-        )).map { it.toUri().toURL() }.toTypedArray()
-
-        val classFileName = scriptFile.nameWithoutExtension.run {
-            replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }
-        }
-        val classLoader = URLClassLoader.newInstance(urls)
-
-        val results: MutableMap<String, Any> = mutableMapOf()
-
-        val loadedClass = classLoader.loadClass(classFileName)
-        loadedClass.constructors.single().newInstance(results)
-
-        return results
+    private val requiredKotlinArtifacts by lazy {
+        listOf(
+            KotlinArtifacts.kotlinCompiler,
+            KotlinArtifacts.kotlinStdlib,
+            KotlinArtifacts.kotlinReflect,
+            KotlinArtifacts.kotlinScriptRuntime,
+            KotlinArtifacts.trove4j,
+            KotlinArtifacts.kotlinDaemon,
+            KotlinArtifacts.powerAssertPlugin,
+            KotlinArtifacts.kotlinScriptingCompiler,
+            KotlinArtifacts.kotlinScriptingCompilerImpl,
+            KotlinArtifacts.kotlinScriptingCommon,
+            KotlinArtifacts.kotlinScriptingJvm,
+            KotlinArtifacts.jetbrainsAnnotations
+        ).map { it.toPath() }.filter {
+            Files.exists(it)
+        }.map { it.absolutePathString() }
     }
 
-    fun getPathToScriptJar(scriptFile: VirtualFile): Path = tempDir.resolve(scriptFile.name.replace(".kts", ".jar"))
+    private val ideaScriptingJar by lazy { PathUtil.getJarPathForClass(KotlinScratchScript::class.java) }
+
+    private val explainScratchesDirectory: Path by lazy {
+        FileUtilRt.createTempDirectory("kotlin-scratches-explain", null, true).toPath()
+    }
+
+    private val VirtualFile.explainFilePath: Path
+        get() = explainScratchesDirectory.resolve(this.name.replace(".kts", ".txt"))
 
     override fun stop() {
-        handler.onFinish(file)
+        handler.onFinish(scratchFile)
     }
+
+    private data class CompilationResult(
+        val code: Int,
+        val stdout: String,
+        val stderr: String,
+    )
 }

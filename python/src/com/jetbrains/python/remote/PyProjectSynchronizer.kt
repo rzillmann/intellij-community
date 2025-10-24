@@ -1,18 +1,4 @@
-/*
- * Copyright 2000-2016 JetBrains s.r.o.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.jetbrains.python.remote
 
 import com.intellij.openapi.extensions.ExtensionPointName
@@ -23,7 +9,6 @@ import com.intellij.remote.CredentialsType
 import com.intellij.util.PathMappingSettings
 import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.annotations.Nls
-import java.io.File
 import java.util.function.Consumer
 
 typealias PathMappings = List<PathMappingSettings.PathMapping>
@@ -31,7 +16,7 @@ typealias PathMappings = List<PathMappingSettings.PathMapping>
 /**
  * ProjectSynchronizer is an engine that synchronize code between local and remote system or between java (which is local)
  * and python (which may be remote).
- * This engine is sdk-specific and used by [com.jetbrains.python.newProject.PythonProjectGenerator] (and friends).
+ * This engine is sdk-specific.
  *
  * When generator creates remote project, it may use python helpers (with aid of tasks) and it may need some way
  * to pull remote files, patch them and push 'em back. The way it does it is skd-specific and this interface encapsulates it.
@@ -135,7 +120,7 @@ sealed interface PySyncCheckStrategy
  *
  * No remote project creation would be allowed if this strategy returns "false".
  */
-class PySyncCheckOnly(val projectBaseDir: File) : PySyncCheckStrategy
+class PySyncCheckOnly() : PySyncCheckStrategy
 
 /**
  * Checks if project with specific module could be synced with remote server.

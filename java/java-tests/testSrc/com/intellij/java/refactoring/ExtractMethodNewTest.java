@@ -1,4 +1,4 @@
-// Copyright 2000-2021 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license that can be found in the LICENSE file.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.java.refactoring;
 
 import com.intellij.JavaTestUtil;
@@ -201,7 +201,7 @@ public class ExtractMethodNewTest extends LightJavaCodeInsightTestCase {
     try {
       doTest();
       fail("Should not work for assignment expression");
-    } catch (PrepareFailedException e){
+    } catch (PrepareFailedException ignored) {
     }
   }
 
@@ -273,7 +273,7 @@ public class ExtractMethodNewTest extends LightJavaCodeInsightTestCase {
     try {
       doTest();
       fail("Should not work for assignment expression");
-    } catch (PrepareFailedException e){
+    } catch (PrepareFailedException ignored) {
     }
   }
 
@@ -281,8 +281,12 @@ public class ExtractMethodNewTest extends LightJavaCodeInsightTestCase {
     try {
       doTest();
       fail("Should not work for assignment expression");
-    } catch (PrepareFailedException e){
+    } catch (PrepareFailedException ignored) {
     }
+  }
+
+  public void testAssignmentInsideLambda() throws Exception {
+    doTest();
   }
 
   public void testExtractFromTryFinally2() throws Exception {
@@ -812,6 +816,10 @@ public class ExtractMethodNewTest extends LightJavaCodeInsightTestCase {
 
   public void testCodeDuplicatesVarargsShouldNotChangeReturnType() throws Exception {
     doDuplicatesTest();
+  }
+
+  public void testVarargsArguments() throws Exception {
+    doTest();
   }
 
   public void testParametersFromAnonymous() throws Exception {

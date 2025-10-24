@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 @file:Suppress("ReplaceGetOrSet", "ReplacePutWithAssignment", "RemoveRedundantQualifierName")
 
 package com.intellij.ide.ui.customization
@@ -18,7 +18,9 @@ import com.intellij.openapi.project.ProjectManager
 import com.intellij.openapi.util.IconLoader
 import com.intellij.openapi.util.IconLoader.getDisabledIcon
 import com.intellij.openapi.util.Key
+import com.intellij.openapi.util.findUserIconByPath
 import com.intellij.openapi.util.io.FileUtil
+import com.intellij.openapi.util.io.FileUtilRt
 import com.intellij.openapi.util.text.NaturalComparator
 import com.intellij.openapi.wm.ex.WindowManagerEx
 import com.intellij.ui.ExperimentalUI
@@ -39,6 +41,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
 import javax.swing.Icon
 import javax.swing.tree.DefaultMutableTreeNode
 
@@ -76,7 +79,7 @@ class CustomActionsSchema(private val coroutineScope: CoroutineScope?) : Persist
   @Volatile
   private var idToActionGroup: Map<String, ActionGroup> = java.util.Map.of()
   private val extGroupIds = HashSet<String>()
-  private val actions = ArrayList<ActionUrl>()
+  private val actions = CopyOnWriteArrayList<ActionUrl>()
   private var isFirstLoadState = true
   var modificationStamp: Int = 0
     private set
@@ -94,7 +97,9 @@ class CustomActionsSchema(private val coroutineScope: CoroutineScope?) : Persist
     idToName.put(IdeActions.GROUP_NAVBAR_POPUP, ActionsTreeUtil.getNavigationBarPopupMenu())
     idToName.put(IdeActions.GROUP_NAVBAR_TOOLBAR, ActionsTreeUtil.getNavigationBarToolbar())
     fillExtGroups(idToName, extGroupIds)
-    EP_NAME.addChangeListener({ fillExtGroups(idToName, extGroupIds) }, null)
+    if (coroutineScope != null) {
+      EP_NAME.addChangeListener(coroutineScope) { fillExtGroups(idToName, extGroupIds) }
+    }
     idToName.putAll(additionalIdToName)
     this.idToName = idToName
   }
@@ -155,10 +160,16 @@ class CustomActionsSchema(private val coroutineScope: CoroutineScope?) : Persist
   }
 
   /**
-   * Mutable list is returned.
+   * An immutable view of the action list is returned.
+   * 
+   * The returned list may change at any moment,
+   * so one must not rely on, e.g., values returned by `size`.
+   * But iterating over is safe, as per the [CopyOnWriteArrayList] contract.
+   * 
+   * Any attempt to modify the list will throw [UnsupportedOperationException].
    */
   @ApiStatus.Internal
-  fun getActions(): List<ActionUrl> = actions
+  fun getActions(): List<ActionUrl> = Collections.unmodifiableList(actions)
 
   @ApiStatus.Internal
   fun setActions(newActions: List<ActionUrl>) {
@@ -368,25 +379,28 @@ class CustomActionsSchema(private val coroutineScope: CoroutineScope?) : Persist
     }
 
     val text = group.templatePresentation.text
-    if (!text.isNullOrEmpty()) {
-      @Suppress("HardCodedStringLiteral")
-      for (url in actions) {
-        if (url.groupPath.contains(text) || url.groupPath.contains(defaultGroupName)) {
-          return true
+    if (text.isNullOrEmpty()) {
+      return true
+    }
+
+    for (url in actions) {
+      if (url.groupPath.contains(text) || url.groupPath.contains(defaultGroupName)) {
+        return true
+      }
+
+      if (url.component is Group) {
+        val urlGroup = url.component as Group
+        if (urlGroup.children.isEmpty()) {
+          continue
         }
 
-        if (url.component is Group) {
-          val urlGroup = url.component as Group
-          if (urlGroup.children.isEmpty()) continue
-          val id = if (urlGroup.name != null) urlGroup.name else urlGroup.id
-          if (id == null || id == text || id == defaultGroupName) {
-            return true
-          }
+        val id = urlGroup.name ?: urlGroup.id
+        if (id == null || id == text || id == defaultGroupName) {
+          return true
         }
       }
-      return false
     }
-    return true
+    return false
   }
 
   @ApiStatus.Internal
@@ -533,7 +547,7 @@ private object ActionUrlComparator : Comparator<ActionUrl> {
 @ApiStatus.Internal
 @Throws(Throwable::class)
 fun loadCustomIcon(path: String): Icon {
-  val independentPath = FileUtil.toSystemIndependentName(path)
+  val independentPath = FileUtilRt.toSystemIndependentName(path)
 
   val lastDotIndex = independentPath.lastIndexOf('.')
   val rawUrl: String
@@ -572,7 +586,7 @@ private fun doLoadCustomIcon(urlString: String): Icon {
       throw FileNotFoundException("Failed to find icon by URL: $urlString")
     }
 
-    val icon = IconLoader.findUserIconByPath(file)
+    val icon = findUserIconByPath(file)
     val w = icon.iconWidth
     val h = icon.iconHeight
     if (w <= 1 || h <= 1) {

@@ -271,6 +271,21 @@ public abstract class PyCommonResolveTest extends PyCommonResolveTestCase {
     assertInstanceOf(parent, PyAssignmentStatement.class);
   }
 
+  // PY-82115
+  public void testGlobalDefinedLocally2() {
+    PyTargetExpression target = assertResolvesTo(PyTargetExpression.class, "s");
+    PyFunction function = assertInstanceOf(ScopeUtil.getScopeOwner(target), PyFunction.class);
+    assertEquals("inner", function.getName());
+  }
+
+  // PY-82115
+  public void testGlobalNotResolvedToLocalNameInOuterScope() {
+    // resolves to itself
+    PsiElement resolved = doResolve();
+    PsiReference reference = findReferenceByMarker(myFixture.getFile());
+    assertEquals(reference.getElement(), resolved);
+  }
+
   public void testLambda() {
     PsiElement targetElement = resolve();
     assertInstanceOf(targetElement, PyNamedParameter.class);
@@ -1359,7 +1374,23 @@ public abstract class PyCommonResolveTest extends PyCommonResolveTestCase {
   }
 
   // PY-28228
-  public void testReturnAnnotationForwardReference() {
+  public void testMethodReturnAnnotationForwardReferenceBefore314() {
+    runWithLanguageLevel(
+      LanguageLevel.PYTHON37,
+      () -> assertUnresolved()
+    );
+  }
+
+  // PY-28228
+  public void testFunctionReturnAnnotationForwardReferenceBefore314() {
+    runWithLanguageLevel(
+      LanguageLevel.PYTHON37,
+      () -> assertUnresolved()
+    );
+  }
+
+  // PY-28228
+  public void testMethodReturnAnnotationForwardReferenceBefore314WithFromFutureImportAnnotations() {
     runWithLanguageLevel(
       LanguageLevel.PYTHON37,
       () -> assertResolvesTo(PyClass.class, "A")
@@ -1367,11 +1398,43 @@ public abstract class PyCommonResolveTest extends PyCommonResolveTestCase {
   }
 
   // PY-28228
-  public void testParameterAnnotationForwardReference() {
+  public void testFunctionReturnAnnotationForwardReferenceBefore314WithFromFutureImportAnnotations() {
     runWithLanguageLevel(
       LanguageLevel.PYTHON37,
       () -> assertResolvesTo(PyClass.class, "A")
     );
+  }
+
+  // PY-28228
+  public void testMethodParameterAnnotationForwardReferenceBefore314WithFromFutureImportAnnotations() {
+    runWithLanguageLevel(
+      LanguageLevel.PYTHON37,
+      () -> assertResolvesTo(PyClass.class, "A")
+    );
+  }
+
+  // PY-80002
+  public void testMethodReturnAnnotationForwardReference() {
+    runWithLanguageLevel(
+      LanguageLevel.getLatest(),
+      () -> assertResolvesTo(PyClass.class, "A")
+    );
+  }
+
+  // PY-80002
+  public void testFunctionReturnAnnotationForwardReference() {
+    runWithLanguageLevel(
+      LanguageLevel.getLatest(),
+      () -> assertResolvesTo(PyClass.class, "A")
+    );
+  }
+
+  public void testTopLevelNewStyleTypeAliasForwardReference() {
+    assertResolvesTo(PyClass.class, "MyClass");
+  }
+
+  public void testClassLevelNewStyleTypeAliasForwardReference() {
+    assertResolvesTo(PyClass.class, "MyClass");
   }
 
   // PY-19890
@@ -2152,6 +2215,15 @@ public abstract class PyCommonResolveTest extends PyCommonResolveTestCase {
                            name: Alias
                        #          <ref>
                        """, PyTargetExpression.class, "Alias");
+  }
+
+  // PY-81646
+  public void testResolveFromSliceExpression() {
+    assertResolvesTo("""
+                       def foo(arr, idx):
+                           _ = arr[:, idx]
+                       #               <ref>
+                       """, PyNamedParameter.class, "idx");
   }
 
   private void assertResolvedElement(@NotNull LanguageLevel languageLevel, @NotNull String text, @NotNull Consumer<PsiElement> assertion) {

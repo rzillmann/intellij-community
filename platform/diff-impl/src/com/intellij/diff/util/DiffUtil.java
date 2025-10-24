@@ -2,7 +2,7 @@
 package com.intellij.diff.util;
 
 import com.intellij.application.options.CodeStyle;
-import com.intellij.codeInsight.daemon.OutsidersPsiFileSupport;
+import com.intellij.codeInsight.daemon.SyntheticPsiFileSupport;
 import com.intellij.diff.*;
 import com.intellij.diff.FrameDiffTool.DiffViewer;
 import com.intellij.diff.comparison.ByWord;
@@ -322,7 +322,7 @@ public final class DiffUtil {
   public static boolean canNavigateToFile(@Nullable Project project, @Nullable VirtualFile file) {
     if (project == null || project.isDefault()) return false;
     if (file == null || !file.isValid()) return false;
-    if (OutsidersPsiFileSupport.isOutsiderFile(file)) return false;
+    if (SyntheticPsiFileSupport.isOutsiderFile(file)) return false;
     if (file.getUserData(TEMP_FILE_KEY) == Boolean.TRUE) return false;
     return true;
   }
@@ -884,10 +884,7 @@ public final class DiffUtil {
     DiffUserDataKeysEx.DiffComputer diffComputer = request.getUserData(DiffUserDataKeysEx.CUSTOM_DIFF_COMPUTER);
     if (diffComputer != null) return new SimpleTextDiffProvider(settings, rediff, disposable, diffComputer);
 
-    TwosideTextDiffProvider smartProvider = SmartTextDiffProvider.create(project, request, settings, rediff, disposable);
-    if (smartProvider != null) return smartProvider;
-
-    return new SimpleTextDiffProvider(settings, rediff, disposable);
+    return SmartTextDiffProvider.create(project, request, settings, rediff, disposable);
   }
 
   public static @NotNull TwosideTextDiffProvider.NoIgnore createNoIgnoreTextDiffProvider(@Nullable Project project,
@@ -898,10 +895,7 @@ public final class DiffUtil {
     DiffUserDataKeysEx.DiffComputer diffComputer = request.getUserData(DiffUserDataKeysEx.CUSTOM_DIFF_COMPUTER);
     if (diffComputer != null) return new SimpleTextDiffProvider.NoIgnore(settings, rediff, disposable, diffComputer);
 
-    TwosideTextDiffProvider.NoIgnore smartProvider = SmartTextDiffProvider.createNoIgnore(project, request, settings, rediff, disposable);
-    if (smartProvider != null) return smartProvider;
-
-    return new SimpleTextDiffProvider.NoIgnore(settings, rediff, disposable);
+    return SmartTextDiffProvider.createNoIgnore(project, request, settings, rediff, disposable);
   }
 
   public static List<DocumentContent> getDocumentContentsForViewer(@Nullable Project project,
@@ -1279,7 +1273,8 @@ public final class DiffUtil {
   }
 
   public static @NotNull TextRange getLinesRange(@NotNull Document document, int line1, int line2, boolean includeNewline) {
-    return DiffRangeUtil.getLinesRange(LineOffsetsUtil.create(document), line1, line2, includeNewline);
+    LinesRange linesRange = DiffRangeUtil.getLinesRange(LineOffsetsUtil.create(document), line1, line2, includeNewline);
+    return new TextRange(linesRange.getStartOffset(), linesRange.getEndOffset());
   }
 
 
@@ -1312,7 +1307,7 @@ public final class DiffUtil {
 
   public static int bound(int value, int lowerBound, int upperBound) {
     assert lowerBound <= upperBound : String.format("%s - [%s, %s]", value, lowerBound, upperBound);
-    return MathUtil.clamp(value, lowerBound, upperBound);
+    return Math.clamp(value, lowerBound, upperBound);
   }
 
   //
@@ -1676,6 +1671,14 @@ public final class DiffUtil {
   public static void addNotification(@Nullable DiffNotificationProvider provider, @NotNull UserDataHolder holder) {
     if (provider == null) return;
     List<DiffNotificationProvider> newProviders = new ArrayList<>(getNotificationProviders(holder));
+    newProviders.add(provider);
+    holder.putUserData(DiffUserDataKeys.NOTIFICATION_PROVIDERS, newProviders);
+  }
+
+  public static void addNotificationIfAbsent(@NotNull DiffNotificationProvider provider, @NotNull UserDataHolder holder) {
+    List<DiffNotificationProvider> providers = getNotificationProviders(holder);
+    if(providers.contains(provider)) return;
+    List<DiffNotificationProvider> newProviders = new ArrayList<>(providers);
     newProviders.add(provider);
     holder.putUserData(DiffUserDataKeys.NOTIFICATION_PROVIDERS, newProviders);
   }

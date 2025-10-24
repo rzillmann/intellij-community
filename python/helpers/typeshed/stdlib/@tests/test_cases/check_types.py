@@ -1,8 +1,12 @@
+from __future__ import annotations
+
 import sys
 import types
 from collections import UserDict
-from typing import Union
+from typing import Any, Literal, TypeVar, Union
 from typing_extensions import assert_type
+
+_T = TypeVar("_T")
 
 # test `types.SimpleNamespace`
 
@@ -39,3 +43,30 @@ item_3 = mp.get(3, "default")
 assert_type(item_3, Union[int, str])
 # Default isn't accepted as a keyword argument.
 mp.get(4, default="default")  # type: ignore
+
+
+# test: `types.DynamicClassAttribute`
+class DCAtest:
+    _value: int | None = None
+
+    @types.DynamicClassAttribute
+    def foo(self) -> int | None:
+        return self._value
+
+    @foo.setter
+    def foo(self, value: int) -> None:
+        self._value = value
+
+    @foo.deleter
+    def foo(self) -> None:
+        self._value = None
+
+
+if sys.version_info > (3, 10):
+    union_type = int | list[_T]
+
+    # ideally this would be `_SpecialForm` (Union)
+    assert_type(union_type | Literal[1], types.UnionType | Any)
+    # Both mypy and pyright special-case this operation,
+    # but in different ways, so we just check that no error is emitted:
+    _ = union_type[int]

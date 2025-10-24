@@ -6,10 +6,9 @@ import com.intellij.psi.PsiTypes;
 import com.intellij.psi.PsiVariable;
 import de.plushnikov.intellij.plugin.processor.field.AccessorsInfo;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
-import java.util.Collection;
-import java.util.Collections;
-import java.util.HashSet;
+import java.util.*;
 
 /**
  * @author ProjectLombok Team
@@ -48,6 +47,7 @@ public final class LombokUtils {
     "org.eclipse.jdt.annotation.NonNull",
     "org.jetbrains.annotations.NotNull",
     "org.jmlspecs.annotation.NonNull",
+    "org.jspecify.annotations.NonNull",
     "org.netbeans.api.annotations.common.NonNull",
     "org.springframework.lang.NonNull",
     "reactor.util.annotation.NonNull",
@@ -110,8 +110,8 @@ public final class LombokUtils {
     "org.jetbrains.annotations.UnknownNullability",
     "org.jmlspecs.annotation.NonNull",
     "org.jmlspecs.annotation.Nullable",
-    "org.jspecify.nullness.Nullable",
-    "org.jspecify.nullness.NullnessUnspecified",
+    "org.jspecify.annotations.Nullable",
+    "org.jspecify.annotations.NonNull",
     "org.netbeans.api.annotations.common.CheckForNull",
     "org.netbeans.api.annotations.common.NonNull",
     "org.netbeans.api.annotations.common.NullAllowed",
@@ -349,6 +349,35 @@ public final class LombokUtils {
     "org.checkerframework.framework.qual.PurityUnqualified",
   };
 
+  // The following two lists contain all annotations that can be copied from the field to the getter or setter.
+  // Right now, it only contains Jackson annotations.
+  // Jackson's annotation processing roughly works as follows: To calculate the annotation for a JSON property, Jackson
+  // builds a triple of the Java field and the corresponding setter and getter methods. It is sufficient for an annotation
+  // to be present on one of those to become effective. E.g., a @JsonIgnore on a setter completely ignores the JSON property,
+  // not only during deserialization, but also when serializing. Therefore, in most cases it is _not_ necessary to copy the
+  // annotations. It may even harm, as Jackson considers some annotations inheritable, and this "virtual inheritance" only
+  // affects annotations on setter/getter, but not on private fields.
+  // However, there are two exceptions where we have to copy the annotations:
+  // 1. When using a builder to deserialize, Jackson does _not_ "propagate" the annotations to the setter methods of the
+  //    builder, i.e. annotations like @JsonIgnore on the field will not be respected when deserializing with a builder.
+  //    Thus, those annotations should be copied to the builder's setters.
+  // 2. If the getter/setter methods do not follow the exact beanspec naming strategy, Jackson will not correctly detect the
+  //    field-getter-setter triple, and annotations may not work as intended.
+  //    However, we cannot always know what the user's intention is. Thus, lombok should only fix those cases where it is
+  //    obvious what the user wants. That is the case for a `@Jacksonized @Accessors(fluent=true)`.
+  static final String[] COPY_TO_GETTER_ANNOTATIONS = {
+    "com.fasterxml.jackson.annotation.JsonFormat",
+      "com.fasterxml.jackson.annotation.JsonIgnore",
+      "com.fasterxml.jackson.annotation.JsonIgnoreProperties",
+      "com.fasterxml.jackson.annotation.JsonProperty",
+      "com.fasterxml.jackson.annotation.JsonSubTypes",
+      "com.fasterxml.jackson.annotation.JsonTypeInfo",
+      "com.fasterxml.jackson.annotation.JsonUnwrapped",
+      "com.fasterxml.jackson.annotation.JsonView",
+      "com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlElementWrapper",
+      "com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty",
+      "com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlText",
+  };
   static final String[] COPY_TO_SETTER_ANNOTATIONS = {
     "com.fasterxml.jackson.annotation.JacksonInject",
     "com.fasterxml.jackson.annotation.JsonAlias",
@@ -370,6 +399,8 @@ public final class LombokUtils {
   static final String[] COPY_TO_BUILDER_SINGULAR_SETTER_ANNOTATIONS = {
     "com.fasterxml.jackson.annotation.JsonAnySetter"};
 
+  // In order to let Jackson recognize certain configuration annotations when deserializing using a builder, those must
+  // be copied to the generated builder class.
   static final String[] JACKSON_COPY_TO_BUILDER_ANNOTATIONS = {
     "com.fasterxml.jackson.annotation.JsonAutoDetect",
     "com.fasterxml.jackson.annotation.JsonFormat",
@@ -396,6 +427,13 @@ public final class LombokUtils {
     return toGetterName(accessorsInfo, psiFieldName, isBoolean);
   }
 
+  public static String getWithByName(@NotNull PsiVariable psiVariable, @NotNull AccessorsInfo accessorsInfo) {
+    final String psiFieldName = psiVariable.getName();
+    final boolean isBoolean = PsiTypes.booleanType().equals(psiVariable.getType());
+
+    return toWithByName(accessorsInfo, psiFieldName, isBoolean);
+  }
+
   public static String getSetterName(@NotNull PsiField psiField) {
     final AccessorsInfo accessorsInfo = AccessorsInfo.buildFor(psiField);
     return getSetterName(psiField, accessorsInfo);
@@ -406,7 +444,11 @@ public final class LombokUtils {
   }
 
   public static String getWitherName(@NotNull PsiVariable psiVariable, @NotNull AccessorsInfo accessorsInfo) {
-    return toWitherName(accessorsInfo.withFluent(false), psiVariable.getName(), PsiTypes.booleanType().equals(psiVariable.getType()));
+    return getWitherName(psiVariable, psiVariable.getName(), accessorsInfo);
+  }
+
+  public static String getWitherName(@NotNull PsiVariable psiVariable, @Nullable String variableName, @NotNull AccessorsInfo accessorsInfo) {
+    return toWitherName(accessorsInfo.withFluent(false), variableName, PsiTypes.booleanType().equals(psiVariable.getType()));
   }
 
   /**
@@ -477,10 +519,21 @@ public final class LombokUtils {
    * @return The wither name for this field, or {@code null} if this field does not fit expected patterns and therefore cannot be turned into a getter name.
    */
   public static String toWitherName(@NotNull AccessorsInfo accessors, String fieldName, boolean isBoolean) {
-    if (accessors.isFluent()) {
-      throw new IllegalArgumentException("@Wither does not support @Accessors(fluent=true)");
-    }
-    return toAccessorName(accessors, fieldName, isBoolean, "with", "with");
+    return toAccessorName(accessors.withFluent(false), fieldName, isBoolean, "with", "with");
+  }
+
+  /**
+   * Generates a withBy name from a given field name.
+   *
+   * Strategy: The same as the {@code toWithName} strategy, but then append {@code "By"} at the end.
+   *
+   * @param accessors Accessors configuration.
+   * @param fieldName the name of the field.
+   * @param isBoolean if the field is of type 'boolean'. For fields of type {@code java.lang.Boolean}, you should provide {@code false}.
+   * @return The with name for this field, or {@code null} if this field does not fit expected patterns and therefore cannot be turned into a getter name.
+   */
+  public static String toWithByName(@NotNull AccessorsInfo accessors, String fieldName, boolean isBoolean) {
+    return toAccessorName(accessors.withFluent(false), fieldName, isBoolean, "with", "with") + "By";
   }
 
   private static String toAccessorName(@NotNull AccessorsInfo accessorsInfo,
@@ -521,11 +574,12 @@ public final class LombokUtils {
    * For example if {@code isBoolean} is true, then a field named {@code isRunning} would produce:<br />
    * {@code [isRunning, getRunning, isIsRunning, getIsRunning]}
    *
+   * @param accessors Accessors configuration.
    * @param fieldName the name of the field.
    * @param isBoolean if the field is of type 'boolean'. For fields of type 'java.lang.Boolean', you should provide {@code false}.
    */
-  public static Collection<String> toAllGetterNames(@NotNull AccessorsInfo accessorsInfo, String fieldName, boolean isBoolean) {
-    return toAllAccessorNames(accessorsInfo, fieldName, isBoolean, "is", "get");
+  public static Collection<String> toAllGetterNames(@NotNull AccessorsInfo accessors, String fieldName, boolean isBoolean) {
+    return toAllAccessorNames(accessors, fieldName, isBoolean, "is", "get");
   }
 
   /**
@@ -534,11 +588,12 @@ public final class LombokUtils {
    * For example if {@code isBoolean} is true, then a field named {@code isRunning} would produce:<br />
    * {@code [setRunning, setIsRunning]}
    *
+   * @param accessors Accessors configuration.
    * @param fieldName the name of the field.
    * @param isBoolean if the field is of type 'boolean'. For fields of type 'java.lang.Boolean', you should provide {@code false}.
    */
-  public static Collection<String> toAllSetterNames(@NotNull AccessorsInfo accessorsInfo, String fieldName, boolean isBoolean) {
-    return toAllAccessorNames(accessorsInfo, fieldName, isBoolean, "set", "set");
+  public static Collection<String> toAllSetterNames(@NotNull AccessorsInfo accessors, String fieldName, boolean isBoolean) {
+    return toAllAccessorNames(accessors, fieldName, isBoolean, "set", "set");
   }
 
   /**
@@ -547,14 +602,28 @@ public final class LombokUtils {
    * For example if {@code isBoolean} is true, then a field named {@code isRunning} would produce:<br />
    * {@code [withRunning, withIsRunning]}
    *
+   * @param accessors Accessors configuration.
    * @param fieldName the name of the field.
    * @param isBoolean if the field is of type 'boolean'. For fields of type 'java.lang.Boolean', you should provide {@code false}.
    */
-  public static Collection<String> toAllWitherNames(@NotNull AccessorsInfo accessorsInfo, String fieldName, boolean isBoolean) {
-    if (accessorsInfo.isFluent()) {
-      throw new IllegalArgumentException("@Wither does not support @Accessors(fluent=true)");
-    }
-    return toAllAccessorNames(accessorsInfo, fieldName, isBoolean, "with", "with");
+  public static Collection<String> toAllWitherNames(@NotNull AccessorsInfo accessors, String fieldName, boolean isBoolean) {
+    return toAllAccessorNames(accessors.withFluent(false), fieldName, isBoolean, "with", "with");
+  }
+
+  /**
+   * Returns all names of methods that would represent the withBy for a field with the provided name.
+   *
+   * For example if {@code isBoolean} is true, then a field named {@code isRunning} would produce:<br />
+   * {@code [withRunningBy, withIsRunningBy]}
+   *
+   * @param accessors Accessors configuration.
+   * @param fieldName the name of the field.
+   * @param isBoolean if the field is of type 'boolean'. For fields of type 'java.lang.Boolean', you should provide {@code false}.
+   */
+  public static List<String> toAllWithByNames(@NotNull AccessorsInfo accessors, String fieldName, boolean isBoolean) {
+    List<String> result = new ArrayList<>(toAllAccessorNames(accessors.withFluent(false), fieldName, isBoolean, "with", "with"));
+    result.replaceAll(s -> s + "By");
+    return result;
   }
 
   private static Collection<String> toAllAccessorNames(@NotNull AccessorsInfo accessorsInfo,

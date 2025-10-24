@@ -84,14 +84,15 @@ class TelemetryManagerImpl(coroutineScope: CoroutineScope, isUnitTestMode: Boole
 
       // make sure that otlpService job is canceled before BatchSpanProcessor job
       otlpServiceCoroutineScope = coroutineScope.childScope(supervisor = false)
-      BatchSpanProcessor(coroutineScope = coroutineScope, spanExporters = java.util.List.copyOf(spanExporters))
+      BatchSpanProcessor(coroutineScope = coroutineScope.childScope(), spanExporters = java.util.List.copyOf(spanExporters))
     }
     else {
       null
     }
 
     otlJob = otlpService.process(coroutineScope = otlpServiceCoroutineScope,
-                                 batchSpanProcessor = batchSpanProcessor,
+                                 batchSpanProcessor = batchSpanProcessor, // JaegerJsonSpanExporter only
+                                 endpoint = getTraceEndpoint(),
                                  opentelemetrySdkResource = configurator.resource)
 
     sdk = configurator.sdkBuilder
@@ -167,6 +168,11 @@ class TelemetryManagerImpl(coroutineScope: CoroutineScope, isUnitTestMode: Boole
   @TestOnly
   override suspend fun resetExporters() {
     batchSpanProcessor?.reset()
+  }
+
+  override suspend fun shutdownExporters() {
+    logger<TelemetryManagerImpl>().info("OpenTelemetry metric exporters are being stopped")
+    batchSpanProcessor?.forceShutdown()
   }
 }
 

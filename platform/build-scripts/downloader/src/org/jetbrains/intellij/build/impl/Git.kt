@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.intellij.build.impl
 
 import org.jetbrains.annotations.ApiStatus
@@ -36,7 +36,9 @@ class Git(private val dir: Path) {
   }
 
   fun currentCommitShortHash(): String {
-    val lines = execute("git", "rev-parse", "--short=13", "HEAD")
+    val repoDirectory = dir.toAbsolutePath().toString()
+
+    val lines = execute("git", "-c", "safe.directory=${repoDirectory}", "rev-parse", "--short=13", "HEAD")
     if (lines.size != 1) {
       throw IllegalStateException("Single line output is expected but got '$lines'")
     }

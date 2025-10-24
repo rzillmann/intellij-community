@@ -2,17 +2,38 @@ package com.jetbrains.python.codeInsight.controlflow
 
 import com.intellij.codeInsight.controlflow.ControlFlowBuilder
 import com.intellij.codeInsight.controlflow.impl.InstructionImpl
-import com.intellij.psi.util.PsiTreeUtil
 import com.jetbrains.python.psi.PyWithItem
-import com.jetbrains.python.psi.PyWithStatement
-import com.jetbrains.python.psi.impl.PyBuiltinCache
-import com.jetbrains.python.psi.impl.PyEvaluator
-import com.jetbrains.python.psi.types.PyCollectionType
-import com.jetbrains.python.psi.types.PyLiteralType
-import com.jetbrains.python.psi.types.PyTypeUtil
 import com.jetbrains.python.psi.types.TypeEvalContext
 
-class PyWithContextExitInstruction(builder: ControlFlowBuilder, withItem: PyWithItem): InstructionImpl(builder, withItem) {
+/**
+ * Each `with` statement surrounds its block with an implicit `try/except`. Depending on the return value
+ * of the context manager's `__exit__()` method, the intercepted exception may be suppressed or propagated further.
+ *
+ * It affects the reachability analysis. Consider the following snippet
+ *
+ * ```python
+ * with manager():
+ *     may_raise_exception()
+ *     return
+ * print("Reachable?")
+ * ```
+ *
+ * The potential exception from `may_raise_exception` jumps over the return statement and invokes `__exit__()`.
+ * If then `__exit__()` returns a "truthy" value, suppressing the exception, the subsequent `print` statement becomes reachable.
+ *
+ * We model this behavior with this special virtual instruction in CFG for a `with` statement.
+ * All instructions potentially raising an exception connect to it, while it connects to the next instruction after
+ * the `with` statement. During the reachability analysis, we consider the latter edge from this instruction "passable"
+ * only if the context manager can suppress exceptions.
+ *
+ * The rules for detecting if a context manager can suppress exceptions are
+ * [described in the typing specification](https://typing.python.org/en/latest/spec/exceptions.html#context-managers).
+ *
+ * See also the [`__exit__` method documentation in the language reference](https://docs.python.org/3/reference/datamodel.html#object.__exit__).
+ *
+ * @see PyWithItem.isSuppressingExceptions
+ */
+class PyWithContextExitInstruction(builder: ControlFlowBuilder, withItem: PyWithItem) : InstructionImpl(builder, withItem) {
   override fun getElementPresentation(): String = "exit context manager: ${element.text}"
   override fun getElement(): PyWithItem = super.getElement() as PyWithItem
 
@@ -20,13 +41,5 @@ class PyWithContextExitInstruction(builder: ControlFlowBuilder, withItem: PyWith
    * While traversing CFG, use this method to know if you should let your traversal consider this node.
    * Usually, you would want it only if the context manager DOES suppress exceptions.
    */
-  fun isSuppressingExceptions(context: TypeEvalContext): Boolean {
-    val withStmt = PsiTreeUtil.getParentOfType(element, PyWithStatement::class.java, false) ?: return false
-    val abstractType = if (withStmt.isAsync) "contextlib.AbstractAsyncContextManager" else "contextlib.AbstractContextManager"
-    return context.getType(element.expression)
-      .let { PyTypeUtil.convertToType(it, abstractType, element, context) }
-      .let { (it as? PyCollectionType)?.elementTypes?.getOrNull(1) }
-      .let { it == PyBuiltinCache.getInstance(element).boolType ||
-             it is PyLiteralType && PyEvaluator.getBooleanLiteralValue(it.expression) == true }
-  }
+  fun isSuppressingExceptions(context: TypeEvalContext): Boolean = element.isSuppressingExceptions(context)
 }

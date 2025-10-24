@@ -18,7 +18,6 @@ import com.intellij.openapi.util.Condition
 import com.intellij.openapi.util.Ref
 import com.intellij.util.SmartList
 import com.intellij.util.SystemProperties
-import com.intellij.util.concurrency.SchedulingWrapper.MyScheduledFutureTask
 import com.intellij.util.containers.forEachGuaranteed
 import kotlinx.coroutines.*
 import org.jetbrains.annotations.ApiStatus
@@ -42,8 +41,6 @@ private object Holder {
   // in order to disable it in RT modules
   var propagateThreadContext: Boolean = SystemProperties.getBooleanProperty("ide.propagate.context", true)
   val checkIdeAssertion: Boolean = SystemProperties.getBooleanProperty("ide.check.context.assertion", false)
-
-  var useImplicitBlockingContext: Boolean = SystemProperties.getBooleanProperty("ide.enable.implicit.blocking.context", true)
 }
 
 @TestOnly
@@ -59,30 +56,25 @@ fun runWithContextPropagationEnabled(runnable: Runnable) {
   }
 }
 
-@TestOnly
-@ApiStatus.Internal
-fun runWithImplicitBlockingContextEnabled(runnable: Runnable) {
-  val propagateThreadContext = Holder.useImplicitBlockingContext
-  Holder.useImplicitBlockingContext = true
-  try {
-    runnable.run()
-  }
-  finally {
-    Holder.useImplicitBlockingContext = propagateThreadContext
-  }
-}
-
 internal val isPropagateThreadContext: Boolean
   get() = Holder.propagateThreadContext
 
 internal val isCheckContextAssertions: Boolean
   get() = Holder.checkIdeAssertion
 
-internal val useImplicitBlockingContext: Boolean
-  get() = Holder.useImplicitBlockingContext
-
+/**
+ * Tracks all IntelliJ Platform async computations launched inside
+ * ```
+ * withContext(BlockingJob(Job())) {
+ *   application.executeOnPooledThread {} // tracked
+ *   currentThreadCoroutineScope().launch {} // tracked
+ * }
+ * ```
+ * Both `executeOnPooledThread` and `launch` will be awaited by `withContext`
+ */
 @Internal
 class BlockingJob(val blockingJob: Job) : AbstractCoroutineContextElement(BlockingJob), IntelliJContextElement {
+  companion object : CoroutineContext.Key<BlockingJob>
 
   /**
    * Consider the following case:
@@ -114,12 +106,52 @@ class BlockingJob(val blockingJob: Job) : AbstractCoroutineContextElement(Blocki
   }
 
   fun isRemembered(element: IntelliJContextElement): Boolean = rememberedElements.containsKey(element)
-
-  override fun produceChildElement(parentContext: CoroutineContext, isStructured: Boolean): IntelliJContextElement = this
-
-  companion object : CoroutineContext.Key<BlockingJob>
 }
 
+/**
+ * Tracks only coroutines bound to `currentThreadCoroutineScope` inside
+ * ```
+ * withContext(ThreadScopeCheckpoint(Job())) {
+ *   application.executeOnPooledThread { } // NOT tracked
+ *   currentThreadCoroutineScope().launch { } // tracked
+ * }
+ * ```
+ */
+@Internal
+class ThreadScopeCheckpoint(val context: CoroutineContext) : AbstractCoroutineContextElement(ThreadScopeCheckpoint), IntelliJContextElement {
+  companion object : CoroutineContext.Key<ThreadScopeCheckpoint>
+
+  override fun produceChildElement(parentContext: CoroutineContext, isStructured: Boolean): IntelliJContextElement? {
+    return if (parentContext[BlockingJob] != null) {
+      this
+    }
+    else {
+      null
+    }
+  }
+
+  override fun toString(): String {
+    return "ThreadScopeCheckpoint"
+  }
+
+  fun startWaitingForChildren(): Job {
+    val supervisingJob = context.job as CompletableJob
+    @Suppress("RAW_SCOPE_CREATION")
+    CoroutineScope(supervisingJob + Dispatchers.Default).launch {
+      val thisLaunchJob = coroutineContext.job
+      supervisingJob.children.forEach {
+        if (it == thisLaunchJob) {
+          return@forEach
+        }
+        it.join()
+      }
+      supervisingJob.complete()
+    }
+    return supervisingJob
+  }
+}
+
+@ConsistentCopyVisibility
 @OptIn(DelicateCoroutinesApi::class)
 @Internal
 data class ChildContext internal constructor(
@@ -197,8 +229,8 @@ fun createChildContextWithContextJob(debugName: @NonNls String) : ChildContext =
 @Internal
 fun createChildContextIgnoreStructuredConcurrency(debugName: @NonNls String) : ChildContext {
   // probably we need to exclude some elements like PlatformActivityTrackerService.ObservationTracker
-  installThreadContext(currentThreadContext().minusKey(BlockingJob), true).use {
-    return createChildContext(debugName)
+  return installThreadContext(currentThreadContext().minusKey(BlockingJob), true) {
+    createChildContext(debugName)
   }
 }
 
@@ -250,7 +282,7 @@ private fun doCreateChildContext(debugName: @NonNls String, unconditionalCancell
 
   val parentBlockingJob =
     if (unconditionalCancellationPropagation) currentThreadContext[Job]
-    else currentThreadContext[BlockingJob]?.blockingJob
+    else blockingJob?.blockingJob
   val (cancellationContext, childContinuation) = if (parentBlockingJob != null) {
     val continuation: Continuation<Unit> = childContinuation(debugName, parentBlockingJob)
     Pair((currentThreadContext[BlockingJob] ?: EmptyCoroutineContext) + continuation.context.job, continuation)
@@ -489,7 +521,7 @@ internal fun <T, R> capturePropagationContext(function: Function<T, R>): Functio
   return f
 }
 
-internal fun <V> capturePropagationContext(wrapper: SchedulingWrapper, c: Callable<V>, ns: Long): MyScheduledFutureTask<V> {
+internal fun <V> capturePropagationContext(wrapper: SchedulingWrapper, c: Callable<V>, ns: Long): FutureTask<V> {
   if (isContextAwareComputation(c)) {
     return wrapper.MyScheduledFutureTask(c, ns)
   }
@@ -498,8 +530,7 @@ internal fun <V> capturePropagationContext(wrapper: SchedulingWrapper, c: Callab
   val cancellationTracker = AtomicBoolean(false)
   val wrappedCallable = ContextCallable(false, childContext, callable, cancellationTracker)
 
-  val cont = childContext.continuation
-  return CancellationScheduledFutureTask(wrapper, childContext, cont?.context?.job, cancellationTracker, wrappedCallable, ns)
+  return CancellationScheduledFutureTask(wrapper, childContext, cancellationTracker, wrappedCallable, ns)
 }
 
 internal fun capturePropagationContext(
@@ -507,27 +538,25 @@ internal fun capturePropagationContext(
   runnable: Runnable,
   ns: Long,
   period: Long,
-): MyScheduledFutureTask<*> {
+): FutureTask<*> {
   val childContext = createChildContext("$runnable (scheduled: $ns, period: $period)")
   val capturedRunnable1 = captureClientIdInRunnable(runnable)
   val capturedRunnable2 = Runnable {
     // no cancellation tracker here: this is a periodic runnable that is restarted
-    installThreadContext(childContext.context, false).use {
+    installThreadContext(childContext.context, false) {
       childContext.applyContextActions(false).use {
         capturedRunnable1.run()
       }
     }
   }
   val cont = childContext.continuation
-  val (finalCapturedRunnable, job) = if (cont != null) {
-    val capturedRunnable3 = PeriodicCancellationRunnable(childContext.continuation, capturedRunnable2)
-    val childJob = cont.context.job
-    capturedRunnable3 to childJob
+  val finalCapturedRunnable = if (cont != null) {
+    PeriodicCancellationRunnable(cont, capturedRunnable2)
   }
   else {
-    capturedRunnable2 to null
+    capturedRunnable2
   }
-  return CancellationScheduledFutureTask<Void>(wrapper, childContext, job, finalCapturedRunnable, ns, period)
+  return CancellationScheduledFutureTask<Void>(wrapper, childContext, finalCapturedRunnable, ns, period)
 }
 
 @ApiStatus.Internal

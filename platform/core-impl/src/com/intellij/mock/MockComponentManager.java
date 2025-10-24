@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.mock;
 
 import com.intellij.diagnostic.ActivityCategory;
@@ -16,7 +16,6 @@ import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.util.UserDataHolderBase;
 import com.intellij.util.ExceptionUtilRt;
 import com.intellij.util.ReflectionUtil;
-import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.messages.MessageBus;
 import com.intellij.util.messages.MessageBusOwner;
 import com.intellij.util.messages.impl.MessageBusFactoryImpl;
@@ -40,6 +39,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class MockComponentManager extends UserDataHolderBase implements ComponentManagerEx, MessageBusOwner {
   private final MessageBus myMessageBus = MessageBusFactoryImpl.createRootBus(this);
@@ -47,7 +47,7 @@ public class MockComponentManager extends UserDataHolderBase implements Componen
   private final ExtensionsAreaImpl myExtensionArea;
 
   private final Map<Class<?>, Object> myComponents = new HashMap<>();
-  private final Set<Object> myDisposableComponents = ContainerUtil.newConcurrentSet();
+  private final Set<Object> myDisposableComponents = ConcurrentHashMap.newKeySet();
   private boolean myDisposed;
 
   @Internal
@@ -231,14 +231,6 @@ public class MockComponentManager extends UserDataHolderBase implements Componen
 
   @Internal
   @Override
-  public <T> void replaceServiceInstance(@NotNull Class<@NotNull T> serviceInterface,
-                                         @NotNull T instance,
-                                         @NotNull Disposable parentDisposable) {
-    throw new UnsupportedOperationException("unsupported");
-  }
-
-  @Internal
-  @Override
   public @NotNull Sequence<@NotNull Object> instances(boolean createIfNeeded,
                                                       @Nullable Function1<? super @NotNull Class<?>, @NotNull Boolean> filter) {
     throw new UnsupportedOperationException("unsupported");
@@ -319,20 +311,6 @@ public class MockComponentManager extends UserDataHolderBase implements Componen
   @Internal
   @Override
   public @Nullable Class<?> getServiceImplementation(@NotNull Class<?> key) {
-    throw new UnsupportedOperationException("unsupported");
-  }
-
-  @Internal
-  @Override
-  public <T> void replaceComponentInstance(@NotNull Class<@NotNull T> componentKey,
-                                           @NotNull T componentImplementation,
-                                           @Nullable Disposable parentDisposable) {
-    throw new UnsupportedOperationException("unsupported");
-  }
-
-  @Internal
-  @Override
-  public void registerComponentInstance(@NotNull Class<?> key, @NotNull Object instance) {
     throw new UnsupportedOperationException("unsupported");
   }
 

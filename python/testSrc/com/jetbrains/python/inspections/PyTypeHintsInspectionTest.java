@@ -115,12 +115,15 @@ public class PyTypeHintsInspectionTest extends PyInspectionTestCase {
   // PY-28227
   public void testGenericParametersTypes() {
     doTestByText("""
-                   from typing import Generic, TypeVar
+                   from typing import Generic, Protocol, TypeVar
 
                    class A1(Generic[<error descr="Parameters to 'Generic[...]' must all be type variables">0</error>]):
                        pass
 
                    class B1(Generic[<error descr="Parameters to 'Generic[...]' must all be type variables">int</error>]):
+                       pass
+                   
+                   class B11(Protocol[<error descr="Parameters to 'Protocol[...]' must all be type variables">int</error>]):
                        pass
 
                    class A2(Generic[<error descr="Parameters to 'Generic[...]' must all be type variables">0</error>, <error descr="Parameters to 'Generic[...]' must all be type variables">0</error>]):
@@ -209,17 +212,20 @@ public class PyTypeHintsInspectionTest extends PyInspectionTestCase {
   // PY-28227
   public void testGenericCompleteness() {
     doTestByText("""
-                   from typing import Generic, TypeVar, Iterable
+                   from typing import Generic, TypeVar, Iterable, Protocol
 
                    T = TypeVar('T')
                    S = TypeVar('S')
 
-                   class C<error descr="Some type variables (S) are not listed in 'Generic[T]'">(Generic[T], Iterable[S])</error>:
+                   class C<error descr="'Generic[...]' or 'Protocol[...]' should list all type variables (S)">(Generic[T], Iterable[S])</error>:
+                       pass
+                   
+                   class P<error descr="'Generic[...]' or 'Protocol[...]' should list all type variables (S)">(Iterable[S], Protocol[T])</error>:
                        pass
 
                    B = Generic
                    D = T
-                   class A<error descr="Some type variables (S) are not listed in 'Generic[T]'">(B[<error descr="Parameters to 'Generic[...]' must all be type variables">D</error>], Iterable[S])</error>:
+                   class A<error descr="'Generic[...]' or 'Protocol[...]' should list all type variables (S)">(B[<error descr="Parameters to 'Generic[...]' must all be type variables">D</error>], Iterable[S])</error>:
                        pass
 
                    class E(Generic[T], Iterable[T]):
@@ -229,7 +235,8 @@ public class PyTypeHintsInspectionTest extends PyInspectionTestCase {
                        pass
                    
                    class G(Iterable[T]):
-                       pass""");
+                       pass
+                   """);
   }
 
   // PY-31147
@@ -304,6 +311,7 @@ public class PyTypeHintsInspectionTest extends PyInspectionTestCase {
                 ...""");
   }
 
+  // PY-78878
   public void testGenericClassCannotUseTypeVariablesFromOuterScope() {
     doTestByText("""
                    from typing import TypeVar, Generic, Iterable
@@ -314,18 +322,55 @@ public class PyTypeHintsInspectionTest extends PyInspectionTestCase {
                    def a_fun(x: T) -> None:
                        a_list: list[T] = []
                    
-                       class <warning descr="Some type variables (T) are used by an outer scope">MyGeneric</warning>(Generic[T]):
+                       class <warning descr="Some type variables (T) are already in use by an outer scope">MyGeneric</warning>(Generic[T]):
+                           ...
+                   
+                   def a_fun_new_syntax1[U]() -> None:
+                       class <warning descr="Some type variables (U) are already in use by an outer scope">MyGeneric</warning>(Generic[U]):
+                           ...
+                   
+                   def a_fun_new_syntax2[U](u: U) -> None:
+                       class <warning descr="Some type variables (U) are already in use by an outer scope">MyGeneric</warning>(Generic[U]):
                            ...
                    
                    class Outer(Generic[T]):
-                       class <warning descr="Some type variables (T) are used by an outer scope">Bad</warning>(Iterable[T]):
+                       class <warning descr="Some type variables (T) are already in use by an outer scope">Bad</warning>(Iterable[T]):
                            ...
                        class AlsoBad:
                            x: list[<warning descr="Unbound type variable">T</warning>]
                    
                        class Inner(Iterable[S]):
                            ...
-                       attr: Inner[T]""");
+                       attr: Inner[T]
+                   
+                   class OuterNewSyntax[U]:
+                       class <warning descr="Some type variables (U) are already in use by an outer scope">Bad</warning>(Generic[U]):
+                           ...""");
+  }
+
+  // PY-82835
+  public void testTypeParameterIsAlreadyInUseByOuterScope() {
+    doTestByText("""
+                   from typing import Sequence, TypeAlias
+                   
+                   T = 0
+                   
+                   
+                   class ClassA[T](Sequence[T]):
+                       T = 1
+                   
+                       def method1[<warning descr="Type parameter 'T' is already in use by an outer scope">T</warning>](self):
+                           ...
+                   
+                       def method2[<warning descr="Type parameter 'T' is already in use by an outer scope">T</warning>](self, x=T):
+                           ...
+                   
+                       def method3[<warning descr="Type parameter 'T' is already in use by an outer scope">T</warning>](self, x: T):
+                           ...
+                   
+                       class Inner[<warning descr="Type parameter 'T' is already in use by an outer scope">T</warning>]:
+                           ...
+                   """);
   }
 
   // PY-28249
@@ -2627,6 +2672,521 @@ public class PyTypeHintsInspectionTest extends PyInspectionTestCase {
                
                c = Clazz[RefToNoWhere, WrongRef]() # will be reported by PyUnresolvedReferencesInspection, but not here
                """);
+  }
+
+  // PY-76862
+  public void testUnionsInTypeAnnotationsWithMultipleElements() {
+    doTestByText("""
+               bad1: <error descr="Union type annotations with forward references must be wrapped in quotes entirely">"ClassA"</error> | int
+               bad2: int | <error descr="Union type annotations with forward references must be wrapped in quotes entirely">"ClassA"</error>
+               bad3: int | str | bool | <error descr="Union type annotations with forward references must be wrapped in quotes entirely">"ClassA"</error>
+               bad4: int | <error descr="Union type annotations with forward references must be wrapped in quotes entirely">"ClassA"</error> | str | bool
+               good1: int | list["ClassA"]
+               class ClassA: ...
+               """);
+  }
+
+  // PY-76870
+  public void testTypeVarDefaultCanBeSubclassOfBound() {
+    doTestByText("""
+               from typing import TypeVar, List
+               
+               T1 = TypeVar('T1', bound=int, default=bool)
+               """);
+  }
+
+  // PY-76870
+  public void testTypeVarDefaultCanNotBeSubclassOfConstraint() {
+    doTestByText("""
+               from typing import TypeVar, List
+               
+               T1 = TypeVar('T1', int, str, default=<warning descr="Default type of TypeVar must be one of the constraint types">bool</warning>)
+               """);
+  }
+
+  // PY-76870
+  public void testTypeVarDefaultTypeMatchesConstraints() {
+    doTestByText("""
+               from typing import TypeVar, List
+               
+               # Default type matches one of the constraints
+               T1 = TypeVar('T1', str, int, default=str)
+               T2 = TypeVar('T2', str, int, default=int)
+               
+               # Default type doesn't match any of the constraints
+               T3 = TypeVar('T3', str, int, default=<warning descr="Default type of TypeVar must be one of the constraint types">bool</warning>)
+               T4 = TypeVar('T4', str, int, default=<warning descr="Default type of TypeVar must be one of the constraint types">List[int]</warning>)
+               """);
+  }
+
+  // PY-76870
+  public void testTypeVarDefaultTypeReferringToTypeVarMatchesBound() {
+    doTestByText("""
+               from typing import TypeVar
+               
+               Y1 = TypeVar("Y1", bound=int)
+               Invalid = TypeVar("Invalid", float, str, default=<warning descr="Default type of TypeVar must be one of the constraint types">Y1</warning>)
+               """);
+  }
+
+  // PY-76870
+  public void testTypeVarDefaultTypeReferringToTypeVarMatchesConstraints() {
+    doTestByText("""
+               from typing import TypeVar
+               
+               Y1 = TypeVar("Y1", int, str)
+               AlsoOk2 = TypeVar("AlsoOk2", int, str, bool, default=Y1)  # OK
+               AlsoInvalid2 = TypeVar("AlsoInvalid2", bool, complex, default=<warning descr="Default type of TypeVar must be one of the constraint types">Y1</warning>)
+               """);
+  }
+
+  // PY-76870
+  public void testTypeVarDefaultTypeReferringToTypeVarWithoutConstraints() {
+    doTestByText("""
+               from typing import TypeVar
+               T = TypeVar("T")
+               Invalid = TypeVar("Invalid", str, int, default=<warning descr="Default type of TypeVar must be one of the constraint types">T</warning>)
+               """);
+  }
+
+  // PY-76870
+  public void testTypeVarDefaultBoundMatchedAgainstBound() {
+    doTestByText("""
+               from typing import TypeVar
+               
+               X1 = TypeVar("X1", bound=int)
+               Ok1 = TypeVar("Ok1", default=X1, bound=float)
+               """);
+  }
+
+  // PY-76870
+  public void testTypeVarDefaultBoundNotMatchedAgainstConstraints() {
+    doTestByText("""
+               from typing import TypeVar
+               
+               Y3 = TypeVar("Y3", bound=int)
+               Invalid3 = TypeVar("Invalid3", str, complex, default=<warning descr="Default type of TypeVar must be one of the constraint types">Y3</warning>)
+               """);
+  }
+
+  // PY-76870
+  public void testTypeVarDefaultBoundNotMatchedAgainstBound() {
+    doTestByText("""
+               from typing import TypeVar
+               
+               X1 = TypeVar("X1", bound=int)
+               Invalid1 = TypeVar("Invalid1", default=<warning descr="Default type of TypeVar is not a subtype of the bound">X1</warning>, bound=str)
+               """);
+  }
+
+  // PY-76870
+  public void testTypeVarDefaultConstraintsNotMatchedAgainstBound() {
+    doTestByText("""
+               from typing import TypeVar
+               
+               Y4 = TypeVar("Y4", int, str)
+               Invalid4 = TypeVar("Invalid4", bound=str, default=<warning descr="Default type of TypeVar is not a subtype of the bound">Y4</warning>)
+               """);
+  }
+
+  // PY-76870
+  public void testTypeVarDefaultChecksNewSyntax() {
+    doTestByText("""
+               # NOT OK
+               def foo1[T1: int = <warning descr="Default type of TypeVar is not a subtype of the bound">str</warning>](): ...
+               def foo2[T1: (int, bool) = <warning descr="Default type of TypeVar must be one of the constraint types">str</warning>](): ...
+               def foo3[T1: int, T2: str = <warning descr="Default type of TypeVar is not a subtype of the bound">T1</warning>](): ...
+               def foo4[T1: (int, bool), T2: str = <warning descr="Default type of TypeVar is not a subtype of the bound">T1</warning>](): ...
+               def foo5[T1: (int, bool), T2: (int, str) = <warning descr="Default type of TypeVar must be one of the constraint types">T1</warning>](): ...
+               def foo6[T1: (int, str, float), T2: (int, float) = <warning descr="Default type of TypeVar must be one of the constraint types">T1</warning>](): ...
+               def foo7[T1: (int, str) = <warning descr="Default type of TypeVar must be one of the constraint types">bool</warning>](): ...
+               
+               # OK
+               def bar1[T1: int = bool](): ...
+               def bar2[T1: (int, str) = str](): ...
+               def bar3[T1: bool, T2: int = T1](): ...
+               def bar4[T1: (int, str), T2: (str, int) = T1](): ...
+               def bar5[T1: (int, str), T2: (str, int, float) = T1](): ...
+               """);
+  }
+
+  // PY-76870
+  public void testTypeVarDefaultTypeMatchedWithObject() {
+    doTestByText("""
+                   from typing import TypeVar, Any
+                   
+                   T = TypeVar('T')
+                   T1 = TypeVar('T1', bound=object, default=T)
+                   T2 = TypeVar('T2', int, object, default=T)
+                   """);
+  }
+
+  // PY-76870
+  public void testTypeVarDefaultAnyInConstraintsAndBound() {
+    doTestByText("""
+               from typing import TypeVar, Any
+               T1 = TypeVar("T1", int, str)
+               Ok1 = TypeVar("Ok1", int, str, Any, default=T1)
+               T2 = TypeVar("T2", int, str, Any)
+               Ok2 = TypeVar("Ok2", int, str, Any, default=T2)
+               T3 = TypeVar("T3", bound=Any)
+               Ok3 = TypeVar("Ok3", bound=Any, default=T3)
+               T4 = TypeVar("T4", bound=str)
+               Ok4 = TypeVar("Ok4", bound=Any, default=T4)
+               T5 = TypeVar("T5", bound=Any)
+               Ok5 = TypeVar("Ok5", bound=Any, default=T5)
+               
+               Y1 = TypeVar("Y1", int, str, Any)
+               NotOk1 = TypeVar("NotOk1", int, str, default=<warning descr="Default type of TypeVar must be one of the constraint types">Y1</warning>)
+               Y2 = TypeVar("Y2", bound=Any)
+               NotOk2 = TypeVar("NotOk2", int, str, default=<warning descr="Default type of TypeVar must be one of the constraint types">Y2</warning>)
+               Y3 = TypeVar("Y3", bound=str)
+               NotOk3 = TypeVar("NotOk3", int, Any, default=<warning descr="Default type of TypeVar must be one of the constraint types">Y3</warning>)
+               Y4 = TypeVar("Y4", str, Any)
+               NotOk4 = TypeVar("NotOk4", int, Any, default=<warning descr="Default type of TypeVar must be one of the constraint types">Y4</warning>)
+               Y5 = TypeVar("Y5", bound=Any)
+               NotOk5 = TypeVar("NotOk5", int, str, Any, default=<warning descr="Default type of TypeVar must be one of the constraint types">Y5</warning>)
+               """);
+  }
+
+  // PY-76852
+  public void testTwoUnpackedUnboundTuples() {
+    doTestByText("""
+               from typing import TypeVarTuple, Unpack
+               
+               t1: <warning descr="Type argument list can have at most one unpacked TypeVarTuple or unbounded tuple">tuple[*tuple[str, ...], *tuple[int, ...]]</warning>
+               t2: <warning descr="Type argument list can have at most one unpacked TypeVarTuple or unbounded tuple">tuple[*tuple[str, *tuple[str, ...]], *tuple[int, ...]]</warning>
+               t3: <warning descr="Type argument list can have at most one unpacked TypeVarTuple or unbounded tuple">tuple[Unpack[tuple[str, ...]], Unpack[tuple[int, ...]]]</warning>
+               t4: <warning descr="Type argument list can have at most one unpacked TypeVarTuple or unbounded tuple">tuple[Unpack[tuple[str, Unpack[tuple[str, ...]]]], Unpack[tuple[int, ...]]]</warning>
+               
+               # > An unpacked TypeVarTuple counts as an unbounded tuple in the context of this rule
+               
+               Ts = TypeVarTuple("Ts")
+               
+               
+               def func(t: tuple[*Ts]):
+                   t5: tuple[*tuple[str], *Ts]
+                   t6: <warning descr="Type argument list can have at most one unpacked TypeVarTuple or unbounded tuple">tuple[*tuple[str, ...], *Ts]</warning>
+               """);
+  }
+
+  // PY-80166
+  public void testCovariantTypeVarsCannotBeUsedInFunctionParameterTypes() {
+    doTestByText("""
+                   from typing import TypeVar, Generic
+                   
+                   T_co = TypeVar('T_co', covariant=True)
+                   T_contra = TypeVar('T_contra', contravariant=True)
+                   
+                   def foo(x: <warning descr="Covariant type variable cannot be used in parameter type">T_co</warning>) -> None: ...
+                   
+                   class Foo(Generic[T_co]):
+                      def __init__(self, x: T_co) -> None: ... # allowed in __init__
+                      def dosmth(self, x: <warning descr="Covariant type variable cannot be used in parameter type">T_co</warning>) -> None: ...
+                   """);
+  }
+
+  // PY-80167
+  public void testContravariantTypeVarsCannotBeUsedInFunctionReturnType() {
+    doTestByText("""
+                   from typing import TypeVar, Generic
+                   
+                   T_co = TypeVar('T_co', covariant=True)
+                   T_contra = TypeVar('T_contra', contravariant=True)
+                   
+                   def foo(x: T_contra) -> <warning descr="Contravariant type variable cannot be used in function return type">T_contra</warning>: ...
+                   
+                   class Foo(Generic[T_co]):
+                      def dosmth(self, x: T_contra) -> <warning descr="Contravariant type variable cannot be used in function return type">T_contra</warning>: ...
+                   """);
+  }
+
+  // PY-76862
+  public void testCheckCircularReferences() {
+    doTestByText("""
+                   from typing import TypeAlias
+                   class ClassA:
+                       ...
+                   
+                   type ClassB = str
+                   
+                   ClassC = int
+                   
+                   ClassD: TypeAlias = bool
+                   
+                   circular: <error descr="Circular reference">"circular"</error> = None
+                   
+                   class Test:
+                       ClassA: "ClassA"  # OK
+                       ClassB: "ClassB"  # OK
+                       ClassC: "ClassC"  # OK
+                       ClassD: "ClassD"  # OK
+                   
+                       ClassE: <error descr="Circular reference">"ClassE"</error>  # E: circular reference
+                   
+                       ClassG: <error descr="Circular reference">"ClassG"</error> = None  # E: circular reference
+                   
+                       def foo(self):
+                          Test: "Test"
+                          ClassA: "ClassA"  # OK
+                          ClassB: "ClassB"  # OK
+                          ClassC: "ClassC"  # OK
+                          str: "str"  # OK
+                          def int(self) -> None:
+                                  ...
+                          x: "int" = 0 # OK
+                          var: <error descr="Circular reference">"var"</error> = None  # E: circular reference
+                   """);
+  }
+
+  public void testConcatenateNotReportedAsIllegalFirstParam() {
+    doTestByText("""
+                   from typing import Callable, Concatenate
+                   x: Callable[Concatenate[int, ...], str]
+                   """);
+  }
+
+
+  // PY-76851
+  public void testInvalidTypeAliasStatement() {
+    doTestByText("""
+               var1 = 1
+               type BadTypeAlias1 = <warning descr="Type hint is invalid or refers to the expression which is not a correct type">eval(<warning descr="Generics should be specified through square brackets">"".join(<warning descr="Generics should be specified through square brackets">map(chr, [105, 110, 116])</warning>)</warning>)</warning>
+               type BadTypeAlias2 = <warning descr="Type hint is invalid or refers to the expression which is not a correct type">[int, str]</warning>
+               type BadTypeAlias3 = <warning descr="Type hint is invalid or refers to the expression which is not a correct type">((int, str),)</warning>
+               type BadTypeAlias4 = <warning descr="Type hint is invalid or refers to the expression which is not a correct type">[int for i in <warning descr="Generics should be specified through square brackets">range(1)</warning>]</warning>
+               type BadTypeAlias5 = <warning descr="Type hint is invalid or refers to the expression which is not a correct type">{"a": "b"}</warning>
+               type BadTypeAlias6 = <warning descr="Type hint is invalid or refers to the expression which is not a correct type">(lambda: int)()</warning>
+               type BadTypeAlias7 = <warning descr="Type hint is invalid or refers to the expression which is not a correct type">[int][0]</warning>
+               type BadTypeAlias8 = <warning descr="Type hint is invalid or refers to the expression which is not a correct type">int if 1 < 3 else str</warning>
+               type BadTypeAlias9 = <warning descr="Type hint is invalid or refers to the expression which is not a correct type">var1</warning>
+               type BadTypeAlias10 = <warning descr="Type hint is invalid or refers to the expression which is not a correct type">True</warning>
+               type BadTypeAlias11 = <warning descr="Type hint is invalid or refers to the expression which is not a correct type">1</warning>
+               type BadTypeAlias12 = <warning descr="Type hint is invalid or refers to the expression which is not a correct type">list or set</warning>
+               type BadTypeAlias13 = <warning descr="Type hint is invalid or refers to the expression which is not a correct type">f"{'int'}"</warning>
+               """);
+  }
+
+  // PY-76851
+  public void testTypeAliasStatementScope() {
+    doTestByText("""
+               type B = int
+               class C:
+                   type D = int
+               def func():
+                   <warning descr="A 'type' statement can be used only within a module or class scope">type A = int</warning>
+               """);
+  }
+
+  // PY-76851
+  public void testTypeAliasBoundMatch() {
+    doTestByText("""
+               type TypeAlias[S: str] = list[S]
+               r: TypeAlias[str] = [""]
+               """);
+  }
+
+  // PY-76851
+  public void testTypeAliasBoundMismatch() {
+    doTestByText("""
+               type TypeAlias[S: int] = list[S]
+               r: TypeAlias[<warning descr="Expected type 'S ≤: int', got 'str' instead">str</warning>] = [""]
+               """);
+  }
+
+  // PY-76851
+  public void testTypeAliasOldStyleBoundMismatch() {
+    doTestByText("""
+               from typing import TypeAlias, TypeVar
+               T = TypeVar("T", bound=str)
+               Alias: TypeAlias = list[T]
+               x: Alias[<warning descr="Expected type 'T ≤: str', got 'int' instead">int</warning>]
+               """);
+  }
+
+  // PY-76851
+  public void testClassVariadicTypeParameters() {
+    doTestByText("""
+               from typing import Callable
+
+               class A[S1, **S2]:
+                   t: Callable[S2, S1]
+               
+               a: A[int, ...]
+               """);
+  }
+
+  // PY-76851
+  public void testClassBoundMismatch() {
+    doTestByText("""
+               class C[T: str]: ...
+               c = C[<warning descr="Expected type 'T ≤: str', got 'int' instead">int</warning>]()
+               """);
+  }
+
+  // PY-76851
+  public void testTypeAliasVariadicTypeParameters() {
+    doTestByText("""
+               from typing import Callable
+
+               type TypeAlias[S1, **S2] = Callable[S2, S1]
+               type TypeAlias2 = TypeAlias[int, ...]
+               """);
+  }
+
+
+  // PY-76851
+  public void testSimpleRecursiveTypeAliasStatement() {
+    doTestByText("""
+                   type TypeAlias = <warning descr="Type hint is invalid or refers to the expression which is not a correct type">TypeAlias</warning>
+                   """);
+  }
+
+  // PY-76851
+  public void testRecursiveTypeAliasStatementInUnion() {
+    doTestByText("""
+                   type TypeAlias = <warning descr="Type hint is invalid or refers to the expression which is not a correct type">int | TypeAlias</warning>
+                   type TypeAlias2 = int | str
+                   """);
+  }
+
+  // PY-76851
+  public void testUnionRecursiveTypeAliasStatement() {
+    doTestByText("""
+                   type TypeAlias = <warning descr="Type hint is invalid or refers to the expression which is not a correct type">TypeAlias | int</warning>
+                   """);
+  }
+
+
+  // PY-76851
+  public void testDeepRecursiveTypeAliasStatement() {
+    doTestByText("""
+                   type TypeAlias1 = <warning descr="Type hint is invalid or refers to the expression which is not a correct type">TypeAlias2</warning>
+                   type TypeAlias2 = <warning descr="Type hint is invalid or refers to the expression which is not a correct type">TypeAlias3</warning>
+                   type TypeAlias3 = <warning descr="Type hint is invalid or refers to the expression which is not a correct type">TypeAlias1</warning>
+                   """);
+  }
+
+  // PY-76851
+  public void testCorrectRecursiveTypeAliasStatement() {
+    doTestByText("""
+                   type TypeAlias1 = list[TypeAlias1]
+                   """);
+  }
+
+  // PY-82979
+  public void testImplicitTypeAliasUsingLiteralMultiFile() {
+    doMultiFileTest();
+  }
+
+  // PY-81028
+  public void testImplicitTypeAliasUsingAnnotatedMultiFile() {
+    doMultiFileTest();
+  }
+
+  // PY-83583
+  public void testImplicitTypeAliasUsingAnnotatedWithNewStyleUnion() {
+    doTestByText("""
+                   from typing import Annotated
+                   from typing_extensions import Doc
+                   
+                   class A:
+                       pass
+                   
+                   class B:
+                       pass
+                   
+                   AOrB = Annotated[
+                       A | B,
+                       Doc("An instance of either A or B"),
+                   ]
+                   
+                   a_or_b: AOrB
+                   """);
+  }
+
+  // PY-83699
+  public void testImplicitTypeAliasUsingCallableWithNewStyleUnion() {
+    doTestByText("""
+                   from typing import Awaitable, Any, Callable
+                   
+                   AsyncFunc = Callable[[int], Awaitable[Any | None]]
+                   
+                   f: AsyncFunc
+                   """);
+  }
+
+  // PY-83700
+  public void testImplicitTypeAliasAtClassLevelMultiFile() {
+    doMultiFileTest();
+  }
+
+  // PY-81926
+  public void testUnionWithClassOverridingDunderOr() {
+    doTestByText("""
+                   from typing import Self
+                   
+                   class Cls:
+                       def __or__(self, other: Self) -> Self:
+                           return self
+                   
+                   def foo(arg: Cls | None) -> None:
+                       print(arg)
+                   """);
+  }
+
+  // PY-81439
+  public void testImplicitTypeAliasUsingLiteral() {
+    doTestByText("""
+                   from typing import Literal, TypeAlias, reveal_type
+                   
+                   A = Literal[1, 2]
+                   A1: TypeAlias = Literal[6, 7]
+                   type A2 = Literal[6, 7]
+                   A3 = Literal[666]
+                   B = Literal[False, True]
+                   C = Literal['A', 'B']
+                   
+                   def f(a: A, a1: A1, a2: A2, a3: A3, b: B, c: C) -> None:
+                       print(a, a1, a2, a3, b, c)
+                   """);
+  }
+
+  public void testSelfImportedFromNonExcludedTypingExtensionsMultiFile() {
+    doMultiFileTest();
+  }
+
+
+  // PY-84289
+  public void testExponentialAnalysisTimeWhenMapLookupKeyEqualsVariableName() {
+    long before = System.currentTimeMillis();
+    doMultiFileTest("main.py");
+    long after = System.currentTimeMillis();
+    long diff = after - before;
+    // junit3 doesn't support timeouts out of the box
+    if (diff > 5000) {
+      fail("Took too long to analyze main.py: " + diff + " ms");
+    }
+  }
+
+  // PY-84570
+  public void testListLiteralIsNotConsideredTypeAlias() {
+    doTestByText("""
+                   from enum import Enum
+                   from typing import TypeAlias
+                   
+                   class Direction(Enum):
+                       NORTH = "N"
+                       SOUTH = "S"
+                       EAST = "E"
+                       WEST = "W"
+                   
+                   CARTESIAN = [Direction.NORTH, Direction.EAST, Direction.SOUTH, Direction.WEST]
+                   print(CARTESIAN[0])
+                   
+                   type Alias = <warning descr="Type hint is invalid or refers to the expression which is not a correct type">[int, str]</warning>
+                   myAlias: TypeAlias = <warning descr="Assigned value of type alias must be a correct type">[int, str]</warning>
+                   """);
   }
 
   @NotNull

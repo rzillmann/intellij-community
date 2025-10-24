@@ -15,7 +15,7 @@ import com.intellij.psi.search.GlobalSearchScope;
 import com.intellij.psi.search.ProjectScope;
 import com.intellij.util.containers.ContainerUtil;
 import com.jetbrains.python.PyNames;
-import com.jetbrains.python.sdk.PythonSdkUtil;
+import com.jetbrains.python.sdk.legacy.PythonSdkUtil;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -41,7 +41,6 @@ public class PySearchUtilBase {
   public static @NotNull GlobalSearchScope defaultSuggestionScope(@NotNull PsiElement anchor) {
     return PySearchScopeBuilder.forPythonSdkOf(anchor)
       .excludeStandardLibraryTests()
-      .excludePythonSkeletonsStubs()
       .excludeThirdPartyPackageTests()
       .excludeThirdPartyPackageBundledDependencies()
       .build();

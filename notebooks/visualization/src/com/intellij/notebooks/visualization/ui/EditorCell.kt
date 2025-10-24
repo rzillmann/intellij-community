@@ -1,15 +1,16 @@
 package com.intellij.notebooks.visualization.ui
 
-import com.intellij.notebooks.visualization.NotebookCellInlayController
+import com.intellij.notebooks.jupyter.core.jupyter.CellType
+import com.intellij.notebooks.ui.afterDistinctChange
 import com.intellij.notebooks.visualization.NotebookCellInlayManager
-import com.intellij.notebooks.visualization.NotebookCellLines.CellType
 import com.intellij.notebooks.visualization.NotebookCellLines.Interval
 import com.intellij.notebooks.visualization.NotebookIntervalPointer
 import com.intellij.notebooks.visualization.UpdateContext
 import com.intellij.notebooks.visualization.outputs.NotebookOutputDataKey
-import com.intellij.notebooks.visualization.ui.cell.frame.EditorCellFrameManager
+import com.intellij.notebooks.visualization.ui.providers.frame.EditorCellFrameManager
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.actionSystem.AnAction
+import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.editor.impl.EditorImpl
 import com.intellij.openapi.observable.properties.AtomicBooleanProperty
 import com.intellij.openapi.observable.properties.AtomicProperty
@@ -20,7 +21,6 @@ import com.intellij.openapi.util.UserDataHolderBase
 import java.time.ZonedDateTime
 import kotlin.reflect.KClass
 
-
 class EditorCell(
   val notebook: EditorNotebook,
   var intervalPointer: NotebookIntervalPointer,
@@ -28,15 +28,17 @@ class EditorCell(
 ) : Disposable, UserDataHolder by UserDataHolderBase() {
   val isUnfolded: AtomicBooleanProperty = AtomicBooleanProperty(true)
   val isSelected: AtomicBooleanProperty = AtomicBooleanProperty(false)
-  val isUnderDiff: AtomicBooleanProperty = AtomicBooleanProperty(false)
   val isHovered: AtomicBooleanProperty = AtomicBooleanProperty(false)
-
-  //Enable NotebookVisibleCellsBatchUpdater if this field is required
-  //val isInViewportRectangle: AtomicBooleanProperty = AtomicBooleanProperty(false)
 
   val source: AtomicProperty<String> = AtomicProperty(interval.getContentText(editor))
   val gutterAction: AtomicProperty<AnAction?> = AtomicProperty(null)
   val executionStatus: AtomicProperty<ExecutionStatus> = AtomicProperty<ExecutionStatus>(ExecutionStatus())
+
+  init {
+    executionStatus.afterDistinctChange(this) {
+      thisLogger().debug("Execution status changed: $it for interval ${intervalPointer.get()?.ordinal}")
+    }
+  }
 
   val cellFrameManager: EditorCellFrameManager? = EditorCellFrameManager.create(this)?.also {
     Disposer.register(this, it)
@@ -52,7 +54,6 @@ class EditorCell(
     get() = interval.type
   val view: EditorCellView?
     get() = NotebookCellInlayManager.get(editor)?.views[this]
-
 
   override fun dispose() {
     cleanupExtensions()
@@ -78,41 +79,16 @@ class EditorCell(
     source.set(interval.getContentText(editor))
   }
 
+  fun checkAndRebuildInlays() {
+    view?.checkAndRebuildInlays()
+  }
+
   fun onViewportChange() {
     view?.onViewportChanges()
   }
 
-  inline fun <reified T : NotebookCellInlayController> getController(): T? {
-    val lazyFactory = getLazyFactory(T::class)
-    if (lazyFactory != null) {
-      createLazyControllers(lazyFactory)
-    }
-    return view?.getExtension<T>()
-  }
-
-  @PublishedApi
-  internal fun createLazyControllers(factory: NotebookCellInlayController.LazyFactory) {
-    factory.cellOrdinalsInCreationBlock.add(interval.ordinal)
-    editor.updateManager.update { ctx ->
-      update(ctx)
-    }
-    factory.cellOrdinalsInCreationBlock.remove(interval.ordinal)
-  }
-
-  @PublishedApi
-  internal fun <T : NotebookCellInlayController> getLazyFactory(type: KClass<T>): NotebookCellInlayController.LazyFactory? {
-    return NotebookCellInlayController.Factory.EP_NAME.extensionList
-      .filterIsInstance<NotebookCellInlayController.LazyFactory>()
-      .firstOrNull { it.getControllerClass() == type.java }
-  }
-
   fun updateOutputs(): Unit = editor.updateManager.update {
     outputs.updateOutputs()
-  }
-
-
-  fun requestCaret() {
-    view?.requestCaret()
   }
 
   inline fun <reified T : EditorCellExtension> getExtension(): T? {

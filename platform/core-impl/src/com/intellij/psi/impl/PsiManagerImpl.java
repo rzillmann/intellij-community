@@ -1,10 +1,12 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.psi.impl;
 
 import com.intellij.codeInsight.multiverse.CodeInsightContext;
 import com.intellij.lang.PsiBuilderFactory;
 import com.intellij.openapi.Disposable;
+import com.intellij.openapi.application.Application;
 import com.intellij.openapi.application.ApplicationManager;
+import com.intellij.openapi.application.impl.TransferredWriteActionService;
 import com.intellij.openapi.diagnostic.ControlFlowException;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.progress.ProgressIndicator;
@@ -25,10 +27,14 @@ import com.intellij.psi.impl.file.impl.FileManager;
 import com.intellij.psi.impl.file.impl.FileManagerEx;
 import com.intellij.psi.impl.file.impl.FileManagerImpl;
 import com.intellij.psi.util.PsiModificationTracker;
+import com.intellij.serviceContainer.NonInjectable;
+import com.intellij.util.concurrency.ThreadingAssertions;
 import com.intellij.util.concurrency.annotations.RequiresEdt;
 import com.intellij.util.concurrency.annotations.RequiresReadLock;
+import com.intellij.util.concurrency.annotations.RequiresWriteLock;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.messages.Topic;
+import com.intellij.util.ui.EDT;
 import org.jetbrains.annotations.*;
 
 import java.util.Arrays;
@@ -46,7 +52,10 @@ public final class PsiManagerImpl extends PsiManagerEx implements Disposable {
   private final FileManagerEx myFileManager;
 
   private final List<PsiTreeChangePreprocessor> myTreeChangePreprocessors = ContainerUtil.createLockFreeCopyOnWriteList();
+  private final List<PsiTreeChangePreprocessor> myTreeChangePreprocessorsBackgroundable = ContainerUtil.createLockFreeCopyOnWriteList();
   private final List<PsiTreeChangeListener> myTreeChangeListeners = ContainerUtil.createLockFreeCopyOnWriteList();
+  private final List<PsiTreeChangeListener> myTreeChangeListenersBackgroundable =
+    ContainerUtil.createLockFreeCopyOnWriteList();
   private boolean myTreeChangeEventIsFiring;
 
   private VirtualFileFilter myAssertOnFileLoadingFilter = VirtualFileFilter.NONE;
@@ -68,6 +77,21 @@ public final class PsiManagerImpl extends PsiManagerEx implements Disposable {
 
     myTreeChangePreprocessors.add((PsiTreeChangePreprocessor)myModificationTracker);
   }
+  
+  @NonInjectable
+  @ApiStatus.Internal
+  public PsiManagerImpl(@NotNull Project project, FileManagerEx fileManager) {
+    // we need to initialize PsiBuilderFactory service, so it won't initialize under PsiLock from ChameleonTransform
+    PsiBuilderFactory.getInstance();
+
+    myProject = project;
+    myFileIndex = NotNullLazyValue.createValue(() -> FileIndexFacade.getInstance(project));
+    myModificationTracker = PsiModificationTracker.getInstance(project);
+
+    myFileManager = fileManager;
+
+    myTreeChangePreprocessors.add((PsiTreeChangePreprocessor)myModificationTracker);
+  }
 
   @Override
   public void dispose() {
@@ -86,8 +110,10 @@ public final class PsiManagerImpl extends PsiManagerEx implements Disposable {
   }
 
   @Override
-  @RequiresEdt
   public void dropPsiCaches() {
+    if (!(EDT.isCurrentThreadEdt() || ApplicationManager.getApplication().isWriteAccessAllowed())) {
+      LOG.error("PsiManager#dropPsiCaches must be called in EDT or in write action");
+    }
     dropResolveCaches();
     ApplicationManager.getApplication().runWriteAction(myFileManager::firePropertyChangedForUnloadedPsi);
   }
@@ -168,7 +194,7 @@ public final class PsiManagerImpl extends PsiManagerEx implements Disposable {
     return myFileManager.findFile(file);
   }
 
-  @ApiStatus.Internal
+  @ApiStatus.Experimental
   @Override
   public @Nullable PsiFile findFile(@NotNull VirtualFile file, @NotNull CodeInsightContext context) {
     ProgressIndicatorProvider.checkCanceled();
@@ -195,8 +221,8 @@ public final class PsiManagerImpl extends PsiManagerEx implements Disposable {
   }
 
   @Override
-  public void reloadFromDisk(@NotNull PsiFile file) {
-    myFileManager.reloadFromDisk(file);
+  public void reloadFromDisk(@NotNull PsiFile psiFile) {
+    myFileManager.reloadFromDisk(psiFile);
   }
 
   @Override
@@ -208,6 +234,13 @@ public final class PsiManagerImpl extends PsiManagerEx implements Disposable {
   public void addPsiTreeChangeListener(@NotNull PsiTreeChangeListener listener, @NotNull Disposable parentDisposable) {
     addPsiTreeChangeListener(listener);
     Disposer.register(parentDisposable, () -> removePsiTreeChangeListener(listener));
+  }
+
+  @Override
+  @ApiStatus.Experimental
+  public void addPsiTreeChangeListenerBackgroundable(@NotNull PsiTreeChangeListener listener, @NotNull Disposable parentDisposable) {
+    myTreeChangeListenersBackgroundable.add(listener);
+    Disposer.register(parentDisposable, () -> myTreeChangeListenersBackgroundable.remove(listener));
   }
 
   @Override
@@ -349,14 +382,31 @@ public final class PsiManagerImpl extends PsiManagerEx implements Disposable {
     afterChange(true);
   }
 
+  @ApiStatus.Internal
+  @Override
+  public void addTreeChangePreprocessor(@NotNull PsiTreeChangePreprocessor preprocessor, @NotNull Disposable parentDisposable) {
+    myTreeChangePreprocessors.add(preprocessor);
+    Disposer.register(parentDisposable, () -> myTreeChangePreprocessors.remove(preprocessor));
+  }
+
+  @Deprecated
   @Override
   public void addTreeChangePreprocessor(@NotNull PsiTreeChangePreprocessor preprocessor) {
     myTreeChangePreprocessors.add(preprocessor);
   }
-  
+
+  @Deprecated
   @Override
   public void removeTreeChangePreprocessor(@NotNull PsiTreeChangePreprocessor preprocessor) {
     myTreeChangePreprocessors.remove(preprocessor);
+  }
+
+  @Override
+  @ApiStatus.Internal
+  public void addTreeChangePreprocessorBackgroundable(@NotNull PsiTreeChangePreprocessor preprocessor,
+                                                      @NotNull Disposable parentDisposable) {
+    myTreeChangePreprocessorsBackgroundable.add(preprocessor);
+    Disposer.register(parentDisposable, () -> myTreeChangePreprocessorsBackgroundable.remove(preprocessor));
   }
 
   private void fireEvent(@NotNull PsiTreeChangeEventImpl event) {
@@ -372,8 +422,15 @@ public final class PsiManagerImpl extends PsiManagerEx implements Disposable {
       myTreeChangeEventIsFiring = true;
     }
     try {
-      for (PsiTreeChangePreprocessor preprocessor : myTreeChangePreprocessors) {
+      for (PsiTreeChangePreprocessor preprocessor : myTreeChangePreprocessorsBackgroundable) {
         preprocessor.treeChanged(event);
+      }
+      if (!myTreeChangePreprocessors.isEmpty()) {
+        runWriteActionOnEdtRegardlessOfCurrentThread(() -> {
+          for (PsiTreeChangePreprocessor preprocessor : myTreeChangePreprocessors) {
+            preprocessor.treeChanged(event);
+          }
+        });
       }
       for (PsiTreeChangePreprocessor preprocessor : PsiTreeChangePreprocessor.EP.getExtensions(myProject)) {
         try {
@@ -383,11 +440,19 @@ public final class PsiManagerImpl extends PsiManagerEx implements Disposable {
           LOG.error(e);
         }
       }
-      for (PsiTreeChangeListener listener : myTreeChangeListeners) {
+      for (PsiTreeChangeListener listener : myTreeChangeListenersBackgroundable) {
         notifyPsiTreeChangeListener(event, listener);
       }
-      for (PsiTreeChangeListener listener : PsiTreeChangeListener.EP.getExtensions(myProject)) {
-        notifyPsiTreeChangeListener(event, listener);
+      List<PsiTreeChangeListener> listeners = PsiTreeChangeListener.EP.getExtensions(myProject);
+      if (!myTreeChangeListeners.isEmpty() && !listeners.isEmpty()) {
+        runWriteActionOnEdtRegardlessOfCurrentThread(() -> {
+          for (PsiTreeChangeListener listener : myTreeChangeListeners) {
+            notifyPsiTreeChangeListener(event, listener);
+          }
+          for (PsiTreeChangeListener listener : PsiTreeChangeListener.EP.getExtensions(myProject)) {
+            notifyPsiTreeChangeListener(event, listener);
+          }
+        });
       }
     }
     finally {
@@ -396,6 +461,20 @@ public final class PsiManagerImpl extends PsiManagerEx implements Disposable {
       }
     }
   }
+
+  @RequiresWriteLock
+  @ApiStatus.Internal
+  static void runWriteActionOnEdtRegardlessOfCurrentThread(Runnable action) {
+    if (EDT.isCurrentThreadEdt()) {
+      action.run();
+    }
+    else {
+      Application application = ApplicationManager.getApplication();
+      TransferredWriteActionService service = application.getService(TransferredWriteActionService.class);
+      service.runOnEdtWithTransferredWriteActionAndWait(action);
+    }
+  }
+
 
   private static void notifyPsiTreeChangeListener(@NotNull PsiTreeChangeEventImpl event, PsiTreeChangeListener listener) {
     try {

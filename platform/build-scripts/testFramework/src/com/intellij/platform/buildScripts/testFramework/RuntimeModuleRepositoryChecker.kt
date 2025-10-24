@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.platform.buildScripts.testFramework
 
 import com.intellij.openapi.util.text.StringUtil
@@ -6,6 +6,8 @@ import com.intellij.platform.runtime.product.ProductMode
 import com.intellij.platform.runtime.product.ProductModules
 import com.intellij.platform.runtime.product.impl.ServiceModuleMapping
 import com.intellij.platform.runtime.product.serialization.ProductModulesSerialization
+import com.intellij.platform.runtime.product.serialization.RawProductModules
+import com.intellij.platform.runtime.product.serialization.ResourceFileResolver
 import com.intellij.platform.runtime.repository.MalformedRepositoryException
 import com.intellij.platform.runtime.repository.RuntimeModuleDescriptor
 import com.intellij.platform.runtime.repository.RuntimeModuleId
@@ -14,10 +16,18 @@ import com.intellij.platform.runtime.repository.serialization.RuntimeModuleRepos
 import com.intellij.util.containers.FList
 import org.assertj.core.api.SoftAssertions
 import org.jetbrains.intellij.build.BuildContext
-import org.jetbrains.intellij.build.impl.*
+import org.jetbrains.intellij.build.impl.MODULE_DESCRIPTORS_COMPACT_PATH
+import org.jetbrains.intellij.build.impl.SUPPORTED_DISTRIBUTIONS
+import org.jetbrains.intellij.build.impl.getOsAndArchSpecificDistDirectory
+import org.jetbrains.intellij.build.impl.hasModuleOutputPath
 import java.io.IOException
 import java.nio.file.Path
-import kotlin.io.path.*
+import kotlin.io.path.ExperimentalPathApi
+import kotlin.io.path.createDirectories
+import kotlin.io.path.exists
+import kotlin.io.path.moveTo
+import kotlin.io.path.pathString
+import kotlin.io.path.walk
 
 /**
  * Checks that runtime module descriptors in the product distribution are valid.
@@ -28,7 +38,7 @@ internal class RuntimeModuleRepositoryChecker private constructor(
   private val osSpecificDistPath: Path?,
   private val context: BuildContext,
 ): AutoCloseable {
-  private val descriptorsJarFile: Path
+  private val descriptorsFile: Path
   private val repository: RuntimeModuleRepository
   private val osSpecificFilePaths: List<Path>
   init {
@@ -46,8 +56,8 @@ internal class RuntimeModuleRepositoryChecker private constructor(
     else {
       osSpecificFilePaths = emptyList()
     }
-    descriptorsJarFile = commonDistPath.resolve(MODULE_DESCRIPTORS_JAR_PATH)
-    repository = RuntimeModuleRepository.create(descriptorsJarFile)
+    descriptorsFile = commonDistPath.resolve(MODULE_DESCRIPTORS_COMPACT_PATH)
+    repository = RuntimeModuleRepository.create(descriptorsFile)
   }
   
   companion object {
@@ -55,6 +65,17 @@ internal class RuntimeModuleRepositoryChecker private constructor(
       createCheckers(context).forEach {
         it().use { checker ->
           checker.checkProductModules(productModulesModule, softly)
+        }
+      }
+    }
+
+    /**
+     * Verifies that the bundled plugins specified in product-modules.xml file in [productModulesModule] are present in the distribution.
+     */
+    suspend fun checkBundledPluginsArePresent(productModulesModule: String, context: BuildContext, isEmbeddedVariant: Boolean, softly: SoftAssertions) {
+      createCheckers(context).forEach {
+        it().use { checker ->
+          checker.checkBundledPluginsArePresent(productModulesModule, softly, isEmbeddedVariant)
         }
       }
     }
@@ -74,20 +95,20 @@ internal class RuntimeModuleRepositoryChecker private constructor(
 
     private fun createCheckers(context: BuildContext): List<() -> RuntimeModuleRepositoryChecker> {
       val commonDistPath = context.paths.distAllDir 
-      if (commonDistPath.resolve(MODULE_DESCRIPTORS_JAR_PATH).exists()) {
+      if (commonDistPath.resolve(MODULE_DESCRIPTORS_COMPACT_PATH).exists()) {
         return listOf { RuntimeModuleRepositoryChecker(commonDistPath, null, context) }
       }
       return SUPPORTED_DISTRIBUTIONS
         .mapNotNull { distribution ->
-          val osSpecificDistPath = getOsAndArchSpecificDistDirectory(distribution.os, distribution.arch, context)
-          if (osSpecificDistPath.resolve(MODULE_DESCRIPTORS_JAR_PATH).exists()) {
+          val osSpecificDistPath = getOsAndArchSpecificDistDirectory(distribution.os, distribution.arch, distribution.libcImpl, context)
+          if (osSpecificDistPath.resolve(MODULE_DESCRIPTORS_COMPACT_PATH).exists()) {
             { RuntimeModuleRepositoryChecker(commonDistPath, osSpecificDistPath, context) }
           }
           else null
         }
     }
   }
-  private val moduleRepositoryData by lazy { RuntimeModuleRepositorySerialization.loadFromJar(descriptorsJarFile) }
+  private val moduleRepositoryData by lazy { RuntimeModuleRepositorySerialization.loadFromCompactFile(descriptorsFile) }
 
   private suspend fun checkProductModules(productModulesModule: String, softly: SoftAssertions) {
     try {
@@ -103,6 +124,12 @@ internal class RuntimeModuleRepositoryChecker private constructor(
       
       productModules.bundledPluginModuleGroups.forEach { group ->
         val allPluginModules = group.includedModules.map { it.moduleDescriptor } + serviceModuleMapping.getAdditionalModules(group)
+        if (group.mainModule.moduleId == RuntimeModuleId.module("intellij.performanceTesting.async") && context.applicationInfo.productCode == "IC") {
+          //'intellij.performanceTesting.async' bundled with IDEA Community includes modules which are included in the core plugin for IDEA Ultimate, 
+          //so it won't be loaded in IDEA Community, see IJPL-186414 
+          return@forEach
+        }
+        
         for (pluginModule in allPluginModules) {
           if (pluginModule.moduleId == RuntimeModuleId.projectLibrary("commons-lang3")) {
             //ignore this error until IJPL-671 is fixed
@@ -114,19 +141,26 @@ internal class RuntimeModuleRepositoryChecker private constructor(
             if (mainModules != null) {
               val mainModuleListString = 
                 if (mainModules.size < 3) mainModules.joinToString { it.stringId } 
-                else "${mainModules.first().stringId} and ${mainModules.size - 1} more modules" 
-              softly.collectAssertionError(
+                else "${mainModules.first().stringId} and ${mainModules.size - 1} more modules"
+              val moduleId = pluginModule.moduleId.stringId
+              val pluginModuleId = group.mainModule.moduleId.stringId
+              softly.collectAssertionErrorIfNotRegisteredYet(
                 AssertionError("""
-                |Module '${pluginModule.moduleId.stringId}' from plugin '${group.mainModule.moduleId}' has resource root $resourcePath,
-                |which is also added as a resource root of modules from the platform part ($mainModuleListString).
-                """.trimMargin()))
+                |Module '$moduleId' from plugin '$pluginModuleId' has resource root ${commonDistPath.relativize(resourcePath)},
+                |which is also added as a resource root of modules from the core (platform) plugin ($mainModuleListString).
+                |This may lead to classes from the core plugin to be loaded by two classloaders leading to ClassCastException at runtime.
+                |If '$moduleId' belongs to '$pluginModuleId' plugin, make sure that it's included in the plugin layout (if it's registered as a content module, it should be enough to remove
+                |explicit references to it from the build scripts, and it'll be packed in the plugin automatically).
+                |If '$moduleId' is a part of the core plugin, don't register it as a content module in '$pluginModuleId', and register it in `main-root-modules` tag in
+                |`product-modules.xml` instead. 
+                |""".trimMargin()))
             }
           }
         }
       }
     }
     catch (e: MalformedRepositoryException) { 
-      softly.collectAssertionError(AssertionError("Failed to load product-modules.xml for $descriptorsJarFile: $e", e))
+      softly.collectAssertionErrorIfNotRegisteredYet(AssertionError("Failed to load product-modules.xml for $descriptorsFile: $e", e))
     }
   }
 
@@ -141,7 +175,7 @@ internal class RuntimeModuleRepositoryChecker private constructor(
     }
     productModules.bundledPluginModuleGroups.forEach { group ->
       if (group.includedModules.isEmpty()) {
-        softly.collectAssertionError(AssertionError("""
+        softly.collectAssertionErrorIfNotRegisteredYet(AssertionError("""
            |No modules from '$group' are included in a product running in the frontend mode, so corresponding plugin won't be loaded.
            |Probably it indicates that some incorrect dependency was added to the main plugin module.  
         """.trimMargin()))
@@ -184,7 +218,7 @@ internal class RuntimeModuleRepositoryChecker private constructor(
         val rest = includedModules.size - displayedModulesCount
         val embeddedProductPresentableName = "${context.applicationInfo.shortProductName} Frontend"
         val more = if (rest > 0) " and $rest more ${StringUtil.pluralize("module", rest)}" else ""
-        softly.collectAssertionError(AssertionError("""
+        softly.collectAssertionErrorIfNotRegisteredYet(AssertionError("""
           |Module '${moduleId.stringId}' is not part of $embeddedProductPresentableName included in the full ${context.applicationInfo.shortProductName} distribution, but it's packed in ${included.pathString},
           |which is included in the classpath of $embeddedProductPresentableName because:
           |$firstIncludedModuleData$more are also packed in it.
@@ -202,13 +236,73 @@ internal class RuntimeModuleRepositoryChecker private constructor(
     }
   }
 
+  private suspend fun checkBundledPluginsArePresent(productModulesModule: String, softly: SoftAssertions, isEmbeddedVariant: Boolean) {
+    val rawProductModules = loadRawProductModules(productModulesModule)
+    val productName = context.applicationInfo.productNameWithEdition
+    val currentDistributionName = if (isEmbeddedVariant) productName else "'$productName Frontend'"
+    for (mainModuleId in rawProductModules.bundledPluginMainModules) {
+      val mainModule = repository.resolveModule(mainModuleId)
+      if (mainModule.resolvedModule == null) {
+        val problematicModule = if (mainModule.failedDependencyPath.size == 1) "it" else "its dependency ${mainModule.failedDependencyPath.reversed().joinToString(" <- ") { it.stringId }}"
+        softly.collectAssertionErrorIfNotRegisteredYet(
+          AssertionError(
+            buildString { 
+              append("Module '${mainModuleId.stringId}' is specified as the main module of a bundled plugin in product-modules.xml in '$productModulesModule',\n")
+              append("but $problematicModule cannot be found in the runtime module repository in the distribution of $currentDistributionName.\n")
+              if (isEmbeddedVariant) {
+                append("It means that the corresponding plugin won't be loaded when '$productName Frontend' is started from the full\n")
+                append("installation of $productName\n")
+              }
+              append("If '${mainModuleId.stringId}' shouldn't be available in the frontend variant of $productName, remove it from product-modules.xml file\n")
+              append("(or use 'without-module' tag if it comes via 'include' tag).\n")
+              if (isEmbeddedVariant) {
+                append("If it should, add all necessary modules to the plugin layout of the main variant of '${mainModuleId.stringId}' plugin.\n")
+                append("Modules used by the frontend variant only should be put in JAR files in 'frontend-split' subdirectory so they won't be loaded in the regular IDE.\n")
+              }
+              else {
+                append("If it should, make sure that all necessary modules are included in the distribution of $currentDistributionName.\n")
+              }
+              if (mainModule.failedDependencyPath.size > 1) {
+                append("If some dependencies in the chain ${mainModule.failedDependencyPath.joinToString(" <- ") { it.stringId }}\n")
+                append("are not actually needed, they can be removed from configuration of the corresponding JPS modules (*.iml) to fix this problem.\n")
+              }
+              append("Please refer to https://youtrack.jetbrains.com/articles/IJPL-A-268 to learn more how the frontend process starts.")
+            }
+          )
+        )
+      }
+    }
+  }
+
+  private fun SoftAssertions.collectAssertionErrorIfNotRegisteredYet(e: AssertionError) {
+    if (errorsCollected().none {
+        val message = it.message
+        message != null && message.lineSequence().filterNot { line -> line.startsWith("at ") }.joinToString("\n").trim() == e.message?.trim() 
+    }) {
+      collectAssertionError(e)
+    }
+  }
+
   private suspend fun loadProductModules(productModulesModule: String): ProductModules {
     val relativePath = "META-INF/$productModulesModule/product-modules.xml"
-    val debugName = "${context.getModuleOutputDir(context.findRequiredModule(productModulesModule))}/$relativePath"
-    val content = context.getModuleOutputFileContent(context.findRequiredModule(productModulesModule), relativePath)
+    val debugName = "($relativePath file in $productModulesModule)"
+    val content = context.readFileContentFromModuleOutput(context.findRequiredModule(productModulesModule), relativePath)
                   ?: throw MalformedRepositoryException("File '$relativePath' is not found in module $productModulesModule output")
     try {
       return ProductModulesSerialization.loadProductModules(content.inputStream(), debugName, ProductMode.FRONTEND, repository)
+    }
+    catch (e: IOException) {
+      throw MalformedRepositoryException("Failed to load module group from $debugName", e)
+    }
+  }
+  
+  private suspend fun loadRawProductModules(productModulesModule: String): RawProductModules {
+    val relativePath = "META-INF/$productModulesModule/product-modules.xml"
+    val debugName = "($relativePath file in $productModulesModule)"
+    val content = context.readFileContentFromModuleOutput(context.findRequiredModule(productModulesModule), relativePath)
+                  ?: throw MalformedRepositoryException("File '$relativePath' is not found in module $productModulesModule output")
+    try {
+      return ProductModulesSerialization.readProductModulesAndMergeIncluded(content.inputStream(), debugName, ResourceFileResolver.createDefault(repository))
     }
     catch (e: IOException) {
       throw MalformedRepositoryException("Failed to load module group from $debugName", e)

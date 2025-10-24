@@ -8,6 +8,7 @@ import com.intellij.ide.plugins.DynamicPluginListener
 import com.intellij.openapi.application.Application
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.PathManager
+import com.intellij.openapi.components.impl.stores.stateStore
 import com.intellij.openapi.components.serviceAsync
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.impl.processPerProjectSupport
@@ -23,6 +24,7 @@ import kotlinx.coroutines.flow.debounce
 import java.nio.file.Path
 import kotlin.io.path.exists
 import kotlin.io.path.readBytes
+import kotlin.time.Duration.Companion.minutes
 
 private class P3SharedConfigFolderApplicationLoadListener : ApplicationLoadListener {
   override suspend fun beforeApplicationLoaded(application: Application, configPath: Path) {
@@ -36,16 +38,32 @@ private class P3SharedConfigFolderApplicationLoadListener : ApplicationLoadListe
 
 @OptIn(FlowPreview::class)
 private class ProcessPerProjectSharedConfigFolderApplicationInitializedListener : ApplicationActivity {
-  override suspend fun execute() {
+  override suspend fun execute() = coroutineScope {
+    if (!processPerProjectSupport().isEnabled()) {
+      return@coroutineScope
+    }
+
     val path = PathManager.getOriginalConfigDir()
-    if (processPerProjectSupport().isEnabled()) {
-      LOG.info("P3 mode is enabled, configuration files with be synchronized with $path.")
-      SharedConfigFolderUtil.installFsWatcher(path)
-      ApplicationManager.getApplication().messageBus.connect().subscribe(DynamicPluginListener.TOPIC, serviceAsync<P3DynamicPluginSynchronizer>())
-      coroutineScope {
-        setupSyncEarlyAccessRegistry(path, this)
-        setupSyncDisabledPlugins(path, this)
+    LOG.info("P3 mode is enabled, configuration files with be synchronized with $path.")
+    val app = ApplicationManager.getApplication()
+    val compoundStreamProvider = app.stateStore.storageManager.streamProvider
+    val streamProvider = compoundStreamProvider.getInstanceOf(SharedConfigFolderStreamProvider::class.java) as SharedConfigFolderStreamProvider
+    val configFilesUpdatedByThisProcess = streamProvider.configFilesUpdatedByThisProcess
+    launch {
+      SharedConfigFolderUtil.installFsWatcher(path, configFilesUpdatedByThisProcess)
+    }
+
+    launch {
+      while (isActive) {
+        delay(1.minutes)
+        configFilesUpdatedByThisProcess.cleanUpOldData()
       }
+    }
+
+    app.messageBus.connect(this@coroutineScope).subscribe(DynamicPluginListener.TOPIC, serviceAsync<P3DynamicPluginSynchronizer>())
+    coroutineScope {
+      setupSyncEarlyAccessRegistry(path, this)
+      setupSyncDisabledPlugins(path, this)
     }
   }
 
@@ -83,7 +101,9 @@ private class ProcessPerProjectSharedConfigFolderApplicationInitializedListener 
 
   private fun syncCustomConfigFile(originalConfigDir: Path, fileName: String) {
     val sourceFile = PathManager.getConfigDir().resolve(fileName)
-    val targetFile = originalConfigDir.resolve(fileName)
+    val targetFileName = fileName.takeIf { it != DisabledPluginsState.DISABLED_PLUGINS_FILENAME }
+                         ?: processPerProjectSupport().disabledPluginsFileName
+    val targetFile = originalConfigDir.resolve(targetFileName)
     if (sourceFile.exists()) {
       SharedConfigFolderUtil.writeToSharedFile(targetFile, sourceFile.readBytes())
     }

@@ -1,9 +1,10 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.kotlin.idea.k2.codeinsight.quickFixes.createFromUsage
 
 import com.intellij.codeInsight.Nullability
 import com.intellij.codeInsight.daemon.QuickFixBundle
 import com.intellij.codeInsight.intention.IntentionAction
+import com.intellij.codeInsight.intention.PriorityAction
 import com.intellij.codeInsight.intention.preview.IntentionPreviewInfo
 import com.intellij.lang.java.request.CreateFieldFromJavaUsageRequest
 import com.intellij.lang.jvm.JvmClass
@@ -16,6 +17,7 @@ import com.intellij.lang.jvm.actions.ExpectedTypeWithNullability
 import com.intellij.lang.jvm.types.JvmPrimitiveType
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.editor.Editor
+import com.intellij.openapi.editor.ScrollType
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.text.StringUtilRt
 import com.intellij.openapi.vfs.ReadonlyStatusHandler
@@ -27,6 +29,9 @@ import com.intellij.psi.util.parentOfType
 import org.jetbrains.kotlin.analysis.api.KaExperimentalApi
 import org.jetbrains.kotlin.analysis.api.KaSession
 import org.jetbrains.kotlin.analysis.api.analyze
+import org.jetbrains.kotlin.analysis.api.components.buildClassType
+import org.jetbrains.kotlin.analysis.api.components.expressionType
+import org.jetbrains.kotlin.analysis.api.components.resolveToSymbol
 import org.jetbrains.kotlin.analysis.api.permissions.KaAllowAnalysisFromWriteAction
 import org.jetbrains.kotlin.analysis.api.permissions.KaAllowAnalysisOnEdt
 import org.jetbrains.kotlin.analysis.api.permissions.allowAnalysisFromWriteAction
@@ -46,6 +51,7 @@ import org.jetbrains.kotlin.idea.base.analysis.api.utils.shortenReferences
 import org.jetbrains.kotlin.idea.base.codeInsight.ShortenReferencesFacility
 import org.jetbrains.kotlin.idea.base.psi.classIdIfNonLocal
 import org.jetbrains.kotlin.idea.base.psi.getOrCreateCompanionObject
+import org.jetbrains.kotlin.idea.base.psi.presentableClassId
 import org.jetbrains.kotlin.idea.base.resources.KotlinBundle
 import org.jetbrains.kotlin.idea.codeinsight.utils.resolveExpression
 import org.jetbrains.kotlin.idea.quickfix.createFromUsage.CreateFromUsageUtil
@@ -69,7 +75,7 @@ object K2CreatePropertyFromUsageBuilder {
         request: CreateFieldRequest,
         lateinit: Boolean
     ): IntentionAction? {
-        if (!request.isValid) null
+        if (!request.isValid) return null
         return CreatePropertyFromUsageAction(targetContainer, classOrFileName, request, lateinit)
     }
 
@@ -90,7 +96,7 @@ object K2CreatePropertyFromUsageBuilder {
         }
     }
 
-    context(KaSession)
+    context(_: KaSession)
     private fun buildRequests(ref: KtNameReferenceExpression): List<Pair<JvmClass, CreateFieldRequest>> {
         val requests = mutableListOf<Pair<JvmClass, CreateFieldRequest>>()
         val qualifiedElement = ref.getQualifiedElement()
@@ -138,7 +144,7 @@ object K2CreatePropertyFromUsageBuilder {
                 }
                 val jvmModifiers = createModifiers(ref, containingKtFile, isExtension = true, static = true, false)
                 val classId =
-                    (defaultContainerPsi as? KtClassOrObject)?.takeUnless { it is KtEnumEntry }?.classIdIfNonLocal ?: (defaultContainerPsi as? PsiClass)?.classIdIfNonLocal
+                    (defaultContainerPsi as? KtClassOrObject)?.takeUnless { it is KtEnumEntry }?.presentableClassId ?: (defaultContainerPsi as? PsiClass)?.classIdIfNonLocal
                 if (classId != null) {
                     val targetClassType = buildClassType(if (static) ClassId.fromString(classId.asFqNameString() + ".Companion") else classId)
                     requests.add(wrapperForKtFile to CreatePropertyFromKotlinUsageRequest(ref, jvmModifiers, targetClassType, isExtension = true))
@@ -180,7 +186,7 @@ object K2CreatePropertyFromUsageBuilder {
         target: AnnotationUseSiteTarget?,
         request: AnnotationRequest
     ): IntentionAction? {
-        if (!request.isValid) null
+        if (!request.isValid) return null
 
         return CreateAnnotationAction(owner, target, request)
     }
@@ -190,7 +196,7 @@ object K2CreatePropertyFromUsageBuilder {
         private val classOrFileName: String?,
         private val request: CreateFieldRequest,
         private val lateinit: Boolean
-    ) : IntentionAction {
+    ) : IntentionAction, PriorityAction {
         val pointer: SmartPsiElementPointer<KtElement> = SmartPointerManager.createPointer(targetContainer)
 
         private val varVal: String
@@ -198,6 +204,13 @@ object K2CreatePropertyFromUsageBuilder {
                 val writeable = JvmModifier.FINAL !in request.modifiers && !request.isConstant
                 return if (writeable) "var" else "val"
             }
+
+        override fun getPriority(): PriorityAction.Priority {
+            if ((request as? CreatePropertyFromKotlinUsageRequest)?.isExtension == true) {
+                return PriorityAction.Priority.LOW
+            }
+            return PriorityAction.Priority.NORMAL
+        }
 
         private val kotlinModifiers: List<KtModifierKeywordToken>?
             get() =
@@ -214,9 +227,11 @@ object K2CreatePropertyFromUsageBuilder {
                 }.takeUnless { it.isEmpty() }
 
         private fun isLateinitAllowed(): Boolean {
-            if (request is CreatePropertyFromKotlinUsageRequest &&
-                request.fieldType.all { it.theType is JvmPrimitiveType || (it as? ExpectedTypeWithNullability)?.nullability == Nullability.NULLABLE }) {
-                return false
+            if (request is CreatePropertyFromKotlinUsageRequest) {
+                if (request.fieldType.all { it.theType is JvmPrimitiveType || (it as? ExpectedTypeWithNullability)?.nullability == Nullability.NULLABLE } ||
+                    request.modifiers.contains(JvmModifier.ABSTRACT)) {
+                    return false
+                }
             }
             return request !is CreatePropertyFromKotlinUsageRequest || !request.isExtension
         }
@@ -232,23 +247,39 @@ object K2CreatePropertyFromUsageBuilder {
                     } else "fix.create.from.usage.property"
                     KotlinBundle.message(key, request.fieldName)
                 }
-            } else
-            KotlinBundle.message(
-                "quickFix.add.property.text",
-                kotlinModifiers?.joinToString(separator = " ", postfix = " ") ?: "",
-                varVal,
-                request.fieldName,
-                classOrFileName.toString()
-            )
+            } else {
+                val modifier = if (lateinit || kotlinModifiers?.contains(KtTokens.LATEINIT_KEYWORD) == true) {
+                    "lateinit "
+                } else if (request.isConstant) {
+                    "const "
+                } else ""
+
+                KotlinBundle.message(
+                    "quickFix.add.property.text",
+                    modifier,
+                    varVal,
+                    request.fieldName,
+                    classOrFileName.toString()
+                )
+            }
         }
 
         private var declarationText: String = computeDeclarationText()
 
-        @OptIn(KaExperimentalApi::class)
+        @OptIn(KaExperimentalApi::class, KaAllowAnalysisOnEdt::class)
         private fun computeDeclarationText(): String {
             val container = pointer.element ?: return ""
+            val psiFactory = KtPsiFactory(container.project)
 
             return buildString {
+                for (annotation in request.annotations) {
+                    if (isNotEmpty()) append(" ")
+                    append('@')
+                    append(renderAnnotation(container, annotation, psiFactory))
+                }
+
+                if (isNotEmpty()) append(" ")
+
                 if (request is CreateFieldFromJavaUsageRequest && !lateinit) {
                     append("@")
                     append(JvmAbi.JVM_FIELD_ANNOTATION_FQ_NAME)
@@ -268,16 +299,19 @@ object K2CreatePropertyFromUsageBuilder {
                     (request.receiverTypeString)?.let { append(it).append(".") }
                 }
                 append(request.fieldName.quoteIfNeeded())
-                append(": ")
 
-                analyze(container) {
-                    val expectedType = request.fieldType.firstOrNull()
-                    val type = when (expectedType) {
-                        is ExpectedKotlinType -> expectedType.kaType
-                        else -> (expectedType?.theType as? PsiType)?.asKaType(container)
+                allowAnalysisOnEdt {
+                    analyze(container) {
+                        val type = when (val expectedType = request.fieldType.firstOrNull()) {
+                            is ExpectedKotlinType -> expectedType.kaType
+                            else -> (expectedType?.theType as? PsiType).takeUnless { it == PsiTypes.nullType() }?.asKaType(container)
+                        }
+                        type?.render(KaTypeRendererForSource.WITH_QUALIFIED_NAMES, Variance.IN_VARIANCE)
                     }
-                    type?.render(KaTypeRendererForSource.WITH_QUALIFIED_NAMES, Variance.IN_VARIANCE)
-                }?.let { append(it) }
+                }?.let {
+                    append(": ")
+                    append(it)
+                }
 
                 val requestInitializer = request.initializer
                 val addInitializer =
@@ -332,6 +366,10 @@ object K2CreatePropertyFromUsageBuilder {
 
                 val declarationInContainer =
                     CreateFromUsageUtil.placeDeclarationInContainer(createdDeclaration, adjustedContainer, actualAnchor)
+                if (file == declarationInContainer.containingFile) {
+                    editor?.caretModel?.moveToOffset(declarationInContainer.textRange.endOffset)
+                    editor?.scrollingModel?.scrollToCaret(ScrollType.MAKE_VISIBLE)
+                }
                 shortenReferences(declarationInContainer)
             }
         }
@@ -406,7 +444,6 @@ object K2CreatePropertyFromUsageBuilder {
                 }
             }
         }
-        return false
     }
 
     private val fieldAnnotationTargetCallableId: CallableId =

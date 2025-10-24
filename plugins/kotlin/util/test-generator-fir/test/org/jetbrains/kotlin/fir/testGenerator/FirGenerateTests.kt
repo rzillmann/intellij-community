@@ -1,7 +1,8 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 
 package org.jetbrains.kotlin.fir.testGenerator
 
+import com.intellij.testFramework.TestIndexingModeSupporter.IndexingMode
 import org.jetbrains.fir.uast.test.*
 import org.jetbrains.kotlin.fir.testGenerator.codeinsight.generateK2CodeInsightTests
 import org.jetbrains.kotlin.fir.testGenerator.gradle.generateK2GradleTests
@@ -9,6 +10,7 @@ import org.jetbrains.kotlin.idea.base.fir.analysisApiPlatform.AbstractIdeKotlinA
 import org.jetbrains.kotlin.idea.base.fir.analysisApiPlatform.dependents.AbstractModuleDependentsTest
 import org.jetbrains.kotlin.idea.base.fir.analysisApiPlatform.inheritors.AbstractDirectInheritorsProviderTest
 import org.jetbrains.kotlin.idea.base.fir.analysisApiPlatform.inheritors.AbstractSealedInheritorsProviderTest
+import org.jetbrains.kotlin.idea.base.fir.analysisApiPlatform.projectStructure.scopes.AbstractResolutionScopeStructureTest
 import org.jetbrains.kotlin.idea.base.fir.analysisApiPlatform.sessions.AbstractGlobalSessionInvalidationTest
 import org.jetbrains.kotlin.idea.base.fir.analysisApiPlatform.sessions.AbstractLocalSessionInvalidationTest
 import org.jetbrains.kotlin.idea.base.fir.analysisApiPlatform.trackers.AbstractProjectWideSourceKotlinModificationTrackerTest
@@ -37,9 +39,11 @@ import org.jetbrains.kotlin.idea.fir.imports.AbstractK2JsOptimizeImportsTest
 import org.jetbrains.kotlin.idea.fir.imports.AbstractK2JvmOptimizeImportsTest
 import org.jetbrains.kotlin.idea.fir.kmp.AbstractK2KmpLightFixtureHighlightingTest
 import org.jetbrains.kotlin.idea.fir.navigation.*
+import org.jetbrains.kotlin.idea.fir.parameterInfo.AbstractFirMultilineParameterInfoTest
 import org.jetbrains.kotlin.idea.fir.parameterInfo.AbstractFirParameterInfoTest
 import org.jetbrains.kotlin.idea.fir.projectView.AbstractK2ProjectViewTest
 import org.jetbrains.kotlin.idea.fir.resolve.*
+import org.jetbrains.kotlin.idea.fir.run.AbstractKotlinTestNavigationTest
 import org.jetbrains.kotlin.idea.fir.search.AbstractHLImplementationSearcherTest
 import org.jetbrains.kotlin.idea.fir.search.AbstractKotlinBuiltInsResolveScopeEnlargerTest
 import org.jetbrains.kotlin.idea.fir.search.AbstractScopeEnlargerTest
@@ -118,6 +122,10 @@ private fun assembleWorkspace(): TWorkspace = workspace(KotlinPluginMode.K2) {
         testClass<AbstractSealedInheritorsProviderTest> {
             model("sealedInheritors", pattern = DIRECTORY, isRecursive = false)
         }
+
+        testClass<AbstractResolutionScopeStructureTest> {
+            model("resolutionScopes", pattern = DIRECTORY, isRecursive = false)
+        }
     }
 
     testGroup("base/fir/project-structure") {
@@ -137,6 +145,10 @@ private fun assembleWorkspace(): TWorkspace = workspace(KotlinPluginMode.K2) {
     }
 
     testGroup("fir/tests", testDataPath = "../../idea/tests/testData", category = CODE_INSIGHT) {
+        testClass<AbstractKotlinTestNavigationTest>(indexingMode = listOf(IndexingMode.DUMB_FULL_INDEX, IndexingMode.SMART)) {
+            model("navigation/navigateToTestFromView", pattern = Patterns.forRegex("^([^.]+)\\.(kt|java)$"))
+        }
+
         testClass<AbstractK2AddImportActionTest> {
             model("idea/actions/kotlinAddImportAction", pattern = KT_WITHOUT_DOTS)
         }
@@ -203,12 +215,21 @@ private fun assembleWorkspace(): TWorkspace = workspace(KotlinPluginMode.K2) {
             model("shortenRefs/this", pattern = KT_WITHOUT_DOTS, testMethodName = "doTestWithMuting")
         }
 
-        testClass<AbstractFirParameterInfoTest> {
-            model(
-                "parameterInfo", pattern = Patterns.forRegex("^([\\w\\-_]+)\\.(kt|java)$"), isRecursive = true,
-                excludedDirectories = listOf("withLib1/sharedLib", "withLib2/sharedLib", "withLib3/sharedLib", "withLib4/sharedLib")
-            )
+        run {
+            fun MutableTSuite.parameterInfoModel() {
+                model(
+                    "parameterInfo", pattern = Patterns.forRegex("^([\\w\\-_]+)\\.(kt|java)$"), isRecursive = true,
+                    excludedDirectories = listOf("withLib1/sharedLib", "withLib2/sharedLib", "withLib3/sharedLib", "withLib4/sharedLib")
+                )
+            }
+            testClass<AbstractFirParameterInfoTest> {
+                parameterInfoModel()
+            }
+            testClass<AbstractFirMultilineParameterInfoTest> {
+                parameterInfoModel()
+            }
         }
+
 
         testClass<AbstractK2AutoImportTest> {
             model(
@@ -252,7 +273,7 @@ private fun assembleWorkspace(): TWorkspace = workspace(KotlinPluginMode.K2) {
             model("navigation/moveToNextMethod", pattern = TEST, testMethodName = "doTest")
         }
 
-        testClass<AbstractFirGotoTest> {
+        testClass<AbstractFirGotoTest>(indexingMode = listOf(IndexingMode.DUMB_FULL_INDEX, IndexingMode.SMART)) {
             model("navigation/gotoClass", testMethodName = "doClassTest")
             model("navigation/gotoSymbol", testMethodName = "doSymbolTest")
         }
@@ -271,7 +292,12 @@ private fun assembleWorkspace(): TWorkspace = workspace(KotlinPluginMode.K2) {
         testClass<AbstractK2JvmBasicCompletionTest> {
             model("basic/common", pattern = KT_WITHOUT_FIR_PREFIX)
             model("basic/java", pattern = KT_WITHOUT_FIR_PREFIX)
+            model("basic/skipRangeTo", pattern = KT_WITHOUT_DOTS)
             model("../../idea-fir/testData/completion/basic/common", testClassName = "CommonFir")
+        }
+
+        testClass<AbstractK2TypeCodeFragmentCompletionTest> {
+            model("basic/typeFragments", pattern = KT_WITHOUT_FIR_PREFIX)
         }
 
         testClass<AbstractK2JvmBasicCompletionFullJdkTest> {
@@ -356,6 +382,10 @@ private fun assembleWorkspace(): TWorkspace = workspace(KotlinPluginMode.K2) {
 
         testClass<AbstractFirWithMppStdlibCompletionTest> {
             model("basic/stdlibWithCommon", isRecursive = false, pattern = KT_WITHOUT_FIR_PREFIX)
+        }
+
+        testClass<AbstractK2SmartCompletionTest> {
+            model("smart/frontendAgnostic", pattern = KT_WITHOUT_FIR_PREFIX)
         }
 
         // Smart completion does not work in K2, see KTIJ-26166

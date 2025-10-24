@@ -1,10 +1,11 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.kotlin.idea.k2.codeinsight.copyPaste
 
 import com.intellij.openapi.util.TextRange
 import com.intellij.psi.createSmartPointer
 import org.jetbrains.kotlin.analysis.api.KaImplementationDetail
 import org.jetbrains.kotlin.analysis.api.KaSession
+import org.jetbrains.kotlin.analysis.api.analyze
 import org.jetbrains.kotlin.analysis.api.resolution.KaSymbolBasedReference
 import org.jetbrains.kotlin.analysis.api.symbols.KaCallableSymbol
 import org.jetbrains.kotlin.analysis.api.symbols.KaSymbol
@@ -76,7 +77,7 @@ internal object KotlinReferenceRestoringHelper {
     /**
      * Note that the contents of [sourceFile] are expected to be the same as they were at the moment of [sourceReferenceInfos]' collection.
      */
-    context(KaSession)
+    context(_: KaSession)
     fun getResolvedSourceReferencesThatMightRequireRestoring(
         sourceFile: KtFile,
         sourceReferenceInfos: List<KotlinSourceReferenceInfo>,
@@ -126,7 +127,7 @@ internal object KotlinReferenceRestoringHelper {
         override fun toString(): String = fqName.asString()
     }
 
-    context(KaSession)
+    context(_: KaSession)
     fun getTargetReferencesToRestore(
         sourceReferencesInTargetFile: List<KotlinSourceReferenceInTargetFile>,
         resolvedSourceReferences: List<KotlinResolvedSourceReference>,
@@ -154,7 +155,7 @@ internal object KotlinReferenceRestoringHelper {
         }
     }
 
-    context(KaSession)
+    context(_: KaSession)
     private fun symbolMightRequireRestoring(
         symbol: KaSymbol,
         receiverExpression: KtExpression?,
@@ -169,7 +170,7 @@ internal object KotlinReferenceRestoringHelper {
         return true
     }
 
-    context(KaSession)
+    context(_: KaSession)
     private fun buildTargetReferenceToRestore(
         sourceFqName: FqName,
         isReferenceQualifiable: Boolean,
@@ -192,7 +193,6 @@ internal object KotlinReferenceRestoringHelper {
         else -> null
     }
 
-    context(KaSession)
     private fun isAccessible(
         targetReference: KtReference,
         sourceFqName: FqName
@@ -202,7 +202,9 @@ internal object KotlinReferenceRestoringHelper {
                 .createImportDirective(ImportPath(sourceFqName, false))
                 .importedReference
         val reference = importedReference?.getQualifiedElementSelector()?.mainReference ?: return false
-        val symbols = reference.resolveToSymbols()
-        return symbols.isNotEmpty()
+        analyze(reference.element) {
+            val symbols = reference.resolveToSymbols()
+            return symbols.isNotEmpty()
+        }
     }
 }

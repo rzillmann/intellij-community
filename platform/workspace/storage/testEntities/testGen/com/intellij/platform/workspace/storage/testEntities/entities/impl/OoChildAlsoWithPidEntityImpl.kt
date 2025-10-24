@@ -1,16 +1,7 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.platform.workspace.storage.testEntities.entities.impl
 
 import com.intellij.platform.workspace.storage.*
-import com.intellij.platform.workspace.storage.ConnectionId
-import com.intellij.platform.workspace.storage.EntitySource
-import com.intellij.platform.workspace.storage.EntityType
-import com.intellij.platform.workspace.storage.GeneratedCodeApiVersion
-import com.intellij.platform.workspace.storage.GeneratedCodeImplVersion
-import com.intellij.platform.workspace.storage.MutableEntityStorage
-import com.intellij.platform.workspace.storage.WorkspaceEntity
-import com.intellij.platform.workspace.storage.WorkspaceEntityInternalApi
-import com.intellij.platform.workspace.storage.annotations.Child
 import com.intellij.platform.workspace.storage.impl.EntityLink
 import com.intellij.platform.workspace.storage.impl.ModifiableWorkspaceEntityBase
 import com.intellij.platform.workspace.storage.impl.WorkspaceEntityBase
@@ -22,11 +13,13 @@ import com.intellij.platform.workspace.storage.instrumentation.EntityStorageInst
 import com.intellij.platform.workspace.storage.instrumentation.MutableEntityStorageInstrumentation
 import com.intellij.platform.workspace.storage.metadata.model.EntityMetadata
 import com.intellij.platform.workspace.storage.testEntities.entities.OoChildAlsoWithPidEntity
+import com.intellij.platform.workspace.storage.testEntities.entities.OoChildAlsoWithPidEntityBuilder
 import com.intellij.platform.workspace.storage.testEntities.entities.OoChildEntityId
 import com.intellij.platform.workspace.storage.testEntities.entities.OoParentWithPidEntity
+import com.intellij.platform.workspace.storage.testEntities.entities.OoParentWithPidEntityBuilder
 
 @GeneratedCodeApiVersion(3)
-@GeneratedCodeImplVersion(6)
+@GeneratedCodeImplVersion(7)
 @OptIn(WorkspaceEntityInternalApi::class)
 internal class OoChildAlsoWithPidEntityImpl(private val dataSource: OoChildAlsoWithPidEntityData) : OoChildAlsoWithPidEntity, WorkspaceEntityBase(
   dataSource) {
@@ -65,7 +58,7 @@ internal class OoChildAlsoWithPidEntityImpl(private val dataSource: OoChildAlsoW
 
 
   internal class Builder(result: OoChildAlsoWithPidEntityData?) : ModifiableWorkspaceEntityBase<OoChildAlsoWithPidEntity, OoChildAlsoWithPidEntityData>(
-    result), OoChildAlsoWithPidEntity.Builder {
+    result), OoChildAlsoWithPidEntityBuilder {
     internal constructor() : this(OoChildAlsoWithPidEntityData())
 
     override fun applyToBuilder(builder: MutableEntityStorage) {
@@ -141,17 +134,17 @@ internal class OoChildAlsoWithPidEntityImpl(private val dataSource: OoChildAlsoW
         changedProperty.add("childProperty")
       }
 
-    override var parentEntity: OoParentWithPidEntity.Builder
+    override var parentEntity: OoParentWithPidEntityBuilder
       get() {
         val _diff = diff
         return if (_diff != null) {
           @OptIn(EntityStorageInstrumentationApi::class)
           ((_diff as MutableEntityStorageInstrumentation).getParentBuilder(PARENTENTITY_CONNECTION_ID,
-                                                                           this) as? OoParentWithPidEntity.Builder)
-          ?: (this.entityLinks[EntityLink(false, PARENTENTITY_CONNECTION_ID)]!! as OoParentWithPidEntity.Builder)
+                                                                           this) as? OoParentWithPidEntityBuilder)
+          ?: (this.entityLinks[EntityLink(false, PARENTENTITY_CONNECTION_ID)]!! as OoParentWithPidEntityBuilder)
         }
         else {
-          this.entityLinks[EntityLink(false, PARENTENTITY_CONNECTION_ID)]!! as OoParentWithPidEntity.Builder
+          this.entityLinks[EntityLink(false, PARENTENTITY_CONNECTION_ID)]!! as OoParentWithPidEntityBuilder
         }
       }
       set(value) {
@@ -188,7 +181,7 @@ internal class OoChildAlsoWithPidEntityData : WorkspaceEntityData<OoChildAlsoWit
 
   internal fun isChildPropertyInitialized(): Boolean = ::childProperty.isInitialized
 
-  override fun wrapAsModifiable(diff: MutableEntityStorage): WorkspaceEntity.Builder<OoChildAlsoWithPidEntity> {
+  override fun wrapAsModifiable(diff: MutableEntityStorage): WorkspaceEntityBuilder<OoChildAlsoWithPidEntity> {
     val modifiable = OoChildAlsoWithPidEntityImpl.Builder(null)
     modifiable.diff = diff
     modifiable.id = createEntityId()
@@ -215,9 +208,9 @@ internal class OoChildAlsoWithPidEntityData : WorkspaceEntityData<OoChildAlsoWit
     return OoChildAlsoWithPidEntity::class.java
   }
 
-  override fun createDetachedEntity(parents: List<WorkspaceEntity.Builder<*>>): WorkspaceEntity.Builder<*> {
+  override fun createDetachedEntity(parents: List<WorkspaceEntityBuilder<*>>): WorkspaceEntityBuilder<*> {
     return OoChildAlsoWithPidEntity(childProperty, entitySource) {
-      parents.filterIsInstance<OoParentWithPidEntity.Builder>().singleOrNull()?.let { this.parentEntity = it }
+      parents.filterIsInstance<OoParentWithPidEntityBuilder>().singleOrNull()?.let { this.parentEntity = it }
     }
   }
 

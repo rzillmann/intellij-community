@@ -1,6 +1,7 @@
 // Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.java.syntax.element
 
+import com.intellij.java.syntax.element.lazyParser.JavaCodeBlockParser
 import com.intellij.platform.syntax.SyntaxElementType
 import kotlin.jvm.JvmField
 
@@ -8,7 +9,7 @@ import kotlin.jvm.JvmField
  * @see com.intellij.psi.impl.source.tree.JavaElementType
  */
 object JavaSyntaxElementType {
-  @JvmField val JAVA_FILE: SyntaxElementType = SyntaxElementType("JAVA_FILE")
+  @JvmField val JAVA_FILE: SyntaxElementType = SyntaxElementType("java.FILE")
   @JvmField val CLASS: SyntaxElementType = SyntaxElementType("CLASS")
   @JvmField val IMPLICIT_CLASS: SyntaxElementType = SyntaxElementType("IMPLICIT_CLASS")
   @JvmField val ANONYMOUS_CLASS: SyntaxElementType = SyntaxElementType("ANONYMOUS_CLASS")
@@ -119,7 +120,7 @@ object JavaSyntaxElementType {
   @JvmField val DEFAULT_CASE_LABEL_ELEMENT: SyntaxElementType = SyntaxElementType("DEFAULT_CASE_LABEL_ELEMENT")
   @JvmField val CASE_LABEL_ELEMENT_LIST: SyntaxElementType = SyntaxElementType("CASE_LABEL_ELEMENT_LIST")
 
-  @JvmField val CODE_BLOCK: SyntaxElementType = SyntaxElementType("CODE_BLOCK")
+  @JvmField val CODE_BLOCK: SyntaxElementType = SyntaxElementType("CODE_BLOCK", lazyParser = JavaCodeBlockParser())
 
   @JvmField val MEMBERS: SyntaxElementType = SyntaxElementType("MEMBERS")
 

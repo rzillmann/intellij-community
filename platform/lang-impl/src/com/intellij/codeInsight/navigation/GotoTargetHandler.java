@@ -38,7 +38,9 @@ import com.intellij.platform.ide.navigation.NavigationOptions;
 import com.intellij.pom.Navigatable;
 import com.intellij.psi.*;
 import com.intellij.psi.util.PsiUtilCore;
+import com.intellij.ui.ClientProperty;
 import com.intellij.ui.ExperimentalUI;
+import com.intellij.ui.components.JBList;
 import com.intellij.usages.UsageView;
 import com.intellij.util.Alarm;
 import com.intellij.util.ArrayUtil;
@@ -64,24 +66,24 @@ public abstract class GotoTargetHandler implements CodeInsightActionHandler {
   }
 
   @Override
-  public void invoke(@NotNull Project project, @NotNull Editor editor, @NotNull PsiFile file) {
+  public void invoke(@NotNull Project project, @NotNull Editor editor, @NotNull PsiFile psiFile) {
     String featureId = getFeatureUsedKey();
     if (featureId != null) {
       FeatureUsageTracker.getInstance().triggerFeatureUsed(featureId);
     }
 
     try {
-      GotoData gotoData = getSourceAndTargetElements(editor, file);
+      GotoData gotoData = getSourceAndTargetElements(editor, psiFile);
       Consumer<JBPopup> showPopupProcedure = popup -> {
         if (!editor.isDisposed()) {
           popup.showInBestPositionFor(editor);
         }
       };
       if (gotoData != null) {
-        show(project, editor, file, gotoData, showPopupProcedure);
+        show(project, editor, psiFile, gotoData, showPopupProcedure);
       }
       else {
-        chooseFromAmbiguousSources(editor, file, data -> show(project, editor, file, data, showPopupProcedure));
+        chooseFromAmbiguousSources(editor, psiFile, data -> show(project, editor, psiFile, data, showPopupProcedure));
       }
     }
     catch (IndexNotReadyException e) {
@@ -184,7 +186,14 @@ public abstract class GotoTargetHandler implements CodeInsightActionHandler {
       setAdText(getAdText(gotoData.source, targets.length));
     final JBPopup popup = builder.createPopup();
 
-    JScrollPane pane = builder instanceof PopupChooserBuilder ? ((PopupChooserBuilder<?>)builder).getScrollPane() : null;
+    JScrollPane pane;
+    if (builder instanceof PopupChooserBuilder<?> popupChooserBuilder) {
+      ClientProperty.put(popupChooserBuilder.getChooserComponent(), JBList.IMMUTABLE_MODEL_AND_RENDERER, true);
+      pane = popupChooserBuilder.getScrollPane();
+    } else {
+      pane = null;
+    }
+
     if (pane != null) {
       if (!ExperimentalUI.isNewUI()) {
         pane.setBorder(null);

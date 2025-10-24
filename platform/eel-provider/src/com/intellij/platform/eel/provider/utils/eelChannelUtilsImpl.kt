@@ -1,13 +1,10 @@
 // Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.platform.eel.provider.utils
 
-import com.intellij.platform.eel.EelResult
 import com.intellij.platform.eel.ReadResult
 import com.intellij.platform.eel.channels.EelReceiveChannel
 import com.intellij.platform.eel.channels.EelSendChannel
 import com.intellij.platform.eel.channels.sendWholeBuffer
-import com.intellij.platform.eel.provider.ResultErrImpl
-import com.intellij.platform.eel.provider.ResultOkImpl
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ReceiveChannel
@@ -21,18 +18,13 @@ import java.nio.channels.WritableByteChannel
 import java.nio.charset.Charset
 import kotlin.coroutines.CoroutineContext
 
-internal class NioReadToEelAdapter(private val readableByteChannel: ReadableByteChannel) : EelReceiveChannel<IOException> {
-  override suspend fun receive(dst: ByteBuffer): EelResult<ReadResult, IOException> = withContext(Dispatchers.IO) {
-    return@withContext try {
-      val read = readableByteChannel.read(dst)
-      ResultOkImpl(ReadResult.fromNumberOfReadBytes(read))
-    }
-    catch (e: IOException) {
-      ResultErrImpl(e)
-    }
+internal class NioReadToEelAdapter(private val readableByteChannel: ReadableByteChannel) : EelReceiveChannel {
+  override suspend fun receive(dst: ByteBuffer): ReadResult = withContext(Dispatchers.IO) {
+    val read = readableByteChannel.read(dst)
+    ReadResult.fromNumberOfReadBytes(read)
   }
 
-  override suspend fun close() {
+  override suspend fun closeForReceive() {
     withContext(Dispatchers.IO + NonCancellable) {
       readableByteChannel.close()
     }
@@ -42,21 +34,14 @@ internal class NioReadToEelAdapter(private val readableByteChannel: ReadableByte
 internal class NioWriteToEelAdapter(
   private val writableByteChannel: WritableByteChannel,
   private val flushable: Flushable? = null,
-) : EelSendChannel<IOException> {
+) : EelSendChannel {
 
-  override val closed: Boolean get() = !writableByteChannel.isOpen
+  override val isClosed: Boolean get() = !writableByteChannel.isOpen
 
-  override suspend fun send(src: ByteBuffer): EelResult<Unit, IOException> =
-    withContext(Dispatchers.IO) {
-      return@withContext try {
-        writableByteChannel.write(src)
-        flushable?.flush()
-        OK_UNIT
-      }
-      catch (e: IOException) {
-        ResultErrImpl(e)
-      }
-    }
+  override suspend fun send(src: ByteBuffer): Unit = withContext(Dispatchers.IO) {
+    writableByteChannel.write(src)
+    flushable?.flush()
+  }
 
   override suspend fun close() {
     withContext(Dispatchers.IO + NonCancellable) {
@@ -71,12 +56,8 @@ internal class NioWriteToEelAdapter(
   }
 }
 
-val OK_UNIT: ResultOkImpl<Unit> = ResultOkImpl(Unit)
-val ERR_CHANNEL_CLOSED: ResultErrImpl<IOException> = ResultErrImpl(IOException("Channel is closed"))
-
-
 internal class InputStreamAdapterImpl(
-  private val receiveChannel: EelReceiveChannel<IOException>,
+  private val receiveChannel: EelReceiveChannel,
   private val blockingContext: CoroutineContext,
 
   ) : InputStream() {
@@ -93,14 +74,26 @@ internal class InputStreamAdapterImpl(
 
   override fun close() {
     runBlocking(blockingContext) {
-      receiveChannel.close()
+      receiveChannel.closeForReceive()
     }
   }
 
   // Pipe is a special case we can tell how much bytes are available.
   // In other cases, we do not know.
   // Unblocking read in IJ depends on it, so we can't simply return 0 here not to break unblocking read
-  override fun available(): Int = (receiveChannel as? EelPipeImpl)?.bytesInQueue ?: 0
+  override fun available(): Int {
+    return when (receiveChannel) {
+      is EelPipeImpl -> {
+        receiveChannel.bytesInQueue
+      }
+      is EelOutputChannel -> {
+        receiveChannel.available()
+      }
+      else -> {
+        0
+      }
+    }
+  }
 
   override fun read(b: ByteArray, off: Int, len: Int): Int = read(ByteBuffer.wrap(b, off, len), len)
 
@@ -108,20 +101,22 @@ internal class InputStreamAdapterImpl(
   private fun read(dst: ByteBuffer, len: Int): Int {
     if (!dst.hasRemaining() || len == 0) return 0
     while (true) { // InputStream.read never returns 0 unless closed or dst has size 0
-      val r = runBlocking(blockingContext) {
-        receiveChannel.receive(dst)
+      val r = if (receiveChannel is EelOutputChannel && receiveChannel.available() > 0) {
+        receiveChannel.receiveAvailable(dst)
+      }
+      else {
+        runBlocking(blockingContext) {
+          receiveChannel.receive(dst)
+        }
       }
       when (r) {
-        is EelResult.Error -> throw IOException(r.error)
-        is EelResult.Ok -> when (r.value) {
-          ReadResult.EOF -> {
-            return -1
-          }
-          ReadResult.NOT_EOF -> {
-            val bytesRead = len - dst.remaining()
-            if (bytesRead > 0) { // See comment on while(true)
-              return bytesRead
-            }
+        ReadResult.EOF -> {
+          return -1
+        }
+        ReadResult.NOT_EOF -> {
+          val bytesRead = len - dst.remaining()
+          if (bytesRead > 0) { // See comment on while(true)
+            return bytesRead
           }
         }
       }
@@ -130,7 +125,7 @@ internal class InputStreamAdapterImpl(
 }
 
 internal class OutputStreamAdapterImpl(
-  private val sendChannel: EelSendChannel<IOException>,
+  private val sendChannel: EelSendChannel,
   private val blockingContext: CoroutineContext,
 ) : OutputStream() {
   private val oneByte = ByteBuffer.allocate(1)
@@ -147,12 +142,8 @@ internal class OutputStreamAdapterImpl(
 
   @Throws(IOException::class)
   private fun write(buffer: ByteBuffer) {
-    val result = runBlocking(blockingContext) {
+    runBlocking(blockingContext) {
       sendChannel.sendWholeBuffer(buffer)
-    }
-    when (result) {
-      is EelResult.Ok -> Unit
-      is EelResult.Error -> throw IOException(result.error)
     }
   }
 
@@ -163,64 +154,75 @@ internal class OutputStreamAdapterImpl(
   }
 }
 
-internal fun CoroutineScope.consumeReceiveChannelAsKotlinImpl(receiveChannel: EelReceiveChannel<*>, bufferSize: Int): ReceiveChannel<ByteBuffer> {
+internal fun CoroutineScope.consumeReceiveChannelAsKotlinImpl(receiveChannel: EelReceiveChannel, bufferSize: Int): ReceiveChannel<ByteBuffer> {
   val channel = Channel<ByteBuffer>()
   launch {
     while (true) {
       val buffer = ByteBuffer.allocate(bufferSize)
-      when (val r = receiveChannel.receive(buffer)) {
-        is EelResult.Error -> {
-          val cause = r.error
-          channel.close(cause as? Throwable ?: IOException(cause.toString()))
-          break
-        }
-        is EelResult.Ok -> {
-          when (r.value) {
-            ReadResult.EOF -> {
-              channel.close()
-              break
-            }
-            ReadResult.NOT_EOF -> {
-              channel.send(buffer.flip())
-            }
+      try {
+        val r = receiveChannel.receive(buffer)
+        when (r) {
+          ReadResult.EOF -> {
+            channel.close()
+            break
+          }
+          ReadResult.NOT_EOF -> {
+            channel.send(buffer.flip())
           }
         }
+      } catch (e: IOException) {
+        channel.close(e)
+        break
       }
     }
   }
   return channel
 }
 
-internal fun Socket.consumeAsEelChannelImpl(): EelReceiveChannel<IOException> =
+internal fun Socket.consumeAsEelChannelImpl(): EelReceiveChannel =
   channel?.consumeAsEelChannel() ?: inputStream.consumeAsEelChannel()
 
-internal fun Socket.asEelChannelImpl(): EelSendChannel<IOException> =
+internal fun Socket.asEelChannelImpl(): EelSendChannel =
   channel?.asEelChannel() ?: outputStream.asEelChannel()
 
-
-internal fun <E : Any> EelReceiveChannel<E>.linesImpl(charset: Charset): Flow<EelResult<String, E>> = flow {
+internal fun EelReceiveChannel.linesImpl(charset: Charset): Flow<String> = flow {
   val tmpBuffer = ByteBuffer.allocate(1)
   var result = ByteArrayOutputStream()
   while (true) {
     tmpBuffer.rewind()
     suspend fun emitBuffer() {
-      emit(ResultOkImpl(charset.decode(ByteBuffer.wrap(result.toByteArray())).toString()))
+      emit(charset.decode(ByteBuffer.wrap(result.toByteArray())).toString())
     }
 
-    when (val r = receive(tmpBuffer)) {
-      is EelResult.Error -> emit(ResultErrImpl(r.error))
-      is EelResult.Ok -> {
-        if (r.value == ReadResult.EOF) {
-          emitBuffer()
-          return@flow
-        }
-        val b = tmpBuffer.flip().get().toInt()
-        result.write(b)
-        if (b == 10) {
-          emitBuffer()
-          result = ByteArrayOutputStream()
-        }
-      }
+    val r = receive(tmpBuffer)
+
+    if (r == ReadResult.EOF) {
+      emitBuffer()
+      return@flow
+    }
+    val b = tmpBuffer.flip().get().toInt()
+    result.write(b)
+    if (b == 10) {
+      emitBuffer()
+      result = ByteArrayOutputStream()
     }
   }
+}
+
+internal fun ByteBuffer.putPartially(src: ByteBuffer): Int {
+  val dst = this
+  val bytesBeforeRead = src.remaining()
+  // Choose the best approach:
+  if (src.remaining() <= dst.remaining()) {
+    // Bulk put the whole buffer
+    dst.put(src)
+  }
+  else {
+    // Slice, put, and set size back
+    val l = src.limit()
+    dst.put(src.limit(src.position() + dst.remaining()))
+    src.limit(l)
+  }
+  val bytesRead = bytesBeforeRead - src.remaining()
+  return bytesRead
 }

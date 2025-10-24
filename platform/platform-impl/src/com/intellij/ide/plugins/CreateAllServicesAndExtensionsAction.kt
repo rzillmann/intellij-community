@@ -14,13 +14,13 @@ import com.intellij.openapi.actionSystem.ActionPlaces
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.components.ComponentManagerEx
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.extensions.ExtensionNotApplicableException
 import com.intellij.openapi.extensions.impl.ExtensionPointImpl
 import com.intellij.openapi.module.ModuleManager
 import com.intellij.openapi.progress.ProcessCanceledException
-import com.intellij.openapi.progress.blockingContext
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
 import com.intellij.platform.ide.progress.ModalTaskOwner
@@ -51,7 +51,7 @@ private class CreateAllServicesAndExtensionsAction : DumbAwareAction() {
 }
 
 private fun checkLightServices(
-  application: ComponentManagerImpl,
+  application: ComponentManagerEx,
   project: ComponentManagerImpl?,
   errors: MutableList<Throwable>,
 ) {
@@ -118,9 +118,7 @@ private fun createAllServicesAndExtensions2(): List<Throwable> {
       }
 
       // check first
-      blockingContext {
-        checkExtensionPoint(StubElementTypeHolderEP.EP_NAME.point as ExtensionPointImpl<*>, taskExecutor)
-      }
+      checkExtensionPoint(StubElementTypeHolderEP.EP_NAME.point as ExtensionPointImpl<*>, taskExecutor)
 
       val application = ApplicationManager.getApplication().getComponentManagerImpl()
       reporter.indeterminateStep {
@@ -140,9 +138,7 @@ private fun createAllServicesAndExtensions2(): List<Throwable> {
         }
       }
       reporter.indeterminateStep("Checking light services...")
-      blockingContext {
-        checkLightServices(application, project, errors)
-      }
+      checkLightServices(application, project, errors)
     }
   }
   return errors
@@ -189,9 +185,7 @@ private suspend fun checkContainer2(
     createAllServices2(container, servicesWhichRequireEdt, servicesWhichRequireReadAction)
   }
   reporter.indeterminateStep("Checking ${levelDescription} extensions...") {
-    blockingContext {
-      checkExtensions(container, taskExecutor)
-    }
+    checkExtensions(container, taskExecutor)
   }
 }
 
@@ -241,8 +235,8 @@ private fun scanClassLoader(pluginClassLoader: PluginClassLoader): ScanResult {
 
 private fun checkLightServices(
   classInfo: ClassInfo,
-  mainDescriptor: IdeaPluginDescriptorImpl,
-  application: ComponentManagerImpl,
+  mainDescriptor: PluginMainDescriptor,
+  application: ComponentManagerEx,
   project: ComponentManagerImpl?,
   onThrowable: (Throwable) -> Unit,
 ) {
@@ -310,15 +304,16 @@ private fun levelsByAnnotations(annotationParameterValue: AnnotationParameterVal
 
 private fun loadLightServiceClass(
   className: String,
-  mainDescriptor: IdeaPluginDescriptorImpl,
+  mainDescriptor: PluginMainDescriptor,
 ): Class<*>? {
-  fun loadClass(descriptor: IdeaPluginDescriptorImpl) =
-    (descriptor.pluginClassLoader as? PluginClassLoader)?.loadClass(className, true)
+  fun loadClass(descriptor: IdeaPluginDescriptorImpl): Class<*>? {
+    return (descriptor.pluginClassLoader as? PluginClassLoader)?.loadClass(className, true)
+  }
 
-  for (moduleItem in mainDescriptor.content.modules) {
+  for (moduleItem in mainDescriptor.contentModules) {
     try {
       // module is not loaded - dependency is not provided
-      return loadClass(moduleItem.requireDescriptor())
+      return loadClass(moduleItem)
     }
     catch (_: PluginException) {
     }

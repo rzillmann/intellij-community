@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.idea.svn;
 
 import com.intellij.application.Topics;
@@ -408,12 +408,6 @@ public final class SvnVcs extends AbstractVcs {
     return false;
   }
 
-  @Override
-  public boolean fileIsUnderVcs(@NotNull FilePath path) {
-    VirtualFile file = path.getVirtualFile();
-    return file != null && SvnStatusUtil.isUnderControl(this, file);
-  }
-
   public @Nullable Info getInfo(@NotNull Url url, Revision pegRevision, Revision revision) throws SvnBindException {
     return getFactory().createInfoClient().doInfo(Target.on(url, pegRevision), revision);
   }
@@ -538,7 +532,7 @@ public final class SvnVcs extends AbstractVcs {
   }
 
   @NotNull
-  SvnFileUrlMappingImpl getSvnFileUrlMappingImpl() {
+  public SvnFileUrlMappingImpl getSvnFileUrlMappingImpl() {
     return ((SvnFileUrlMappingImpl)getSvnFileUrlMapping());
   }
 
@@ -713,14 +707,6 @@ public final class SvnVcs extends AbstractVcs {
   @Override
   public boolean areDirectoriesVersionedItems() {
     return true;
-  }
-
-  @Override
-  public CheckoutProvider getCheckoutProvider() {
-    if (myCheckoutProvider == null) {
-      myCheckoutProvider = new SvnCheckoutProvider();
-    }
-    return myCheckoutProvider;
   }
 
   /**

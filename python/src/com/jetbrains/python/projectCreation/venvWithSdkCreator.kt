@@ -7,22 +7,28 @@ import com.intellij.openapi.diagnostic.fileLogger
 import com.intellij.openapi.module.Module
 import com.intellij.openapi.module.ModuleManager
 import com.intellij.openapi.project.*
-import com.intellij.openapi.projectRoots.ProjectJdkTable
 import com.intellij.openapi.projectRoots.Sdk
 import com.intellij.openapi.roots.ModuleRootManager
 import com.intellij.openapi.vfs.VfsUtil
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.platform.util.progress.withProgressText
+import com.intellij.python.community.execService.python.validatePythonAndGetInfo
 import com.intellij.python.community.impl.venv.createVenv
+import com.intellij.python.community.services.systemPython.SystemPython
 import com.intellij.python.community.services.systemPython.SystemPythonService
-import com.jetbrains.python.*
+import com.intellij.python.community.services.systemPython.createVenvFromSystemPython
+import com.jetbrains.python.PyBundle
+import com.jetbrains.python.PythonBinary
+import com.jetbrains.python.PythonModuleTypeBase
+import com.jetbrains.python.Result
 import com.jetbrains.python.errorProcessing.MessageError
 import com.jetbrains.python.errorProcessing.PyResult
-import com.jetbrains.python.errorProcessing.failure
+import com.jetbrains.python.errorProcessing.getOr
 import com.jetbrains.python.sdk.configurePythonSdk
 import com.jetbrains.python.sdk.createSdk
 import com.jetbrains.python.sdk.flavors.PythonSdkFlavor
-import com.jetbrains.python.sdk.setAssociationToModuleAsync
+import com.jetbrains.python.sdk.legacy.PythonSdkUtil
+import com.jetbrains.python.sdk.setAssociationToModule
 import com.jetbrains.python.venvReader.VirtualEnvReader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -66,7 +72,7 @@ suspend fun createVenvAndSdk(
     val systemPythonBinary = getSystemPython(confirmInstallation = confirmInstallation, systemPythonService).getOr { return it }
     logger.info("no venv in $venvDirPath, using system python $systemPythonBinary to create venv")
     // create venv using this system python
-    venvPython = createVenv(systemPythonBinary, venvDir = venvDirPath).getOr {
+    venvPython = createVenvFromSystemPython(systemPythonBinary, venvDir = venvDirPath).getOr(PyBundle.message("action.AnActionButton.text.show.early.releases")) {
       return it
     }
   }
@@ -86,7 +92,7 @@ suspend fun createVenvAndSdk(
     VfsUtil.markDirtyAndRefresh(false, true, true, vfsProjectPath)
   }
   configurePythonSdk(project, module, sdk)
-  sdk.setAssociationToModuleAsync(module)
+  sdk.setAssociationToModule(module)
   return Result.success(sdk)
 }
 
@@ -103,7 +109,7 @@ private suspend fun findExistingVenv(
     logger.warn("No flavor found for $pythonPath")
     return@withContext null
   }
-  return@withContext when (val p = pythonPath.validatePythonAndGetVersion()) {
+  return@withContext when (val p = pythonPath.validatePythonAndGetInfo()) {
     is Result.Success -> pythonPath
     is Result.Failure -> {
       logger.warn("No version string. python seems to be broken: $pythonPath. ${p.error}")
@@ -115,25 +121,24 @@ private suspend fun findExistingVenv(
 private suspend fun getSystemPython(
   confirmInstallation: suspend () -> Boolean,
   pythonService: SystemPythonService,
-): Result<PythonBinary, MessageError> {
+): Result<SystemPython, MessageError> {
 
 
   // First, find the latest python according to strategy
-  var systemPythonBinary = pythonService.findSystemPythons().firstOrNull()
+  var systemPythonBinary = pythonService.findSystemPythons(forceRefresh = true).firstOrNull()
 
   // No python found?
   if (systemPythonBinary == null) {
     // Install it
     val installer = pythonService.getInstaller()
-                    ?: return failure(PyBundle.message("project.error.install.not.supported"))
+                    ?: return PyResult.localizedError(PyBundle.message("project.error.install.not.supported"))
     if (confirmInstallation()) {
       // Install
       when (val r = installer.installLatestPython()) {
         is Result.Failure -> {
           val error = r.error
           logger.warn("Python installation failed $error")
-          return failure(
-            PyBundle.message("project.error.install.python", error))
+          return PyResult.localizedError(PyBundle.message("project.error.install.python", error))
         }
         is Result.Success -> {
           // Find the latest python again, after installation
@@ -144,10 +149,10 @@ private suspend fun getSystemPython(
   }
 
   return if (systemPythonBinary == null) {
-    return failure(PyBundle.message("project.error.all.pythons.bad"))
+    return PyResult.localizedError(PyBundle.message("project.error.all.pythons.bad"))
   }
   else {
-    Result.Success(systemPythonBinary.pythonBinary)
+    Result.Success(systemPythonBinary)
   }
 }
 
@@ -166,7 +171,7 @@ private suspend fun ensureModuleHasRoot(module: Module, root: VirtualFile): Unit
 
 private suspend fun getSdk(pythonPath: PythonBinary, project: Project): Sdk =
   withProgressText(ProjectBundle.message("progress.text.configuring.sdk")) {
-    val allJdks = ProjectJdkTable.getInstance().allJdks
+    val allJdks = PythonSdkUtil.getAllSdks().toTypedArray()
     val currentSdk = allJdks.firstOrNull { sdk -> sdk.homeDirectory?.toNioPath() == pythonPath }
     if (currentSdk != null) return@withProgressText currentSdk
 

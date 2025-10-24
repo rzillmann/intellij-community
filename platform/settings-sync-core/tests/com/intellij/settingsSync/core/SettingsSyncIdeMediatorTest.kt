@@ -9,13 +9,17 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.*
 import com.intellij.openapi.components.impl.stores.stateStore
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
+import com.intellij.testFramework.registerComponentInstance
 import com.intellij.testFramework.rules.InMemoryFsRule
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestCoroutineScheduler
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
+import org.assertj.core.api.Assertions.assertThat
 import org.junit.Assert
 import org.junit.Rule
 import org.junit.Test
@@ -25,14 +29,12 @@ import java.nio.file.Path
 import java.time.Instant
 import kotlin.io.path.createDirectories
 import kotlin.io.path.createFile
-import kotlin.io.path.div
 import kotlin.io.path.pathString
 
 @OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(JUnit4::class)
 class SettingsSyncIdeMediatorTest : BasePlatformTestCase() {
-
-  protected lateinit var testScope: TestScope
+  private lateinit var testScope: TestScope
 
   override fun setUp() {
     super.setUp()
@@ -44,29 +46,33 @@ class SettingsSyncIdeMediatorTest : BasePlatformTestCase() {
 
   @Test
   fun `process children with subfolders`() {
-    val rootConfig = memoryFs.fs.getPath("/appconfig")
+    val rootConfig = memoryFs.fs.getPath("/appConfig")
     val componentStore = object : ComponentStoreImpl() {
       override val storageManager: StateStorageManager
         get() = TODO("Not yet implemented")
-      override val isStoreInitialized: Boolean = true
 
       override fun setPath(path: Path) {
         TODO("Not yet implemented")
       }
     }
-    val mediator = SettingsSyncIdeMediatorImpl(componentStore, rootConfig, {true})
+    val mediator = SettingsSyncIdeMediatorImpl(componentStore = componentStore, rootConfig = rootConfig, enabledCondition = { true })
 
-    val fileTypes = rootConfig / "filetypes"
-    val code = (fileTypes / "code").createDirectories()
-    (code / "mytemplate.kt").createFile()
+    val fileTypes = rootConfig.resolve("filetypes")
+    val code = fileTypes.resolve("code").createDirectories()
+    code.resolve("myTemplate.kt").createFile()
 
-    val visited = mutableSetOf<String>()
-    mediator.processChildren(fileTypes.pathString, RoamingType.DEFAULT, {true}, processor = { name, _, _ ->
-      visited += name
-true
-    })
+    val visited = HashSet<String>()
+    mediator.processChildren(
+      path = fileTypes.pathString,
+      roamingType = RoamingType.DEFAULT,
+      filter = { true },
+      processor = { name, _, _ ->
+        visited += name
+        true
+      },
+    )
 
-    assertEquals(setOf("mytemplate.kt"), visited)
+    assertThat(visited).containsExactlyInAnyOrder("myTemplate.kt")
   }
 
   @Test
@@ -75,7 +81,6 @@ true
     val componentStore = object : ComponentStoreImpl() {
       override val storageManager: StateStorageManager
         get() = ApplicationManager.getApplication().stateStore.storageManager
-      override val isStoreInitialized: Boolean = true
 
       override fun setPath(path: Path) {
         TODO("Not yet implemented")
@@ -122,12 +127,11 @@ true
   @TestFor(issues = ["IDEA-324914"])
   @Test
   fun `process files2apply last`() {
-    val componentManager = ApplicationManager.getApplication() as ComponentManagerEx
+    val componentManager = ApplicationManager.getApplication()
     val rootConfig = memoryFs.fs.getPath("/IDEA-324914/appConfig")
     val componentStore = object : ComponentStoreImpl() {
       override val storageManager: StateStorageManager
         get() = ApplicationManager.getApplication().stateStore.storageManager
-      override val isStoreInitialized: Boolean = true
 
       override fun setPath(path: Path) {
         TODO("Not yet implemented")
@@ -135,13 +139,17 @@ true
     }
     val callbackCalls = mutableListOf<String>()
     val firstComponent = FirstComponent({ callbackCalls.add("First") })
-    componentManager.registerComponentInstance(FirstComponent::class.java, firstComponent)
-    componentStore.initComponent(firstComponent, null, PluginManagerCore.CORE_ID)
+    componentManager.registerComponentInstance(FirstComponent::class.java, firstComponent, getTestRootDisposable())
+    runBlocking(Dispatchers.Default) {
+      componentStore.initComponent(firstComponent, null, PluginManagerCore.CORE_ID)
+    }
     componentStore.storageManager.getStateStorage(getStateSpec(FirstComponent::class.java)!!.storages[0]).createSaveSessionProducer()
 
     val secondComponent = SecondComponent({ callbackCalls.add("Second") })
-    componentManager.registerComponentInstance(SecondComponent::class.java, secondComponent)
-    componentStore.initComponent(secondComponent, null, PluginManagerCore.CORE_ID)
+    componentManager.registerComponentInstance(SecondComponent::class.java, secondComponent, getTestRootDisposable())
+    runBlocking(Dispatchers.Default) {
+      componentStore.initComponent(secondComponent, null, PluginManagerCore.CORE_ID)
+    }
     componentStore.storageManager.getStateStorage(getStateSpec(SecondComponent::class.java)!!.storages[0]).createSaveSessionProducer()
 
     val mediator = SettingsSyncIdeMediatorImpl(componentStore = componentStore, rootConfig = rootConfig) { true }

@@ -6,6 +6,7 @@ import com.intellij.openapi.extensions.PluginId
 import com.intellij.openapi.util.BuildNumber
 import com.intellij.openapi.util.NlsContexts
 import com.intellij.openapi.util.NlsSafe
+import com.intellij.util.system.CpuArch
 import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.annotations.Nls
 import org.jetbrains.annotations.NonNls
@@ -116,6 +117,21 @@ class PluginIsIncompatibleWithHostPlatform(
 }
 
 @ApiStatus.Internal
+class PluginIsIncompatibleWithHostCpu(
+  override val plugin: IdeaPluginDescriptor,
+  val requiredCpuArch: PluginCpuArchRequirement,
+  val hostCpu: @NlsSafe CpuArch,
+): PluginNonLoadReason {
+  override val detailedMessage: @NlsContexts.DetailedDescription String
+    get() = CoreBundle.message("plugin.loading.error.long.incompatible.with.cpu", plugin.name, plugin.version, requiredCpuArch, hostCpu)
+  override val shortMessage: @NlsContexts.Label String
+    get() = CoreBundle.message("plugin.loading.error.short.incompatible.with.platform", requiredCpuArch)
+  override val logMessage: @NonNls String
+    get() = "Plugin '${plugin.name}' (${plugin.pluginId}, version=${plugin.version}) requires CPU ${requiredCpuArch} but the current platform is ${hostCpu}"
+  override val shouldNotifyUser: Boolean = true
+}
+
+@ApiStatus.Internal
 class PluginSinceBuildConstraintViolation(
   override val plugin: IdeaPluginDescriptor,
   val productBuildNumber: BuildNumber,
@@ -184,7 +200,7 @@ class PluginPackagePrefixConflict(
             "Their respective modules '${module.moduleId}' and '${conflictingModule.moduleId}' declare the same package prefix"
   override val shouldNotifyUser: Boolean = true
 
-  private val IdeaPluginDescriptorImpl.moduleId: String get() = moduleName ?: pluginId.idString
+  private val IdeaPluginDescriptorImpl.moduleId: String get() = contentModuleName ?: pluginId.idString
 }
 
 @ApiStatus.Internal
@@ -205,14 +221,17 @@ class PluginIsIncompatibleWithAnotherPlugin(
 @ApiStatus.Internal
 class PluginModuleDependencyCannotBeLoadedOrMissing(
   override val plugin: IdeaPluginDescriptor,
-  val moduleDependency: ModuleDependencies.ModuleReference,
+  val moduleDependency: PluginModuleId,
+  val containingPlugin: PluginId?,
   override val shouldNotifyUser: Boolean,
 ): PluginNonLoadReason {
+  private val dependencyName: String
+    get() = containingPlugin?.idString ?: moduleDependency.name
   // FIXME VERY confusing message
   override val detailedMessage: @NlsContexts.DetailedDescription String
-    get() = CoreBundle.message("plugin.loading.error.long.depends.on.not.installed.plugin", plugin.name, moduleDependency.name)
+    get() = CoreBundle.message("plugin.loading.error.long.depends.on.not.installed.plugin", plugin.name, dependencyName)
   override val shortMessage: @NlsContexts.Label String
-    get() = CoreBundle.message("plugin.loading.error.short.depends.on.not.installed.plugin", moduleDependency.name)
+    get() = CoreBundle.message("plugin.loading.error.short.depends.on.not.installed.plugin", dependencyName)
   override val logMessage: @NonNls String
     get() = "Plugin '${plugin.name}' (${plugin.pluginId}) has module dependency '${moduleDependency.name}' which cannot be loaded or missing"
 }
@@ -243,4 +262,19 @@ class PluginDependencyIsNotInstalled(
     get() = CoreBundle.message("plugin.loading.error.short.depends.on.not.installed.plugin", dependencyNameOrId)
   override val logMessage: @NonNls String
     get() = "Plugin '${plugin.name}' (${plugin.pluginId}) has dependency on '${dependencyNameOrId}' which is not installed"
+}
+
+@ApiStatus.Internal
+class PluginHasDuplicateContentModuleDeclaration(
+  override val plugin: IdeaPluginDescriptor,
+  val moduleId: PluginModuleId,
+): PluginNonLoadReason {
+  override val detailedMessage: @NlsContexts.DetailedDescription String
+    get() = CoreBundle.message("plugin.loading.error.long.content.modules.are.invalid.duplicate.module", plugin.name, moduleId.name)
+  override val shortMessage: @NlsContexts.Label String
+    get() = CoreBundle.message("plugin.loading.error.short.content.modules.are.invalid.duplicate.module", plugin.name)
+  override val logMessage: @NonNls String
+    get() = "Plugin '${plugin.name}' (${plugin.pluginId}) has duplicate declaration of content module '${moduleId.name}'"
+  override val shouldNotifyUser: Boolean
+    get() = true
 }

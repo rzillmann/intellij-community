@@ -4,16 +4,23 @@ package org.jetbrains.plugins.gradle.tooling.internal;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.plugins.gradle.model.MavenRepositoryModel;
 import org.jetbrains.plugins.gradle.model.RepositoryModels;
+import com.intellij.gradle.toolingExtension.impl.model.repositoryModel.DefaultProjectRepositoriesModel;
 
 import java.util.Collections;
 import java.util.List;
 
+/**
+ * @deprecated use {@link DefaultProjectRepositoriesModel} instead.
+ */
+@Deprecated
 public class DefaultRepositoryModels implements RepositoryModels {
 
   private final @NotNull List<MavenRepositoryModel> myRepositories;
+  private final int myRepositoriesHashCode;
 
   public DefaultRepositoryModels(@NotNull List<MavenRepositoryModel> repositories) {
     myRepositories = Collections.unmodifiableList(repositories);
+    myRepositoriesHashCode = myRepositories.hashCode();
   }
 
   @Override
@@ -27,14 +34,12 @@ public class DefaultRepositoryModels implements RepositoryModels {
     if (o == null || getClass() != o.getClass()) return false;
 
     DefaultRepositoryModels model = (DefaultRepositoryModels)o;
-
-    if (!myRepositories.equals(model.myRepositories)) return false;
-
+    if (myRepositoriesHashCode != model.myRepositoriesHashCode) return false;
     return true;
   }
 
   @Override
   public int hashCode() {
-    return myRepositories.hashCode();
+    return myRepositoriesHashCode;
   }
 }

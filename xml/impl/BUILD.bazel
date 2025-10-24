@@ -1,9 +1,9 @@
 ### auto-generated section `build intellij.xml.impl` start
-load("@rules_jvm//:jvm.bzl", "jvm_library", "jvm_resources")
+load("@rules_jvm//:jvm.bzl", "jvm_library", "resourcegroup")
 
-jvm_resources(
+resourcegroup(
   name = "impl_resources",
-  files = glob(["resources/**/*"]),
+  srcs = glob(["resources/**/*"]),
   strip_prefix = "resources"
 )
 
@@ -11,10 +11,18 @@ jvm_library(
   name = "impl",
   module_name = "intellij.xml.impl",
   visibility = ["//visibility:public"],
-  srcs = glob(["src/**/*.kt", "src/**/*.java"], allow_empty = True),
+  srcs = glob(["src/**/*.kt", "src/**/*.java", "src/**/*.form"], allow_empty = True),
+  resources = [":impl_resources"],
   deps = [
-    "//xml/openapi:xml",
-    "@lib//:xerces",
+    "//platform/analysis-api:analysis",
+    "//platform/code-style-api:codeStyle",
+    "//platform/core-api:core",
+    "//platform/editor-ui-api:editor-ui",
+    "//platform/foldings",
+    "//platform/core-impl",
+    "//platform/indexing-api:indexing",
+    "//platform/lang-core",
+    "//platform/projectModel-api:projectModel",
     "//platform/platform-impl:ide-impl",
     "//platform/lang-impl",
     "//platform/execution-impl",
@@ -24,31 +32,36 @@ jvm_library(
     "//platform/refactoring",
     "//platform/indexing-impl",
     "//platform/usageView",
-    "//xml/xml-frontback-impl:frontback-impl",
+    "//xml/xml-psi-api:psi",
     "//xml/xml-psi-impl:psi-impl",
+    "//xml/xml-ui-common:ui-common",
     "//xml/xml-analysis-impl:analysis-impl",
     "//xml/xml-structure-view-impl:structureView-impl",
     "//platform/xdebugger-api:debugger",
     "//platform/ide-core-impl",
     "//platform/diff-api:diff",
+    "//platform/util/diff",
     "//platform/built-in-server-api:builtInServer",
     "//platform/editor-ui-ex:editor-ex",
-    "@lib//:fastutil-min",
+    "//libraries/fastutil",
     "//platform/core-ui",
-    "//spellchecker",
     "//xml/dom-openapi:dom",
-    "//platform/webSymbols",
+    "//platform/polySymbols",
     "//platform/code-style-impl:codeStyle-impl",
     "//platform/platform-util-io-impl:ide-util-io-impl",
     "//platform/util/xmlDom",
-    "@lib//:aalto-xml",
+    "//platform/util/jdom",
+    "//libraries/aalto-xml",
+    "//platform/polySymbols/backend",
+    "//libraries/xerces",
+    "//xml/xml-syntax:syntax",
   ],
   exports = [
-    "//xml/openapi:xml",
     "//xml/xml-psi-impl:psi-impl",
+    "//xml/xml-ui-common:ui-common",
     "//xml/xml-analysis-impl:analysis-impl",
     "//xml/xml-structure-view-impl:structureView-impl",
   ],
-  runtime_deps = [":impl_resources"]
+  runtime_deps = ["//platform/backend"]
 )
 ### auto-generated section `build intellij.xml.impl` end

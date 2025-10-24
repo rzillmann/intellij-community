@@ -21,7 +21,7 @@ import com.intellij.openapi.vfs.StandardFileSystems
 import com.intellij.openapi.vfs.VfsUtilCore
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.util.QualifiedName
-import com.jetbrains.python.PythonHelpersLocator
+import com.intellij.python.community.helpersLocator.PythonHelpersLocator
 import com.jetbrains.python.PythonRuntimeService
 import com.jetbrains.python.psi.LanguageLevel
 import java.io.File
@@ -178,7 +178,7 @@ object PyTypeShed {
   fun findStdlibRootsForLanguageLevel(level: LanguageLevel): List<VirtualFile> {
     val dir = directory ?: return emptyList()
 
-    val stdlib = dir.findChild("stdlib") ?: return emptyList()
+    val stdlib = stdlibRoot ?: return emptyList()
     return if (level.isPython2) listOfNotNull(stdlib.findChild("@python2"), stdlib) else listOf(stdlib)
   }
 
@@ -210,6 +210,10 @@ object PyTypeShed {
     directory?.findChild("stubs")
   }
 
+  private val stdlibRoot: VirtualFile? by lazy {
+    directory?.findChild("stdlib")
+  }
+
   private val directoryPath: String?
     get() {
       val paths = listOf("${PathManager.getConfigPath()}/typeshed",
@@ -220,12 +224,11 @@ object PyTypeShed {
           .firstOrNull()
     }
 
-  /**
-   * A shallow check for a [file] being located inside the typeshed third-party stubs.
-   */
-  fun isInThirdPartyLibraries(file: VirtualFile): Boolean = "stubs" in file.path
+  fun isInThirdPartyLibraries(file: VirtualFile): Boolean =
+    thirdPartyStubRoot?.let { VfsUtilCore.isAncestor(it, file, false) } == true
 
-  fun isInStandardLibrary(file: VirtualFile): Boolean = "stdlib" in file.path
+  fun isInStandardLibrary(file: VirtualFile): Boolean =
+    stdlibRoot?.let { VfsUtilCore.isAncestor(it, file, false) } == true
 
   /**
    * Find the directory containing .pyi stubs for the package [packageName] under `typeshed/stubs`.

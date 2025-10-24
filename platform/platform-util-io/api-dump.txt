@@ -12,6 +12,9 @@ com.intellij.execution.KillableProcess
 c:com.intellij.execution.RunCanceledByUserException
 - com.intellij.execution.ExecutionException
 - <init>():V
+com.intellij.execution.configurations.CommandLineWithSuspendedProcessCallback
+- a:getWinSuspendedProcessCallback():java.util.function.LongConsumer
+- a:withWinSuspendedProcessCallback(java.util.function.LongConsumer):V
 c:com.intellij.execution.configurations.GeneralCommandLine
 - com.intellij.openapi.util.UserDataHolder
 - <init>():V
@@ -72,6 +75,9 @@ e:com.intellij.execution.configurations.GeneralCommandLine$ParentEnvironmentType
 - sf:SYSTEM:com.intellij.execution.configurations.GeneralCommandLine$ParentEnvironmentType
 - s:valueOf(java.lang.String):com.intellij.execution.configurations.GeneralCommandLine$ParentEnvironmentType
 - s:values():com.intellij.execution.configurations.GeneralCommandLine$ParentEnvironmentType[]
+com.intellij.execution.configurations.ISupportWinSuspendedProcessCallback
+- a:getWinSuspendedProcessCallback():java.util.function.Consumer
+- a:withWinSuspendedProcessCallback(java.util.function.Consumer):V
 f:com.intellij.execution.configurations.ParametersList
 - java.lang.Cloneable
 - <init>():V
@@ -145,14 +151,17 @@ f:com.intellij.execution.configurations.PathEnvironmentVariableUtil
 - s:getPathDirs(java.lang.String):java.util.List
 - s:getPathVariableValue():java.lang.String
 - s:getWindowsExecutableFileExtensions():java.util.List
+- s:isOnPath(java.lang.String):Z
 c:com.intellij.execution.configurations.PtyCommandLine
 - com.intellij.execution.configurations.GeneralCommandLine
+- com.intellij.execution.configurations.CommandLineWithSuspendedProcessCallback
 - sf:MAX_COLUMNS:I
 - <init>():V
 - <init>(com.intellij.execution.configurations.GeneralCommandLine):V
 - <init>(java.util.List):V
 - p:createProcess(java.lang.ProcessBuilder):java.lang.Process
 - getPtyOptions():com.intellij.execution.process.LocalPtyOptions
+- getWinSuspendedProcessCallback():java.util.function.LongConsumer
 - s:isEnabled():Z
 - withConsoleMode(Z):com.intellij.execution.configurations.PtyCommandLine
 - withInitialColumns(I):com.intellij.execution.configurations.PtyCommandLine
@@ -160,13 +169,11 @@ c:com.intellij.execution.configurations.PtyCommandLine
 - withOptions(com.intellij.execution.process.LocalPtyOptions):com.intellij.execution.configurations.PtyCommandLine
 - withUnixOpenTtyToPreserveOutputAfterTermination(Z):com.intellij.execution.configurations.PtyCommandLine
 - withUseCygwinLaunch(Z):com.intellij.execution.configurations.PtyCommandLine
+- withWinSuspendedProcessCallback(java.util.function.LongConsumer):V
 c:com.intellij.execution.process.AnsiEscapeDecoder
 - <init>():V
 - escapeText(java.lang.String,com.intellij.openapi.util.Key,com.intellij.execution.process.AnsiEscapeDecoder$ColoredTextAcceptor):V
 - p:getCurrentOutputAttributes(com.intellij.openapi.util.Key):com.intellij.openapi.util.Key
-com.intellij.execution.process.AnsiEscapeDecoder$ColoredChunksAcceptor
-- com.intellij.execution.process.AnsiEscapeDecoder$ColoredTextAcceptor
-- a:coloredChunksAvailable(java.util.List):V
 com.intellij.execution.process.AnsiEscapeDecoder$ColoredTextAcceptor
 - a:coloredTextAvailable(java.lang.String,com.intellij.openapi.util.Key):V
 c:com.intellij.execution.process.CapturingProcessAdapter
@@ -233,8 +240,8 @@ c:com.intellij.execution.process.KillableColoredProcessHandler$Silent
 c:com.intellij.execution.process.KillableProcessHandler
 - com.intellij.execution.process.OSProcessHandler
 - com.intellij.execution.KillableProcess
+- com.intellij.execution.process.SoftlyKillableProcessHandler
 - <init>(com.intellij.execution.configurations.GeneralCommandLine):V
-- <init>(com.intellij.execution.configurations.GeneralCommandLine,Z):V
 - p:<init>(java.lang.Process,com.intellij.execution.configurations.GeneralCommandLine):V
 - <init>(java.lang.Process,java.lang.String):V
 - <init>(java.lang.Process,java.lang.String,java.nio.charset.Charset):V
@@ -249,7 +256,6 @@ c:com.intellij.execution.process.KillableProcessHandler
 - shouldKillProcessSoftly():Z
 f:com.intellij.execution.process.LocalPtyOptions
 - sf:Companion:com.intellij.execution.process.LocalPtyOptions$Companion
-- sf:DEFAULT:com.intellij.execution.process.LocalPtyOptions
 - f:builder():com.intellij.execution.process.LocalPtyOptions$Builder
 - sf:defaults():com.intellij.execution.process.LocalPtyOptions
 - f:getConsoleMode():Z
@@ -257,6 +263,7 @@ f:com.intellij.execution.process.LocalPtyOptions
 - f:getInitialRows():I
 - f:getUseCygwinLaunch():Z
 - f:getUseWinConPty():Z
+- f:getWinSuspendedProcessCallback():java.util.function.LongConsumer
 f:com.intellij.execution.process.LocalPtyOptions$Builder
 - f:build():com.intellij.execution.process.LocalPtyOptions
 - f:consoleMode():Z
@@ -268,6 +275,8 @@ f:com.intellij.execution.process.LocalPtyOptions$Builder
 - f:set(com.intellij.execution.process.LocalPtyOptions):com.intellij.execution.process.LocalPtyOptions$Builder
 - f:useCygwinLaunch():Z
 - f:useCygwinLaunch(Z):com.intellij.execution.process.LocalPtyOptions$Builder
+- f:winSuspendedProcessCallback():java.util.function.LongConsumer
+- f:winSuspendedProcessCallback(java.util.function.LongConsumer):com.intellij.execution.process.LocalPtyOptions$Builder
 f:com.intellij.execution.process.LocalPtyOptions$Companion
 - f:defaults():com.intellij.execution.process.LocalPtyOptions
 c:com.intellij.execution.process.OSProcessHandler

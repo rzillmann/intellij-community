@@ -1,9 +1,7 @@
 package com.intellij.searchEverywhereMl.typos
 
-import com.intellij.searchEverywhereMl.SearchEverywhereTab
-import com.intellij.searchEverywhereMl.isTypoExperiment
+import com.intellij.openapi.options.advanced.AdvancedSettings
 
 internal val isTypoFixingEnabled: Boolean
-  get() {
-    return SearchEverywhereTab.Actions.isTypoExperiment
-  }
+  get() = AdvancedSettings.getBoolean("searcheverywhere.ml.typos.enable")
+

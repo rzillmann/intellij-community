@@ -6,6 +6,9 @@ import com.intellij.ide.IdeBundle
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.openapi.ui.Messages
+import com.intellij.platform.eel.provider.utils.stderrString
+import com.intellij.platform.eel.provider.utils.stdoutString
+import com.intellij.python.processOutput.ProcessOutputApi
 import com.intellij.ui.IdeBorderFactory
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
@@ -55,6 +58,22 @@ fun showProcessExecutionErrorDialog(
 ) {
   check(project == null || !project.isDisposed)
 
+  val logId = execError.loggedProcessId
+
+  if (project != null && logId != null) {
+    ProcessOutputApi.getInstance()?.also { api ->
+      val foundAndOpened = api.tryOpenLogInToolWindow(project, logId)
+
+      if (foundAndOpened) {
+        execError.additionalMessageToUser?.also {
+          api.specifyAdditionalMessageToUser(project, logId, it)
+        }
+
+        return
+      }
+    }
+  }
+
   val errorMessageText = PyBundle.message("dialog.message.command.could.not.complete")
   // HTML format for text in `JBLabel` enables text wrapping
   val errorMessageLabel = JBLabel(UIUtil.toHtml(errorMessageText), Messages.getErrorIcon(), SwingConstants.LEFT)
@@ -67,7 +86,7 @@ fun showProcessExecutionErrorDialog(
 
       }
       is ExecErrorReason.UnexpectedProcessTermination -> {
-        appendProcessOutput(command, err.stdout, err.stderr, err.exitCode)
+        appendProcessOutput(command, err.stdoutString, err.stderrString, err.exitCode)
       }
       ExecErrorReason.Timeout -> {
         appendProcessOutput(command, "Timeout", "\n", null)
@@ -87,6 +106,11 @@ fun showProcessExecutionErrorDialog(
 
   val formBuilder = FormBuilder()
     .addComponent(errorMessageLabel)
+    .addComponent(JButton(PyBundle.message("python.error.full.log")).apply {
+      addActionListener {
+        Messages.showErrorDialog(execError.message, PyBundle.message("python.error"))
+      }
+    })
     .addComponentFillVertically(commandOutputPanel, UIUtil.DEFAULT_VGAP)
 
   object : DialogWrapper(project) {
@@ -98,7 +122,7 @@ fun showProcessExecutionErrorDialog(
     override fun createActions(): Array<Action> = arrayOf(okAction)
 
     override fun createCenterPanel(): JComponent = formBuilder.panel.apply {
-      preferredSize = Dimension(600, 300)
+      preferredSize = Dimension(820, 400)
     }
   }.showAndGet()
 }

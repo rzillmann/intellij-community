@@ -4,13 +4,16 @@ package com.intellij.threadDumpParser;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.tools.ide.metrics.benchmark.Benchmark;
 import com.intellij.util.containers.ContainerUtil;
-import junit.framework.TestCase;
+import org.junit.Test;
 
 import java.util.Arrays;
 import java.util.List;
 
-public class ThreadDumpParserTest extends TestCase {
-  public void testWaitingThreadsAreNotLocking() {
+import static org.junit.Assert.*;
+
+public class ThreadDumpParserTest {
+  @Test
+	public void testWaitingThreadsAreNotLocking() {
     String text = """
       "1" daemon prio=10 tid=0x00002b5bf8065000 nid=0x4294 waiting for monitor entry [0x00002b5aadb5d000]
          java.lang.Thread.State: BLOCKED (on object monitor)
@@ -84,7 +87,8 @@ public class ThreadDumpParserTest extends TestCase {
     assertTrue(threads.get(0).isAwaitedBy(threads.get(1)));
   }
 
-  public void testYourKitFormat() {
+  @Test
+	public void testYourKitFormat() {
     String text = """
       Stacks at 2017-05-03 01:07:25 PM (uptime 4h 21m 28s) Threads shown: 38 of 46
 
@@ -112,7 +116,8 @@ public class ThreadDumpParserTest extends TestCase {
     assertEquals(Arrays.asList(2, 2, 5), ContainerUtil.map(threads, state -> StringUtil.countNewLines(state.getStackTrace())));
   }
 
-  public void testYourKit2017Format() {
+  @Test
+	public void testYourKit2017Format() {
     String text = """
       Stacks at 2017-06-08 12:56:31 PM. Uptime is 23m 47s 200ms.
 
@@ -163,7 +168,8 @@ public class ThreadDumpParserTest extends TestCase {
     assertEquals(ContainerUtil.map(threads, ThreadState::isDaemon), Arrays.asList(false, false, false, true));
   }
 
-  public void testYourKit2018Format() {
+  @Test
+	public void testYourKit2018Format() {
     String text = """
       ApplicationImpl pooled thread 81  Waiting CPU usage on sample: 0ms
         sun.misc.Unsafe.park(boolean, long) Unsafe.java (native)
@@ -205,7 +211,8 @@ public class ThreadDumpParserTest extends TestCase {
                                "ApplicationImpl pooled thread 90"));
   }
 
-  public void testLogIsNotAThreadDump() {
+  @Test
+	public void testLogIsNotAThreadDump() {
     List<ThreadState> threads = ThreadDumpParser.parse("""
                                                          2017-05-11 15:37:22,031 [100664612]   INFO - krasa.visualvm.VisualVMContext - saving context: VisualVMContext{appId=322303893654749}\s
                                                          2017-05-11 15:53:08,057 [101610638]   INFO - krasa.visualvm.VisualVMContext - saving context: VisualVMContext{appId=323249981117880}\s
@@ -216,7 +223,8 @@ public class ThreadDumpParserTest extends TestCase {
     assertTrue(threads.size() <= 1);
   }
 
-  public void testTraceWithTrailingJarNamesIsNotAThreadDump() {
+  @Test
+	public void testTraceWithTrailingJarNamesIsNotAThreadDump() {
     List<ThreadState> threads = ThreadDumpParser.parse("""
                                                          Jun 27 02:58:45.222 WARN  [][Atomikos:2]  Error while retrieving xids from resource - will retry later... (com.atomikos.recovery.xa.XaResourceRecoveryManager:40)\s
                                                          javax.transaction.xa.XAException
@@ -237,7 +245,8 @@ public class ThreadDumpParserTest extends TestCase {
     assertTrue(threads.size() <= 1);
   }
 
-  public void testYourkitThreadsWithIndentedNames() {
+  @Test
+	public void testYourkitThreadsWithIndentedNames() {
     String text = """
        Stacks at 2017-07-13 07:15:35 AM (uptime 1d 2h 59m 6 sec) Threads shown: 3 of 55
 
@@ -263,7 +272,8 @@ public class ThreadDumpParserTest extends TestCase {
                                "AWT-EventQueue-0 2017.3#IC-173.SNAPSHOT IDEA, eap:true, os:Linux 3.13.0-117-generic, java-version:JetBrains s.r.o 1.8.0_152-release-867-b1"));
   }
 
-  public void testJstackFFormat() {
+  @Test
+	public void testJstackFFormat() {
     String text = """
       Attaching to process ID 7370, please wait...
       Debugger attached successfully.
@@ -302,7 +312,8 @@ public class ThreadDumpParserTest extends TestCase {
     assertTrue(threads.get(2).isEmptyStackTrace());
   }
 
-  public void testJdk11Format() {
+  @Test
+	public void testJdk11Format() {
     String text = """
       "main" #1 prio=5 os_prio=0 cpu=171.88ms elapsed=101.93s tid=0x0000026392746000 nid=0x3bc4 runnable  [0x000000d7ed0fe000]
          java.lang.Thread.State: RUNNABLE
@@ -341,7 +352,8 @@ public class ThreadDumpParserTest extends TestCase {
     assertEquals(4, threads.size());
   }
 
-  public void testJcmdThreadDumpToFilePlainTextFormat() {
+  @Test
+	public void testJcmdThreadDumpToFilePlainTextFormat() {
     String text = """
       81916
       2025-01-14T19:27:30.373190Z
@@ -409,7 +421,8 @@ public class ThreadDumpParserTest extends TestCase {
     assertEquals("Reference Handler", threads.get(4).getName());
   }
 
-  public void testJcmdThreadDumpToFileJsonFormat() {
+  @Test
+	public void testJcmdThreadDumpToFileJsonFormat() {
     String text = """
       {
         "threadDump": {
@@ -641,7 +654,8 @@ public class ThreadDumpParserTest extends TestCase {
     assertTrue(threads.get(threads.size() - 1).isVirtual());
   }
 
-  public void testCoroutineDump() {
+  @Test
+	public void testCoroutineDump() {
     String text = """
       "Timer-0" prio=0 tid=0x0 nid=0x0 waiting on condition
            java.lang.Thread.State: TIMED_WAITING
@@ -665,7 +679,8 @@ public class ThreadDumpParserTest extends TestCase {
     assertEquals("Coroutine dump", threads.get(1).getName());
   }
 
-  public void testOwnableLocks() {
+  @Test
+	public void testOwnableLocks() {
     String text = """
       "DefaultDispatcher-worker-4" #47 daemon prio=5 os_prio=0 cpu=4308.76ms elapsed=599.17s tid=0x00007f82b41796c0 nid=0x14907 runnable  [0x00007f8280bb4000]
          java.lang.Thread.State: TIMED_WAITING (parking)
@@ -686,7 +701,8 @@ public class ThreadDumpParserTest extends TestCase {
     assertEquals("0x00000000a7140250", threads.get(0).getOwnableSynchronizers());
   }
 
-  public void testCarryingVirtualThread() {
+  @Test
+	public void testCarryingVirtualThread() {
     String text = """
       "ForkJoinPool-1-worker-1" #24 [25347] daemon prio=5 os_prio=31 cpu=41.39ms elapsed=6.75s tid=0x000000011f00da00  [0x000000017003d000]
          Carrying virtual thread #21
@@ -719,7 +735,72 @@ public class ThreadDumpParserTest extends TestCase {
     assertEquals("WAITING", threads.get(1).getJavaThreadState());
   }
 
-  public void testVeryLongLineParsingPerformance() {
+  @Test
+  public void testOurDebuggerExportFormatWithVirtualThreads() {
+    // Note, that virtual threads have no priority.
+    String text = """
+      "main@1" prio=5 tid=0x1 nid=NA runnable
+        java.lang.Thread.State: RUNNABLE
+      	at java.lang.Throwable.fillInStackTrace(Throwable.java:-1)
+      	at java.lang.Throwable.fillInStackTrace(Throwable.java:820)
+      	  - locked <0x450> (a java.lang.Throwable)
+      	at java.lang.Throwable.<init>(Throwable.java:258)
+      	at com.intellij.rt.debugger.agent.CaptureStorage$3.run(CaptureStorage.java:56)
+      	at com.intellij.rt.debugger.agent.CaptureStorage$9.call(CaptureStorage.java:209)
+      	at com.intellij.rt.debugger.agent.CaptureStorage$9.call(CaptureStorage.java:206)
+      	at com.intellij.rt.debugger.agent.CaptureStorage.withoutThrowableCapture(CaptureStorage.java:220)
+      	at com.intellij.rt.debugger.agent.CaptureStorage.withoutThrowableCapture(CaptureStorage.java:206)
+      	at com.intellij.rt.debugger.agent.CaptureStorage.capture(CaptureStorage.java:48)
+      	at java.util.concurrent.FutureTask.<init>(FutureTask.java:132)
+      	at java.util.concurrent.ThreadPerTaskExecutor$ThreadBoundFuture.<init>(ThreadPerTaskExecutor.java:334)
+      	at java.util.concurrent.ThreadPerTaskExecutor.submit(ThreadPerTaskExecutor.java:285)
+      	at java.util.concurrent.ThreadPerTaskExecutor.submit(ThreadPerTaskExecutor.java:293)
+      	at VirtualThreadsDemo.main(VirtualThreadsDemo.java:30)
+      
+      "ForkJoinPool-1-worker-1@934" daemon prio=5 tid=0x1a nid=NA waiting
+        java.lang.Thread.State: WAITING
+      	at jdk.internal.vm.Continuation.run(Continuation.java:248)
+      	at java.lang.VirtualThread.runContinuation(VirtualThread.java:221)
+      	at java.lang.VirtualThread$$Lambda/0x0000007001062870.run(Unknown Source:-1)
+      	at java.util.concurrent.ForkJoinTask$RunnableExecuteAction.exec(ForkJoinTask.java:1423)
+      	at java.util.concurrent.ForkJoinTask.doExec$$$capture(ForkJoinTask.java:387)
+      	at java.util.concurrent.ForkJoinTask.doExec(ForkJoinTask.java:-1)
+      	at java.util.concurrent.ForkJoinPool$WorkQueue.topLevelExec(ForkJoinPool.java:1312)
+      	at java.util.concurrent.ForkJoinPool.scan(ForkJoinPool.java:1843)
+      	at java.util.concurrent.ForkJoinPool.runWorker(ForkJoinPool.java:1808)
+      	at java.util.concurrent.ForkJoinWorkerThread.run(ForkJoinWorkerThread.java:188)
+      
+      "@960" tid=0x19 nid=NA virtual runnable
+        java.lang.Thread.State: RUNNABLE
+      	at java.base/java.lang.VirtualThread.parkNanos(VirtualThread.java:621)
+      	at java.base/java.lang.VirtualThread.sleepNanos(VirtualThread.java:791)
+      	at java.base/java.lang.Thread.sleep(Thread.java:590)
+      	at VirtualThreadsDemo.simulateWork(VirtualThreadsDemo.java:12)
+      	at java.base/java.util.concurrent.Executors$RunnableAdapter.call(Executors.java:572)
+      	at java.base/java.util.concurrent.FutureTask.run$$$capture(FutureTask.java:317)
+      	at java.base/java.util.concurrent.FutureTask.run(FutureTask.java)
+      	at java.base/java.lang.VirtualThread.run(VirtualThread.java:309)
+      
+      "@957" tid=0x1c nid=NA virtual runnable
+        java.lang.Thread.State: RUNNABLE
+      	at java.base/java.lang.VirtualThread.parkNanos(VirtualThread.java:621)
+      	at java.base/java.lang.VirtualThread.sleepNanos(VirtualThread.java:791)
+      	at java.base/java.lang.Thread.sleep(Thread.java:590)
+      	at VirtualThreadsDemo.simulateWork(VirtualThreadsDemo.java:12)
+      	at java.base/java.util.concurrent.Executors$RunnableAdapter.call(Executors.java:572)
+      	at java.base/java.util.concurrent.FutureTask.run$$$capture(FutureTask.java:317)
+      	at java.base/java.util.concurrent.FutureTask.run(FutureTask.java)
+      	at java.base/java.lang.VirtualThread.run(VirtualThread.java:309)
+      """;
+    List<ThreadState> threads = ThreadDumpParser.parse(text);
+    assertEquals(4, threads.size());
+
+    assertTrue(threads.get(3).getName().endsWith("@957"));
+    assertTrue(threads.get(3).isVirtual());
+  }
+
+  @Test
+	public void testVeryLongLineParsingPerformance() {
     final String spaces = " ".repeat(1_000_000);
     final String letters = "a".repeat(1_000_000);
     Benchmark.newBenchmark("parsing spaces", () -> {

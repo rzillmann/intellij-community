@@ -1,4 +1,6 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+@file:Suppress("ReplacePutWithAssignment")
+
 package com.intellij.openapi.wm.impl.headertoolbar
 
 import com.intellij.accessibility.AccessibilityUtils
@@ -24,13 +26,14 @@ import com.intellij.openapi.actionSystem.toolbarLayout.CompressingLayoutStrategy
 import com.intellij.openapi.actionSystem.toolbarLayout.ToolbarLayoutStrategy
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.EDT
-import com.intellij.openapi.application.UiDispatcherKind
-import com.intellij.openapi.application.ui
+import com.intellij.openapi.application.UiWithModelAccess
+import com.intellij.openapi.application.impl.InternalUICustomization
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.keymap.impl.ui.ActionsTreeUtil
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.util.IconLoader
 import com.intellij.openapi.util.SystemInfoRt
+import com.intellij.openapi.wm.IdeFrame
 import com.intellij.openapi.wm.impl.IdeBackgroundUtil
 import com.intellij.openapi.wm.impl.ToolbarComboButton
 import com.intellij.openapi.wm.impl.customFrameDecorations.header.CustomWindowHeaderUtil
@@ -73,11 +76,11 @@ private sealed interface MainToolbarFlavor {
   }
 }
 
-private class MenuButtonInToolbarMainToolbarFlavor(coroutineScope: CoroutineScope,
-                                                   private val headerContent: JComponent,
-                                                   frame: JFrame, toolbar: MainToolbar) : MainToolbarFlavor {
-
-
+private class MenuButtonInToolbarMainToolbarFlavor(
+  coroutineScope: CoroutineScope,
+  private val headerContent: JComponent,
+  frame: JFrame, toolbar: MainToolbar,
+) : MainToolbarFlavor {
   private val mainMenuWithButton = MainMenuWithButton(coroutineScope, frame)
   private val mainMenuButton = mainMenuWithButton.mainMenuButton
 
@@ -112,7 +115,9 @@ class MainToolbar(
 ) : JPanel(HorizontalLayout(layoutGap)) {
   private val flavor: MainToolbarFlavor
   private val widthCalculationListeners = mutableSetOf<ToolbarWidthCalculationListener>()
-  private val cachedWidths by lazy { ConcurrentHashMap<String?, Int>() }
+  private val cachedWidths by lazy { ConcurrentHashMap<String, Int>() }
+
+  internal var borderPainter: BorderPainter = DefaultBorderPainter()
 
   init {
     this.background = background
@@ -185,7 +190,7 @@ class MainToolbar(
       CustomizationUtil.createToolbarCustomizationHandler(it, MAIN_TOOLBAR_ID, this, ActionPlaces.MAIN_TOOLBAR)
     }
 
-    val widgets = withContext(Dispatchers.ui(UiDispatcherKind.RELAX)) {
+    val widgets = withContext(Dispatchers.EDT) {
       removeAll()
 
       flavor.addWidget()
@@ -203,13 +208,15 @@ class MainToolbar(
 
     for (widget in widgets) {
       // separate EDT action - avoid long-running update
-      withContext(Dispatchers.EDT) {
+      withContext(Dispatchers.UiWithModelAccess) {
         widget.first.updateActions()
       }
     }
 
     migratePreviousCustomizations(schema)
     migrateVcsActions(schema)
+
+    InternalUICustomization.getInstance()?.configureMainToolbar(this)
   }
 
   private fun migrateVcsActions(schema: CustomActionsSchema) {
@@ -289,7 +296,13 @@ class MainToolbar(
     super.paintComponent(g)
     if (!CustomWindowHeaderUtil.isToolbarInHeader(UISettings.getInstance(), isFullScreen())) {
       ProjectWindowCustomizerService.getInstance().paint(frame, this, g as Graphics2D)
+      InternalUICustomization.getInstance()?.paintFrameBackground(frame as IdeFrame, this, g)
     }
+  }
+
+  override fun paintChildren(g: Graphics) {
+    super.paintChildren(g)
+    borderPainter.paintAfterChildren(this, g)
   }
 
   private fun installClickListener(popupHandler: PopupHandler, customTitleBar: WindowDecorations.CustomTitleBar?) {
@@ -336,7 +349,6 @@ class MainToolbar(
     widthCalculationListeners.forEach { it.onToolbarCompressed(event) }
   }
 
-
   override fun removeNotify() {
     super.removeNotify()
     if (ScreenUtil.isStandardAddRemoveNotify(this)) {
@@ -357,6 +369,7 @@ class MainToolbar(
     return accessibleContext
   }
 
+  @Suppress("RedundantInnerClassModifier")
   private inner class AccessibleMainToolbar : AccessibleJPanel() {
     override fun getAccessibleRole(): AccessibleRole = AccessibilityUtils.GROUPED_ELEMENTS
   }
@@ -418,7 +431,7 @@ class MyActionToolbarImpl(group: ActionGroup, customizationGroup: ActionGroup?)
   }
 
   fun updateActions() {
-    updateActionsWithoutLoadingIcon(/* includeInvisible = */ false)
+    updateActionsWithoutLoadingIcon(includeInvisible = false)
   }
 
   override fun getChildPreferredSize(index: Int): Dimension {

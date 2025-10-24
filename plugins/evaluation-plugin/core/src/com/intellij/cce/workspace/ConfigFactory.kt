@@ -9,9 +9,12 @@ import com.intellij.cce.interpreter.InterpretationOrder
 import com.intellij.cce.util.getAs
 import com.intellij.cce.util.getIfExists
 import com.intellij.cce.workspace.filter.CompareSessionsFilter
+import com.intellij.cce.workspace.filter.LookupFilter
+import com.intellij.cce.workspace.filter.SpanFilter
 import com.intellij.cce.workspace.filter.SessionsFilter
 import com.intellij.openapi.diagnostic.logger
-import org.apache.commons.lang3.text.StrSubstitutor
+import org.apache.commons.text.StringSubstitutor
+import org.apache.commons.text.lookup.StringLookup
 import java.lang.reflect.Type
 import java.nio.file.Files
 import java.nio.file.Path
@@ -95,10 +98,10 @@ object ConfigFactory {
 
     if (map != null) {
       val resultProjectPath = projectPath ?: map.handleEnv("projectPath")
-      builder.actions = Config.ActionsGeneration(
+      builder.actions = Config.ActionsGenerationIml(
         resultProjectPath,
         projectName ?: map.getIfExists<String>("projectName")?.handleEnv() ?: resultProjectPath.split('/').last(),
-        language ?: map.getAs("language"),
+        language ?: map.getIfExists("language"),
         map.getAs("evaluationRoots"),
         map.getIfExists<List<String>>("ignoreFileNames")?.toSet() ?: emptySet(),
         map.getIfExists<String?>("sourceFile"),
@@ -117,7 +120,7 @@ object ConfigFactory {
       return
     }
 
-    builder.fileDataset = Config.FileDataset(
+    builder.fileDataset = Config.FileDatasetImpl(
       map.getAs("url"),
       map.getIfExists<Double?>("chunkSize")?.toInt(),
     )
@@ -127,6 +130,7 @@ object ConfigFactory {
     if (map == null) return
     map.getIfExists<Double?>("experimentGroup")?.let { builder.experimentGroup = it.toInt() }
     map.getIfExists<Double?>("sessionsLimit")?.let { builder.sessionsLimit = it.toInt() }
+    map.getIfExists<Boolean?>("strictSessionsLimit")?.let { builder.strictSessionsLimit = it }
     map.getIfExists<Double?>("filesLimit")?.let { builder.filesLimit = it.toInt() }
     map.getIfExists<Double?>("sessionProbability")?.let { builder.sessionProbability = it }
     map.getIfExists<Double?>("sessionSeed")?.let { builder.sessionSeed = it.toLong() }
@@ -168,6 +172,19 @@ object ConfigFactory {
     if (map.containsKey("defaultMetrics")) {
       builder.defaultMetrics = map.getAs("defaultMetrics")
     }
+
+    if (System.getProperty("idea.diagnostic.opentelemetry.file") != null) {
+      map.getIfExists<Map<String, Any>?>("openTelemetrySpanFilter")?.let { filterMap ->
+        val filterType = SpanFilter.FilterType.entries.firstOrNull { it.name == filterMap.getAs<String>("filterType") }
+        check(filterType != null) { "Not existing span filter type $filterType in config" }
+        val spanNames = filterMap.getAs<List<String>>("spanNames")
+        when (filterType) {
+          SpanFilter.FilterType.contains -> builder.openTelemetrySpanFilter = SpanFilter(SpanFilter.FilterType.contains, spanNames)
+          SpanFilter.FilterType.equals -> builder.openTelemetrySpanFilter = SpanFilter(SpanFilter.FilterType.equals, spanNames)
+        }
+      }
+    }
+
     val filtersList = map.getIfExists<List<Map<String, Any>>>("sessionsFilters")
     val filters = mutableListOf<SessionsFilter>()
     filtersList?.forEach {
@@ -181,10 +198,16 @@ object ConfigFactory {
       comparisonFilters.add(CompareSessionsFilter.create(it.getAs("filterType"), it.getAs("name"), it.getAs("evaluationType")))
     }
     builder.mergeComparisonFilters(comparisonFilters)
+    val lookupFiltersList = map.getIfExists<List<Map<String, Any>>>("lookupFilters")
+    val lookupFilters = mutableListOf<LookupFilter>()
+    lookupFiltersList?.forEach {
+      lookupFilters.add(LookupFilter.create(it.getAs("filterType")))
+    }
+    builder.mergeLookupFilters(lookupFilters)
   }
 
-  private fun Map<String, *>.handleEnv(key: String): String = StrSubstitutor.replaceSystemProperties(getAs(key))
-  private fun String.handleEnv(): String = StrSubstitutor.replaceSystemProperties(this)
+  private fun Map<String, *>.handleEnv(key: String): String = resolveVariables(getAs(key))
+  private fun String.handleEnv(): String = resolveVariables(this)
 
   private class SessionFiltersSerializer : JsonSerializer<SessionsFilter> {
     override fun serialize(src: SessionsFilter, typeOfSrc: Type, context: JsonSerializationContext): JsonObject {
@@ -196,4 +219,22 @@ object ConfigFactory {
       return jsonObject
     }
   }
+}
+
+fun resolveVariables(source: Any): String {
+  val lookup = object : StringLookup {
+    override fun lookup(key: String): String? {
+      val property = System.getProperty(key)
+      if (property?.isNotBlank() == true) {
+        return property
+      }
+      val env = System.getenv(key)
+      if (env?.isNotBlank() == true) {
+        return env
+      }
+      throw IllegalArgumentException("No value for $key found")
+    }
+  }
+
+  return StringSubstitutor(lookup).replace(source)
 }

@@ -45,6 +45,7 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import static com.intellij.notification.NotificationType.ERROR;
 import static com.intellij.notification.NotificationType.INFORMATION;
+import static com.intellij.openapi.vfs.newvfs.persistent.PersistentFSHeaders.Flags.FLAGS_DEFRAGMENTATION_REQUESTED;
 import static com.intellij.platform.diagnostic.telemetry.PlatformScopesKt.Indexes;
 import static com.intellij.util.SystemProperties.getIntProperty;
 import static java.nio.charset.StandardCharsets.UTF_8;
@@ -112,7 +113,8 @@ public final class PersistentFSConnection {
     recoveryInfo = info;
   }
 
-  @NotNull DataEnumerator<String> attributesEnumerator() {
+  @VisibleForTesting
+  public @NotNull DataEnumerator<String> attributesEnumerator() {
     return enumeratedAttributes;
   }
 
@@ -128,11 +130,13 @@ public final class PersistentFSConnection {
     return enumeratedAttributeId;
   }
 
-  @NotNull VFSContentStorage contents() {
+  @VisibleForTesting
+  public @NotNull VFSContentStorage contents() {
     return contentStorage;
   }
 
-  @NotNull VFSAttributesStorage attributes() {
+  @VisibleForTesting
+  public @NotNull VFSAttributesStorage attributes() {
     return attributesStorage;
   }
 
@@ -182,7 +186,8 @@ public final class PersistentFSConnection {
            || contentStorage.isDirty();
   }
 
-  void force() throws IOException {
+  @VisibleForTesting
+  public void force() throws IOException {
     ((Forceable)namesEnumerator).force();//checked to be a Forceable in ctor
     attributesStorage.force();
     contentStorage.force();
@@ -217,7 +222,6 @@ public final class PersistentFSConnection {
       closed = true;
     }
   }
-
 
   public @NotNull PersistentFSPaths paths() {
     return persistentFSPaths;
@@ -260,26 +264,31 @@ public final class PersistentFSConnection {
       records.setErrorsAccumulated(corruptions);
       if (corruptions == 1) {
         //Persist ErrorsAccumulated.
-        // No need to force() on each error -- we don't bother not persist exact count of errors,
-        // but we do want to persist (errors > 0) transition:
+        // No need to force() on _each_ error -- we don't bother not persisting _exact_ number of errors,
+        // but we _do_ want to persist (errors == 0) -> (errors > 0) transition:
         force();
       }
-      corruptionNotificationThrottler.runThrottled(System.nanoTime(), () -> {
-        Application app = ApplicationManager.getApplication();
-        if (app != null && !app.isHeadlessEnvironment()) {
+      Application app = ApplicationManager.getApplication();
+      if (app != null && !app.isHeadlessEnvironment()) {
+        corruptionNotificationThrottler.runThrottled(System.nanoTime(), () -> {
           boolean insistRestart = (corruptions >= INSIST_TO_RESTART_AFTER_ERRORS_COUNT);
           showCorruptionNotification(insistRestart);
-        }
-      });
+        });
+      }
+      else {
+        LOG.warn("No Application to show Notification about VFS corruption", cause);
+      }
     }
-    catch (IOException ioException) {
-      LOG.error(ioException);
+    catch (Throwable t) {
+      LOG.error(t);
+      cause.addSuppressed(t);
     }
   }
 
-  static void scheduleVFSRebuild(@NotNull Path corruptionMarkerFile,
-                                 @Nullable String message,
-                                 @Nullable Throwable errorCause) {
+  @VisibleForTesting
+  public static void scheduleVFSRebuild(@NotNull Path corruptionMarkerFile,
+                                        @Nullable String message,
+                                        @Nullable Throwable errorCause) {
     VFSCorruptedException corruptedException = new VFSCorruptedException(
       message == null ? "(No specific reason of corruption was given)" : message,
       errorCause
@@ -310,9 +319,20 @@ public final class PersistentFSConnection {
     }
   }
 
-  void scheduleVFSRebuild(@Nullable String message,
-                          @Nullable Throwable errorCause) {
+  @VisibleForTesting
+  public void scheduleVFSRebuild(@Nullable String message,
+                                 @Nullable Throwable errorCause) {
     scheduleVFSRebuild(persistentFSPaths.getCorruptionMarkerFile(), message, errorCause);
+  }
+
+  /**
+   * Currently implementation is == rebuild.
+   * The difference between this method and {@linkplain #scheduleVFSRebuild(String, Throwable)} is that this method is not about
+   * 'rebuild VFS because it is corrupted', but 'defragment VFS because it may contain al lot of garbage' -- this is why there is
+   * no 'message' nor 'errorCause' parameters.
+   */
+  public void scheduleDefragmentation() throws IOException {
+    records.updateFlags(/*flagsToAdd: */ FLAGS_DEFRAGMENTATION_REQUESTED, /*flagsToRemove: */ 0);
   }
 
 
@@ -327,7 +347,19 @@ public final class PersistentFSConnection {
   void ensureFileIdIsValid(int fileId) throws IndexOutOfBoundsException {
     if (!records.isValidFileId(fileId)) {
       int maxAllocatedID = records.maxAllocatedID();
-      throw new IndexOutOfBoundsException("fileId[" + fileId + "] is outside valid/allocated ids range [1.." + maxAllocatedID + "]");
+      throw new IndexOutOfBoundsException(
+        "fileId[" + fileId + "] is outside valid/allocated ids range [1.." + maxAllocatedID + "], " +
+        "VFS.status: {" + describeConsistencyStatus() + "}"
+      );
+    }
+  }
+
+  String describeConsistencyStatus() {
+    try {
+      return "wasClosedProperly=" + records.wasClosedProperly() + ", wasAlwaysClosedProperly=" + records.wasAlwaysClosedProperly();
+    }
+    catch (IOException e) {
+      return "(unknown: " + e.getMessage() + ")";
     }
   }
 
@@ -390,7 +422,7 @@ public final class PersistentFSConnection {
             connection.force();
           }
           catch (AlreadyDisposedException | RejectedExecutionException e) {
-            LOG.warn("Stop flushing: pool is shutting down or whole application is closing", e);
+            LOG.warn("Stop flushing: pool is shutting down or whole application is closing", new Exception(e));
             scheduledFuture.cancel(false);
           }
           catch (Throwable t) {
@@ -414,7 +446,7 @@ public final class PersistentFSConnection {
    * <p>
    * More details in a {@link GentleFlusherBase} javadocs
    */
-  private static class GentleVFSFlusher extends GentleFlusherBase {
+  private static final class GentleVFSFlusher extends GentleFlusherBase {
     /** How often, on average, flush each index to the disk */
     private static final long FLUSHING_PERIOD_MS = SECONDS.toMillis(FlushingDaemon.FLUSHING_PERIOD_IN_SECONDS);
 

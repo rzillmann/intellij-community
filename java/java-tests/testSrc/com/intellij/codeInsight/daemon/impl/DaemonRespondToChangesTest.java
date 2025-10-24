@@ -340,7 +340,7 @@ public class DaemonRespondToChangesTest extends DaemonAnalyzerTestCase {
 
     consoleView.getComponent(); //create editor
     consoleView.print("haha", ConsoleViewContentType.NORMAL_OUTPUT);
-    UIUtil.dispatchAllInvocationEvents();
+    PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue();
 
     try {
       checkDaemonReaction(false, () -> {
@@ -351,7 +351,7 @@ public class DaemonRespondToChangesTest extends DaemonAnalyzerTestCase {
         catch (InterruptedException e) {
           LOG.error(e);
         }
-        UIUtil.dispatchAllInvocationEvents(); //flush
+        PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue(); //flush
       });
       checkDaemonReaction(false, () -> {
         consoleView.print("sss", ConsoleViewContentType.NORMAL_OUTPUT);
@@ -361,7 +361,7 @@ public class DaemonRespondToChangesTest extends DaemonAnalyzerTestCase {
         catch (InterruptedException e) {
           LOG.error(e);
         }
-        UIUtil.dispatchAllInvocationEvents(); //flush
+        PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue(); //flush
       });
       checkDaemonReaction(false, () -> {
         consoleView.setOutputPaused(true);
@@ -401,6 +401,7 @@ public class DaemonRespondToChangesTest extends DaemonAnalyzerTestCase {
             });
     try {
       while (true) {
+        Thread.onSpinWait();
         try {
           int[] toIgnore = new int[0];
           Runnable callbackWhileWaiting = () -> {
@@ -445,9 +446,9 @@ public class DaemonRespondToChangesTest extends DaemonAnalyzerTestCase {
     Editor schemaEditor = null;
     for (Editor editor : allEditors) {
       Document document = editor.getDocument();
-      PsiFile file = PsiDocumentManager.getInstance(getProject()).getPsiFile(document);
-      if (file == null) continue;
-      if (location.equals(file.getName())) {
+      PsiFile psiFile = PsiDocumentManager.getInstance(getProject()).getPsiFile(document);
+      if (psiFile == null) continue;
+      if (location.equals(psiFile.getName())) {
         schemaEditor = editor;
         break;
       }
@@ -583,7 +584,7 @@ public class DaemonRespondToChangesTest extends DaemonAnalyzerTestCase {
     assertOneElement(highlightErrors());
   }
 
-  public void testWhenTypingOverWrongReferenceItsColorChangesToBlackAndOnlyAfterHighlightingFinishedItReturnsToRed() {
+  public void testWhenTypingOverWrongReferenceIncludingRightAfterTheEndAndRightBeforeStartItsColorMustStayTheRedWithoutAnyBlinking() {
     configureByText(JavaFileType.INSTANCE, """
       class S {  int f() {
           return asfsdfsdfsd<caret>;
@@ -596,9 +597,21 @@ public class DaemonRespondToChangesTest extends DaemonAnalyzerTestCase {
 
     type("xxx");
 
-    List<HighlightInfo> infos = DaemonCodeAnalyzerImpl.getHighlights(document, HighlightInfoType.SYMBOL_TYPE_SEVERITY, getProject());
-    for (HighlightInfo info : infos) {
-      assertNotSame(HighlightInfoType.WRONG_REF, info.type);
+    // right after typing, before the highlighting kicked in, its color must stay red
+    for (HighlightInfo info : DaemonCodeAnalyzerImpl.getHighlights(document, HighlightInfoType.SYMBOL_TYPE_SEVERITY, getProject())) {
+      if (TextRange.create(info).intersects(error)) {
+        assertSame(HighlightInfoType.WRONG_REF, info.type);
+        assertEquals("asfsdfsdfsd" + "xxx", info.getText());
+      }
+    }
+
+    getEditor().getCaretModel().moveToOffset(error.startOffset);
+    type("zzz");
+    for (HighlightInfo info : DaemonCodeAnalyzerImpl.getHighlights(document, HighlightInfoType.SYMBOL_TYPE_SEVERITY, getProject())) {
+      if (TextRange.create(info).intersects(error)) {
+        assertSame(HighlightInfoType.WRONG_REF, info.type);
+        assertEquals("zzz" + "asfsdfsdfsd" + "xxx", info.getText());
+      }
     }
 
     HighlightInfo error2 = assertOneElement(highlightErrors());
@@ -1087,13 +1100,13 @@ public class DaemonRespondToChangesTest extends DaemonAnalyzerTestCase {
     try {
       PsiDocumentManager.getInstance(myProject).commitAllDocuments();
 
-      PsiFile file = getFile();
+      PsiFile psiFile = getFile();
       Editor editor = getEditor();
-      Project project = file.getProject();
+      Project project = psiFile.getProject();
       CodeInsightTestFixtureImpl.ensureIndexesUpToDate(project);
       TextEditor textEditor = TextEditorProvider.getInstance().getTextEditor(editor);
       Runnable callbackWhileWaiting = () -> type(' ');
-      myDaemonCodeAnalyzer.runPasses(file, editor.getDocument(), textEditor, ArrayUtilRt.EMPTY_INT_ARRAY, true, callbackWhileWaiting);
+      myDaemonCodeAnalyzer.runPasses(psiFile, editor.getDocument(), textEditor, ArrayUtilRt.EMPTY_INT_ARRAY, true, callbackWhileWaiting);
     }
     catch (ProcessCanceledException ignored) {
       return;
@@ -1109,21 +1122,21 @@ public class DaemonRespondToChangesTest extends DaemonAnalyzerTestCase {
 
     PsiDocumentManager.getInstance(myProject).commitAllDocuments();
 
-    PsiFile file = getFile();
-    Project project = file.getProject();
+    PsiFile psiFile = getFile();
+    Project project = psiFile.getProject();
     CodeInsightTestFixtureImpl.ensureIndexesUpToDate(project);
     List<HighlightInfo> errors = doHighlighting(HighlightSeverity.ERROR);
     assertEmpty(errors);
     List<HighlightInfo> initialWarnings = doHighlighting(HighlightSeverity.WARNING);
     assertEmpty(initialWarnings);
-    int N_BLOCKS = codeBlocks(file).size();
+    int N_BLOCKS = codeBlocks(psiFile).size();
     assertTrue("codeblocks :"+N_BLOCKS, N_BLOCKS > 1000);
     Random random = new Random();
     int N = 10;
     // try with both serialized and not-serialized passes
     myDaemonCodeAnalyzer.serializeCodeInsightPasses(false);
     for (int i=0; i<N*2; i++) {
-      PsiCodeBlock block = codeBlocks(file).get(random.nextInt(N_BLOCKS));
+      PsiCodeBlock block = codeBlocks(psiFile).get(random.nextInt(N_BLOCKS));
       getEditor().getCaretModel().moveToOffset(block.getLBrace().getTextOffset() + 1);
       type("\n/*xxx*/");
       List<HighlightInfo> warnings = doHighlighting(HighlightSeverity.WARNING);
@@ -1139,9 +1152,9 @@ public class DaemonRespondToChangesTest extends DaemonAnalyzerTestCase {
   }
 
   @NotNull
-  private List<PsiCodeBlock> codeBlocks(@NotNull PsiFile file) {
+  private List<PsiCodeBlock> codeBlocks(@NotNull PsiFile psiFile) {
     List<PsiCodeBlock> blocks = new ArrayList<>();
-    file.accept(new JavaRecursiveElementWalkingVisitor() {
+    psiFile.accept(new JavaRecursiveElementWalkingVisitor() {
       @Override
       public void visitCodeBlock(@NotNull PsiCodeBlock block) {
         blocks.add(block);
@@ -1185,7 +1198,7 @@ public class DaemonRespondToChangesTest extends DaemonAnalyzerTestCase {
       }
       if (element instanceof PsiComment && element.getText().equals("//XXX")) {
         while (wait.get()) {
-          Thread.yield();
+          Thread.onSpinWait();
         }
         holder.newAnnotation(HighlightSeverity.ERROR, SWEARING).range(element).create();
         iDidIt();
@@ -1218,6 +1231,8 @@ public class DaemonRespondToChangesTest extends DaemonAnalyzerTestCase {
     Disposer.register(getTestRootDisposable(), () -> EditorFactory.getInstance().releaseEditor(editor2));
     TextEditor textEditor1 = new PsiAwareTextEditorProvider().getTextEditor(editor1);
     TextEditor textEditor2 = new PsiAwareTextEditorProvider().getTextEditor(editor2);
+    assertNotNull(textEditor1);
+    assertNotNull(textEditor2);
     EditorTracker.getInstance(getProject()).setActiveEditors(List.of(editor1, editor2));
 
     // check that 'MySingletonAnnotator' is run only once for two editors for the same document
@@ -1226,9 +1241,7 @@ public class DaemonRespondToChangesTest extends DaemonAnalyzerTestCase {
         MySingletonAnnotator.wait.set(true);
         type("/");
         PsiDocumentManager.getInstance(getProject()).commitAllDocuments();
-        AppExecutorUtil.getAppScheduledExecutorService().schedule(() -> {
-          MySingletonAnnotator.wait.set(false);
-        }, 1000, TimeUnit.MILLISECONDS);
+        AppExecutorUtil.getAppScheduledExecutorService().schedule(() -> MySingletonAnnotator.wait.set(false), 1000, TimeUnit.MILLISECONDS);
         waitForDaemonToFinish(getProject(), editor1.getDocument());
 
         // revert back
@@ -1312,7 +1325,7 @@ public class DaemonRespondToChangesTest extends DaemonAnalyzerTestCase {
         EditorTracker editorTracker = EditorTracker.Companion.getInstance(myProject);
         setActiveEditors(editor);
         while (HeavyProcessLatch.INSTANCE.isRunning()) {
-          UIUtil.dispatchAllInvocationEvents();
+          PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue();
         }
         type("xxx"); // restart daemon
         assertTrue(editorTracker.getActiveEditors().contains(editor));
@@ -1322,7 +1335,7 @@ public class DaemonRespondToChangesTest extends DaemonAnalyzerTestCase {
         // wait for the first pass to complete
         long start = System.currentTimeMillis();
         while (myDaemonCodeAnalyzer.isRunning() || !applied.contains(editor)) {
-          UIUtil.dispatchAllInvocationEvents();
+          PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue();
           if (System.currentTimeMillis() - start > 1000000) {
             fail("Too long waiting for daemon (" +(System.currentTimeMillis() - start)+"ms) ");
           }
@@ -1332,11 +1345,12 @@ public class DaemonRespondToChangesTest extends DaemonAnalyzerTestCase {
         ApplicationManager.getApplication().executeOnPooledThread(() ->
           HeavyProcessLatch.INSTANCE.performOperation(HeavyProcessLatch.Type.Processing, "my own heavy op", ()-> {
             while (runHeavyProcessing) {
+              Thread.onSpinWait();
             }
           })
         );
         while (!HeavyProcessLatch.INSTANCE.isRunning()) {
-          UIUtil.dispatchAllInvocationEvents();
+          PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue();
         }
         applied.clear();
         collected.clear();
@@ -1347,7 +1361,7 @@ public class DaemonRespondToChangesTest extends DaemonAnalyzerTestCase {
         while (System.currentTimeMillis() < start + 5000) {
           assertEmpty(applied);  // it should not restart
           assertEmpty(collected);
-          UIUtil.dispatchAllInvocationEvents();
+          PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue();
         }
       }
       finally {
@@ -1369,7 +1383,7 @@ public class DaemonRespondToChangesTest extends DaemonAnalyzerTestCase {
         EditorTracker editorTracker = EditorTracker.Companion.getInstance(myProject);
         setActiveEditors(editor);
         while (HeavyProcessLatch.INSTANCE.isRunning()) {
-          UIUtil.dispatchAllInvocationEvents();
+          PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue();
         }
         type("xxx"); // restart daemon
         assertTrue(editorTracker.getActiveEditors().contains(editor));
@@ -1379,7 +1393,7 @@ public class DaemonRespondToChangesTest extends DaemonAnalyzerTestCase {
         // wait for the first pass to complete
         long start = System.currentTimeMillis();
         while (myDaemonCodeAnalyzer.isRunning() || !applied.contains(editor)) {
-          UIUtil.dispatchAllInvocationEvents();
+          PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue();
           if (System.currentTimeMillis() - start > 1000000) {
             fail("Too long waiting for daemon (" +(System.currentTimeMillis() - start)+"ms) ");
           }
@@ -1389,12 +1403,12 @@ public class DaemonRespondToChangesTest extends DaemonAnalyzerTestCase {
         Future<?> future = ApplicationManager.getApplication().executeOnPooledThread(() ->
           HeavyProcessLatch.INSTANCE.performOperation(HeavyProcessLatch.Type.Syncing, "my own vfs refresh", () -> {
             while (runHeavyProcessing) {
-              Thread.yield();
+              Thread.onSpinWait();
             }
           })
         );
         while (!HeavyProcessLatch.INSTANCE.isRunning()) {
-          UIUtil.dispatchAllInvocationEvents();
+          PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue();
         }
         applied.clear();
         collected.clear();
@@ -1442,7 +1456,7 @@ public class DaemonRespondToChangesTest extends DaemonAnalyzerTestCase {
         while (System.currentTimeMillis() < start + 5000) {
           assertEmpty(applied);  // it must not restart
           assertEmpty(collected);
-          UIUtil.dispatchAllInvocationEvents();
+          PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue();
         }
       });
 
@@ -1453,7 +1467,7 @@ public class DaemonRespondToChangesTest extends DaemonAnalyzerTestCase {
 
       long start = System.currentTimeMillis();
       while (System.currentTimeMillis() < start + 5000 && applied.isEmpty()) {
-        UIUtil.dispatchAllInvocationEvents();
+        PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue();
       }
       assertNotEmpty(applied);  // it must restart outside bulk
       assertNotEmpty(collected);
@@ -1568,7 +1582,7 @@ public class DaemonRespondToChangesTest extends DaemonAnalyzerTestCase {
         }
       }
       if (System.currentTimeMillis() > deadline) {
-        DaemonRespondToChangesPerformanceTest.dumpThreadsToConsole();
+        DaemonRespondToChangesPerfTest.dumpThreadsToConsole();
         fail("Too long waiting for daemon to finish ("+(System.currentTimeMillis()-start)+"ms already)");
       }
       PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue();
@@ -1644,8 +1658,8 @@ public class DaemonRespondToChangesTest extends DaemonAnalyzerTestCase {
         }
 
         class TestDumbAwareHighlightingPassesStartEvenInDumbModePass extends EditorBoundHighlightingPass implements DumbAware {
-          TestDumbAwareHighlightingPassesStartEvenInDumbModePass(Editor editor, PsiFile file) {
-            super(editor, file, false);
+          TestDumbAwareHighlightingPassesStartEvenInDumbModePass(Editor editor, PsiFile psiFile) {
+            super(editor, psiFile, false);
           }
 
           @Override
@@ -1953,7 +1967,7 @@ public class DaemonRespondToChangesTest extends DaemonAnalyzerTestCase {
     public void annotate(@NotNull PsiElement element, @NotNull AnnotationHolder holder) {
       if (element instanceof PsiComment && element.getText().equals("//XXX")) {
         while (wait.get()) {
-          Thread.yield();
+          Thread.onSpinWait();
         }
         holder.newAnnotation(HighlightSeverity.ERROR, SWEARING).range(element).create();
         iDidIt();
@@ -1967,11 +1981,10 @@ public class DaemonRespondToChangesTest extends DaemonAnalyzerTestCase {
         .filter(info -> SWEARING.equals(info.getDescription())).toList();
     }
     static List<HighlightInfo> syntaxHighlights(MarkupModel markupModel, String description) {
-      List<HighlightInfo> errors = Arrays.stream(markupModel.getAllHighlighters())
+      return Arrays.stream(markupModel.getAllHighlighters())
             .map(highlighter -> HighlightInfo.fromRangeHighlighter(highlighter))
             .filter(Objects::nonNull)
             .filter(info -> description.equals(info.getDescription())).toList();
-      return errors;
     }
   }
 
@@ -2024,7 +2037,7 @@ public class DaemonRespondToChangesTest extends DaemonAnalyzerTestCase {
       // register very slow annotator and make sure the invalid PSI highlighting was removed before this annotator finished
       TestTimeOut n = TestTimeOut.setTimeout(100, TimeUnit.SECONDS);
       Runnable checkHighlighted = () -> {
-        UIUtil.dispatchAllInvocationEvents();
+        PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue();
         if (MyVerySlowAnnotator.syntaxHighlights(markupModel, errorDescription).isEmpty() && MyVerySlowAnnotator.wait.get()) {
           // removed before highlighting is finished
           MyVerySlowAnnotator.wait.set(false);
@@ -2049,8 +2062,9 @@ public class DaemonRespondToChangesTest extends DaemonAnalyzerTestCase {
     });
   }
 
+  @SuppressWarnings("FieldMayBeStatic")
   @Language(value = "JAVA", prefix="class X { void foo() {\n", suffix = "\n}\n}")
-  String MANY_LAMBDAS_TEXT_TO_TYPE = """
+  private final String MANY_LAMBDAS_TEXT_TO_TYPE = """
     if (i(()->{
             i(()-> {
               System.out.println("vFile = ");
@@ -2068,8 +2082,9 @@ public class DaemonRespondToChangesTest extends DaemonAnalyzerTestCase {
     }
     """;
 
+  @SuppressWarnings("FieldMayBeStatic")
   @Language("JAVA")
-  String MANY_LAMBDAS_INITIAL = """
+  private final String MANY_LAMBDAS_INITIAL = """
     class X {
       void invokeLater(Runnable r) {}
       boolean i(Runnable r) { return true;}
@@ -2080,12 +2095,14 @@ public class DaemonRespondToChangesTest extends DaemonAnalyzerTestCase {
   public void testDaemonDoesRestartDuringMadMonkeyTyping/*Stress*/() {
     assertDaemonRestartsAndLeavesNoErrorElementsInTheEnd(MANY_LAMBDAS_INITIAL, MANY_LAMBDAS_TEXT_TO_TYPE, null);
   }
+  @SuppressWarnings("FieldMayBeStatic")
   @Language(value = "JAVA", prefix="class X { void foo() {\n", suffix = "\n}\n}")
-  String LONG_LINE_WITH_PARENS_TEXT_TO_TYPE = """
+  private final String LONG_LINE_WITH_PARENS_TEXT_TO_TYPE = """
     if (highlighter != null) highlighter += " text='" + StringUtil.first(getText(), 40, true) + "'";
     """;
+  @SuppressWarnings("FieldMayBeStatic")
   @Language("JAVA")
-  String LONG_LINE_WITH_PARENS_INITIAL_TEXT = """
+  private final String LONG_LINE_WITH_PARENS_INITIAL_TEXT = """
     class X {
       static String getText() { return ""; }
       static class StringUtil {
@@ -2142,7 +2159,7 @@ public class DaemonRespondToChangesTest extends DaemonAnalyzerTestCase {
               }
             });
             //updater.assertNoDuplicates(myFile, getErrorsFromMarkup(markupModel), "errors from markup ");
-            myDaemonCodeAnalyzer.restart(myFile);
+            myDaemonCodeAnalyzer.restart(myFile, this);
             List<HighlightInfo> errorsFromMarkup = getErrorsFromMarkup(markupModel);
             //updater.assertNoDuplicates(myFile, errorsFromMarkup, "errors from markup ");
             //((HighlightInfoUpdaterImpl)HighlightInfoUpdater.getInstance(getProject())).assertMarkupDataConsistent(myFile);
@@ -2302,7 +2319,7 @@ public class DaemonRespondToChangesTest extends DaemonAnalyzerTestCase {
           //System.out.println(edtTrace+"\n  delay ="+delay+"  --------------------------------");
         }, delay, TimeUnit.MILLISECONDS);
         while (!future.isDone()) {
-          UIUtil.dispatchAllInvocationEvents();
+          PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue();
         }
         try {
           future.get();
@@ -2356,7 +2373,7 @@ public class DaemonRespondToChangesTest extends DaemonAnalyzerTestCase {
         {
           long deadline = System.currentTimeMillis() + 10; // do something for awhile
           while (System.currentTimeMillis() < deadline) {
-            UIUtil.dispatchAllInvocationEvents();
+            PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue();
           }
         }
 
@@ -2418,8 +2435,29 @@ public class DaemonRespondToChangesTest extends DaemonAnalyzerTestCase {
     TestTimeOut t = TestTimeOut.setTimeout(10, TimeUnit.SECONDS);
     while (!t.isTimedOut()) {
       assertTrue(restarts.toString(), restarts.get() < 10);
-      UIUtil.dispatchAllInvocationEvents();
+      PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue();
     }
   }
 
+
+  public void testStartingTypingCommentMustExtendExistingHighlighterButShrinkItBackAfterRehighlighting() {
+    @Language("JAVA")
+    String text = """
+      class X {
+         void foo() {
+           Str/*ing xxx;
+         }
+      }""";
+
+    configureByText(JavaFileType.INSTANCE, text);
+    List<HighlightInfo> errs = highlightErrors();
+    HighlightInfo info = ContainerUtil.find(errs, e -> "Cannot resolve symbol 'Str'".equals(e.getDescription()));
+    assertTrue(errs.toString(), info != null && info.getText().equals("Str"));
+
+    int i = getEditor().getDocument().getText().indexOf("/*");
+    WriteCommandAction.writeCommandAction(getProject()).run(() -> getEditor().getDocument().insertString(i, "/*"));
+    errs = highlightErrors();
+    info = ContainerUtil.find(errs, e -> "Cannot resolve symbol 'Str'".equals(e.getDescription()));
+    assertTrue(errs.toString(), info != null && info.getText().equals("Str"));
+  }
 }

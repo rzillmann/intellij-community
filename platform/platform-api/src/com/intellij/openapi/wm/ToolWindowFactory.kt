@@ -1,11 +1,9 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.openapi.wm
 
-import com.intellij.openapi.progress.blockingContext
 import com.intellij.openapi.project.PossiblyDumbAware
 import com.intellij.openapi.project.Project
 import org.jetbrains.annotations.ApiStatus.Experimental
-import org.jetbrains.annotations.ApiStatus.Internal
 import javax.swing.Icon
 
 /**
@@ -22,10 +20,8 @@ interface ToolWindowFactory : PossiblyDumbAware {
    * @return false to deactivate the factory
    */
   suspend fun isApplicableAsync(project: Project): Boolean {
-    return blockingContext {
-      @Suppress("DEPRECATION")
-      isApplicable(project)
-    }
+    @Suppress("DEPRECATION")
+    return isApplicable(project)
   }
 
   @Suppress("DeprecatedCallableAddReplaceWith")
@@ -41,7 +37,6 @@ interface ToolWindowFactory : PossiblyDumbAware {
 
   // todo it acts like ProjectActivity.execute - we should find a better name for this method
   @Experimental
-  @Internal
   suspend fun manage(toolWindow: ToolWindow, toolWindowManager: ToolWindowManager) {
   }
 
@@ -64,11 +59,11 @@ interface ToolWindowFactory : PossiblyDumbAware {
   /**
    * Return custom anchor or null to use anchor defined in Tool Window Registration or customized by user.
    */
-  @get:Internal
+  @get:Experimental
   val anchor: ToolWindowAnchor?
     get() = null
 
-  @get:Internal
+  @get:Experimental
   val icon: Icon?
     get() = null
 }

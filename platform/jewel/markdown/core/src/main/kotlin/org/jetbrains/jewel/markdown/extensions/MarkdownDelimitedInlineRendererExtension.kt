@@ -1,6 +1,8 @@
 package org.jetbrains.jewel.markdown.extensions
 
 import androidx.compose.ui.text.AnnotatedString
+import org.jetbrains.annotations.ApiStatus
+import org.jetbrains.jewel.foundation.ExperimentalJewelApi
 import org.jetbrains.jewel.markdown.InlineMarkdown
 import org.jetbrains.jewel.markdown.InlineMarkdown.CustomDelimitedNode
 import org.jetbrains.jewel.markdown.rendering.InlineMarkdownRenderer
@@ -12,6 +14,8 @@ import org.jetbrains.jewel.markdown.rendering.InlinesStyling
  *
  * Only `Delimited` nodes that can be rendered as an [AnnotatedString] are supported; other kinds of inline node aren't.
  */
+@ApiStatus.Experimental
+@ExperimentalJewelApi
 public interface MarkdownDelimitedInlineRendererExtension {
     /**
      * Check whether the provided [node] node can be rendered by this extension.

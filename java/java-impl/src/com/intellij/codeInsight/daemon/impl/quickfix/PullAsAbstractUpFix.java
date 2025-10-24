@@ -50,7 +50,7 @@ public class PullAsAbstractUpFix extends LocalQuickFixAndIntentionActionOnPsiEle
 
   @Override
   public boolean isAvailable(@NotNull Project project,
-                             @NotNull PsiFile file,
+                             @NotNull PsiFile psiFile,
                              @NotNull PsiElement startElement,
                              @NotNull PsiElement endElement) {
     return startElement instanceof PsiMethod && ((PsiMethod)startElement).getContainingClass() != null;
@@ -58,7 +58,7 @@ public class PullAsAbstractUpFix extends LocalQuickFixAndIntentionActionOnPsiEle
 
   @Override
   public void invoke(@NotNull Project project,
-                     @NotNull PsiFile file,
+                     @NotNull PsiFile psiFile,
                      @Nullable Editor editor,
                      @NotNull PsiElement startElement,
                      @NotNull PsiElement endElement) {
@@ -157,7 +157,7 @@ public class PullAsAbstractUpFix extends LocalQuickFixAndIntentionActionOnPsiEle
         name = JavaBundle.message("intention.name.extract.method.to.new.interface", methodWithOverrides.getName());
         canBePulledUp = false;
       } else if (classesToPullUp.size() == 1) {
-        final PsiClass baseClass = classesToPullUp.iterator().next();
+        final PsiClass baseClass = classesToPullUp.getFirst();
         name = JavaBundle.message("intention.name.pull.method.up.and.make.it.abstract.conditionally", methodWithOverrides.getName(), baseClass.getName(), !baseClass.hasModifierProperty(PsiModifier.ABSTRACT) ? 0 : 1);
       }
     }

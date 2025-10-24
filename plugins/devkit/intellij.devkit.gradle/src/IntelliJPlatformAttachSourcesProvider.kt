@@ -28,7 +28,6 @@ internal enum class ApiSourceArchive(
   val archiveName: String,
 ) {
   CSS("com.intellij.css", "attachSources.api.action.displayName.css", "src_css-api.zip"),
-  DATABASE("com.intellij.database", "attachSources.api.action.displayName.database", "src_database-openapi.zip"),
   JAM("com.intellij.java", "attachSources.api.action.displayName.jam", "src_jam-openapi.zip"),
   JAVAEE("com.intellij.javaee", "attachSources.api.action.displayName.javaee", "src_javaee-openapi.zip"),
   PERSISTENCE("com.intellij.persistence", "attachSources.api.action.displayName.persistence", "src_persistence-openapi.zip"),
@@ -91,7 +90,9 @@ internal class IntelliJPlatformAttachSourcesProvider : AttachSourcesProvider {
   ): AttachSourcesAction? {
     val productInfo = resolveProductInfo(psiFile) ?: return null
     val product = IntelliJPlatformProduct.fromProductCode(productInfo.productCode) ?: return null
-    val majorVersion = productInfo.buildNumber.substringBefore('.').toInt()
+    val buildNumber = productInfo.buildNumber
+    val majorVersion = buildNumber.substringBefore('.').toInt()
+    val rangedVersion = "[$majorVersion,$buildNumber]!!$buildNumber"
     val productCoordinates = resolveProductCoordinates(product, majorVersion) ?: return null
 
     return when {
@@ -99,7 +100,7 @@ internal class IntelliJPlatformAttachSourcesProvider : AttachSourcesProvider {
       isLspApiSourcesArchive(psiFile, product, majorVersion) -> createAttachSourcesArchiveAction(psiFile, ApiSourceArchive.LSP)
 
       // Create the actual IntelliJ Platform sources attaching action
-      else -> createAttachPlatformSourcesAction(psiFile, productCoordinates, version)
+      else -> createAttachPlatformSourcesAction(psiFile, productCoordinates, version, rangedVersion)
     }
   }
 
@@ -172,8 +173,9 @@ internal class IntelliJPlatformAttachSourcesProvider : AttachSourcesProvider {
    * @param psiFile The PSI file that represents the currently handled class.
    * @param productCoordinates The Maven coordinates of the IntelliJ Platform whose sources we load.
    * @param version The version of the product.
+   * @param closeVersion The alternative version of the product used for resolving sources of a close version.
    */
-  private fun createAttachPlatformSourcesAction(psiFile: PsiFile, productCoordinates: String, version: String) =
+  private fun createAttachPlatformSourcesAction(psiFile: PsiFile, productCoordinates: String, version: String, closeVersion: String) =
     object : AttachSourcesAction {
       override fun getName() = DevKitGradleBundle.message("attachSources.intellijPlatform.action.name")
 
@@ -185,19 +187,25 @@ internal class IntelliJPlatformAttachSourcesProvider : AttachSourcesProvider {
 
         val executionResult = ActionCallback()
         val project = psiFile.project
-        val sourceArtifactNotation = "$productCoordinates:$version:sources"
 
-        GradleArtifactDownloader.downloadArtifact(project, name, sourceArtifactNotation, externalProjectPath)
-          .whenComplete { path, error ->
-            if (error != null) {
-              executionResult.setRejected()
-            }
-            else {
-              attachSources(path, orderEntries) {
-                executionResult.setDone()
+        val primaryNotation = "$productCoordinates:$version:sources"
+        val fallbackNotation = "$productCoordinates:$closeVersion:sources"
+
+        fun downloadAndAttach(artifactNotation: String, onFailure: () -> Unit) {
+          GradleArtifactDownloader.downloadArtifact(project, name, artifactNotation, externalProjectPath)
+            .whenComplete { path, error ->
+              when {
+                error == null && path != null -> attachSources(path, orderEntries) { executionResult.setDone() }
+                else -> onFailure()
               }
             }
+        }
+
+        downloadAndAttach(primaryNotation) {
+          downloadAndAttach(fallbackNotation) {
+            executionResult.setRejected()
           }
+        }
 
         return executionResult
       }
@@ -268,11 +276,15 @@ internal class IntelliJPlatformAttachSourcesProvider : AttachSourcesProvider {
 
       // IntelliJ IDEA Ultimate has sources published since 242; otherwise we use IC.
       IntelliJPlatformProduct.IDEA -> when {
-        majorVersion >= 242 -> IntelliJPlatformProduct.IDEA
+        majorVersion >= 253 -> IntelliJPlatformProduct.IDEA
+        majorVersion >= 242 -> IntelliJPlatformProduct.IDEA_IU
         else -> IntelliJPlatformProduct.IDEA_IC
       }
 
       // Any other IntelliJ Platform should use IC
-      else -> IntelliJPlatformProduct.IDEA_IC
+      else -> when {
+        majorVersion >= 253 -> IntelliJPlatformProduct.IDEA
+        else -> IntelliJPlatformProduct.IDEA_IC
+      }
     }.mavenCoordinates
 }

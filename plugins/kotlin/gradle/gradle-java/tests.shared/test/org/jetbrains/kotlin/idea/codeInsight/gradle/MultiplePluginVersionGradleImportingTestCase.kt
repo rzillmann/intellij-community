@@ -10,11 +10,11 @@ import com.intellij.lang.annotation.HighlightSeverity
 import com.intellij.openapi.util.Disposer
 import org.gradle.util.GradleVersion
 import org.jetbrains.kotlin.gradle.ProjectInfo
+import org.jetbrains.kotlin.gradle.multiplatformTests.KotlinMppTestProperties
 import org.jetbrains.kotlin.gradle.multiplatformTests.TestConfiguration
 import org.jetbrains.kotlin.gradle.multiplatformTests.TestWithKotlinPluginAndGradleVersions
 import org.jetbrains.kotlin.gradle.multiplatformTests.testFeatures.checkers.orderEntries.OrderEntriesChecker
 import org.jetbrains.kotlin.gradle.multiplatformTests.testFeatures.checkers.workspace.GeneralWorkspaceChecks
-import org.jetbrains.kotlin.gradle.multiplatformTests.workspace.checkWorkspaceModel
 import org.jetbrains.kotlin.idea.codeInsight.gradle.KotlinGradlePluginVersions.V_1_7_21
 import org.jetbrains.kotlin.idea.codeInsight.gradle.KotlinGradlePluginVersions.V_1_8_22
 import org.jetbrains.kotlin.tooling.core.KotlinToolingVersion
@@ -58,8 +58,9 @@ abstract class MultiplePluginVersionGradleImportingTestCase : KotlinGradleImport
             "Missing 'kotlinPluginVersionParam'"
         }.version
 
-    override val gradleVersion: String
+    override var gradleVersion: String
         get() = super.gradleVersion
+        set(_) {}
 
     override fun setUp() {
         super.setUp()
@@ -178,14 +179,14 @@ abstract class MultiplePluginVersionGradleImportingTestCase : KotlinGradleImport
             configure()
         }
 
-        checkWorkspaceModel(
+        val testProperties = KotlinMppTestProperties.constructRaw(kotlinPluginVersion, GradleVersion.version(gradleVersion))
+
+        OrderEntriesChecker.check(
             myProject,
             testDataDirectory(),
             myProjectRoot.toNioPath().toFile(),
-            kotlinPluginVersion,
-            gradleVersion,
-            listOf(OrderEntriesChecker),
-            testConfiguration = testConfiguration
+            testProperties,
+            testConfiguration,
         )
     }
 }
@@ -220,4 +221,3 @@ fun MultiplePluginVersionGradleImportingTestCase.nativeDistLibraryDependency(
 
     return Regex("$namePart$platformPart")
 }
-

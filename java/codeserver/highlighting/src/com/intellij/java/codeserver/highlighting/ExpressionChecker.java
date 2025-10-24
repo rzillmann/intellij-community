@@ -19,7 +19,6 @@ import com.intellij.psi.controlFlow.ControlFlowUtil;
 import com.intellij.psi.impl.IncompleteModelUtil;
 import com.intellij.psi.impl.source.resolve.graphInference.InferenceSession;
 import com.intellij.psi.impl.source.resolve.graphInference.PsiPolyExpressionUtil;
-import com.intellij.psi.infos.CandidateInfo;
 import com.intellij.psi.infos.MethodCandidateInfo;
 import com.intellij.psi.search.GlobalSearchScope;
 import com.intellij.psi.search.searches.ImplicitClassSearch;
@@ -95,9 +94,23 @@ final class ExpressionChecker {
   void checkCreateInnerClassFromStaticContext(@NotNull PsiElement element,
                                               @NotNull PsiElement placeToSearchEnclosingFrom,
                                               @NotNull PsiClass aClass) {
-    if (!PsiUtil.isInnerClass(aClass)) return;
+    if (aClass.hasModifierProperty(PsiModifier.STATIC)) return;
     PsiClass outerClass = aClass.getContainingClass();
-    if (outerClass == null) return;
+    if (outerClass == null) {
+      if (!(aClass.getParent() instanceof PsiDeclarationStatement)) return; // local class
+      PsiMember scope = PsiTreeUtil.getParentOfType(aClass, PsiMember.class);
+      if (scope == null) return;
+      if (scope.hasModifierProperty(PsiModifier.STATIC)) {
+        PsiModifierListOwner enclosingStaticElement = PsiUtil.getEnclosingStaticElement(element, null);
+        assert enclosingStaticElement != null;
+        if (enclosingStaticElement != scope) {
+          myVisitor.report(JavaErrorKinds.INSTANTIATION_LOCAL_CLASS_WRONG_STATIC_CONTEXT.create(element, aClass));
+        }
+        return;
+      }
+      outerClass = scope.getContainingClass();
+      if (outerClass == null) return;
+    }
 
     if (outerClass instanceof PsiSyntheticClass ||
         InheritanceUtil.hasEnclosingInstanceInScope(outerClass, placeToSearchEnclosingFrom, true, false)) {
@@ -245,12 +258,10 @@ final class ExpressionChecker {
   void checkMethodCall(@NotNull PsiMethodCallExpression methodCall) {
     PsiExpressionList list = methodCall.getArgumentList();
     PsiReferenceExpression referenceToMethod = methodCall.getMethodExpression();
+    
     JavaResolveResult[] results = referenceToMethod.multiResolve(true);
     JavaResolveResult resolveResult = results.length == 1 ? results[0] : JavaResolveResult.EMPTY;
     PsiElement resolved = resolveResult.getElement();
-
-    boolean isDummy = isDummyConstructorCall(methodCall, list, referenceToMethod);
-    if (isDummy) return;
 
     PsiSubstitutor substitutor = resolveResult.getSubstitutor();
     if (resolved instanceof PsiMethod psiMethod && resolveResult.isValidResult()) {
@@ -397,13 +408,12 @@ final class ExpressionChecker {
     if (!(type instanceof PsiClassType classType)) return;
     PsiClassType.ClassResolveResult typeResult = classType.resolveGenerics();
     PsiClass aClass = typeResult.getElement();
-    if (aClass == null) return;
     if (aClass instanceof PsiAnonymousClass anonymousClass) {
       classType = anonymousClass.getBaseClassType();
       typeResult = classType.resolveGenerics();
       aClass = typeResult.getElement();
-      if (aClass == null) return;
     }
+    if (aClass == null || aClass instanceof PsiTypeParameter) return;
 
     PsiJavaCodeReferenceElement classReference = expression.getClassOrAnonymousClassReference();
     checkConstructorCall(typeResult, expression, classReference);
@@ -425,8 +435,18 @@ final class ExpressionChecker {
   void checkConstructorCallProblems(@NotNull PsiMethodCallExpression methodCall) {
     if (!JavaPsiConstructorUtil.isConstructorCall(methodCall)) return;
     PsiMethod method = PsiTreeUtil.getParentOfType(methodCall, PsiMethod.class, true, PsiClass.class, PsiLambdaExpression.class);
-    if (method == null || !method.isConstructor()) {
+    PsiMethod contextMethod =
+      method != null ? method : PsiTreeUtil.getContextOfType(methodCall, PsiMethod.class, true, PsiClass.class, PsiLambdaExpression.class);
+    if (contextMethod == null || !contextMethod.isConstructor()) {
       myVisitor.report(JavaErrorKinds.CALL_CONSTRUCTOR_ONLY_ALLOWED_IN_CONSTRUCTOR.create(methodCall));
+      return;
+    }
+    if (JavaPsiRecordUtil.isCompactConstructor(contextMethod) || JavaPsiRecordUtil.isExplicitCanonicalConstructor(contextMethod)) {
+      myVisitor.report(JavaErrorKinds.CALL_CONSTRUCTOR_RECORD_IN_CANONICAL.create(methodCall));
+      return;
+    }
+    if (method == null) {
+      // Do not report other errors for detached constructor call, as they are likely non-relevant
       return;
     }
     PsiMethodCallExpression constructorCall = JavaPsiConstructorUtil.findThisOrSuperCallInConstructor(method);
@@ -437,10 +457,6 @@ final class ExpressionChecker {
     PsiElement codeBlock = methodCall.getParent().getParent();
     if (!(codeBlock instanceof PsiCodeBlock) || !(codeBlock.getParent() instanceof PsiMethod)) {
       myVisitor.report(JavaErrorKinds.CALL_CONSTRUCTOR_MUST_BE_TOP_LEVEL_STATEMENT.create(methodCall));
-      return;
-    }
-    if (JavaPsiRecordUtil.isCompactConstructor(method) || JavaPsiRecordUtil.isExplicitCanonicalConstructor(method)) {
-      myVisitor.report(JavaErrorKinds.CALL_CONSTRUCTOR_RECORD_IN_CANONICAL.create(methodCall));
       return;
     }
     PsiStatement prevStatement = PsiTreeUtil.getPrevSiblingOfType(methodCall.getParent(), PsiStatement.class);
@@ -1106,23 +1122,6 @@ final class ExpressionChecker {
     myVisitor.report(JavaErrorKinds.EXCEPTION_UNHANDLED.create(element, unhandled));
   }
 
-  boolean isDummyConstructorCall(@NotNull PsiMethodCallExpression methodCall,
-                                 @NotNull PsiExpressionList list,
-                                 @NotNull PsiReferenceExpression referenceToMethod) {
-    boolean isThisOrSuper = referenceToMethod.getReferenceNameElement() instanceof PsiKeyword;
-    if (isThisOrSuper) {
-      // super(..) or this(..)
-      if (list.isEmpty()) { // implicit ctr call
-        CandidateInfo[] candidates = PsiResolveHelper.getInstance(myVisitor.project())
-          .getReferencedMethodCandidates(methodCall, true);
-        if (candidates.length == 1 && !candidates[0].getElement().isPhysical()) {
-          return true; // dummy constructor
-        }
-      }
-    }
-    return false;
-  }
-
   void checkConstructorCall(@NotNull PsiClassType.ClassResolveResult typeResolveResult,
                             @NotNull PsiConstructorCall constructorCall,
                             @Nullable PsiJavaCodeReferenceElement classReference) {
@@ -1143,11 +1142,8 @@ final class ExpressionChecker {
     }
     PsiMethod[] constructors = aClass.getConstructors();
     if (constructors.length == 0) {
-      if (!list.isEmpty()) {
-        myVisitor.report(JavaErrorKinds.NEW_EXPRESSION_ARGUMENTS_TO_DEFAULT_CONSTRUCTOR_CALL.create(constructorCall));
-      }
-      else if (classReference != null && aClass.hasModifierProperty(PsiModifier.PROTECTED) &&
-               callingProtectedConstructorFromDerivedClass(constructorCall, aClass)) {
+      if (classReference != null && aClass.hasModifierProperty(PsiModifier.PROTECTED) &&
+          callingProtectedConstructorFromDerivedClass(constructorCall, aClass)) {
         myVisitor.myModifierChecker.reportAccessProblem(classReference, aClass, typeResolveResult);
       }
       else if (aClass.isInterface() && constructorCall instanceof PsiNewExpression newExpression) {
@@ -1155,8 +1151,8 @@ final class ExpressionChecker {
         if (typeArgumentList.getTypeArguments().length > 0) {
           myVisitor.report(JavaErrorKinds.NEW_EXPRESSION_ANONYMOUS_IMPLEMENTS_INTERFACE_WITH_TYPE_ARGUMENTS.create(typeArgumentList));
         }
+        return;
       }
-      return;
     }
     JavaResolveResult[] results = constructorCall.multiResolve(false);
     MethodCandidateInfo result = null;
@@ -1196,7 +1192,7 @@ final class ExpressionChecker {
         constructorCall, new JavaErrorKinds.UnresolvedConstructorContext(aClass, results)));
       return;
     }
-    if (classReference != null &&
+    if (classReference != null && !constructor.isDefaultConstructor() &&
         (!result.isAccessible() ||
          constructor.hasModifierProperty(PsiModifier.PROTECTED) && callingProtectedConstructorFromDerivedClass(constructorCall, aClass))) {
       myVisitor.myModifierChecker.reportAccessProblem(classReference, constructor, result);
@@ -1597,10 +1593,10 @@ final class ExpressionChecker {
     }
     if (!(expression instanceof PsiThisExpression) && !(expression instanceof PsiSuperExpression) ||
         ((PsiQualifiedExpression)expression).getQualifier() == null) {
-      PsiClass expressionClass = PsiTreeUtil.getParentOfType(expression, PsiClass.class, true);
+      PsiClass expressionClass = PsiUtil.getContainingClass(expression);
       while (expressionClass != null && parentClass != expressionClass) {
         if (InheritanceUtil.isInheritorOrSelf(expressionClass, referencedClass, true)) return;
-        expressionClass = PsiTreeUtil.getParentOfType(expressionClass, PsiClass.class, true);
+        expressionClass = PsiUtil.getContainingClass(expressionClass);
       }
     }
 

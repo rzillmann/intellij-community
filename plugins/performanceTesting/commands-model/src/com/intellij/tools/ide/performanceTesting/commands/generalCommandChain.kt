@@ -78,6 +78,7 @@ fun <T : CommandChain> T.openFile(
   warmup: Boolean = false,
   disableCodeAnalysis: Boolean = false,
   useWaitForCodeAnalysisCode: Boolean = true,
+  forbidDownloadingSourcesOnNavigation: Boolean = false,
 ): T = apply {
   val command = mutableListOf("${CMD_PREFIX}openFile", "-file ${relativePath.replace(" ", "SPACE_SYMBOL")}")
   if (timeoutInSeconds != 0L) {
@@ -94,6 +95,9 @@ fun <T : CommandChain> T.openFile(
   }
   if (useWaitForCodeAnalysisCode) {
     command.add("-unwfca")
+  }
+  if (forbidDownloadingSourcesOnNavigation) {
+    command.add("-forbidDownloadingSourcesOnNavigation")
   }
 
   addCommand(*command.toTypedArray())
@@ -167,15 +171,23 @@ fun <T : CommandChain> T.findUsages(expectedElementName: String = "", scope: Str
   navigateAndFindUsages(expectedElementName, "", scope, warmup = warmup)
 }
 
+fun <T : CommandChain> T.findUsagesInToolWindow(expectedElementName: String = "", scope: String = "Project Files", warmup: Boolean = false): T = apply {
+  navigateAndFindUsages(expectedElementName, "", scope, warmup = warmup, runInToolWindow = true)
+}
+
 fun <T : CommandChain> T.navigateAndFindUsages(
   expectedElementName: String,
   position: String = "INTO",
   scope: String = "Project Files",
   warmup: Boolean = false,
   runInBackground: Boolean = false,
+  runInToolWindow: Boolean = false,
 ): T = apply {
   val command = if (runInBackground) {
     mutableListOf("${CMD_PREFIX}findUsagesInBackground")
+  }
+  else if (runInToolWindow) {
+    mutableListOf("${CMD_PREFIX}findUsagesInToolWindow")
   }
   else {
     mutableListOf("${CMD_PREFIX}findUsages")
@@ -854,8 +866,12 @@ fun <T : CommandChain> T.moveDeclarations(moveDeclarationData: MoveDeclarationsD
   addCommand("${CMD_PREFIX}moveDeclarations $jsonData")
 }
 
-fun <T : CommandChain> T.performGC(): T = apply {
-  addCommand("${CMD_PREFIX}performGC")
+fun <T : CommandChain> T.performSystemGC(): T = apply {
+  addCommand("${CMD_PREFIX}performSystemGC")
+}
+
+fun <T : CommandChain> T.performJBRFullGC(): T = apply {
+  addCommand("${CMD_PREFIX}performJBRFullGC")
 }
 
 fun <T : CommandChain> T.copy(): T = apply {
@@ -871,7 +887,6 @@ fun <T : CommandChain> T.cut(): T = apply {
   executeEditorAction("\$Cut")
 }
 
-@Suppress("unused")
 fun <T : CommandChain> T.undo(): T = apply {
   executeEditorAction("\$Undo")
 }
@@ -1095,6 +1110,14 @@ fun <T : CommandChain> T.waitForVcsLogUpdate(): T = apply {
 }
 
 /**
+ * Wait for background procedures on project opening
+ */
+fun <T : CommandChain> T.waitForProjectOpenProcedures(): T = apply {
+  waitForSmartMode()
+  waitForVcsLogUpdate()
+}
+
+/**
  * Will wait and throw exception if the condition wasn't satisfied
  */
 fun <T : CommandChain> T.waitVcsLogIndexing(timeout: Duration? = null): T = apply {
@@ -1130,7 +1153,12 @@ fun <T: CommandChain> T.vcsDisableConfirmationPopup(): T = apply {
   addCommand("${CMD_PREFIX}vcsDisableConfirmationPopup")
 }
 
-fun <T : CommandChain> T.replaceText(startOffset: Int? = null, endOffset: Int? = null, newText: String? = null): T = apply {
+fun <T : CommandChain> T.replaceText(
+  startOffset: Int? = null,
+  endOffset: Int? = null,
+  newText: String? = null,
+  calculateAnalysisTime: Boolean = false,
+): T = apply {
   val options = StringBuilder()
   if (startOffset != null) {
     options.append(" -startOffset ${startOffset}")
@@ -1140,6 +1168,9 @@ fun <T : CommandChain> T.replaceText(startOffset: Int? = null, endOffset: Int? =
   }
   if (newText != null) {
     options.append(" -newText ${newText}")
+  }
+  if (calculateAnalysisTime) {
+    options.append(" -calculateAnalysisTime ${true}")
   }
   addCommand("${CMD_PREFIX}replaceText ${options}")
 }
@@ -1271,6 +1302,12 @@ fun <T : CommandChain> T.waitForVfsRefreshSelectedEditor(): T = apply {
   addCommand("${CMD_PREFIX}waitForVfsRefreshSelectedEditor")
 }
 
+/** @see com.jetbrains.performancePlugin.commands.FindInFilesCommand */
+@Suppress("KDocUnresolvedReference")
+fun <T : CommandChain> T.findInFiles(queries: List<String> = listOf()): T = apply {
+  addCommand("${CMD_PREFIX}findInFiles ${queries.joinToString(";")}")
+}
+
 fun <T : CommandChain> T.closeLookup(): T = apply {
   addCommand("${CMD_PREFIX}closeLookup")
 }
@@ -1309,7 +1346,10 @@ fun <T : CommandChain> T.assertProblemViewCount(expectedProblemCount: Int): T = 
   addCommand("${CMD_PREFIX}assertProblemsViewCount $expectedProblemCount")
 }
 
-/** @see com.jetbrains.performancePlugin.commands.DetectProjectLeaksCommand */
+fun <T : CommandChain> T.waitForReOpenedFile(relativePath: String): T = apply {
+  addCommand("${CMD_PREFIX}waitForReOpenedFile -file ${relativePath.replace(" ", "SPACE_SYMBOL")}")
+}
+
 @Suppress("KDocUnresolvedReference")
 fun <T : CommandChain> T.detectProjectLeaks(): T = apply {
   addCommand("${CMD_PREFIX}detectProjectLeaks")

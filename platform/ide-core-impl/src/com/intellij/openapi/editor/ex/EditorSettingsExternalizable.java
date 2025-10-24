@@ -30,16 +30,6 @@ import java.util.stream.Collectors;
 
 @State(name = "EditorSettings", storages = @Storage("editor.xml"), category = SettingsCategory.CODE, perClient = true)
 public class EditorSettingsExternalizable implements PersistentStateComponent<EditorSettingsExternalizable.OptionSet> {
-  /**
-   * @deprecated Use {@link PropNames#PROP_IS_VIRTUAL_SPACE} instead
-   */
-  @Deprecated(forRemoval = true)
-  public static final @NonNls String PROP_VIRTUAL_SPACE = PropNames.PROP_IS_VIRTUAL_SPACE;
-  /**
-   * @deprecated Use {@link PropNames#PROP_BREADCRUMBS_PER_LANGUAGE} instead
-   */
-  @Deprecated(forRemoval = true)
-  public static final @NonNls String PROP_BREADCRUMBS_PER_LANGUAGE = PropNames.PROP_BREADCRUMBS_PER_LANGUAGE;
 
   /**
    * @deprecated Use {@link PropNames#PROP_ENABLE_RENDERED_DOC} instead
@@ -455,7 +445,7 @@ public class EditorSettingsExternalizable implements PersistentStateComponent<Ed
     Boolean visible = myOptions.mapLanguageBreadcrumbs.put(languageID, value);
     boolean newValue = (visible == null || visible) != value;
     if (newValue) {
-      myPropertyChangeSupport.firePropertyChange(PROP_BREADCRUMBS_PER_LANGUAGE, visible, (Boolean)value);
+      myPropertyChangeSupport.firePropertyChange(PropNames.PROP_BREADCRUMBS_PER_LANGUAGE, visible, (Boolean)value);
     }
     return newValue;
   }

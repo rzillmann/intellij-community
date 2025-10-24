@@ -38,6 +38,11 @@ public abstract class JoinLinesTestGenerated extends AbstractJoinLinesTest {
             runTest("testData/joinLines/addSemicolon/ClassDeclarations.kt");
         }
 
+        @TestMetadata("FunctionAndProperty.kt")
+        public void testFunctionAndProperty() throws Exception {
+            runTest("testData/joinLines/addSemicolon/FunctionAndProperty.kt");
+        }
+
         @TestMetadata("FunctionCalls.kt")
         public void testFunctionCalls() throws Exception {
             runTest("testData/joinLines/addSemicolon/FunctionCalls.kt");
@@ -101,6 +106,41 @@ public abstract class JoinLinesTestGenerated extends AbstractJoinLinesTest {
         @TestMetadata("MemberFunctions.kt")
         public void testMemberFunctions() throws Exception {
             runTest("testData/joinLines/addSemicolon/MemberFunctions.kt");
+        }
+
+        @TestMetadata("Properties.kt")
+        public void testProperties() throws Exception {
+            runTest("testData/joinLines/addSemicolon/Properties.kt");
+        }
+
+        @TestMetadata("PropertiesAndNewLineBetween.kt")
+        public void testPropertiesAndNewLineBetween() throws Exception {
+            runTest("testData/joinLines/addSemicolon/PropertiesAndNewLineBetween.kt");
+        }
+
+        @TestMetadata("PropertiesAndNewLineBetweenInSelection.kt")
+        public void testPropertiesAndNewLineBetweenInSelection() throws Exception {
+            runTest("testData/joinLines/addSemicolon/PropertiesAndNewLineBetweenInSelection.kt");
+        }
+
+        @TestMetadata("PropertyAccessors.kt")
+        public void testPropertyAccessors() throws Exception {
+            runTest("testData/joinLines/addSemicolon/PropertyAccessors.kt");
+        }
+
+        @TestMetadata("PropertyAndFunction.kt")
+        public void testPropertyAndFunction() throws Exception {
+            runTest("testData/joinLines/addSemicolon/PropertyAndFunction.kt");
+        }
+
+        @TestMetadata("PropertyAndPropertyAccessor.kt")
+        public void testPropertyAndPropertyAccessor() throws Exception {
+            runTest("testData/joinLines/addSemicolon/PropertyAndPropertyAccessor.kt");
+        }
+
+        @TestMetadata("PropertyWithInitializerAndPropertyAccessor.kt")
+        public void testPropertyWithInitializerAndPropertyAccessor() throws Exception {
+            runTest("testData/joinLines/addSemicolon/PropertyWithInitializerAndPropertyAccessor.kt");
         }
 
         @TestMetadata("WhileAndACall.kt")
@@ -549,6 +589,26 @@ public abstract class JoinLinesTestGenerated extends AbstractJoinLinesTest {
         @TestMetadata("hasComment2.kt")
         public void testHasComment2() throws Exception {
             runTest("testData/joinLines/whenEntry/hasComment2.kt");
+        }
+
+        @TestMetadata("hasComment3.kt")
+        public void testHasComment3() throws Exception {
+            runTest("testData/joinLines/whenEntry/hasComment3.kt");
+        }
+
+        @TestMetadata("hasComment4.kt")
+        public void testHasComment4() throws Exception {
+            runTest("testData/joinLines/whenEntry/hasComment4.kt");
+        }
+
+        @TestMetadata("hasComment5.kt")
+        public void testHasComment5() throws Exception {
+            runTest("testData/joinLines/whenEntry/hasComment5.kt");
+        }
+
+        @TestMetadata("hasComment6.kt")
+        public void testHasComment6() throws Exception {
+            runTest("testData/joinLines/whenEntry/hasComment6.kt");
         }
 
         @TestMetadata("in.kt")

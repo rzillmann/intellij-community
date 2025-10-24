@@ -12,13 +12,12 @@ import com.intellij.openapi.util.registry.Registry;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.openapi.vfs.VirtualFileWithId;
 import com.intellij.psi.PsiDocumentManager;
-import com.intellij.psi.PsiElement;
 import com.intellij.psi.PsiFile;
 import com.intellij.psi.impl.PsiManagerEx;
 import com.intellij.psi.impl.source.PsiFileImpl;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.indexing.*;
-import com.intellij.util.indexing.events.VfsEventsMerger;
+import com.intellij.util.indexing.events.IndexingEventsLogger;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -30,8 +29,6 @@ import java.util.List;
 
 final class StubTreeLoaderImpl extends StubTreeLoader {
   private static final Logger LOG = Logger.getInstance(StubTreeLoaderImpl.class);
-  // todo remove once we don't need this for stub-ast mismatch debug info
-  private static volatile boolean ourStubReloadingProhibited;
   private final IndexingStampInfoStorage indexingStampInfoStorage = createStorage();
 
   private static IndexingStampInfoStorage createStorage() {
@@ -136,7 +133,9 @@ final class StubTreeLoaderImpl extends StubTreeLoader {
       ObjectStubTree<?> tree =
         stub instanceof PsiFileStub ? new StubTree((PsiFileStub<?>)stub) : new ObjectStubTree<>((ObjectStubBase<?>)stub, true);
       tree.setDebugInfo("created from index");
-      checkDeserializationCreatesNoPsi(tree);
+      StubBase.checkDeserializationCreatesNoPsi(tree.getRoot() instanceof PsiFileStubImpl<?> fileStub
+                                             ? fileStub.getStubRoots()
+                                             : PsiFileStub.EMPTY_ARRAY);
       return tree;
     }
 
@@ -186,7 +185,6 @@ final class StubTreeLoaderImpl extends StubTreeLoader {
         if (project.equals(cachedPsi.getProject())) {
           message += " (this)";
         }
-        message += " use.workspace.file.index.to.generate.iterators=" + Registry.is("use.workspace.file.index.to.generate.iterators");
         message += " shouldBeIndexed=" + IndexingIteratorsProvider.getInstance(project).shouldBeIndexed(vFile);
         // Should return the same as above. Why do we need two different API?
         message += " shouldBeIndexed2=" + ((FileBasedIndexImpl)FileBasedIndex.getInstance()).belongsToProjectIndexableFiles(vFile, project);
@@ -211,24 +209,6 @@ final class StubTreeLoaderImpl extends StubTreeLoader {
       message += e.getMessage();
     }
     return message;
-  }
-
-  private static void checkDeserializationCreatesNoPsi(ObjectStubTree<?> tree) {
-    if (ourStubReloadingProhibited || !(tree instanceof StubTree)) return;
-
-    for (PsiFileStub<?> root : ((PsiFileStubImpl<?>)tree.getRoot()).getStubRoots()) {
-      if (root instanceof StubBase) {
-        StubList stubList = ((StubBase<?>)root).getStubList();
-        for (int i = 0; i < stubList.size(); i++) {
-          StubBase<?> each = stubList.getCachedStub(i);
-          PsiElement cachedPsi = each == null ? null : each.getCachedPsi();
-          if (cachedPsi != null) {
-            ourStubReloadingProhibited = true;
-            throw new AssertionError("Stub deserialization shouldn't create PSI: " + cachedPsi + "; " + each);
-          }
-        }
-      }
-    }
   }
 
   private static int getCurrentTextContentLength(Project project, VirtualFile vFile, Document document, PsiFile psiFile) {
@@ -300,7 +280,7 @@ final class StubTreeLoaderImpl extends StubTreeLoader {
   }
 
   void saveIndexingStampInfo(@Nullable IndexingStampInfo indexingStampInfo, int fileId) {
-    VfsEventsMerger.tryLog(() -> {
+    IndexingEventsLogger.tryLog(() -> {
       return "event=SAVE_STUB_INDEXING_STAMP_INFO" +
              ",id=" + fileId +
              "," + indexingStampInfo;

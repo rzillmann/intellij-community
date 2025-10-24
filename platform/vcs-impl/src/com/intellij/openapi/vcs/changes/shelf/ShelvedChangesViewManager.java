@@ -40,12 +40,13 @@ import com.intellij.openapi.vcs.changes.shelf.DiffShelvedChangesActionProvider.P
 import com.intellij.openapi.vcs.changes.ui.*;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.openapi.wm.ToolWindow;
+import com.intellij.platform.vcs.impl.shared.changes.DiffPreviewUpdateProcessor;
+import com.intellij.platform.vcs.impl.shared.changes.PreviewDiffSplitterComponent;
 import com.intellij.pom.Navigatable;
 import com.intellij.pom.NavigatableAdapter;
 import com.intellij.ui.PopupHandler;
 import com.intellij.ui.ScrollPaneFactory;
 import com.intellij.ui.SimpleTextAttributes;
-import com.intellij.ui.TreeSpeedSearch;
 import com.intellij.ui.awt.RelativeRectangle;
 import com.intellij.ui.components.panels.Wrapper;
 import com.intellij.ui.content.Content;
@@ -57,8 +58,6 @@ import com.intellij.util.ui.JBUI;
 import com.intellij.util.ui.tree.TreeUtil;
 import com.intellij.util.ui.update.MergingUpdateQueue;
 import com.intellij.util.ui.update.Update;
-import com.intellij.platform.vcs.impl.shared.changes.DiffPreviewUpdateProcessor;
-import com.intellij.platform.vcs.impl.shared.changes.PreviewDiffSplitterComponent;
 import kotlinx.coroutines.CoroutineScope;
 import one.util.streamex.StreamEx;
 import org.jetbrains.annotations.*;
@@ -206,17 +205,6 @@ public class ShelvedChangesViewManager implements Disposable {
     AbstractVcs singleVcs = ProjectLevelVcsManager.getInstance(project).getSingleVCS();
     if (singleVcs == null) return false;
     return singleVcs.isWithCustomShelves();
-  }
-
-  protected void removeContent(Content content) {
-    ChangesViewContentI contentManager = ChangesViewContentManager.getInstance(myProject);
-    contentManager.removeContent(content);
-    contentManager.selectContent(ChangesViewContentManager.LOCAL_CHANGES);
-  }
-
-  protected void addContent(Content content) {
-    ChangesViewContentI contentManager = ChangesViewContentManager.getInstance(myProject);
-    contentManager.addContent(content);
   }
 
   protected void activateContent() {
@@ -480,7 +468,6 @@ public class ShelvedChangesViewManager implements Disposable {
       super(project, false, false, false);
       myAsyncTreeModel = new ShelfTreeAsyncModel(project, getScope());
 
-      TreeSpeedSearch.installOn(this, true, ChangesBrowserNode.TO_TEXT_CONVERTER);
       setKeepTreeState(true);
     }
 
@@ -710,6 +697,7 @@ public class ShelvedChangesViewManager implements Disposable {
       myTree.setEditable(true);
       myTree.setDragEnabled(!ApplicationManager.getApplication().isHeadlessEnvironment());
       myTree.setCellEditor(new ShelveRenameTreeCellEditor());
+      myTree.getAccessibleContext().setAccessibleName(VcsBundle.message("shelve.tree.accessible.name"));
 
       final AnAction showDiffAction = ActionManager.getInstance().getAction(IdeActions.ACTION_SHOW_DIFF_COMMON);
       showDiffAction.registerCustomShortcutSet(showDiffAction.getShortcutSet(), myTree);
@@ -783,6 +771,11 @@ public class ShelvedChangesViewManager implements Disposable {
       public void returnFocusToTree() {
         ToolWindow toolWindow = getToolWindowFor(myProject, SHELF);
         if (toolWindow != null) toolWindow.activate(null);
+      }
+
+      @Override
+      public boolean openPreview(boolean requestFocus) {
+        return CommitToolWindowUtil.openDiff(SHELF, this, requestFocus);
       }
 
       @Override

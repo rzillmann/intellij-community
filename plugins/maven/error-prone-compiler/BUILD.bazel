@@ -5,9 +5,11 @@ jvm_library(
   name = "errorProne-compiler",
   module_name = "intellij.maven.errorProne.compiler",
   visibility = ["//visibility:public"],
-  srcs = glob(["src/main/java/**/*.kt", "src/main/java/**/*.java"], allow_empty = True),
+  srcs = glob(["src/main/java/**/*.kt", "src/main/java/**/*.java", "src/main/java/**/*.form"], allow_empty = True),
   deps = [
     "//plugins/maven",
+    "//platform/core-api:core",
+    "//platform/projectModel-api:projectModel",
     "@lib//:kotlin-stdlib",
   ]
 )

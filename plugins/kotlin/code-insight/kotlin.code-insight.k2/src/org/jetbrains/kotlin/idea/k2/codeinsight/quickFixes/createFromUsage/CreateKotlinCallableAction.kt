@@ -1,4 +1,4 @@
-// Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.kotlin.idea.k2.codeinsight.quickFixes.createFromUsage
 
 import com.intellij.codeInsight.daemon.QuickFixBundle.message
@@ -7,6 +7,7 @@ import com.intellij.codeInsight.intention.preview.IntentionPreviewInfo
 import com.intellij.codeInspection.util.IntentionName
 import com.intellij.lang.java.request.CreateExecutableFromJavaUsageRequest
 import com.intellij.lang.jvm.JvmClass
+import com.intellij.lang.jvm.JvmModifier
 import com.intellij.lang.jvm.actions.*
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.project.Project
@@ -15,6 +16,7 @@ import org.jetbrains.kotlin.analysis.api.analyze
 import org.jetbrains.kotlin.analysis.api.symbols.KaCallableSymbol
 import org.jetbrains.kotlin.analysis.api.types.KaTypeParameterType
 import org.jetbrains.kotlin.idea.KotlinFileType
+import org.jetbrains.kotlin.idea.base.analysis.api.utils.allowAnalysisFromWriteActionInEdt
 import org.jetbrains.kotlin.idea.codeinsight.utils.resolveExpression
 import org.jetbrains.kotlin.idea.k2.codeinsight.quickFixes.createFromUsage.CreateKotlinCallableActionTextBuilder.renderCandidatesOfParameterTypes
 import org.jetbrains.kotlin.idea.k2.codeinsight.quickFixes.createFromUsage.CreateKotlinCallableActionTextBuilder.renderCandidatesOfReturnType
@@ -46,6 +48,8 @@ internal class CreateKotlinCallableAction(
         else -> null
     }?.createSmartPointer()
 
+    private val elementToReplace: SmartPsiElementPointer<PsiElement>? = request.elementToReplace?.createSmartPointer()
+
     private val call: PsiElement?
         get() = callPointer?.element
 
@@ -56,11 +60,13 @@ internal class CreateKotlinCallableAction(
 
     internal data class ParamCandidate(val names: Collection<String>, val renderedTypes: List<String>)
 
-    private val parameterCandidates: List<ParamCandidate> = (call as? KtElement ?: pointerToContainer.element as? KtElement)?.let { analyze(it) { renderCandidatesOfParameterTypes(request.expectedParameters, it) } } ?: emptyList()
-    private val candidatesOfRenderedReturnType: List<String> = (call as? KtElement ?: pointerToContainer.element as? KtElement)?.let { analyze(it) { renderCandidatesOfReturnType(request, it) } } ?: emptyList()
+    private val parameterCandidates: List<ParamCandidate> = (call as? KtElement ?: pointerToContainer.element as? KtElement)?.let { element -> allowAnalysisFromWriteActionInEdt(element) { analyze(it) { renderCandidatesOfParameterTypes(request.expectedParameters, it) } } } ?: emptyList()
+    private val candidatesOfRenderedReturnType: List<String> = (call as? KtElement ?: pointerToContainer.element as? KtElement)?.let { element -> allowAnalysisFromWriteActionInEdt(element) { analyze(it) { renderCandidatesOfReturnType(request, it) } } } ?: emptyList()
     private val containerClassFqName: FqName? = (getContainer() as? KtClassOrObject)?.fqName
 
-    private val isForCompanion: Boolean = (request as? CreateMethodFromKotlinUsageRequest)?.isForCompanion == true
+    private val isForCompanion: Boolean =
+        (request as? CreateMethodFromKotlinUsageRequest)?.isForCompanion == true || JvmModifier.STATIC in request.modifiers
+
     private val isExtension: Boolean = (request as? CreateMethodFromKotlinUsageRequest)?.isExtension == true
 
     // Note that this property must be initialized after initializing above properties, because it has dependency on them.
@@ -80,13 +86,13 @@ internal class CreateKotlinCallableAction(
     override fun startInWriteAction(): Boolean = true
 
     override fun getPriority(): PriorityAction.Priority {
+        if (isExtension) return PriorityAction.Priority.LOW
         return if (methodName.firstOrNull()?.isLowerCase() == true) PriorityAction.Priority.NORMAL else PriorityAction.Priority.LOW
     }
 
     override fun isAvailable(project: Project, editor: Editor?, file: PsiFile?): Boolean {
         return pointerToContainer.element != null
-                && callPointer?.element != null
-                && hasReferenceName()
+                && (callPointer == null || callPointer.element != null && hasReferenceName())
                 && PsiNameHelper.getInstance(project).isIdentifier(methodName)
                 && callableDefinitionAsString != null
     }
@@ -138,6 +144,7 @@ internal class CreateKotlinCallableAction(
             isExtension,
             requestTargetClassPointer?.element,
             insertContainer,
+            elementToReplace?.element,
         )
     }
 
@@ -150,17 +157,17 @@ internal class CreateKotlinCallableAction(
         val container = getContainer()
             ?: return null
 
+        val psiFactory = KtPsiFactory(container.project)
         return buildString {
             for (annotation in request.annotations) {
+                if (isNotEmpty()) append(" ")
                 append('@')
-                append(annotation.qualifiedName)
-                append(' ')
+                append(renderAnnotation(container, annotation, psiFactory))
             }
 
             for (modifier in request.modifiers) {
-                val string = CreateFromUsageUtil.visibilityModifierToString(modifier) ?: continue
-                append(string)
-                append(' ')
+                if (isNotEmpty()) append(" ")
+                append(renderModifier(modifier, container, request) ?: continue)
             }
 
             if (abstract) {
@@ -178,7 +185,7 @@ internal class CreateKotlinCallableAction(
             append(renderTypeParameterDeclarations(request, container, receiverTypeText))
             if ((request as? CreateMethodFromKotlinUsageRequest)?.isExtension == true) {
                 if (receiver.isNotEmpty()) {
-                    append("$receiver ")
+                    append(receiver)
                 }
             }
             append(request.methodName)
@@ -188,6 +195,14 @@ internal class CreateKotlinCallableAction(
             candidatesOfRenderedReturnType.firstOrNull()?.let { append(": $it") }
             if (needFunctionBody) append(" {}")
         }
+    }
+
+    private fun renderModifier(modifier: JvmModifier, container: KtElement, request: CreateMethodRequest): String? {
+        val string = CreateFromUsageUtil.visibilityModifierToString(modifier)
+        if (string != null) return string
+        return if (request !is CreateMethodFromKotlinUsageRequest && modifier == JvmModifier.STATIC && container is KtClassOrObject)
+            "@${JvmStatic::class.qualifiedName}"
+        else null
     }
 
     private fun renderTypeParameterDeclarations(

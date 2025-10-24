@@ -6,10 +6,6 @@ import com.intellij.notification.BrowseNotificationAction
 import com.intellij.notification.Notification
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
-import com.intellij.openapi.components.PersistentStateComponent
-import com.intellij.openapi.components.State
-import com.intellij.openapi.components.Storage
-import com.intellij.openapi.components.StoragePathMacros
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Key
@@ -44,7 +40,6 @@ import org.jetbrains.kotlin.utils.SmartList
 import org.jetbrains.kotlin.utils.addIfNotNull
 import java.io.File
 import java.lang.ref.WeakReference
-import java.util.*
 
 interface MavenProjectImportHandler {
     companion object : ProjectExtensionDescriptor<MavenProjectImportHandler>(
@@ -57,15 +52,15 @@ interface MavenProjectImportHandler {
 
 open class KotlinMavenImporter : MavenApplicableConfigurator(KOTLIN_PLUGIN_GROUP_ID, KOTLIN_PLUGIN_ARTIFACT_ID) {
     companion object {
-        const val KOTLIN_PLUGIN_GROUP_ID = "org.jetbrains.kotlin"
-        const val KOTLIN_PLUGIN_ARTIFACT_ID = "kotlin-maven-plugin"
+        const val KOTLIN_PLUGIN_GROUP_ID: String = "org.jetbrains.kotlin"
+        const val KOTLIN_PLUGIN_ARTIFACT_ID: String = "kotlin-maven-plugin"
 
-        const val KOTLIN_PLUGIN_SOURCE_DIRS_CONFIG = "sourceDirs"
+        const val KOTLIN_PLUGIN_SOURCE_DIRS_CONFIG: String = "sourceDirs"
 
         private val LOG = logger<KotlinMavenImporter>()
 
         internal val KOTLIN_JVM_TARGET_6_NOTIFICATION_DISPLAYED = Key<Boolean>("KOTLIN_JVM_TARGET_6_NOTIFICATION_DISPLAYED")
-        val KOTLIN_JPS_VERSION_ACCUMULATOR = Key<IdeKotlinVersion>("KOTLIN_JPS_VERSION_ACCUMULATOR")
+        val KOTLIN_JPS_VERSION_ACCUMULATOR: Key<IdeKotlinVersion> = Key<IdeKotlinVersion>("KOTLIN_JPS_VERSION_ACCUMULATOR")
     }
 
     protected data class ImportedArguments(val args: List<String>, val jvmTarget6IsUsed: Boolean)
@@ -156,7 +151,7 @@ open class KotlinMavenImporter : MavenApplicableConfigurator(KOTLIN_PLUGIN_GROUP
           .notify(project)
     }
 
-    protected val compilationGoals = listOf(
+    protected val compilationGoals: List<String> = listOf(
         PomFile.KotlinGoals.Compile,
         PomFile.KotlinGoals.TestCompile,
         PomFile.KotlinGoals.Js,
@@ -202,7 +197,7 @@ open class KotlinMavenImporter : MavenApplicableConfigurator(KOTLIN_PLUGIN_GROUP
             .notify(project)
     }
 
-    protected fun detectPlatform(mavenProject: MavenProject) =
+    protected fun detectPlatform(mavenProject: MavenProject): IdePlatformKind? =
         detectPlatformByExecutions(mavenProject) ?: detectPlatformByLibraries(mavenProject)
 
     private fun detectPlatformByExecutions(mavenProject: MavenProject): IdePlatformKind? {
@@ -250,7 +245,7 @@ open class KotlinMavenImporter : MavenApplicableConfigurator(KOTLIN_PLUGIN_GROUP
     }
 }
 
-fun MavenPlugin.isKotlinPlugin() =
+fun MavenPlugin.isKotlinPlugin(): Boolean =
     groupId == KotlinMavenImporter.KOTLIN_PLUGIN_GROUP_ID && artifactId == KotlinMavenImporter.KOTLIN_PLUGIN_ARTIFACT_ID
 
 fun Element?.sourceDirectories(): List<String> =
@@ -266,23 +261,4 @@ private fun isTestGoalName(goalName: String) = goalName.startsWith("test-")
 
 enum class SourceType {
     PROD, TEST
-}
-
-@State(
-    name = "AutoImportedSourceRoots",
-    storages = [(Storage(StoragePathMacros.MODULE_FILE))]
-)
-class KotlinImporterComponent : PersistentStateComponent<KotlinImporterComponent.State> {
-    class State(var directories: List<String> = ArrayList())
-
-    private val addedSources: MutableSet<String> = Collections.synchronizedSet(HashSet())
-
-    override fun loadState(state: State) {
-        addedSources.clear()
-        addedSources.addAll(state.directories)
-    }
-
-    override fun getState(): State {
-        return State(addedSources.sorted())
-    }
 }

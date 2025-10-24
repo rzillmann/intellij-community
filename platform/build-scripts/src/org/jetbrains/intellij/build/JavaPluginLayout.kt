@@ -14,10 +14,14 @@ object JavaPluginLayout {
       spec.withProjectLibrary("netty-jps", "rt/netty-jps.jar")
 
       spec.withModule("intellij.platform.jps.build.launcher", "jps-launcher.jar")
-      spec.withModule("intellij.platform.jps.build", "jps-builders.jar")
+      for (moduleName in listOf(
+        "intellij.platform.jps.build",
+        "intellij.platform.jps.build.dependencyGraph",
+      )) {
+        spec.withModule(moduleName, "jps-builders.jar")
+      }
       spec.withModule("intellij.platform.jps.build.javac.rt", "jps-builders-6.jar")
       spec.withModule("intellij.java.aetherDependencyResolver", "aether-dependency-resolver.jar")
-      spec.withModule("intellij.java.jshell.protocol", "jshell-protocol.jar")
 
       for (moduleName in listOf(
         "intellij.java.compiler.antTasks",
@@ -33,6 +37,7 @@ object JavaPluginLayout {
         "intellij.java.compiler",
         "intellij.java.debugger",
         "intellij.java.execution",
+        "intellij.java.execution.impl.shared",
         "intellij.java.remoteServers",
         "intellij.java.analysis",
         "intellij.jvm.analysis",
@@ -52,6 +57,8 @@ object JavaPluginLayout {
         "intellij.java.terminal",
         "intellij.java.debugger.memory.agent",
         "intellij.java.execution.impl",
+        "intellij.java.execution.impl.backend",
+        "intellij.java.execution.impl.frontend",
         "intellij.java.ui",
         "intellij.java.structureView",
         "intellij.java.manifest",
@@ -81,15 +88,12 @@ object JavaPluginLayout {
       spec.withProjectLibrary("jb-jdi")
 
       spec.withModuleLibrary("debugger-memory-agent", "intellij.java.debugger.memory.agent", "")
-      // explicitly pack jshell-frontend and sa-jdwp as a separate JARs
-      spec.withModuleLibrary("jshell-frontend", "intellij.java.execution.impl", "jshell-frontend.jar")
+      // explicitly pack and sa-jdwp as a separate JARs
       spec.withModuleLibrary("sa-jdwp", "intellij.java.debugger.impl", "sa-jdwp.jar")
 
       spec.withResourceArchive("../jdkAnnotations", "lib/resources/jdkAnnotations.jar")
 
       addition?.invoke(spec)
-
-      spec.excludeProjectLibrary("jetbrains-annotations-java5")
     }
   }
 }

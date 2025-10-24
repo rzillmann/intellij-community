@@ -7,13 +7,13 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.*
 import com.intellij.openapi.components.impl.stores.IComponentStore
 import com.intellij.openapi.extensions.DefaultPluginDescriptor
-import com.intellij.openapi.progress.currentThreadCoroutineScope
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.io.FileUtil.createTempDirectory
 import com.intellij.settingsSync.core.communicator.SettingsSyncUserData
 import com.intellij.testFramework.common.timeoutRunBlocking
 import com.intellij.testFramework.replaceService
 import com.intellij.util.xmlb.annotations.Attribute
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.yield
 import org.junit.jupiter.api.AfterEach
@@ -33,13 +33,15 @@ internal abstract class SettingsSyncRealIdeTestBase : SettingsSyncTestBase() {
   @BeforeEach
   fun setupComponentStore() {
     componentStore = TestComponentStore(configDir)
-    application.replaceService(IComponentStore::class.java, componentStore, disposable)
+    val app = application
+    app.replaceService(IComponentStore::class.java, componentStore, disposable)
+    app.componentStoreImplChanged()
     //warm up
-    application.registerService(ExportableNonRoamable::class.java, ExportableNonRoamable::class.java, testPluginDescriptor, false)
-    application.registerService(Roamable::class.java, Roamable::class.java, testPluginDescriptor, false)
+    app.registerService(ExportableNonRoamable::class.java, ExportableNonRoamable::class.java, testPluginDescriptor, false)
+    app.registerService(Roamable::class.java, Roamable::class.java, testPluginDescriptor, false)
     //application.registerService(Roamable::class.java, Roamable::class.java, false)
 
-    application.processAllImplementationClasses { componentClass, plugin ->
+    app.processAllImplementationClasses { _, _ ->
       // do nothing
     }
   }
@@ -66,19 +68,20 @@ internal abstract class SettingsSyncRealIdeTestBase : SettingsSyncTestBase() {
     }
   }
 
-
   @AfterEach
   fun resetComponentStatesToDefault() {
-    application.unregisterService(ExportableNonRoamable::class.java)
-    application.unregisterService(Roamable::class.java)
+    val app = application
+    app.unregisterService(ExportableNonRoamable::class.java)
+    app.unregisterService(Roamable::class.java)
     componentStore.resetComponents()
+    app.componentStoreImplChanged()
   }
 
-  protected suspend fun initSettingsSync(initMode: SettingsSyncBridge.InitMode = SettingsSyncBridge.InitMode.JustInit, crossIdeSync: Boolean = false) {
+  protected fun CoroutineScope.initSettingsSync(initMode: SettingsSyncBridge.InitMode = SettingsSyncBridge.InitMode.JustInit, crossIdeSync: Boolean = false) {
     SettingsSyncSettings.getInstance().syncEnabled = true
-    SettingsSyncLocalSettings.getInstance().state.crossIdeSyncEnabled = crossIdeSync;
+    SettingsSyncLocalSettings.getInstance().state.crossIdeSyncEnabled = crossIdeSync
     val ideMediator = SettingsSyncIdeMediatorImpl(componentStore, configDir, enabledCondition = { true })
-    val controls = SettingsSyncMain.init(currentThreadCoroutineScope(), disposable, settingsSyncStorage, configDir, ideMediator)
+    val controls = SettingsSyncMain.init(this, disposable, settingsSyncStorage, configDir, ideMediator)
     updateChecker = controls.updateChecker
     bridge = controls.bridge
     bridge.initialize(initMode)
@@ -89,7 +92,7 @@ internal abstract class SettingsSyncRealIdeTestBase : SettingsSyncTestBase() {
     }
   }
 
-  protected fun waitForSettingsToBeApplied(vararg componentsToReinit: PersistentStateComponent<*>, execution: () -> Unit) {
+  protected suspend fun waitForSettingsToBeApplied(vararg componentsToReinit: PersistentStateComponent<*>, execution: () -> Unit) {
     val cdl = CountDownLatch(1)
     componentStore.reinitLatch = cdl
 
@@ -105,21 +108,22 @@ internal abstract class SettingsSyncRealIdeTestBase : SettingsSyncTestBase() {
     }
   }
 
-  protected fun <T : PersistentStateComponent<*>> T.init(): T {
-    componentStore.initComponent(component = this, serviceDescriptor = null, pluginId = PluginManagerCore.CORE_ID)
-    val defaultConstructor: Constructor<T> = this::class.java.declaredConstructors.find { it.parameterCount == 0 } as Constructor<T>
+  protected suspend fun <T : PersistentStateComponent<*>> init(component: T): T {
+    componentStore.initComponent(component = component, serviceDescriptor = null, pluginId = PluginManagerCore.CORE_ID)
+    @Suppress("UNCHECKED_CAST")
+    val defaultConstructor: Constructor<T> = component::class.java.declaredConstructors.find { it.parameterCount == 0 } as Constructor<T>
     val componentInstance: T = defaultConstructor.newInstance()
-    componentStore.componentsAndDefaultStates[this] = componentInstance.state!!
-    return this
+    componentStore.componentsAndDefaultStates[component] = componentInstance.state!!
+    return component
   }
 
-  protected fun <State, Component : PersistentStateComponent<State>> Component.initModifyAndSave(modifier: State.() -> Unit): Component {
-    this.init()
-    this.state!!.modifier()
+  protected suspend fun <State, Component : PersistentStateComponent<State>> initModifyAndSave(component: Component, modifier: State.() -> Unit): Component {
+    init(component)
+    component.state!!.modifier()
     runBlocking {
       componentStore.save()
     }
-    return this
+    return component
   }
 
   protected fun <State, Component : PersistentStateComponent<State>> Component.withState(stateApplier: State.() -> Unit): Component {
@@ -139,9 +143,11 @@ internal abstract class SettingsSyncRealIdeTestBase : SettingsSyncTestBase() {
       setPath(configDir)
     }
 
-    override fun reinitComponents(componentNames: Set<String>,
-                                  changedStorages: Set<StateStorage>,
-                                  notReloadableComponents: Collection<String>) {
+      override suspend fun reinitComponents(
+      componentNames: Set<String>,
+      changedStorages: Set<StateStorage>,
+      notReloadableComponents: Collection<String>,
+    ) {
       super.reinitComponents(componentNames, changedStorages, notReloadableComponents)
 
       reinitedComponents.addAll(componentNames)
@@ -150,8 +156,8 @@ internal abstract class SettingsSyncRealIdeTestBase : SettingsSyncTestBase() {
 
     fun resetComponents() {
       for ((component, defaultState) in componentsAndDefaultStates) {
-        val c = component as PersistentStateComponent<Any>
-        c.loadState(defaultState)
+        @Suppress("UNCHECKED_CAST")
+        (component as PersistentStateComponent<Any>).loadState(defaultState)
       }
     }
 
@@ -160,7 +166,7 @@ internal abstract class SettingsSyncRealIdeTestBase : SettingsSyncTestBase() {
   companion object {
     @JvmStatic
     @BeforeAll
-    fun warmUp(): Unit {
+    fun warmUp() {
       val tempDir = createTempDirectory("gitWarmup-${System.currentTimeMillis()}", "beforeAll")
       val parentDisposable = Disposer.newDisposable()
       val gitSettingsLog = GitSettingsLog(

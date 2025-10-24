@@ -150,6 +150,19 @@ public class JpsJavaExtensionServiceImpl extends JpsJavaExtensionService {
   }
 
   @Override
+  public @Nullable Path findSourceFileInProductionRoots(@NotNull JpsModule module, @NotNull String relativePath) {
+    for (JpsModuleSourceRoot root : module.getSourceRoots()) {
+      if (!root.getRootType().isForTests()) {
+        Path file = findSourceFile(root, relativePath);
+        if (file != null) {
+          return file;
+        }
+      }
+    }
+    return null;
+  }
+
+  @Override
   public JpsTypedLibrary<JpsSdk<JpsDummyElement>> addJavaSdk(@NotNull JpsGlobal global, @NotNull String name, @NotNull String homePath) {
     JdkVersionDetector.JdkVersionInfo jdkInfo = JdkVersionDetector.getInstance().detectJdkVersionInfo(homePath);
     assert jdkInfo != null : homePath;
@@ -157,7 +170,7 @@ public class JpsJavaExtensionServiceImpl extends JpsJavaExtensionService {
     JpsTypedLibrary<JpsSdk<JpsDummyElement>> sdk = global.addSdk(name, homePath, version, JpsJavaSdkType.INSTANCE);
     List<Path> roots = JavaSdkUtil.getJdkClassesRoots(Path.of(homePath), false);
     for (Path root : roots) {
-      sdk.addRoot(root.toFile(), JpsOrderRootType.COMPILED);
+      sdk.addRoot(root, JpsOrderRootType.COMPILED);
     }
     return sdk;
   }

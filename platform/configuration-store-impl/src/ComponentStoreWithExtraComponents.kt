@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.configurationStore
 
 import com.intellij.openapi.application.EDT
@@ -7,7 +7,6 @@ import com.intellij.openapi.components.RoamingType
 import com.intellij.openapi.components.ServiceDescriptor
 import com.intellij.openapi.diagnostic.getOrLogException
 import com.intellij.openapi.extensions.PluginId
-import com.intellij.openapi.progress.blockingContext
 import com.intellij.util.concurrency.SynchronizedClearableLazy
 import kotlinx.coroutines.*
 import org.jetbrains.annotations.ApiStatus
@@ -27,10 +26,8 @@ abstract class ComponentStoreWithExtraComponents : ComponentStoreImpl() {
         result.add(object : SettingsSavingComponent {
           override suspend fun save() {
             withContext(Dispatchers.EDT) {
-              blockingContext {
-                @Suppress("removal")
-                instance.save()
-              }
+              @Suppress("removal")
+              instance.save()
             }
           }
         })
@@ -39,11 +36,11 @@ abstract class ComponentStoreWithExtraComponents : ComponentStoreImpl() {
     result
   }
 
-  final override fun initComponent(component: Any, serviceDescriptor: ServiceDescriptor?, pluginId: PluginId) {
+  final override suspend fun initComponent(component: Any, serviceDescriptor: ServiceDescriptor?, pluginId: PluginId, parentScope: CoroutineScope? ) {
     if (component is SettingsSavingComponent) {
       asyncSettingsSavingComponents.drop()
     }
-    super.initComponent(component = component, serviceDescriptor = serviceDescriptor, pluginId = pluginId)
+    super.initComponent(component = component, serviceDescriptor = serviceDescriptor, pluginId = pluginId, parentScope = parentScope)
   }
 
   override fun unloadComponent(component: Any) {
@@ -55,8 +52,8 @@ abstract class ComponentStoreWithExtraComponents : ComponentStoreImpl() {
 
   override suspend fun doSave(saveResult: SaveResult, forceSavingAllSettings: Boolean) {
     val sessionManager = createSaveSessionProducerManager()
-    saveSettingsAndCommitComponents(saveResult, forceSavingAllSettings, sessionManager)
-    sessionManager.save(saveResult)
+    saveSettingsAndCommitComponents(saveResult = saveResult, forceSavingAllSettings = forceSavingAllSettings, sessionManager = sessionManager)
+    sessionManager.save(saveResult, collectVfsEventsDuringSave)
   }
 
   internal suspend fun saveSettingsAndCommitComponents(
@@ -70,7 +67,9 @@ abstract class ComponentStoreWithExtraComponents : ComponentStoreImpl() {
           try {
             settingsSavingComponent.save()
           }
-          catch (e: CancellationException) { throw e }
+          catch (e: CancellationException) {
+            throw e
+          }
           catch (e: Throwable) {
             saveResult.addError(e)
           }
@@ -80,15 +79,15 @@ abstract class ComponentStoreWithExtraComponents : ComponentStoreImpl() {
 
     // SchemeManager (asyncSettingsSavingComponent) must be saved before saving components
     // (component state uses scheme manager in an ipr project, so, we must save it before) so, call it sequentially
-    commitComponents(forceSavingAllSettings, sessionManager, saveResult)
+    commitComponents(isForce = forceSavingAllSettings, sessionManager = sessionManager, saveResult = saveResult)
   }
 
   final override suspend fun commitComponents(isForce: Boolean, sessionManager: SaveSessionProducerManager, saveResult: SaveResult) {
     // ensure that this task will not interrupt regular saving
     runCatching {
-      commitObsoleteComponents(sessionManager, isProjectLevel = false)
+      commitObsoleteComponents(session = sessionManager, isProjectLevel = false)
     }.getOrLogException(LOG)
-    super.commitComponents(isForce, sessionManager, saveResult)
+    super.commitComponents(isForce = isForce, sessionManager = sessionManager, saveResult = saveResult)
   }
 
   internal open fun commitObsoleteComponents(session: SaveSessionProducerManager, isProjectLevel: Boolean) {
@@ -97,9 +96,9 @@ abstract class ComponentStoreWithExtraComponents : ComponentStoreImpl() {
       val bean = item.instance ?: continue
       if (bean.isProjectLevel != isProjectLevel) continue
       val collapsedPath = bean.file ?: continue
-      val storage = storageManager.getOrCreateStorage(collapsedPath, roamingType = RoamingType.DISABLED)
+      val storage = storageManager.getOrCreateStorage(collapsedPath, roamingType = RoamingType.DISABLED, usePathMacroManager = false)
       for (componentName in bean.components) {
-        session.getProducer(storage)?.setState(component = null, componentName, item.pluginDescriptor.pluginId, state = null)
+        session.getProducer(storage)?.setState(component = null, componentName = componentName, pluginId = item.pluginDescriptor.pluginId, state = null)
       }
     }
   }

@@ -5,6 +5,7 @@ import com.intellij.codeInsight.navigation.actions.GotoDeclarationOrUsageHandler
 import com.intellij.codeInsight.navigation.actions.GotoDeclarationOrUsageHandler2.GTDUOutcome
 import com.intellij.ide.util.gotoByName.GotoSymbolModel2
 import com.intellij.psi.PsiElement
+import com.intellij.psi.util.parentOfType
 import com.intellij.testFramework.fixtures.CodeInsightTestUtil
 import com.jetbrains.python.codeInsight.PyTypedDictGoToDeclarationProvider
 import com.jetbrains.python.fixtures.PyTestCase
@@ -17,14 +18,13 @@ import com.jetbrains.python.psi.impl.PyPsiUtils
 import com.jetbrains.python.psi.types.TypeEvalContext
 import com.jetbrains.python.pyi.PyiFile
 import com.jetbrains.python.pyi.PyiUtil
-import junit.framework.TestCase
 
 class PyNavigationTest : PyTestCase() {
 
   // PY-35129
   fun testGoToDeclarationOnPyiFile() {
     configureByDir("onPyiFile")
-    val target = PyGotoDeclarationHandler().getGotoDeclarationTarget(elementAtCaret, myFixture.editor)
+    val target = gotoDeclaration()
     checkPyNotPyi(target)
   }
 
@@ -40,7 +40,7 @@ class PyNavigationTest : PyTestCase() {
   fun testGoToDeclarationForDirectory() {
     runWithAdditionalFileInLibDir("collections/__init__.py", "") {
       configureByDir(getTestName(true))
-      val target = PyGotoDeclarationHandler().getGotoDeclarationTarget(elementAtCaret, myFixture.editor)
+      val target = gotoDeclaration()
       checkPyNotPyi(target)
     }
   }
@@ -101,7 +101,7 @@ class PyNavigationTest : PyTestCase() {
       "  pass\n" +
       "MyCla<caret>ss()"
     )
-    val target = PyGotoDeclarationHandler().getGotoDeclarationTarget(elementAtCaret, myFixture.editor)
+    val target = gotoDeclaration()
     assertInstanceOf(target, PyClass::class.java)
   }
 
@@ -113,7 +113,7 @@ class PyNavigationTest : PyTestCase() {
       "    pass\n" +
       "MyCla<caret>ss()"
     )
-    val target = PyGotoDeclarationHandler().getGotoDeclarationTarget(elementAtCaret, myFixture.editor)
+    val target = gotoDeclaration()
     assertInstanceOf(target, PyFunction::class.java)
   }
 
@@ -127,7 +127,7 @@ class PyNavigationTest : PyTestCase() {
       "  pass\n" +
       "MyCla<caret>ss()"
     )
-    val target = PyGotoDeclarationHandler().getGotoDeclarationTarget(elementAtCaret, myFixture.editor)
+    val target = gotoDeclaration()
     assertInstanceOf(target, PyClass::class.java)
   }
 
@@ -142,7 +142,7 @@ class PyNavigationTest : PyTestCase() {
       "    pass\n" +
       "MyCla<caret>ss()"
     )
-    val target = PyGotoDeclarationHandler().getGotoDeclarationTarget(elementAtCaret, myFixture.editor)
+    val target = gotoDeclaration()
     assertInstanceOf(target, PyClass::class.java)
   }
 
@@ -165,7 +165,7 @@ class PyNavigationTest : PyTestCase() {
       "<caret>A(\"abc\")"
     )
 
-    val foo = PyGotoDeclarationHandler().getGotoDeclarationTarget(elementAtCaret, myFixture.editor) as PyFunction
+    val foo = gotoDeclaration() as PyFunction
     assertEquals(PyNames.INIT, foo.name)
 
     val context = TypeEvalContext.codeAnalysis(myFixture.project, myFixture.file)
@@ -195,7 +195,7 @@ class PyNavigationTest : PyTestCase() {
       "<caret>A(\"abc\")"
     )
 
-    val foo = PyGotoDeclarationHandler().getGotoDeclarationTarget(elementAtCaret, myFixture.editor) as PyFunction
+    val foo = gotoDeclaration() as PyFunction
     assertEquals(PyNames.INIT, foo.name)
 
     val context = TypeEvalContext.codeAnalysis(myFixture.project, myFixture.file)
@@ -206,8 +206,7 @@ class PyNavigationTest : PyTestCase() {
   fun testClassInPyiAssignedToFunctionInPy() {
     myFixture.copyDirectoryToProject(getTestName(true), "")
     myFixture.configureByFile("test.py")
-    val target = PyGotoDeclarationHandler().getGotoDeclarationTarget(elementAtCaret, myFixture.editor)
-    TestCase.assertNotNull(target)
+    val target = gotoDeclaration()
     assertInstanceOf(target, PyTargetExpression::class.java)
     checkPyNotPyi(target?.containingFile)
   }
@@ -217,7 +216,7 @@ class PyNavigationTest : PyTestCase() {
     myFixture.copyDirectoryToProject("importFile", "")
     myFixture.configureByFile("test.py")
     runWithAdditionalClassEntryInSdkRoots(myFixture.findFileInTempDir("addRoots")) {
-      val target = PyGotoDeclarationHandler().getGotoDeclarationTarget(elementAtCaret, myFixture.editor)
+      val target = gotoDeclaration()
       checkPyNotPyi(target?.containingFile)
     }
   }
@@ -226,8 +225,7 @@ class PyNavigationTest : PyTestCase() {
   fun testClassInPyiClassInPy() {
     myFixture.copyDirectoryToProject(getTestName(true), "")
     myFixture.configureByFile("test.py")
-    val target = PyGotoDeclarationHandler().getGotoDeclarationTarget(elementAtCaret, myFixture.editor)
-    TestCase.assertNotNull(target)
+    val target = gotoDeclaration()
     assertInstanceOf(target, PyFunction::class.java)
     checkPyNotPyi(target?.containingFile)
   }
@@ -315,7 +313,7 @@ class PyNavigationTest : PyTestCase() {
     // ensure that `collections.abc` navigates to `_collections_abc.py`, not `collections/abc.pyi`
     runWithAdditionalFileInLibDir("_collections_abc.py", "class Mapping: ...") {
       myFixture.configureByFile(getTestName(true) + "/test.py")
-      val target = PyGotoDeclarationHandler().getGotoDeclarationTarget(this.elementAtCaret, myFixture.editor)
+      val target = gotoDeclaration()
       assertNotNull(target)
       assertEquals("_collections_abc.py", target!!.containingFile.name)
     }
@@ -326,17 +324,225 @@ class PyNavigationTest : PyTestCase() {
     // ensure that `collections.abc.Mapping` navigates to `_collections_abc.py`, not `typing.pyi`
     runWithAdditionalFileInLibDir("_collections_abc.py", "class Mapping: ...") {
       myFixture.configureByFile(getTestName(true) + "/test.py")
-      val target = PyGotoDeclarationHandler().getGotoDeclarationTarget(this.elementAtCaret, myFixture.editor)
+      val target = gotoDeclaration()
       assertNotNull(target)
       assertEquals("_collections_abc.py", target!!.containingFile.name)
     }
   }
 
+  // PY-80931
+  fun testUnionAttribute() {
+    val (a, b) = checkMulti(
+      """
+        class A:
+            x: int
+        class B:
+            x: int
+        class C:
+            x: int
+        ab: A | B
+        ab.<caret>x
+        """.trimIndent(),
+      2,
+    )
+
+    assertInstanceOf<PyTargetExpression>(a)
+    assertEquals("A", a.parentOfType<PyClass>()!!.name)
+
+    assertInstanceOf<PyTargetExpression>(b)
+    assertEquals("B", b.parentOfType<PyClass>()!!.name)
+  }
+
+  // PY-53288
+  fun testOperators() {
+    val (a, b) = checkMulti(
+      """
+        class A:
+            def __add__(self, other): ...
+            def __radd__(self, other): ...
+        class B:
+            def __add__(self, other): ...
+            def __radd__(self, other): ...
+        A() +<caret> B()
+      """.trimIndent(),
+      2,
+    )
+
+    assertInstanceOf<PyFunction>(a)
+    assertEquals("__add__", a.name)
+    assertEquals("A", a.parentOfType<PyClass>()!!.name)
+
+    assertInstanceOf<PyFunction>(b)
+    assertEquals("__radd__", b.name)
+    assertEquals("B", b.parentOfType<PyClass>()!!.name)
+
+  }
+
+  // PY-81789
+  fun `test import isn't declaration and only one from other file`() {
+    runWithAdditionalFileInLibDir(
+      "a.py",
+      """
+      a = 1
+      a = 2""".trimIndent()
+    ) {
+      val (a) = checkMulti(
+        """
+        from a import a
+        
+        <caret>a
+        """.trimIndent(),
+        1
+      )
+
+      assertInstanceOf<PyTargetExpression>(a)
+    }
+  }
+
+  // PY-82962
+  fun testGoToDeclarationOnNewTypeConstructorCall() {
+    myFixture.configureByText(
+      "a.py",
+      """
+      from typing import NewType
+      
+      JobId = NewType("JobId", str)
+      
+      def f():
+          x = Jo<caret>bId("1")
+      """.trimIndent()
+    )
+    val target = gotoDeclaration()
+    val targetExpr = assertInstanceOf(target, PyTargetExpression::class.java)
+    assertEquals("JobId", targetExpr.name)
+  }
+
+  // PY-82962
+  fun testGoToDeclarationOnCollectionsNamedTupleConstructorCall() {
+    myFixture.configureByText(
+      "a.py",
+      """
+      from collections import namedtuple
+
+      Point = namedtuple("Point", ["x", "y"]) 
+
+      def f():
+          p = Po<caret>int(1, 2)
+      """.trimIndent()
+    )
+    val target = gotoDeclaration()
+    val targetExpr = assertInstanceOf(target, PyTargetExpression::class.java)
+    assertEquals("Point", targetExpr.name)
+  }
+
+  // PY-82962
+  fun testGoToDeclarationOnTypingNamedTupleConstructorCall() {
+    myFixture.configureByText(
+      "a.py",
+      """
+      from typing import NamedTuple
+
+      Point = NamedTuple("Point", [("x", int), ("y", int)])
+
+      def f():
+          p = Po<caret>int(1, 2)
+      """.trimIndent()
+    )
+    val target = gotoDeclaration()
+    val targetExpr = assertInstanceOf(target, PyTargetExpression::class.java)
+    assertEquals("Point", targetExpr.name)
+  }
+
+  // PY-82962
+  fun testGoToDeclarationOnTypedDictConstructorCall() {
+    myFixture.configureByText(
+      "a.py",
+      """
+      from typing import TypedDict
+
+      Movie = TypedDict("Movie", {"name": str})
+
+      def f():
+          m = Mo<caret>vie(name="x")
+      """.trimIndent()
+    )
+    val target = gotoDeclaration()
+    val targetExpr = assertInstanceOf(target, PyTargetExpression::class.java)
+    assertEquals("Movie", targetExpr.name)
+  }
+
+  // PY-82962
+  fun testGoToDeclarationOnEnumConstructorCall() {
+    myFixture.configureByText(
+      "a.py",
+      """
+      from enum import Enum
+
+      Color = Enum("Color", "RED GREEN")
+
+      def f():
+          c = Co<caret>lor(1)
+      """.trimIndent()
+    )
+    val target = gotoDeclaration()
+    val targetExpr = assertInstanceOf(target, PyTargetExpression::class.java)
+    assertEquals("Color", targetExpr.name)
+  }
+
+  // PY-82962
+  fun testGoToDeclarationOnImportedCollectionsNamedTupleConstructorCall() {
+    myFixture.addFileToProject(
+      "m.py",
+      """
+      from collections import namedtuple
+      Point = namedtuple("Point", ["x", "y"]) 
+      """.trimIndent()
+    )
+    myFixture.configureByText(
+      "main.py",
+      """
+      from m import Point
+
+      def f():
+          p = Po<caret>int(1, 2)
+      """.trimIndent()
+    )
+    val target = gotoDeclaration()
+    val targetExpr = assertInstanceOf(target, PyTargetExpression::class.java)
+    assertEquals("Point", targetExpr.name)
+    assertEquals("m.py", targetExpr.containingFile.name)
+  }
+
+  fun `test multi with pyi`() {
+    myFixture.copyDirectoryToProject("test_multi_with_pyi", "")
+    val (stubbed, local) = checkMulti(
+      """
+      if bool():
+          from stubbed import A
+      else:
+          class A:
+              pass
+
+      <caret>A
+      """.trimIndent(),
+      2
+    )
+    checkPyNotPyi(stubbed.containingFile)
+    assertEquals("stubbed.py", stubbed.containingFile.name)
+
+    checkPyNotPyi(local.containingFile)
+    assertEquals("test.py", local.containingFile.name)
+  }
+
   private fun doTestGotoDeclarationNavigatesToPyNotPyi() {
     myFixture.copyDirectoryToProject(getTestName(true), "")
     myFixture.configureByFile("test.py")
-    val target = PyGotoDeclarationHandler().getGotoDeclarationTarget(elementAtCaret, myFixture.editor)
+    val target = gotoDeclaration()
     checkPyNotPyi(target!!.containingFile)
+  }
+
+  private fun gotoDeclaration(): PsiElement? {
+    return PyGotoDeclarationHandler().getGotoDeclarationTarget(elementAtCaret, myFixture.editor)
   }
 
   private fun doTestGotoImplementationNavigatesToPyNotPyi(numTargets: Int = 1) {
@@ -360,6 +566,17 @@ class PyNavigationTest : PyTestCase() {
     myFixture.copyDirectoryToProject(dirName, "")
     myFixture.configureByFile("test.py")
     assertTrue(myFixture.elementAtCaret is PyiFile)
+  }
+
+
+  private fun checkMulti(text: String, expectedSize: Int?): List<PsiElement> {
+    myFixture.configureByText("test.py", text)
+    return PyGotoDeclarationHandler()
+      .getGotoDeclarationTargets(elementAtCaret, -1, myFixture.editor)!!
+      .toList()
+      .also {
+        if (expectedSize != null) assertSize(expectedSize, it)
+      }
   }
 
   private fun checkPyNotPyi(file: PsiElement?) {

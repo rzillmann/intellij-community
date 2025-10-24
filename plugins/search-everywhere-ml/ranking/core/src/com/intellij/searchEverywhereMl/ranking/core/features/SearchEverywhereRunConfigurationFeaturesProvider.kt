@@ -4,6 +4,7 @@ import com.intellij.execution.RunnerAndConfigurationSettings
 import com.intellij.execution.actions.ChooseRunConfigurationPopup
 import com.intellij.execution.configurations.ConfigurationType
 import com.intellij.ide.actions.searcheverywhere.RunConfigurationsSEContributor
+import com.intellij.ide.actions.searcheverywhere.SearchEverywhereSpellCheckResult
 import com.intellij.internal.statistic.eventLog.events.EventField
 import com.intellij.internal.statistic.eventLog.events.EventFields
 import com.intellij.internal.statistic.eventLog.events.EventPair
@@ -24,20 +25,21 @@ private class SearchEverywhereRunConfigurationFeaturesProvider
   }
 
   override fun getFeaturesDeclarations(): List<EventField<*>> {
-    return arrayListOf(IS_SHARED, IS_TEMPORARY, RUN_CONFIGURATION_TYPE)
+    return listOf(IS_SHARED, IS_TEMPORARY, RUN_CONFIGURATION_TYPE)
   }
 
   override fun getElementFeatures(element: Any,
                                   currentTime: Long,
                                   searchQuery: String,
                                   elementPriority: Int,
-                                  cache: FeaturesProviderCache?): List<EventPair<*>> {
+                                  cache: FeaturesProviderCache?,
+                                  correction: SearchEverywhereSpellCheckResult): List<EventPair<*>> {
     if (element !is ChooseRunConfigurationPopup.ItemWrapper<*> || element.value !is RunnerAndConfigurationSettings) {
       return emptyList()
     }
 
     val settings = element.value as RunnerAndConfigurationSettings
-    return arrayListOf(
+    return listOf(
       IS_SHARED.with(settings.isShared),
       IS_TEMPORARY.with(settings.isTemporary),
       RUN_CONFIGURATION_TYPE.with(settings.type.id),

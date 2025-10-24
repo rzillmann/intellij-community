@@ -9,12 +9,13 @@ import io.opentelemetry.api.trace.Span
 import org.jetbrains.bazel.jvm.util.linkedSet
 import org.jetbrains.bazel.jvm.worker.core.BazelBuildDataProvider
 import org.jetbrains.bazel.jvm.worker.core.BazelBuildRootIndex
+import org.jetbrains.bazel.jvm.worker.core.BazelCompileContext
 import org.jetbrains.bazel.jvm.worker.core.BazelModuleBuildTarget
 import org.jetbrains.bazel.jvm.worker.core.cleanOutputsCorrespondingToChangedFiles
 import org.jetbrains.bazel.jvm.worker.core.output.OutputSink
-import org.jetbrains.jps.ModuleChunk
 import org.jetbrains.jps.incremental.CompileContext
 import org.jetbrains.jps.incremental.FSOperations.addCompletelyMarkedDirtyTarget
+import org.jetbrains.jps.incremental.ModuleBuildTarget
 import org.jetbrains.jps.incremental.fs.BuildFSState
 import org.jetbrains.jps.incremental.fs.CompilationRound
 import org.jetbrains.jps.incremental.fs.FilesDelta
@@ -25,15 +26,13 @@ import java.nio.file.Path
 
 internal class BazelKotlinFsOperationsHelper(
   private val context: CompileContext,
-  private val chunk: ModuleChunk,
 ) {
   var hasMarkedDirty: Boolean = false
     private set
 
-  fun markChunk(context: CompileContext, excludeFiles: Set<File>, dataManager: BazelBuildDataProvider) {
-    val target = chunk.targets.single()
+  fun markChunk(context: BazelCompileContext, excludeFiles: Set<File>, dataManager: BazelBuildDataProvider, target: ModuleBuildTarget) {
     var completelyMarkedDirty = true
-    val stampStorage = if (dataManager.isCleanBuild) null else dataManager.stampStorage
+    val stampStorage = if (context.scope.isRebuild) null else dataManager.stampStorage
     val projectDescriptor = context.projectDescriptor
     for (rootDescriptor in (projectDescriptor.buildRootIndex as BazelBuildRootIndex).descriptors) {
       val file = rootDescriptor.rootFile

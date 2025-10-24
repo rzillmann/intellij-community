@@ -1,4 +1,4 @@
-// Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.openapi.roots.impl
 
 import com.intellij.concurrency.SensitiveProgressWrapper
@@ -53,6 +53,7 @@ object FilesScanExecutor {
     }
     val results = ArrayList<Future<*>>()
     for (i in 0 until THREAD_COUNT) {
+      // The current Job cancellation will NOT stop the pooled threads. Use 'coroutineToIndicator'.
       results.add(ourExecutor.submit { ProgressManager.getInstance().runProcess(runnable, ProgressWrapper.wrap(progress)) })
     }
 
@@ -67,18 +68,18 @@ object FilesScanExecutor {
   }
 
   @JvmStatic
-  fun <T> processOnAllThreadsInReadActionWithRetries(deque: ConcurrentLinkedDeque<T>, consumer: (T) -> Boolean): Boolean {
+  fun <T: Any> processOnAllThreadsInReadActionWithRetries(deque: ConcurrentLinkedDeque<T>, consumer: (T) -> Boolean): Boolean {
     return doProcessOnAllThreadsInReadAction(deque, consumer, true)
   }
 
   @JvmStatic
-  fun <T> processOnAllThreadsInReadActionNoRetries(deque: ConcurrentLinkedDeque<T>, consumer: (T) -> Boolean): Boolean {
+  fun <T: Any> processOnAllThreadsInReadActionNoRetries(deque: ConcurrentLinkedDeque<T>, consumer: (T) -> Boolean): Boolean {
     return doProcessOnAllThreadsInReadAction(deque, consumer, false)
   }
 
-  private fun <T> doProcessOnAllThreadsInReadAction(deque: ConcurrentLinkedDeque<T>,
-                                                    consumer: (T) -> Boolean,
-                                                    retryCanceled: Boolean): Boolean {
+  private fun <T: Any> doProcessOnAllThreadsInReadAction(deque: ConcurrentLinkedDeque<T>,
+                                                         consumer: (T) -> Boolean,
+                                                         retryCanceled: Boolean): Boolean {
     val application = ApplicationManager.getApplication() as ApplicationEx
     return processOnAllThreads(deque) { o ->
       if (application.isReadAccessAllowed) {
@@ -97,7 +98,7 @@ object FilesScanExecutor {
     }
   }
 
-  private fun <T> processOnAllThreads(deque: ConcurrentLinkedDeque<T>, processor: (T) -> Boolean): Boolean {
+  private fun <T: Any> processOnAllThreads(deque: ConcurrentLinkedDeque<T>, processor: (T) -> Boolean): Boolean {
     ProgressManager.checkCanceled()
     if (deque.isEmpty()) {
       return true
@@ -110,47 +111,54 @@ object FilesScanExecutor {
     runOnAllThreads {
       runnersCount.incrementAndGet()
       var idle = false
-      while (!stopped.get()) {
-        ProgressManager.checkCanceled()
-        if (deque.peek() == null) {
-          if (!idle) {
-            idle = true
-            idleCount.incrementAndGet()
+      try {
+        while (!stopped.get()) {
+          ProgressManager.checkCanceled()
+          if (deque.peek() == null) {
+            if (!idle) {
+              idle = true
+              idleCount.incrementAndGet()
+            }
+          }
+          else if (idle) {
+            idle = false
+            idleCount.decrementAndGet()
+          }
+          if (idle) {
+            if (idleCount.get() == runnersCount.get() && deque.isEmpty()) break
+            TimeoutUtil.sleep(1L)
+            continue
+          }
+          val item = deque.poll() ?: continue
+          try {
+            if (!processor(item)) {
+              stopped.set(true)
+            }
+            if (exited.get() && !stopped.get()) {
+              throw AssertionError("early exit")
+            }
+          }
+          catch (ex: StopWorker) {
+            deque.addFirst(item)
+            return@runOnAllThreads
+          }
+          catch (ex: ProcessCanceledException) {
+            deque.addFirst(item)
+          }
+          catch (ex: Throwable) {
+            error.compareAndSet(null, ex)
           }
         }
-        else if (idle) {
-          idle = false
-          idleCount.decrementAndGet()
-        }
-        if (idle) {
-          if (idleCount.get() == runnersCount.get() && deque.isEmpty()) break
-          TimeoutUtil.sleep(1L)
-          continue
-        }
-        val item = deque.poll() ?: continue
-        try {
-          if (!processor(item)) {
-            stopped.set(true)
-          }
-          if (exited.get() && !stopped.get()) {
-            throw AssertionError("early exit")
-          }
-        }
-        catch (ex: StopWorker) {
-          deque.addFirst(item)
-          runnersCount.decrementAndGet()
-          return@runOnAllThreads
-        }
-        catch (ex: ProcessCanceledException) {
-          deque.addFirst(item)
-        }
-        catch (ex: Throwable) {
-          error.compareAndSet(null, ex)
+        exited.set(true)
+        if (!deque.isEmpty() && !stopped.get()) {
+          throw AssertionError("early exit")
         }
       }
-      exited.set(true)
-      if (!deque.isEmpty() && !stopped.get()) {
-        throw AssertionError("early exit")
+      finally {
+        if (idle) {
+          idleCount.decrementAndGet()
+        }
+        runnersCount.decrementAndGet()
       }
     }
     ExceptionUtil.rethrowAllAsUnchecked(error.get())

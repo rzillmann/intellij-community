@@ -12,43 +12,39 @@ import com.intellij.openapi.project.ProjectCloseListener
 import com.intellij.openapi.project.ProjectManager
 import com.intellij.openapi.startup.StartupManager
 import com.intellij.util.TimeoutUtil
-import org.jetbrains.annotations.ApiStatus
 
-@ApiStatus.Internal
-class LightEditProjectManager {
-  companion object {
-    private val LOG = logger<LightEditProjectManager>()
-    private val LOCK = Any()
+private val LOG = logger<LightEditProjectManager>()
+private val LOCK = Any()
 
-    private fun fireProjectOpened(project: Project) {
-      val app = ApplicationManager.getApplication()
-      val fireRunnable = Runnable {
-        // similar to com.intellij.openapi.project.impl.ProjectManagerExImplKt.openProject
-        app.messageBus.syncPublisher(ProjectManager.TOPIC).projectOpened(project)
-        runUnderModalProgressIfIsEdt {
-          val startupManager = StartupManager.getInstance(project) as StartupManagerImpl
-          startupManager.initProject()
-          startupManager.runPostStartupActivities()
-        }
-      }
-      if (app.isDispatchThread || app.isUnitTestMode) {
-        fireRunnable.run()
-      }
-      else {
-        // Initialize ActionManager out of EDT to pass "assert !app.isDispatchThread()" in ActionManagerImpl
-        ActionManager.getInstance()
-        app.invokeLater(fireRunnable)
-      }
-    }
-
-    private fun createProject(): LightEditProjectImpl {
-      val start = System.nanoTime()
-      val project = LightEditProjectImpl()
-      LOG.info(LightEditProjectImpl::class.java.simpleName + " loaded in " + TimeoutUtil.getDurationMillis(start) + " ms")
-      return project
+private fun fireProjectOpened(project: Project) {
+  val app = ApplicationManager.getApplication()
+  val fireRunnable = Runnable {
+    // similar to com.intellij.openapi.project.impl.ProjectManagerExImplKt.openProject
+    app.messageBus.syncPublisher(ProjectManager.TOPIC).projectOpened(project)
+    runUnderModalProgressIfIsEdt(project) {
+      val startupManager = StartupManager.getInstance(project) as StartupManagerImpl
+      startupManager.initProject()
+      startupManager.runPostStartupActivities()
     }
   }
+  if (app.isDispatchThread || app.isUnitTestMode) {
+    fireRunnable.run()
+  }
+  else {
+    // Initialize ActionManager out of EDT to pass "assert !app.isDispatchThread()" in ActionManagerImpl
+    ActionManager.getInstance()
+    app.invokeLater(fireRunnable)
+  }
+}
 
+private fun createProject(): LightEditProjectImpl {
+  val start = System.nanoTime()
+  val project = LightEditProjectImpl()
+  LOG.info(LightEditProjectImpl::class.java.simpleName + " loaded in " + TimeoutUtil.getDurationMillis(start) + " ms")
+  return project
+}
+
+internal class LightEditProjectManager {
   @Volatile
   private var projectImpl: LightEditProjectImpl? = null
 
@@ -68,7 +64,7 @@ class LightEditProjectManager {
       }
       if (created) {
         fireProjectOpened(project!!)
-        RecentProjectsManagerBase.getInstanceEx().setProjectHidden(project!!, true)
+        RecentProjectsManagerBase.getInstanceEx().setProjectHidden(project, true)
         ApplicationManager.getApplication().messageBus.connect().subscribe(ProjectCloseListener.TOPIC, object : ProjectCloseListener {
           override fun projectClosed(project: Project) {
             if (project === projectImpl) {

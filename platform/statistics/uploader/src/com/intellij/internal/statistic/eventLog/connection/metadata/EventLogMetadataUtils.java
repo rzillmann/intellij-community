@@ -5,23 +5,25 @@ import com.fasterxml.jackson.core.exc.StreamReadException;
 import com.fasterxml.jackson.databind.DatabindException;
 import com.intellij.internal.statistic.config.SerializationHelper;
 import com.intellij.internal.statistic.eventLog.EventLogBuild;
-import com.intellij.internal.statistic.eventLog.connection.EventLogConnectionSettings;
 import com.intellij.internal.statistic.eventLog.connection.metadata.EventLogMetadataLoadException.EventLogMetadataLoadErrorType;
 import com.intellij.internal.statistic.eventLog.connection.request.StatsHttpRequests;
 import com.intellij.internal.statistic.eventLog.connection.request.StatsRequestResult;
 import com.intellij.internal.statistic.eventLog.connection.request.StatsResponseException;
+import com.jetbrains.fus.reporting.model.dictionaries.RemoteDictionaryList;
 import com.jetbrains.fus.reporting.model.metadata.EventGroupRemoteDescriptors;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.IOException;
+import java.util.HashMap;
+import java.util.Map;
 
 import static com.intellij.internal.statistic.config.StatisticsStringUtil.isEmptyOrSpaces;
 
 /**
  * <ol>
  * <li> All collectors/groups have to be requested online.
- * <li> {@link EventLogMetadataUtils#loadMetadataFromServer(String, EventLogConnectionSettings)} connects to online JB service
+ * <li> {@link EventLogMetadataUtils#loadMetadataFromServer(String, StatsConnectionSettings)} connects to online JB service
  * and requests approved groups with conditions on product builds, group versions and group scheme.
  *
  * <li> Online JB service  returns  result in json file format as described in {@link EventGroupRemoteDescriptors}:
@@ -32,7 +34,7 @@ public final class EventLogMetadataUtils {
   /**
    * @return empty rules if error happened during groups fetching or parsing
    */
-  public static @NotNull EventGroupsFilterRules<EventLogBuild> loadAndParseGroupsFilterRules(@NotNull String serviceUrl, @NotNull EventLogConnectionSettings settings) {
+  public static @NotNull EventGroupsFilterRules<EventLogBuild> loadAndParseGroupsFilterRules(@NotNull String serviceUrl, @NotNull StatsConnectionSettings settings) {
     try {
       String content = loadMetadataFromServer(serviceUrl, settings);
       EventGroupRemoteDescriptors groups = parseGroupRemoteDescriptors(content);
@@ -65,7 +67,26 @@ public final class EventLogMetadataUtils {
     }
   }
 
-  public static @NotNull String loadMetadataFromServer(@Nullable String serviceUrl, @NotNull EventLogConnectionSettings settings)
+  public static @NotNull RemoteDictionaryList parseRemoteDictionaryList(@Nullable String content) throws EventLogMetadataParseException {
+    if (isEmptyOrSpaces(content)) {
+      throw new EventLogMetadataParseException(EventLogMetadataParseException.EventLogMetadataParseErrorType.EMPTY_CONTENT);
+    }
+    try {
+      RemoteDictionaryList dictionaryList = SerializationHelper.INSTANCE.deserialize(content, RemoteDictionaryList.class);
+      if (dictionaryList == null) {
+        throw new EventLogMetadataParseException(EventLogMetadataParseException.EventLogMetadataParseErrorType.INVALID_JSON);
+      }
+      return dictionaryList;
+    }
+    catch (StreamReadException | DatabindException e) {
+      throw new EventLogMetadataParseException(EventLogMetadataParseException.EventLogMetadataParseErrorType.INVALID_JSON, e);
+    }
+    catch (Exception e) {
+      throw new EventLogMetadataParseException(EventLogMetadataParseException.EventLogMetadataParseErrorType.UNKNOWN, e);
+    }
+  }
+
+  public static @NotNull String loadMetadataFromServer(@Nullable String serviceUrl, @NotNull StatsConnectionSettings settings)
     throws EventLogMetadataLoadException {
     if (isEmptyOrSpaces(serviceUrl)) {
       throw new EventLogMetadataLoadException(EventLogMetadataLoadErrorType.EMPTY_SERVICE_URL);
@@ -83,7 +104,8 @@ public final class EventLogMetadataUtils {
     }
   }
 
-  public static long lastModifiedMetadata(@Nullable String serviceUrl, @NotNull EventLogConnectionSettings settings) {
+
+  public static long lastModifiedMetadata(@Nullable String serviceUrl, @NotNull StatsConnectionSettings settings) {
     if (isEmptyOrSpaces(serviceUrl)) return 0;
 
     try {
@@ -93,5 +115,46 @@ public final class EventLogMetadataUtils {
     catch (StatsResponseException | IOException e) {
       return 0;
     }
+  }
+
+  public static Map<String, Long> dictionariesLastModified(@Nullable String serviceUrl, @NotNull String recorderId, @NotNull StatsConnectionSettings settings)
+    throws EventLogMetadataLoadException {
+    if (isEmptyOrSpaces(serviceUrl)) {
+      throw new EventLogMetadataLoadException(EventLogMetadataLoadErrorType.EMPTY_SERVICE_URL);
+    }
+
+    String baseUrl = serviceUrl + recorderId + "/";
+    RemoteDictionaryList dictionaryList;
+    try {
+      StatsRequestResult<String> result = StatsHttpRequests.request( baseUrl + "dictionaries.json", settings).send(r -> r.readAsString());
+      if (!result.isSucceed()) {
+        throw new EventLogMetadataLoadException(EventLogMetadataLoadErrorType.UNREACHABLE_SERVICE, result.getError());
+      }
+      dictionaryList = parseRemoteDictionaryList(result.getResult());
+    }
+    catch (StatsResponseException | IOException | EventLogMetadataParseException e) {
+      throw new EventLogMetadataLoadException(EventLogMetadataLoadErrorType.ERROR_ON_LOAD, e);
+    }
+
+    Map<String, Long> lastModifiedMap = new HashMap<>();
+    for(String dictionary : dictionaryList.dictionaries) {
+      try {
+        StatsRequestResult<Long> result = StatsHttpRequests.head(baseUrl + dictionary, settings).send(r -> r.lastModified());
+        lastModifiedMap.put(dictionary, result.getResult());
+      }
+      catch (StatsResponseException | IOException e) {
+        lastModifiedMap.put(dictionary, 0L);
+      }
+    }
+    return lastModifiedMap;
+  }
+
+  public static @NotNull String loadDictionaryFromServer(
+    @Nullable String serviceUrl,
+    @NotNull String recorderId,
+    @NotNull String dictionaryName,
+    @NotNull StatsConnectionSettings settings
+  ) throws EventLogMetadataLoadException {
+    return loadMetadataFromServer(serviceUrl + recorderId + "/" + dictionaryName, settings);
   }
 }

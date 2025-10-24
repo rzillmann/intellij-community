@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.codeInsight.template.impl;
 
 import com.intellij.codeInsight.completion.*;
@@ -7,6 +7,8 @@ import com.intellij.codeInsight.template.CustomLiveTemplate;
 import com.intellij.codeInsight.template.CustomLiveTemplateBase;
 import com.intellij.codeInsight.template.CustomTemplateCallback;
 import com.intellij.codeInsight.template.TemplateActionContext;
+import com.intellij.codeInsight.template.postfix.settings.PostfixTemplatesSettings;
+import com.intellij.codeInsight.template.postfix.templates.PostfixLiveTemplate;
 import com.intellij.openapi.Disposable;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.editor.Editor;
@@ -71,23 +73,21 @@ public final class LiveTemplateCompletionContributor extends CompletionContribut
 
         Editor editor = parameters.getEditor();
         int offset = editor.getCaretModel().getOffset();
-        final List<TemplateImpl> availableTemplates = TemplateManagerImpl.listApplicableTemplates(
-          TemplateActionContext.expanding(file, editor));
-        final Map<TemplateImpl, String> templates = filterTemplatesByPrefix(availableTemplates, editor, offset, false, false);
+        List<TemplateImpl> availableTemplates = TemplateManagerImpl.listApplicableTemplates(TemplateActionContext.expanding(file, editor));
+        Map<TemplateImpl, String> templates = filterTemplatesByPrefix(availableTemplates, editor, offset, false, false);
         boolean isAutopopup = parameters.getInvocationCount() == 0;
         if (shouldShowAllTemplates()) {
           final AtomicBoolean templatesShown = new AtomicBoolean(false);
-          final CompletionResultSet finalResult = result;
           boolean showLiveTemplatesOnTop = Registry.is("ide.completion.show.live.templates.on.top");
           if (showLiveTemplatesOnTop) {
-            ensureTemplatesShown(templatesShown, templates, availableTemplates, finalResult, isAutopopup);
+            ensureTemplatesShown(templatesShown, templates, availableTemplates, result, isAutopopup);
             showCustomLiveTemplates(parameters, result);
           }
 
           result.runRemainingContributors(parameters, completionResult -> {
-            finalResult.passResult(completionResult);
+            result.passResult(completionResult);
             if (completionResult.isStartMatch()) {
-              ensureTemplatesShown(templatesShown, templates, availableTemplates, finalResult, isAutopopup);
+              ensureTemplatesShown(templatesShown, templates, availableTemplates, result, isAutopopup);
             }
           });
 
@@ -164,8 +164,11 @@ public final class LiveTemplateCompletionContributor extends CompletionContribut
   private static void showCustomLiveTemplates(@NotNull CompletionParameters parameters, @NotNull CompletionResultSet result) {
     TemplateActionContext templateActionContext = TemplateActionContext.expanding(
       parameters.getPosition().getContainingFile(), parameters.getEditor());
+    boolean showPostfixTemplateAsSeparateGroup =
+      PostfixTemplatesSettings.getInstance().isShowAsSeparateGroup();
     for (CustomLiveTemplate customLiveTemplate : TemplateManagerImpl.listApplicableCustomTemplates(templateActionContext)) {
       ProgressManager.checkCanceled();
+      if (showPostfixTemplateAsSeparateGroup && customLiveTemplate instanceof PostfixLiveTemplate) continue;
       if (customLiveTemplate instanceof CustomLiveTemplateBase) {
         ((CustomLiveTemplateBase)customLiveTemplate).addCompletions(parameters, result);
       }

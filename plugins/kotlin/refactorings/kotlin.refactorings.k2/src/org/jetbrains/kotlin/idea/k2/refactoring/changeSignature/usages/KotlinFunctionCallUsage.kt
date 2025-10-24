@@ -13,6 +13,8 @@ import com.intellij.util.containers.ContainerUtil
 import org.jetbrains.kotlin.analysis.api.KaExperimentalApi
 import org.jetbrains.kotlin.analysis.api.KaSession
 import org.jetbrains.kotlin.analysis.api.analyze
+import org.jetbrains.kotlin.analysis.api.components.resolveToCall
+import org.jetbrains.kotlin.analysis.api.fir.diagnostics.KaFirDiagnostic
 import org.jetbrains.kotlin.analysis.api.permissions.KaAllowAnalysisFromWriteAction
 import org.jetbrains.kotlin.analysis.api.permissions.KaAllowAnalysisOnEdt
 import org.jetbrains.kotlin.analysis.api.permissions.allowAnalysisFromWriteAction
@@ -22,12 +24,9 @@ import org.jetbrains.kotlin.analysis.api.symbols.KaAnonymousObjectSymbol
 import org.jetbrains.kotlin.analysis.api.symbols.KaClassifierSymbol
 import org.jetbrains.kotlin.analysis.api.symbols.KaReceiverParameterSymbol
 import org.jetbrains.kotlin.analysis.api.symbols.KaValueParameterSymbol
-import org.jetbrains.kotlin.analysis.api.symbols.name
-import org.jetbrains.kotlin.analysis.api.types.KaType
 import org.jetbrains.kotlin.asJava.toLightMethods
 import org.jetbrains.kotlin.config.LanguageFeature
 import org.jetbrains.kotlin.idea.base.analysis.api.utils.defaultValue
-import org.jetbrains.kotlin.idea.base.analysis.api.utils.unwrapSmartCasts
 import org.jetbrains.kotlin.idea.base.projectStructure.languageVersionSettings
 import org.jetbrains.kotlin.idea.base.psi.imports.addImport
 import org.jetbrains.kotlin.idea.base.psi.kotlinFqName
@@ -36,6 +35,8 @@ import org.jetbrains.kotlin.idea.k2.refactoring.changeSignature.KotlinChangeInfo
 import org.jetbrains.kotlin.idea.k2.refactoring.changeSignature.KotlinChangeInfoBase
 import org.jetbrains.kotlin.idea.k2.refactoring.changeSignature.KotlinParameterInfo
 import org.jetbrains.kotlin.idea.k2.refactoring.introduce.introduceVariable.K2IntroduceVariableHandler
+import org.jetbrains.kotlin.idea.k2.refactoring.util.createContextArgumentReplacementMapForFunctionCall
+import org.jetbrains.kotlin.idea.k2.refactoring.util.createReplacementReceiverArgumentExpression
 import org.jetbrains.kotlin.idea.refactoring.canMoveLambdaOutsideParentheses
 import org.jetbrains.kotlin.idea.refactoring.isInsideOfCallerBody
 import org.jetbrains.kotlin.idea.refactoring.moveFunctionLiteralOutsideParentheses
@@ -50,8 +51,6 @@ import org.jetbrains.kotlin.psi.psiUtil.getPossiblyQualifiedCallExpression
 import org.jetbrains.kotlin.psi.psiUtil.getQualifiedExpressionForSelector
 import org.jetbrains.kotlin.psi.psiUtil.getStrictParentOfType
 import org.jetbrains.kotlin.psi.psiUtil.isTopLevelKtOrJavaMember
-import org.jetbrains.kotlin.psi.psiUtil.parentsWithSelf
-import org.jetbrains.kotlin.types.Variance
 import org.jetbrains.kotlin.types.expressions.OperatorConventions
 import org.jetbrains.kotlin.utils.addToStdlib.safeAs
 import org.jetbrains.kotlin.utils.sure
@@ -69,7 +68,8 @@ internal class KotlinFunctionCallUsage(
                 val functionCall = ktCall?.singleFunctionCallOrNull()
                     ?: return@allowAnalysisOnEdt null
                 val partiallyAppliedSymbol = functionCall.partiallyAppliedSymbol
-                if (ktCall is KaErrorCallInfo && partiallyAppliedSymbol.signature.valueParameters.size != element.valueArguments.size) {
+                if (ktCall is KaErrorCallInfo && (partiallyAppliedSymbol.signature.valueParameters.size != element.valueArguments.size ||
+                        ktCall.diagnostic is KaFirDiagnostic.NamedParameterNotFound)) {
                     //don't update broken call sites e.g. if new parameter is added as follows
                     //first add new argument to all function usages and only then call refactoring to update function hierarchy
                     return@allowAnalysisOnEdt null
@@ -111,20 +111,10 @@ internal class KotlinFunctionCallUsage(
     }
 
     @OptIn(KaAllowAnalysisFromWriteAction::class, KaAllowAnalysisOnEdt::class, KaExperimentalApi::class)
-    private val contextParameters: Map<String, SmartPsiElementPointer<KtExpression>>? = allowAnalysisFromWriteAction {
+    private val contextParameters: Map<Int, SmartPsiElementPointer<KtExpression>>? = allowAnalysisFromWriteAction {
         allowAnalysisOnEdt {
             analyze(element) {
-                val ktCall = element.resolveToCall()
-                val functionCall = ktCall?.singleFunctionCallOrNull()
-                    ?: return@allowAnalysisOnEdt null
-                val psiFactory = KtPsiFactory.contextual(element)
-                val map = mutableMapOf<String, SmartPsiElementPointer<KtExpression>>()
-                functionCall.partiallyAppliedSymbol.contextArguments.forEach { receiverValue ->
-                    val value = receiverValue.unwrapSmartCasts() as? KaImplicitReceiverValue ?: return@forEach
-                    map.put(value.type.render(position = Variance.IN_VARIANCE),
-                            psiFactory.createExpression((value.symbol as? KaReceiverParameterSymbol)?.containingSymbol?.name?.asString()?.let { "this@$it" } ?: "this").createSmartPointer())
-                }
-                map
+                createContextArgumentReplacementMapForFunctionCall(element)
             }
         }
     }
@@ -156,7 +146,7 @@ internal class KotlinFunctionCallUsage(
     @OptIn(KaAllowAnalysisFromWriteAction::class, KaAllowAnalysisOnEdt::class)
     private val onReceiver  = allowAnalysisFromWriteAction { allowAnalysisOnEdt { analyze(element) { onReceiver(element) } } }
 
-    context(KaSession)
+    context(_: KaSession)
     private fun onReceiver(element: KtElement): Boolean {
         val partiallyAppliedSymbol = element.resolveToCall()?.successfulCallOrNull<KaCallableMemberCall<*, *>>()?.partiallyAppliedSymbol
         val receiverValue = (partiallyAppliedSymbol?.dispatchReceiver ?: partiallyAppliedSymbol?.extensionReceiver)?.let { (it as? KaSmartCastedReceiverValue)?.original ?: it }
@@ -280,7 +270,21 @@ internal class KotlinFunctionCallUsage(
         val oldArguments = element.valueArguments
         val newParameters = changeInfo.newParameters.filter { changeInfo.receiverParameterInfo != it && !it.isContextParameter }
 
-        val contextValues = changeInfo.newParameters.filter { it.isContextParameter }.mapNotNull { argumentMapping[it.oldIndex]?.element?.text ?: it.defaultValueForCall?.text }
+        val contextValues = changeInfo.newParameters.filter { it.isContextParameter && !it.wasContextParameter }.mapNotNull {
+            val elementPointer = argumentMapping[it.oldIndex]
+            when (elementPointer) {
+                null -> it.defaultValueForCall?.text
+                else -> {
+                    val element = elementPointer.element
+                    when {
+                        element == null -> null
+                        element is KtThisExpression -> null
+                        (element.mainReference?.resolve() as? KtParameter)?.isContextParameter == true -> null
+                        else -> element.text
+                    }
+                }
+            }
+        }
 
         val purelyNamedCall = element is KtCallExpression && oldArguments.isNotEmpty() && oldArguments.all { it.isNamed() }
 
@@ -290,7 +294,7 @@ internal class KotlinFunctionCallUsage(
         val newArgumentInfos = newParameters.asSequence().withIndex().map {
             val (index, param) = it
             val oldIndex = param.oldIndex
-            val resolvedArgument = contextParameters?.get(param.currentType.text) ?: argumentMapping[oldIndex]
+            val resolvedArgument = if (param.wasContextParameter) contextParameters?.get(param.oldIndex) else argumentMapping[oldIndex]
             val receiverValue = if (oldIndex == originalReceiverInfo?.oldIndex && !param.wasContextParameter) {
                 val explicitExtensionReceiver = explicitToImplicitExtensionReceiver.first
                 if (PsiTreeUtil.isAncestor(changeInfo.method, element, false)) {
@@ -311,7 +315,7 @@ internal class KotlinFunctionCallUsage(
         var firstNamedIndex = newArgumentInfos.firstOrNull {
             !canMixArguments && it.wasNamed ||
                     it.parameter.isNewParameter && it.parameter.defaultValue != null ||
-                    it.resolvedArgument is KtValueArgument && it.parameterIndex < lastParameterIndex //todo varargs
+                    it.shouldSkip()
         }?.parameterIndex
 
         if (firstNamedIndex == null) {
@@ -362,16 +366,11 @@ internal class KotlinFunctionCallUsage(
                 }
             }
         }
-        val receiver: PsiElement?  =
-            if (newReceiverInfo?.oldIndex != originalReceiverInfo?.oldIndex && newReceiverInfo != null && !newReceiverInfo.wasContextParameter) {
-                val receiverArgument = argumentMapping[newReceiverInfo.oldIndex]?.element
-                val defaultValueForCall = newReceiverInfo.defaultValueForCall
-                receiverArgument?.let { psiFactory.createExpression(it.text) }
-                    ?: defaultValueForCall
-                    ?: psiFactory.createExpression("_")
-            } else {
-                null
-            }
+        val receiver: PsiElement? = if (newReceiverInfo?.oldIndex != originalReceiverInfo?.oldIndex && newReceiverInfo != null) {
+            createReplacementReceiverArgumentExpression(psiFactory, newReceiverInfo, argumentMapping, contextParameters)
+        } else {
+            null
+        }
 
         newArgumentList.arguments.singleOrNull()?.let {
             if (it.getArgumentExpression() == null) {
@@ -400,7 +399,7 @@ internal class KotlinFunctionCallUsage(
 
         var newElement: KtElement = element
         if (newReceiverInfo?.oldIndex != originalReceiverInfo?.oldIndex) {
-            val replacingElement: PsiElement = if (newReceiverInfo != null && !newReceiverInfo.wasContextParameter) {
+            val replacingElement: PsiElement = if (newReceiverInfo != null) {
                 psiFactory.createExpressionByPattern("$0.$1", receiver!!, element)
             } else {
                 element.copy()

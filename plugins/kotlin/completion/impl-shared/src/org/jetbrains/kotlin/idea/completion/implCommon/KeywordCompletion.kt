@@ -16,6 +16,8 @@ import com.intellij.psi.filters.position.PositionElementFilter
 import com.intellij.psi.tree.IElementType
 import com.intellij.psi.util.parentOfType
 import com.intellij.psi.util.parentOfTypes
+import kotlinx.serialization.Serializable
+import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.kotlin.KtNodeTypes
 import org.jetbrains.kotlin.config.LanguageFeature
 import org.jetbrains.kotlin.config.LanguageVersionSettings
@@ -25,6 +27,8 @@ import org.jetbrains.kotlin.descriptors.annotations.KotlinTarget.*
 import org.jetbrains.kotlin.idea.base.projectStructure.languageVersionSettings
 import org.jetbrains.kotlin.idea.base.psi.isInsideAnnotationEntryArgumentList
 import org.jetbrains.kotlin.idea.base.psi.isInsideKtTypeReference
+import org.jetbrains.kotlin.idea.completion.api.serialization.SerializableInsertHandler
+import org.jetbrains.kotlin.idea.completion.api.serialization.SerializableLookupObject
 import org.jetbrains.kotlin.idea.completion.handlers.WithTailInsertHandler
 import org.jetbrains.kotlin.idea.completion.handlers.createKeywordConstructLookupElement
 import org.jetbrains.kotlin.lexer.KtKeywordToken
@@ -45,7 +49,8 @@ import org.jetbrains.kotlin.utils.addToStdlib.firstIsInstanceOrNull
  * That way, if the same keyword is completed twice, it would not be duplicated in the completion. This is not required in the regular
  * completion, but can be a problem in CodeWithMe plugin (see https://youtrack.jetbrains.com/issue/CWM-438).
  */
-open class KeywordLookupObject {
+@Serializable
+open class KeywordLookupObject : SerializableLookupObject {
     override fun equals(other: Any?): Boolean = this === other || javaClass == other?.javaClass
     override fun hashCode(): Int = javaClass.hashCode()
 }
@@ -53,7 +58,8 @@ open class KeywordLookupObject {
 
 class KeywordCompletion() {
     companion object {
-        private val ALL_KEYWORDS = (KEYWORDS.types + SOFT_KEYWORDS.types)
+        // workaround for the all keyword can be removed after KT-77099
+        private val ALL_KEYWORDS = (KEYWORDS.types + SOFT_KEYWORDS.types + ALL_KEYWORD)
             .map { it as KtKeywordToken }
 
         private val INCOMPATIBLE_KEYWORDS_AROUND_SEALED = setOf(
@@ -270,13 +276,17 @@ class KeywordCompletion() {
         return name
     }
 
-    private object UseSiteAnnotationTargetInsertHandler : InsertHandler<LookupElement> {
+    @Serializable
+    @ApiStatus.Internal
+    object UseSiteAnnotationTargetInsertHandler : SerializableInsertHandler {
         override fun handleInsert(context: InsertionContext, item: LookupElement) {
             WithTailInsertHandler(":", spaceBefore = false, spaceAfter = false).postHandleInsert(context, item)
         }
     }
 
-    private object SpaceAfterInsertHandler : InsertHandler<LookupElement> {
+    @Serializable
+    @ApiStatus.Internal
+    object SpaceAfterInsertHandler : SerializableInsertHandler {
         override fun handleInsert(context: InsertionContext, item: LookupElement) {
             WithTailInsertHandler.SPACE.postHandleInsert(context, item)
         }
@@ -287,7 +297,6 @@ class KeywordCompletion() {
             CommentFilter(),
             ParentFilter(ClassFilter(KtLiteralStringTemplateEntry::class.java)),
             ParentFilter(ClassFilter(KtConstantExpression::class.java)),
-            FileFilter(ClassFilter(KtTypeCodeFragment::class.java)),
             LeftNeighbour(TextFilter(".")),
             LeftNeighbour(TextFilter("?."))
         )
@@ -307,17 +316,6 @@ class KeywordCompletion() {
         override fun isAcceptable(element: Any?, context: PsiElement?): Boolean {
             val parent = (element as? PsiElement)?.parent
             return parent != null && (filter?.isAcceptable(parent, context) ?: true)
-        }
-    }
-
-    private class FileFilter(filter: ElementFilter) : PositionElementFilter() {
-        init {
-            setFilter(filter)
-        }
-
-        override fun isAcceptable(element: Any?, context: PsiElement?): Boolean {
-            val file = (element as? PsiElement)?.containingFile
-            return file != null && (filter?.isAcceptable(file, context) ?: true)
         }
     }
 
@@ -676,6 +674,7 @@ class KeywordCompletion() {
     ): Boolean {
         val feature = when (keyword) {
             TYPE_ALIAS_KEYWORD -> LanguageFeature.TypeAliases
+            ALL_KEYWORD -> LanguageFeature.AnnotationAllUseSiteTarget
             EXPECT_KEYWORD, ACTUAL_KEYWORD -> LanguageFeature.MultiPlatformProjects
             SUSPEND_KEYWORD -> LanguageFeature.Coroutines
             FIELD_KEYWORD -> {

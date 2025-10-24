@@ -1,14 +1,12 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 @file:Suppress("OVERRIDE_DEPRECATION", "ReplaceGetOrSet", "ReplacePutWithAssignment", "ReplaceJavaStaticMethodWithKotlinAnalog")
 
 package com.intellij.openapi.module.impl
 
 import com.intellij.configurationStore.RenameableStateStorageManager
 import com.intellij.ide.highlighter.ModuleFileType
-import com.intellij.openapi.client.ClientKind
 import com.intellij.openapi.components.*
-import com.intellij.openapi.components.impl.stores.IComponentStore
-import com.intellij.openapi.extensions.PluginId
+import com.intellij.openapi.components.impl.stores.ComponentStoreOwner
 import com.intellij.openapi.module.Module
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.ex.ProjectEx
@@ -19,104 +17,72 @@ import com.intellij.openapi.ui.Queryable
 import com.intellij.openapi.util.Key
 import com.intellij.openapi.util.SimpleModificationTracker
 import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.openapi.vfs.pointers.VirtualFilePointer
 import com.intellij.psi.search.GlobalSearchScope
-import com.intellij.serviceContainer.ComponentManagerImpl.Companion.fakeCorePluginDescriptor
-import com.intellij.serviceContainer.getComponentManagerImpl
+import com.intellij.serviceContainer.getComponentManagerEx
+import com.intellij.serviceContainer.precomputeModuleLevelExtensionModel
 import com.intellij.util.messages.MessageBus
 import com.intellij.util.xmlb.annotations.MapAnnotation
 import com.intellij.util.xmlb.annotations.Property
 import org.jetbrains.annotations.ApiStatus
 import java.nio.file.Path
 
-open class ModuleImpl @ApiStatus.Internal constructor(
+@ApiStatus.Internal
+open class ModuleImpl(
   name: String,
   project: Project,
-  val componentManager: ComponentManager,
+  private val componentManager: ComponentManager,
 ) : DelegatingComponentManagerEx, ModuleEx, Queryable {
-
   private val project: Project
-  protected var imlFilePointer: VirtualFilePointer? = null
 
   @Volatile
   private var isModuleAdded = false
   private var name: String? = null
-  private val moduleScopeProvider: ModuleScopeProvider
 
-  @ApiStatus.Internal
-  constructor(
-    name: String,
-    project: Project,
-    virtualFilePointer: VirtualFilePointer?,
-    componentManager: ComponentManager,
-  ) : this(
-    name = name,
-    project = project,
-    componentManager = componentManager
-  ) {
-    imlFilePointer = virtualFilePointer
+  private val moduleScopeProvider = lazy {
+    project.service<ModuleScopeProviderFactory>().createProvider(this)
   }
+
+  private fun getModuleScopeProvider() = moduleScopeProvider.value
 
   init {
     @Suppress("LeakingThis")
     this.project = project
-    @Suppress("LeakingThis")
-    moduleScopeProvider = project.service<ModuleScopeProviderFactory>().createProvider(this)
     this.name = name
   }
 
-  internal fun getModuleComponentManager(): ModuleComponentManager =
-    componentManager.getComponentManagerImpl() as ModuleComponentManager
+  internal fun getModuleComponentManager(): ModuleComponentManager = componentManager.getComponentManagerEx() as ModuleComponentManager
 
-  override fun init() {
+  override fun initNewlyAddedModule() {
     // do not measure (activityNamePrefix method not overridden by this class)
     // because there are a lot of modules and no need to measure each one
     val moduleComponentManager = getModuleComponentManager()
-    moduleComponentManager.registerComponents()
-    if (!isPersistent) {
-      moduleComponentManager.registerService(
-        serviceInterface = IComponentStore::class.java,
-        implementation = NonPersistentModuleStore::class.java,
-        pluginDescriptor = fakeCorePluginDescriptor,
-        override = true,
-      )
-    }
-    @Suppress("DEPRECATION")
-    moduleComponentManager.createComponents()
+    moduleComponentManager.initModuleContainer(precomputeModuleLevelExtensionModel())
+    moduleComponentManager.markContainerAsCreated()
   }
 
-  private val isPersistent: Boolean
-    get() = imlFilePointer != null
-
-  @get:ApiStatus.Internal
   override val delegateComponentManager: ComponentManagerEx
     get() = componentManager as ComponentManagerEx
 
   override fun isDisposed(): Boolean {
-    // in case of light project in tests when it's temporarily disposed, the module should be treated as disposed too.
+    // in case of a light project in tests when it's temporarily disposed, the module should be treated as disposed too.
     @Suppress("TestOnlyProblems")
     return componentManager.isDisposed() || (project as ProjectEx).isLight && project.isDisposed()
   }
 
-  override fun getMessageBus(): MessageBus =
-    delegateComponentManager.messageBus
+  override fun getMessageBus(): MessageBus = delegateComponentManager.messageBus
 
-  override fun getModuleFile(): VirtualFile? = imlFilePointer?.file
+  override fun getModuleFile(): VirtualFile? = null
 
   override fun rename(newName: String, notifyStorage: Boolean) {
     name = newName
     if (notifyStorage) {
-      (store.storageManager as RenameableStateStorageManager).rename(newName + ModuleFileType.DOT_DEFAULT_EXTENSION)
+      ((this as ComponentStoreOwner).componentStore.storageManager as RenameableStateStorageManager)
+        .rename(newName + ModuleFileType.DOT_DEFAULT_EXTENSION)
     }
   }
 
-  protected val store: IComponentStore
-    get() = componentManager.getService(IComponentStore::class.java)!!
-
-  override fun canStoreSettings(): Boolean = store !is NonPersistentModuleStore
-
   override fun getModuleNioFile(): Path {
-    return if (isPersistent) store.storageManager.expandMacro(StoragePathMacros.MODULE_FILE) else Path.of("")
+    return Path.of("")
   }
 
   @Synchronized
@@ -135,7 +101,7 @@ open class ModuleImpl @ApiStatus.Internal constructor(
   }
 
   override fun setOption(key: String, value: String?) {
-    val manager = optionManager
+    val manager = getOptionManager()
     if (value == null) {
       if (manager.state.options.remove(key) != null) {
         manager.incModificationCount()
@@ -146,39 +112,40 @@ open class ModuleImpl @ApiStatus.Internal constructor(
     }
   }
 
-  private val optionManager: DeprecatedModuleOptionManager
-    get() = (this as Module).getService(DeprecatedModuleOptionManager::class.java)
+  private fun getOptionManager(): DeprecatedModuleOptionManager = (this as Module).getService(DeprecatedModuleOptionManager::class.java)
 
-  override fun getOptionValue(key: String): String? = optionManager.state.options.get(key)
+  override fun getOptionValue(key: String): String? = getOptionManager().state.options.get(key)
 
-  override fun getModuleScope(): GlobalSearchScope = moduleScopeProvider.moduleScope
+  override fun getModuleScope(): GlobalSearchScope = getModuleScopeProvider().moduleScope
 
-  override fun getModuleScope(includeTests: Boolean): GlobalSearchScope = moduleScopeProvider.getModuleScope(includeTests)
+  override fun getModuleScope(includeTests: Boolean): GlobalSearchScope = getModuleScopeProvider().getModuleScope(includeTests)
 
-  override fun getModuleWithLibrariesScope(): GlobalSearchScope = moduleScopeProvider.moduleWithLibrariesScope
+  override fun getModuleWithLibrariesScope(): GlobalSearchScope = getModuleScopeProvider().moduleWithLibrariesScope
 
-  override fun getModuleWithDependenciesScope(): GlobalSearchScope = moduleScopeProvider.moduleWithDependenciesScope
+  override fun getModuleWithDependenciesScope(): GlobalSearchScope = getModuleScopeProvider().moduleWithDependenciesScope
 
-  override fun getModuleContentScope(): GlobalSearchScope = moduleScopeProvider.moduleContentScope
+  override fun getModuleContentScope(): GlobalSearchScope = getModuleScopeProvider().moduleContentScope
 
-  override fun getModuleContentWithDependenciesScope(): GlobalSearchScope = moduleScopeProvider.moduleContentWithDependenciesScope
+  override fun getModuleContentWithDependenciesScope(): GlobalSearchScope = getModuleScopeProvider().moduleContentWithDependenciesScope
 
   override fun getModuleWithDependenciesAndLibrariesScope(includeTests: Boolean): GlobalSearchScope {
-    return moduleScopeProvider.getModuleWithDependenciesAndLibrariesScope(includeTests)
+    return getModuleScopeProvider().getModuleWithDependenciesAndLibrariesScope(includeTests)
   }
 
-  override fun getModuleWithDependentsScope(): GlobalSearchScope = moduleScopeProvider.moduleWithDependentsScope
+  override fun getModuleWithDependentsScope(): GlobalSearchScope = getModuleScopeProvider().moduleWithDependentsScope
 
-  override fun getModuleTestsWithDependentsScope(): GlobalSearchScope = moduleScopeProvider.moduleTestsWithDependentsScope
+  override fun getModuleTestsWithDependentsScope(): GlobalSearchScope = getModuleScopeProvider().moduleTestsWithDependentsScope
 
-  override fun getModuleRuntimeScope(includeTests: Boolean): GlobalSearchScope = moduleScopeProvider.getModuleRuntimeScope(includeTests)
+  override fun getModuleRuntimeScope(includeTests: Boolean): GlobalSearchScope = getModuleScopeProvider().getModuleRuntimeScope(includeTests)
 
-  override fun getModuleProductionSourceScope(): GlobalSearchScope = moduleScopeProvider.moduleProductionSourceScope
+  override fun getModuleProductionSourceScope(): GlobalSearchScope = getModuleScopeProvider().moduleProductionSourceScope
 
-  override fun getModuleTestSourceScope(): GlobalSearchScope = moduleScopeProvider.moduleTestSourceScope
+  override fun getModuleTestSourceScope(): GlobalSearchScope = getModuleScopeProvider().moduleTestSourceScope
 
   override fun clearScopesCache() {
-    moduleScopeProvider.clearCache()
+    if (moduleScopeProvider.isInitialized()) {
+      moduleScopeProvider.value.clearCache()
+    }
   }
 
   override fun toString(): String {
@@ -190,11 +157,11 @@ open class ModuleImpl @ApiStatus.Internal constructor(
     info.put("name", getName())
   }
 
-  override fun <T : Any?> getUserData(key: Key<T?>): T? =
-    componentManager.getUserData(key)
+  override fun <T : Any?> getUserData(key: Key<T?>): T? = componentManager.getUserData(key)
 
-  override fun <T : Any?> putUserData(key: Key<T?>, value: T?) =
+  override fun <T : Any?> putUserData(key: Key<T?>, value: T?) {
     componentManager.putUserData(key, value)
+  }
 }
 
 @State(name = "DeprecatedModuleOptionManager", useLoadedStateAsExisting = false)
@@ -212,7 +179,7 @@ internal class DeprecatedModuleOptionManager(private val module: Module)
   class State {
     @Property(surroundWithTag = false)
     @MapAnnotation(surroundKeyWithTag = false, surroundValueWithTag = false, surroundWithTag = false, entryTagName = "option")
-    val options: MutableMap<String, String?> = HashMap()
+    val options = HashMap<String, String?>()
   }
 
   private var state = State()

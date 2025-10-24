@@ -20,6 +20,7 @@ import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Pair;
 import com.intellij.openapi.util.Ref;
 import com.intellij.openapi.util.TextRange;
+import com.intellij.openapi.util.registry.Registry;
 import com.intellij.psi.PsiDocumentManager;
 import com.intellij.psi.PsiElement;
 import com.intellij.psi.PsiExpression;
@@ -30,12 +31,12 @@ import com.intellij.xdebugger.XSourcePosition;
 import com.intellij.xdebugger.evaluation.EvaluationMode;
 import com.intellij.xdebugger.evaluation.ExpressionInfo;
 import com.intellij.xdebugger.evaluation.XDebuggerEvaluator;
+import com.intellij.xdebugger.impl.evaluate.XEvaluationOrigin;
 import com.intellij.xdebugger.impl.breakpoints.XExpressionImpl;
 import com.intellij.xdebugger.impl.evaluate.quick.XDebuggerDocumentOffsetEvaluator;
 import com.intellij.xdebugger.impl.evaluate.quick.common.ValueHintType;
 import com.intellij.xdebugger.impl.ui.DebuggerUIUtil;
 import com.intellij.xdebugger.impl.ui.tree.nodes.XEvaluationCallbackWithOrigin;
-import com.intellij.xdebugger.impl.ui.tree.nodes.XEvaluationOrigin;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -78,6 +79,7 @@ public class JavaDebuggerEvaluator extends XDebuggerEvaluator implements XDebugg
         text.set(new TextWithImportsImpl(element));
         CodeFragmentFactory factory = DebuggerUtilsEx.getCodeFragmentFactory(element, null);
         try {
+          if (Registry.is("debugger.compiling.evaluator.force")) throw new UnsupportedExpressionException("force compilation");
           return factory.getEvaluatorBuilder().build(element, ContextUtil.getSourcePosition(evalContext));
         }
         catch (UnsupportedExpressionException ex) {
@@ -110,7 +112,7 @@ public class JavaDebuggerEvaluator extends XDebuggerEvaluator implements XDebugg
 
       @Override
       public void threadAction(@NotNull SuspendContextImpl suspendContext) {
-        XEvaluationOrigin origin = getOrigin(baseCallback);
+        XEvaluationOrigin origin = XEvaluationCallbackWithOrigin.getOrigin(baseCallback);
         ReportingEvaluationCallback callback = new ReportingEvaluationCallback(myDebugProcess.getProject(), baseCallback, origin);
         WatchItemDescriptor descriptor = null;
         try {

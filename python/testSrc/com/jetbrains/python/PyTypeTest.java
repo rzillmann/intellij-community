@@ -2,6 +2,8 @@
 package com.jetbrains.python;
 
 import com.google.common.collect.ImmutableList;
+import com.intellij.openapi.util.RecursionManager;
+import com.intellij.openapi.util.registry.Registry;
 import com.intellij.testFramework.LightProjectDescriptor;
 import com.jetbrains.python.documentation.docstrings.DocStringFormat;
 import com.jetbrains.python.fixtures.PyTestCase;
@@ -298,7 +300,7 @@ public class PyTypeTest extends PyTestCase {
   }
 
   public void testIfIsInstanceOr1() {
-    doTest("Union[str, int]",
+    doTest("Union[int, str]",
            """
                def foo(a):
                    if isinstance(a, int) or isinstance(a, str):
@@ -307,7 +309,7 @@ public class PyTypeTest extends PyTestCase {
   }
 
   public void testIfIsInstanceOr2() {
-    doTest("Union[B, A, int, str]",
+    doTest("Union[str, int, A, B]",
            """
            class A:
                pass
@@ -351,7 +353,7 @@ public class PyTypeTest extends PyTestCase {
   }
 
   public void testIfIsInstanceLogicalExpressions() {
-    doTest("Union[B, str]",
+    doTest("Union[str, B]",
            """
              class A:
                  pass
@@ -686,7 +688,7 @@ public class PyTypeTest extends PyTestCase {
 
   // EA-40207
   public void testRecursion() {
-    doTest("list",
+    doTest("List[Any]",
            """
              def f():
                  return [f()]
@@ -783,6 +785,8 @@ public class PyTypeTest extends PyTestCase {
   }
 
   public void testParameterFromUsages() {
+    RecursionManager.assertOnRecursionPrevention(myFixture.getTestRootDisposable());
+    Registry.get("python.use.better.control.flow.type.inference").setValue(true);
     final String text = """
       def foo(bar):
           expr = bar
@@ -793,11 +797,11 @@ public class PyTypeTest extends PyTestCase {
       """;
     final PyExpression expr = parseExpr(text);
     assertNotNull(expr);
-    doTest("Union[Union[int, str], Any]", expr, TypeEvalContext.codeCompletion(expr.getProject(), expr.getContainingFile()));
+    doTest("UnsafeUnion[Union[int, str], Any]", expr, TypeEvalContext.codeCompletion(expr.getProject(), expr.getContainingFile()));
   }
 
   public void testUpperBoundGeneric() {
-    doTest("Union[Union[int, str], Any]",
+    doTest("UnsafeUnion[Union[int, str], Any]",
            """
              def foo(x):
                  '''
@@ -1051,7 +1055,7 @@ public class PyTypeTest extends PyTestCase {
   }
 
   public void testDictFromTuple() {
-    doTest("Dict[Union[str, int], Union[str, int]]",
+    doTest("Dict[Union[str, int], Union[int, str]]",
            "expr = dict((('1', 1), (2, 2), (3, '3')))");
   }
 
@@ -1225,15 +1229,6 @@ public class PyTypeTest extends PyTestCase {
              expr = f3(42)""");
   }
 
-  // PY-8836
-  public void testNumpyArrayIntMultiplicationType() {
-    doMultiFileTest("ndarray",
-                    """
-                      import numpy as np
-                      expr = np.ones(10) * 2
-                      """);
-  }
-
   // PY-9439
   public void testNumpyArrayType() {
     doMultiFileTest("ndarray",
@@ -1244,7 +1239,7 @@ public class PyTypeTest extends PyTestCase {
   }
 
   public void testUnionTypeAttributeOfDifferentTypes() {
-    doTest("Union[list, int]",
+    doTest("Union[List[Any], int]",
            """
              class Foo:
                  x = []
@@ -1640,13 +1635,13 @@ public class PyTypeTest extends PyTestCase {
   }
 
   public void testListLiteral() {
-    doTest("list", "expr = []");
+    doTest("List[Any]", "expr = []");
 
     doTest("List[int]", "expr = [1, 2, 3]");
 
     doTest("List[Union[str, int]]", "expr = ['1', 1, 1]");
 
-    doTest("List[Union[Union[str, int], Any]]", "expr = ['1', 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]");
+    doTest("List[UnsafeUnion[Union[str, int], Any]]", "expr = ['1', 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]");
   }
 
   public void testSetLiteral() {
@@ -1654,17 +1649,17 @@ public class PyTypeTest extends PyTestCase {
 
     doTest("Set[Union[str, int]]", "expr = {'1', 1, 1}");
 
-    doTest("Set[Union[Union[str, int], Any]]", "expr = {'1', 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}");
+    doTest("Set[UnsafeUnion[Union[str, int], Any]]", "expr = {'1', 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}");
   }
 
   public void testDictLiteral() {
-    doTest("dict", "expr = {}");
+    doTest("Dict[Any, Any]", "expr = {}");
 
     doTest("Dict[int, bool]", "expr = {1: False}");
 
-    doTest("Dict[Union[str, int], Union[str, int]]", "expr = {'1': 1, 1: '1', 1: 1}");
+    doTest("Dict[Union[str, int], Union[int, str]]", "expr = {'1': 1, 1: '1', 1: 1}");
 
-    doTest("Dict[Union[Union[str, int], Any], Union[Union[str, int], Any]]",
+    doTest("Dict[Union[Union[str, int], Any], Union[Union[int, str], Any]]",
            "expr = {'1': 1, 1: '1', 1: 1, 1: 1, 1: 1, 1: 1, 1: 1, 1: 1, 1: 1, 1: 1, 1: 1}");
   }
 
@@ -1712,7 +1707,7 @@ public class PyTypeTest extends PyTestCase {
 
   // PY-20797
   public void testValueOfEmptyDefaultDict() {
-    doTest("list",
+    doTest("List[Any]",
            """
              from collections import defaultdict
              expr = defaultdict(lambda: [])['x']
@@ -1721,24 +1716,24 @@ public class PyTypeTest extends PyTestCase {
 
   // PY-8473
   public void testCopyDotCopy() {
-    doMultiFileTest("A",
-                    """
-                      import copy
-                      class A(object):
-                          pass
-                      expr = copy.copy(A())
-                      """);
+    doTest("A",
+           """
+             import copy
+             class A(object):
+                 pass
+             expr = copy.copy(A())
+             """);
   }
 
   // PY-8473
   public void testCopyDotDeepCopy() {
-    doMultiFileTest("A",
-                    """
-                      import copy
-                      class A(object):
-                          pass
-                      expr = copy.deepcopy(A())
-                      """);
+    doTest("A",
+           """
+             import copy
+             class A(object):
+                 pass
+             expr = copy.deepcopy(A())
+             """);
   }
 
   // PY-21083
@@ -1784,7 +1779,7 @@ public class PyTypeTest extends PyTestCase {
 
   // PY-20409
   public void testGetFromDictWithDefaultNoneValue() {
-    doTest("Optional[Any]",
+    doTest("Any",
            "d = {}\n" +
            "expr = d.get(\"abc\", None)");
   }
@@ -1894,7 +1889,7 @@ public class PyTypeTest extends PyTestCase {
 
   // PY-21474
   public void testReassigningOptionalListWithDefaultValue() {
-    doTest("Union[List[str], list]",
+    doTest("Union[List[str], List[Any]]",
            """
              def x(things):
                  ""\"
@@ -2034,7 +2029,7 @@ public class PyTypeTest extends PyTestCase {
 
   // PY-37755
   public void testGlobalType() {
-    doTest("list",
+    doTest("List[Any]",
            """
              expr = []
 
@@ -2042,7 +2037,7 @@ public class PyTypeTest extends PyTestCase {
                  global expr
                  expr""");
 
-    doTest("list",
+    doTest("List[Any]",
            """
              expr = []
 
@@ -2051,7 +2046,7 @@ public class PyTypeTest extends PyTestCase {
                      global expr
                      expr""");
 
-    doTest("list",
+    doTest("List[Any]",
            """
              expr = []
 
@@ -2073,43 +2068,32 @@ public class PyTypeTest extends PyTestCase {
                  def nuf():
                      global a
                      expr = a""");
-  }
 
-  // PY-37755
-  public void testNonLocalType() {
-    doTest("bool",
+    // PY-82115
+    doTest("Any",
            """
-             def fun():
-                 expr = True
+             def outer():
+                 s = "aba"
 
-                 def nuf():
-                     nonlocal expr
-                     expr""");
+                 def inner():
+                     global s
+                     expr = s # 's' is unbound
+             """);
 
-    doTest("bool",
+    // PY-82115
+    doTest("int",
            """
-             a = []
-
-             def fun():
-                 a = True
-
-                 def nuf():
-                     nonlocal a
-                     expr = a""");
-
-    doTest("Union[bool, int]",
-           """
-             a = []
-
-             def fun():
-                 if True:
-                     a = True
-                 else:
-                     a = 5
-
-                 def nuf():
-                     nonlocal a
-                     expr = a""");
+             def outer():
+                 s = "aba"
+             
+                 def inner1():
+                     global s
+                     s = 1
+             
+                 def inner2():
+                     global s
+                     expr = s
+             """);
   }
 
   // PY-21906
@@ -2564,7 +2548,7 @@ public class PyTypeTest extends PyTestCase {
           final List<PyClassLikeType> superClassTypes = ((PyClassType)type).getSuperClassTypes(context);
           assertEquals(1, superClassTypes.size());
 
-          assertInstanceOf(superClassTypes.get(0), PyNamedTupleType.class);
+          assertInstanceOf(superClassTypes.get(0), PyClassTypeImpl.class);
         }
       }
     );
@@ -2789,23 +2773,23 @@ public class PyTypeTest extends PyTestCase {
     runWithLanguageLevel(
       LanguageLevel.PYTHON35,
       () -> {
-        doTest("Union[int, Any]",
+        doTest("UnsafeUnion[int, Any]",
                """
                  from typing import Any
                  x: Any
                  expr = x * 2""");
 
-        doTest("Union[int, Any]",
+        doTest("UnsafeUnion[int, Any]",
                """
                  from typing import Any
                  x: Any
                  expr = 2 * x""");
 
-        doTest("Union[int, Any]",
+        doTest("UnsafeUnion[int, Any]",
                "def f(x):\n" +
                "    expr = x * 2");
 
-        doTest("Union[int, Any]",
+        doTest("UnsafeUnion[int, Any]",
                "def f(x):\n" +
                "    expr = 2 * x");
       }
@@ -2882,12 +2866,9 @@ public class PyTypeTest extends PyTestCase {
     );
   }
 
+  // PY-80436
   public void testEllipsis() {
-    runWithLanguageLevel(
-      LanguageLevel.PYTHON34,
-      () -> doTest("Any",
-                   "expr = ...")
-    );
+    doTest("ellipsis", "expr = Ellipsis");
   }
 
   // PY-25751
@@ -2928,7 +2909,7 @@ public class PyTypeTest extends PyTestCase {
 
   // PY-26061
   public void testUnknownDictValues() {
-    doTest("list",
+    doTest("List[Any]",
            "expr = dict().values()");
   }
 
@@ -3122,7 +3103,7 @@ public class PyTypeTest extends PyTestCase {
   public void testSliceOnUnion() {
     runWithLanguageLevel(
       LanguageLevel.PYTHON36,
-      () -> doTest("Union[str, Any]",
+      () -> doTest("str",
                    """
                      from typing import Union
                      myvar: Union[str, int]
@@ -3980,7 +3961,7 @@ public class PyTypeTest extends PyTestCase {
     runWithLanguageLevel(
       LanguageLevel.getLatest(),
       () -> {
-        doTest("A",
+        doTest("type[A]",
                """
                  from typing import TypedDict
                  A = TypedDict('A', {'x': int}, total=False)
@@ -4163,6 +4144,19 @@ public class PyTypeTest extends PyTestCase {
     );
   }
 
+  // PY-79330
+  public void testTypeHintedEnumItemValueAttribute2() {
+    runWithLanguageLevel(
+      LanguageLevel.getLatest(),
+      () -> doTest("() -> Any", // Should be 'Any' PY-71603
+                   """
+                     from enum import Enum
+                     
+                     def f(p: Enum):
+                         expr = p.value""")
+    );
+  }
+
   // PY-54503
   public void testImportedEnumGetItemResultValueAttribute() {
     myFixture.copyDirectoryToProject(TEST_DIRECTORY + getTestName(false), "");
@@ -4172,7 +4166,7 @@ public class PyTypeTest extends PyTestCase {
                                               expr = MyEnum['ONE'].value""");
     assertNotNull(expr);
     TypeEvalContext codeAnalysisContext = TypeEvalContext.codeAnalysis(expr.getProject(), expr.getContainingFile());
-    assertType("Any", expr, codeAnalysisContext);
+    assertType("int", expr, codeAnalysisContext);
     assertProjectFilesNotParsed(codeAnalysisContext);
 
     TypeEvalContext userInitiatedContext = TypeEvalContext.userInitiated(expr.getProject(), expr.getContainingFile());

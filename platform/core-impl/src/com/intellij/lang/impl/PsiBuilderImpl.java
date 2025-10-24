@@ -59,10 +59,11 @@ public class PsiBuilderImpl extends UnprotectedUserDataHolder implements PsiBuil
   private static TokenSet ourAnyLanguageWhitespaceTokens = TokenSet.EMPTY;
 
   private final Project myProject;
-  private PsiFile myFile;
+  private PsiFile myPsiFile;
 
   private final int[] myLexStarts;
   private final IElementType[] myLexTypes;
+  private final NavigableMap<Integer, IElementType> myTokenTypesToRestoreOnRollback = new TreeMap<>();
   private int myCurrentLexeme;
 
   private final ParserDefinition myParserDefinition;
@@ -141,7 +142,7 @@ public class PsiBuilderImpl extends UnprotectedUserDataHolder implements PsiBuil
                          @Nullable MyTreeStructure parentLightTree,
                          @Nullable Object parentCachingNode) {
     myProject = project;
-    myFile = containingFile;
+    myPsiFile = containingFile;
     myParserDefinition = parserDefinition;
 
     myText = text;
@@ -428,7 +429,7 @@ public class PsiBuilderImpl extends UnprotectedUserDataHolder implements PsiBuil
 
     @Override
     public void remapTokenType(@NotNull IElementType type) {
-      //assert myType != null && type != null;
+      LOG.assertTrue(myType != null, "Marker is not done yet.");
       myType = type;
     }
 
@@ -609,7 +610,7 @@ public class PsiBuilderImpl extends UnprotectedUserDataHolder implements PsiBuil
 
     @Override
     public PsiFile getContainingFile() {
-      return getBuilder().myFile;
+      return getBuilder().myPsiFile;
     }
 
     @Override
@@ -767,6 +768,12 @@ public class PsiBuilderImpl extends UnprotectedUserDataHolder implements PsiBuil
   }
 
   @Override
+  public void remapCurrentTokenAndRestoreOnRollback(@NotNull IElementType type) {
+    myTokenTypesToRestoreOnRollback.putIfAbsent(myCurrentLexeme, myLexTypes[myCurrentLexeme]);
+    remapCurrentToken(type);
+  }
+
+  @Override
   public @Nullable IElementType lookAhead(int steps) {
     int cur = shiftOverWhitespaceForward(myCurrentLexeme);
 
@@ -912,6 +919,11 @@ public class PsiBuilderImpl extends UnprotectedUserDataHolder implements PsiBuil
     if (DIAGNOSTICS != null) {
       DIAGNOSTICS.registerRollback(myCurrentLexeme - marker.myLexemeIndex);
     }
+
+    NavigableMap<Integer, IElementType> remapped = myTokenTypesToRestoreOnRollback.tailMap(marker.myLexemeIndex, true);
+    remapped.forEach((index, type) -> myLexTypes[index] = type);
+    remapped.clear();
+
     myCurrentLexeme = marker.myLexemeIndex;
     myTokenTypeChecked = true;
     myProduction.rollbackTo(marker);
@@ -977,7 +989,7 @@ public class PsiBuilderImpl extends UnprotectedUserDataHolder implements PsiBuil
 
   private @NotNull ASTNode buildTree() {
     StartMarker rootMarker = prepareLightTree();
-    boolean possiblyTooDeep = myFile != null && BlockSupport.isTooDeep(myFile.getOriginalFile());
+    boolean possiblyTooDeep = myPsiFile != null && BlockSupport.isTooDeep(myPsiFile.getOriginalFile());
 
     if (myOriginalTree != null && !possiblyTooDeep) {
       DiffLog diffLog = merge(myOriginalTree, rootMarker, myLastCommittedText);
@@ -1066,7 +1078,7 @@ public class PsiBuilderImpl extends UnprotectedUserDataHolder implements PsiBuil
     DiffLog diffLog = new DiffLog();
     DiffTreeChangeBuilder<ASTNode, LighterASTNode> builder = new ConvertFromTokensToASTBuilder(newRoot, diffLog);
     MyTreeStructure treeStructure = new MyTreeStructure(newRoot, null);
-    List<CustomLanguageASTComparator> customLanguageASTComparators = CustomLanguageASTComparator.getMatchingComparators(myFile);
+    List<CustomLanguageASTComparator> customLanguageASTComparators = CustomLanguageASTComparator.getMatchingComparators(myPsiFile);
     ShallowNodeComparator<ASTNode, LighterASTNode> comparator =
       new MyComparator(treeStructure, customLanguageASTComparators, getUserData(CUSTOM_COMPARATOR));
     ProgressIndicator indicator = ProgressIndicatorProvider.getGlobalProgressIndicator();
@@ -1134,9 +1146,9 @@ public class PsiBuilderImpl extends UnprotectedUserDataHolder implements PsiBuil
     if (myCurrentLexeme < myLexemeCount) {
       List<IElementType> missed = ContainerUtil.subArrayAsList(myLexTypes, myCurrentLexeme, myLexemeCount);
       LOG.error("Tokens " + missed + " were not inserted into the tree. "
-                + (myFile == null
+                + (myPsiFile == null
                    ? ""
-                   : myFile.getLanguage()),
+                   : myPsiFile.getLanguage()),
                 new Attachment("missedTokensFragment.txt", myText.toString()));
     }
 
@@ -1168,7 +1180,7 @@ public class PsiBuilderImpl extends UnprotectedUserDataHolder implements PsiBuil
     int index = marker != null ? marker.getStartIndex() + 1 : myLexStarts.length;
     CharSequence context =
       index < myLexStarts.length ? myText.subSequence(Math.max(0, myLexStarts[index] - 1000), myLexStarts[index]) : "<none>";
-    String language = myFile != null ? myFile.getLanguage() + ", " : "";
+    String language = myPsiFile != null ? myPsiFile.getLanguage() + ", " : "";
     LOG.error(UNBALANCED_MESSAGE + "\nlanguage: " + language + "\ncontext: '" + context + "'" +
               "\nmarker id: " + (marker == null ? "n/a" : marker.markerId));
   }
@@ -1265,16 +1277,16 @@ public class PsiBuilderImpl extends UnprotectedUserDataHolder implements PsiBuil
   }
 
   private void checkTreeDepth(int maxDepth, boolean isFileRoot, boolean hasCollapsedChameleons) {
-    if (myFile == null) return;
-    PsiFile file = myFile.getOriginalFile();
-    Boolean flag = file.getUserData(BlockSupport.TREE_DEPTH_LIMIT_EXCEEDED);
+    if (myPsiFile == null) return;
+    PsiFile psiFile = myPsiFile.getOriginalFile();
+    Boolean flag = psiFile.getUserData(BlockSupport.TREE_DEPTH_LIMIT_EXCEEDED);
     if (maxDepth > BlockSupport.INCREMENTAL_REPARSE_DEPTH_LIMIT) {
       if (!Boolean.TRUE.equals(flag)) {
-        file.putUserData(BlockSupport.TREE_DEPTH_LIMIT_EXCEEDED, Boolean.TRUE);
+        psiFile.putUserData(BlockSupport.TREE_DEPTH_LIMIT_EXCEEDED, Boolean.TRUE);
       }
     }
     else if (isFileRoot && flag != null && !hasCollapsedChameleons) {
-      file.putUserData(BlockSupport.TREE_DEPTH_LIMIT_EXCEEDED, null);
+      psiFile.putUserData(BlockSupport.TREE_DEPTH_LIMIT_EXCEEDED, null);
     }
   }
 
@@ -1804,13 +1816,13 @@ public class PsiBuilderImpl extends UnprotectedUserDataHolder implements PsiBuil
   @Override
   public <T> T getUserData(@NotNull Key<T> key) {
     //noinspection unchecked
-    return key == FileContextUtil.CONTAINING_FILE_KEY ? (T)myFile : super.getUserData(key);
+    return key == FileContextUtil.CONTAINING_FILE_KEY ? (T)myPsiFile : super.getUserData(key);
   }
 
   @Override
   public <T> void putUserData(@NotNull Key<T> key, @Nullable T value) {
     if (key == FileContextUtil.CONTAINING_FILE_KEY) {
-      myFile = (PsiFile)value;
+      myPsiFile = (PsiFile)value;
     }
     else {
       super.putUserData(key, value);

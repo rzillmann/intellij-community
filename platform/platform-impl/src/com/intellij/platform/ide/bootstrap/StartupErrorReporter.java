@@ -16,8 +16,10 @@ import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.ConfigBackup;
 import com.intellij.openapi.application.CustomConfigMigrationOption;
 import com.intellij.openapi.application.PathManager;
+import com.intellij.openapi.application.ex.ApplicationEx;
 import com.intellij.openapi.application.ex.ApplicationManagerEx;
 import com.intellij.openapi.application.impl.ApplicationInfoImpl;
+import com.intellij.openapi.application.impl.ExceptionsKt;
 import com.intellij.openapi.diagnostic.ControlFlowException;
 import com.intellij.openapi.diagnostic.ExceptionWithAttachments;
 import com.intellij.openapi.diagnostic.Logger;
@@ -134,6 +136,8 @@ public final class StartupErrorReporter {
     catch (Throwable ignore) { }
 
     try {
+      var messageObj = prepareMessage(message);
+      var close = BootstrapBundle.message("bootstrap.error.option.close");
       var iconUrl = StartupErrorReporter.class.getResource("/images/questionSign.png");
       var learnMore = iconUrl != null ? new JLabel(new ImageIcon(iconUrl)) : new JLabel("?");
       learnMore.setToolTipText(BootstrapBundle.message("bootstrap.error.option.support"));
@@ -144,16 +148,21 @@ public final class StartupErrorReporter {
           supportCenter();
         }
       });
-      var options = new Object[]{
-        BootstrapBundle.message("bootstrap.error.option.close"),
-        BootstrapBundle.message("bootstrap.error.option.reset"),
-        BootstrapBundle.message("bootstrap.error.option.report"),
-        learnMore
-      };
-      var choice = JOptionPane.showOptionDialog(JOptionPane.getRootFrame(), prepareMessage(message), title, JOptionPane.DEFAULT_OPTION, JOptionPane.ERROR_MESSAGE, null, options, options[0]);
-      switch (choice) {
-        case 1 -> cleanStart();
-        case 2 -> reportProblem(title, message, error);
+      if (error != null) {
+        var options = new Object[]{close, BootstrapBundle.message("bootstrap.error.option.reset"), BootstrapBundle.message("bootstrap.error.option.report"), learnMore};
+        var choice = JOptionPane.showOptionDialog(
+          JOptionPane.getRootFrame(), messageObj, title, JOptionPane.DEFAULT_OPTION, JOptionPane.ERROR_MESSAGE, null, options, options[0]
+        );
+        switch (choice) {
+          case 1 -> cleanStart();
+          case 2 -> reportProblem(title, message, error);
+        }
+      }
+      else {
+        var options = new Object[]{close, learnMore};
+        JOptionPane.showOptionDialog(
+          JOptionPane.getRootFrame(), messageObj, title, JOptionPane.DEFAULT_OPTION, JOptionPane.ERROR_MESSAGE, null, options, options[0]
+        );
       }
     }
     catch (Throwable t) {
@@ -270,9 +279,9 @@ public final class StartupErrorReporter {
         zip.addFile(log.getFileName().toString(), log);
       }
 
-      var productData = Path.of(PathManager.getHomePath(), "product-info.json");
+      var productData = PathManager.getHomeDir().resolve(ApplicationEx.PRODUCT_INFO_FILE_NAME);
       if (!Files.exists(productData)) {
-        productData = Path.of(PathManager.getHomePath(), "Resources/product-info.json");
+        productData = PathManager.getHomeDir().resolve(ApplicationEx.PRODUCT_INFO_FILE_NAME_MAC);
       }
       if (Files.exists(productData)) {
         zip.addFile(productData.getFileName().toString(), productData);
@@ -328,6 +337,7 @@ public final class StartupErrorReporter {
     if (LoadingState.COMPONENTS_LOADED.isOccurred() && !(t instanceof StartupAbortedException)) {
       if (!(t instanceof ControlFlowException)) {
         PluginManagerCore.getLogger().error(t);
+        ExceptionsKt.processUnhandledException(t, null);
       }
       return;
     }

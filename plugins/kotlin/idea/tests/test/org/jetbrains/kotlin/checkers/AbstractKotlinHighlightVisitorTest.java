@@ -3,19 +3,19 @@
 package org.jetbrains.kotlin.checkers;
 
 import com.intellij.codeInsight.daemon.impl.DaemonCodeAnalyzerEx;
+import com.intellij.grazie.spellcheck.GrazieSpellCheckingInspection;
 import com.intellij.openapi.fileEditor.FileDocumentManager;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.platform.testFramework.core.FileComparisonFailedError;
 import com.intellij.psi.PsiElement;
 import com.intellij.psi.PsiFile;
-import com.intellij.spellchecker.inspections.SpellCheckingInspection;
 import com.intellij.testFramework.ExpectedHighlightingData;
 import com.intellij.testFramework.fixtures.impl.JavaCodeInsightTestFixtureImpl;
 import kotlin.Unit;
 import kotlin.jvm.functions.Function1;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.kotlin.idea.caches.resolve.ResolutionUtils;
-import org.jetbrains.kotlin.idea.core.script.ScriptConfigurationManager;
+import org.jetbrains.kotlin.idea.core.script.k1.ScriptConfigurationManager;
 import org.jetbrains.kotlin.idea.highlighter.AbstractKotlinHighlightVisitor;
 import org.jetbrains.kotlin.idea.refactoring.ElementSelectionUtilsKt;
 import org.jetbrains.kotlin.idea.test.KotlinLightCodeInsightFixtureTestCase;
@@ -43,7 +43,10 @@ public abstract class AbstractKotlinHighlightVisitorTest extends KotlinLightCode
 
     public void doTest(@NotNull String filePath) throws Exception {
         PsiFile file = myFixture.configureByFile(fileName());
-        ScriptConfigurationManager.getInstance(getProject()).getConfiguration((KtFile) file); // if it's a script, enable its highlighting (see KotlinProblemHighlightFilter)
+        ScriptConfigurationManager manager = ScriptConfigurationManager.getInstanceSafe(getProject());
+        if (manager != null) {
+            manager.getConfiguration((KtFile) file); // if it's a script, enable its highlighting (see KotlinProblemHighlightFilter)
+        }
         checkHighlighting(true, false, false, false);
         checkResolveToDescriptor();
     }
@@ -57,7 +60,7 @@ public abstract class AbstractKotlinHighlightVisitorTest extends KotlinLightCode
     void doTestWithInfos(@NotNull String __) {
         myFixture.configureByFile(fileName());
 
-        myFixture.enableInspections(SpellCheckingInspection.class);
+        myFixture.enableInspections(GrazieSpellCheckingInspection.class);
 
         try {
             // TODO fix duplicate highlighting of some symbols

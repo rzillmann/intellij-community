@@ -1,44 +1,50 @@
-### auto-generated section `build kotlin.injection.k2.tests` start
+### auto-generated section `build intellij.kotlin.injection.tests` start
 load("//build:compiler-options.bzl", "create_kotlinc_options")
-load("@rules_java//java:defs.bzl", "java_library")
-load("@rules_jvm//:jvm.bzl", "jvm_library", "jvm_test")
+load("@rules_jvm//:jvm.bzl", "jvm_library")
 
 create_kotlinc_options(
-  name = "custom",
-  context_receivers = True
-)
-
-java_library(
-  name = "kotlin-injection-k2-tests",
-  visibility = ["//visibility:public"]
+  name = "custom_tests",
+  x_context_parameters = True
 )
 
 jvm_library(
-  name = "kotlin-injection-k2-tests_test_lib",
+  name = "tests",
   visibility = ["//visibility:public"],
-  srcs = glob(["test/**/*.kt", "test/**/*.java"], allow_empty = True),
-  kotlinc_opts = ":custom",
+  srcs = glob([], allow_empty = True)
+)
+
+jvm_library(
+  name = "tests_test_lib",
+  module_name = "intellij.kotlin.injection.tests",
+  visibility = ["//visibility:public"],
+  srcs = glob(["test/**/*.kt", "test/**/*.java", "test/**/*.form"], allow_empty = True),
+  kotlinc_opts = ":custom_tests",
   deps = [
-    "//plugins/kotlin/plugin/k2:kotlin-plugin-k2",
+    "//platform/core-api:core",
+    "//plugins/kotlin/plugin/k2",
     "//plugins/kotlin/test-framework:test-framework_test_lib",
-    "//plugins/kotlin/injection/base/tests:kotlin-base-injection-tests_test_lib",
-    "//plugins/kotlin/fir/tests:kotlin-fir-tests_test_lib",
+    "//plugins/kotlin/injection/base/tests:tests_test_lib",
+    "//plugins/kotlin/fir/tests:tests_test_lib",
     "//platform/testFramework",
     "//platform/testFramework:testFramework_test_lib",
-    "//plugins/kotlin/base/plugin:kotlin-base-plugin",
-    "//plugins/kotlin/base/plugin:kotlin-base-plugin_test_lib",
+    "//plugins/kotlin/base/plugin",
+    "//plugins/kotlin/base/plugin:plugin_test_lib",
     "//plugins/kotlin/tests-common:tests-common_test_lib",
-    "//plugins/kotlin/base/test:kotlin-base-test_test_lib",
+    "//plugins/kotlin/base/test:test_test_lib",
     "//java/testFramework",
     "@lib//:kotlinc-kotlin-compiler-tests",
-    "//plugins/kotlin/idea/tests:kotlin-idea-tests_test_lib",
+    "//plugins/kotlin/idea/tests:tests_test_lib",
     "@lib//:kotlinc-kotlin-compiler-common",
     "@lib//:kotlinc-analysis-api",
   ]
 )
+### auto-generated section `build intellij.kotlin.injection.tests` end
 
-jvm_test(
-  name = "kotlin-injection-k2-tests_test",
-  runtime_deps = [":kotlin-injection-k2-tests_test_lib"]
+### auto-generated section `test intellij.kotlin.injection.tests` start
+load("@community//build:tests-options.bzl", "jps_test")
+
+jps_test(
+  name = "tests_test",
+  runtime_deps = [":tests_test_lib"]
 )
-### auto-generated section `build kotlin.injection.k2.tests` end
+### auto-generated section `test intellij.kotlin.injection.tests` end

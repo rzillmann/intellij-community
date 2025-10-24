@@ -1,10 +1,13 @@
-// Copyright 2000-2022 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.openapi.module
 
 import com.intellij.openapi.components.service
+import com.intellij.openapi.components.serviceAsync
 import com.intellij.openapi.components.serviceOrNull
+import com.intellij.openapi.module.ModuleManager.Companion.getInstanceAsync
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.SimpleModificationTracker
+import com.intellij.util.concurrency.annotations.RequiresBlockingContext
 import com.intellij.util.graph.Graph
 import org.jdom.JDOMException
 import org.jetbrains.annotations.ApiStatus
@@ -22,12 +25,16 @@ abstract class ModuleManager : SimpleModificationTracker() {
   companion object {
     /**
      * Returns the module manager instance for the current project.
+     * In coroutines, use [getInstanceAsync] instead.
      *
      * @param project the project for which the module manager is requested.
      * @return the module manager instance.
      */
     @JvmStatic
+    @RequiresBlockingContext
     fun getInstance(project: Project): ModuleManager = project.service()
+
+    suspend fun getInstanceAsync(project: Project): ModuleManager = project.serviceAsync()
 
     fun getInstanceIfDefined(project: Project): ModuleManager? = project.serviceOrNull()
   }

@@ -1,9 +1,10 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.codeInsight.hint;
 
 import com.intellij.codeWithMe.ClientId;
 import com.intellij.ide.IdeBundle;
 import com.intellij.ide.IdeTooltip;
+import com.intellij.openapi.actionSystem.AnAction;
 import com.intellij.openapi.application.AccessToken;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.diagnostic.Logger;
@@ -32,6 +33,7 @@ import javax.swing.*;
 import javax.swing.event.HyperlinkEvent;
 import javax.swing.event.HyperlinkListener;
 import java.awt.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class HintManagerImpl extends HintManager {
 
@@ -48,7 +50,19 @@ public class HintManagerImpl extends HintManager {
     return ClientHintManager.getCurrentInstance().canShowQuestionAction(action);
   }
 
+  /**
+   * Usually, an invoked action closes a shown balloon, a popup, or a hint. <p/>
+   * Implementations of this marker interface are not taken into account.
+   */
   public interface ActionToIgnore {
+    @ApiStatus.Internal
+    default boolean shouldBeIgnored() {
+      return true;
+    }
+  }
+
+  public static boolean isActionToIgnore(AnAction action) {
+    return action instanceof ActionToIgnore actionToIgnore && actionToIgnore.shouldBeIgnored();
   }
 
   record HintInfo(LightweightHint hint, @HideFlags int flags, boolean reviveOnEditorChange) {
@@ -95,7 +109,7 @@ public class HintManagerImpl extends HintManager {
 
   private static final Key<Integer> LAST_HINT_ON_EDITOR_Y_POSITION = Key.create("hint.previous.editor.y.position");
 
-  static void updateScrollableHintPosition(VisibleAreaEvent e, LightweightHint hint, boolean hideIfOutOfEditor) {
+  static void updateScrollableHintPosition(VisibleAreaEvent e, @NotNull LightweightHint hint, boolean hideIfOutOfEditor) {
     if (hint.getComponent() instanceof ScrollAwareHint) {
       ((ScrollAwareHint)hint.getComponent()).editorScrolled();
     }
@@ -573,8 +587,11 @@ public class HintManagerImpl extends HintManager {
 
     AccessibleContextUtil.setName(hint.getComponent(), IdeBundle.message("information.hint.accessible.context.name"));
     if (onHintHidden != null) {
-      hint.addHintListener((event) -> {
-        onHintHidden.run();
+      AtomicBoolean called = new AtomicBoolean();
+      hint.addHintListener(event -> {
+        if (called.compareAndSet(false, true)) {
+          onHintHidden.run();
+        }
       });
     }
 

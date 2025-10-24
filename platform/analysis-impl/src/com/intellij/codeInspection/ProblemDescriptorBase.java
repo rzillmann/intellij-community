@@ -8,6 +8,7 @@ import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.editor.colors.TextAttributesKey;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.util.NlsSafe;
 import com.intellij.openapi.util.TextRange;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.pom.Navigatable;
@@ -35,6 +36,7 @@ public class ProblemDescriptorBase extends CommonProblemDescriptorImpl implement
   private TextAttributesKey myEnforcedTextAttributes;
   private int myLineNumber = -1;
   private ProblemGroup myProblemGroup;
+  private @NlsSafe @Nullable String tooltip;
 
   public ProblemDescriptorBase(@NotNull PsiElement startElement,
                                @NotNull PsiElement endElement,
@@ -95,6 +97,20 @@ public class ProblemDescriptorBase extends CommonProblemDescriptorImpl implement
     myOnTheFly = onTheFly;
   }
 
+  public ProblemDescriptorBase(@NotNull PsiElement startElement,
+                               @NotNull PsiElement endElement,
+                               @NotNull @InspectionMessage String descriptionTemplate,
+                               @NotNull LocalQuickFix @Nullable [] fixes,
+                               @NotNull ProblemHighlightType highlightType,
+                               boolean isAfterEndOfLine,
+                               @Nullable TextRange rangeInElement,
+                               boolean showTooltip,
+                               boolean onTheFly,
+                               @Nullable String tooltip) {
+    this(startElement, endElement, descriptionTemplate, fixes, highlightType, isAfterEndOfLine, rangeInElement, showTooltip, onTheFly);
+    this.tooltip = tooltip;
+  }
+
   private static @NotNull LocalQuickFix @Nullable [] filterFixes(LocalQuickFix @Nullable [] fixes, boolean onTheFly) {
     if (onTheFly || fixes == null) return fixes;
     List<LocalQuickFix> filtered = ContainerUtil.filter(fixes, fix -> fix != null && fix.availableInBatchMode());
@@ -106,8 +122,8 @@ public class ProblemDescriptorBase extends CommonProblemDescriptorImpl implement
   }
 
   private static @Nullable TextRange getAnnotationRange(@NotNull PsiElement startElement) {
-    return startElement instanceof ExternallyAnnotated
-           ? ((ExternallyAnnotated)startElement).getAnnotationRegion()
+    return startElement instanceof ExternallyAnnotated externally
+           ? externally.getAnnotationRegion()
            : startElement.getTextRange();
   }
 
@@ -265,6 +281,11 @@ public class ProblemDescriptorBase extends CommonProblemDescriptorImpl implement
   @Override
   public boolean showTooltip() {
     return myShowTooltip;
+  }
+
+  @Override
+  public @NotNull String getTooltipTemplate() {
+    return tooltip == null ? getDescriptionTemplate() : tooltip;
   }
 
   @Override

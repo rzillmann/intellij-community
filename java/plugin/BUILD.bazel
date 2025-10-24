@@ -1,26 +1,29 @@
 ### auto-generated section `build intellij.java.plugin` start
-load("@rules_java//java:defs.bzl", "java_library")
-load("@rules_jvm//:jvm.bzl", "jvm_resources")
+load("@rules_jvm//:jvm.bzl", "jvm_library", "resourcegroup")
 
-jvm_resources(
+resourcegroup(
   name = "plugin_resources",
-  files = glob(["resources/**/*"]),
+  srcs = glob(["resources/**/*"]),
   strip_prefix = "resources"
 )
 
-java_library(
+jvm_library(
   name = "plugin",
   visibility = ["//visibility:public"],
+  srcs = glob([], allow_empty = True),
+  resources = [":plugin_resources"],
   runtime_deps = [
-    ":plugin_resources",
-    "//java/compiler/impl:java-compiler-impl",
-    "//java/debugger/impl:java-debugger-impl",
-    "//java/debugger/shared:java-debugger-impl-shared",
-    "//java/debugger/frontend:java-debugger-impl-frontend",
-    "//java/debugger/backend:java-debugger-impl-backend",
+    "//java/compiler/impl",
+    "//java/debugger/impl",
+    "//java/debugger/shared",
+    "//java/debugger/frontend",
+    "//java/debugger/backend",
     "//xml/dom-impl",
     "//java/debugger/memory-agent:java-debugger-memory-agent",
-    "//java/execution/impl:java-execution-impl",
+    "//java/execution/impl",
+    "//java/execution/shared",
+    "//java/execution/backend",
+    "//java/execution/frontend",
     "//platform/external-system-impl:externalSystem-impl",
     "//java/idea-ui:ui",
     "//java/manifest",
@@ -33,7 +36,6 @@ java_library(
     "//java/typeMigration",
     "//resources:java-resources",
     "//resources-en:java-resources-en",
-    "//plugins/IntelliLang/java-support:java-langInjection",
     "//java/performancePlugin",
     "//java/vcs",
     "//java/java-syntax:syntax",

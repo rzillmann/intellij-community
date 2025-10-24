@@ -2,7 +2,9 @@
 package org.jetbrains.kotlin.fir.testGenerator
 
 import org.jetbrains.kotlin.idea.compose.k2.debugger.test.cases.AbstractK2ComposeDebuggerEvaluationTest
-import org.jetbrains.kotlin.idea.compose.k2.debugger.test.cases.AbstractK2ComposeSteppingTest
+import org.jetbrains.kotlin.idea.compose.k2.debugger.test.cases.AbstractK2IdeK1CodeClassLambdaComposeSteppingTest
+import org.jetbrains.kotlin.idea.compose.k2.debugger.test.cases.AbstractK2IdeK1CodeComposeSteppingTest
+import org.jetbrains.kotlin.idea.compose.k2.debugger.test.cases.AbstractK2IdeK2CodeComposeSteppingTest
 import org.jetbrains.kotlin.idea.fir.debugger.evaluate.*
 import org.jetbrains.kotlin.idea.k2.debugger.test.cases.*
 import org.jetbrains.kotlin.idea.parcelize.k2.debugger.test.cases.AbstractK2ParcelizeDebuggerEvaluationTest
@@ -98,6 +100,15 @@ internal fun MutableTWorkspace.generateK2DebuggerTests() {
             }
         }
 
+        listOf(
+            AbstractK2IdeK2CoroutineViewJobHierarchyTest::class,
+            AbstractK2IdeK1CoroutineViewJobHierarchyTest::class,
+        ).forEach {
+            testClass(it) {
+                model("coroutinesView")
+            }
+        }
+
         //testClass<AbstractSequenceTraceTestCase> { // TODO: implement mapping logic for terminal operations
         //    model("sequence/streams/sequence", excludedDirectories = listOf("terminal"))
         //}
@@ -168,7 +179,13 @@ internal fun MutableTWorkspace.generateK2DebuggerTests() {
 
 internal fun MutableTWorkspace.generateK2DebuggerTestsWithCompilerPlugins() {
     testGroup("jvm-debugger/test/compose", testDataPath = "../testData", category = DEBUGGER) {
-        testClass<AbstractK2ComposeSteppingTest> {
+        testClass<AbstractK2IdeK1CodeComposeSteppingTest> {
+            model("stepping/compose")
+        }
+        testClass<AbstractK2IdeK2CodeComposeSteppingTest> {
+            model("stepping/compose")
+        }
+        testClass<AbstractK2IdeK1CodeClassLambdaComposeSteppingTest> {
             model("stepping/compose")
         }
         testClass<AbstractK2ComposeDebuggerEvaluationTest> {

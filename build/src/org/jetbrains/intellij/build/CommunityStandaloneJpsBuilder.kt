@@ -1,11 +1,11 @@
 // Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.intellij.build
 
+import com.intellij.openapi.util.io.NioFiles
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import org.jetbrains.intellij.build.impl.*
-import org.jetbrains.intellij.build.io.deleteDir
 import org.jetbrains.intellij.build.io.zipWithCompression
 import java.nio.file.Files
 import java.nio.file.Path
@@ -13,10 +13,12 @@ import java.nio.file.Path
 /**
  * Creates JARs containing classes required to run the external build for IDEA project without IDE.
  */
-suspend fun buildCommunityStandaloneJpsBuilder(targetDir: Path,
-                                               context: BuildContext,
-                                               dryRun: Boolean = false,
-                                               layoutCustomizer: ((BaseLayout) -> Unit) = {}) {
+suspend fun buildCommunityStandaloneJpsBuilder(
+  targetDir: Path,
+  context: BuildContext,
+  dryRun: Boolean = false,
+  layoutCustomizer: ((BaseLayout) -> Unit) = {},
+) {
   val layout = PlatformLayout()
 
   layout.withModules(sequenceOf(
@@ -32,6 +34,19 @@ suspend fun buildCommunityStandaloneJpsBuilder(targetDir: Path,
     "intellij.platform.util.rt.java8",
     "intellij.platform.util.trove",
     "intellij.platform.util.nanoxml",
+    "intellij.libraries.hash4j",
+    "intellij.libraries.caffeine",
+    "intellij.libraries.gson",
+    "intellij.libraries.fastutil",
+    "intellij.libraries.mvstore",
+    "intellij.libraries.commons.lang3",
+    "intellij.libraries.commons.logging",
+    "intellij.libraries.commons.codec",
+    "intellij.libraries.aalto.xml",
+    "intellij.libraries.lz4",
+    "intellij.libraries.http.client",
+    "intellij.libraries.cli.parser",
+    "intellij.libraries.asm",
   ).map { ModuleItem(moduleName = it, relativeOutputFile = "util.jar", reason = null) })
 
   layout.withModule("intellij.platform.util.rt", "util_rt.jar")
@@ -50,6 +65,7 @@ suspend fun buildCommunityStandaloneJpsBuilder(targetDir: Path,
     "intellij.java.compiler.instrumentationUtil",
     "intellij.java.compiler.instrumentationUtil.java8",
     "intellij.platform.jps.build",
+    "intellij.platform.jps.build.dependencyGraph",
     "intellij.tools.jps.build.standalone",
   ).map { ModuleItem(moduleName = it, relativeOutputFile = "jps-builders.jar", reason = null) })
 
@@ -79,31 +95,19 @@ suspend fun buildCommunityStandaloneJpsBuilder(targetDir: Path,
   for (it in listOf(
     "jna",
     "OroMatcher",
-    "ASM",
     "protobuf",
-    "cli-parser",
     "Log4J",
     "jgoodies-forms",
     "Eclipse",
     "netty-jps",
-    "lz4-java",
-    "commons-codec",
-    "commons-logging",
-    "http-client",
     "slf4j-api",
     "plexus-utils",
     "jetbrains-annotations",
-    "gson",
     "jps-javac-extension",
-    "fastutil-min",
     "kotlin-stdlib",
-    "commons-lang3",
+    "kotlinx-coroutines-core",
     "maven-resolver-provider",
-    "aalto-xml",
-    "caffeine",
-    "mvstore",
     "kotlin-metadata",
-    "hash4j"
   )) {
     layout.withProjectLibrary(it, LibraryPackMode.STANDALONE_MERGED)
   }
@@ -119,26 +123,28 @@ suspend fun buildCommunityStandaloneJpsBuilder(targetDir: Path,
     Files.createTempDirectory(targetDir, "jps-standalone-community-")
   }
   try {
-    JarPackager.pack(includedModules = layout.includedModules,
-                     outputDir = tempDir,
-                     context = context,
-                     layout = layout,
-                     platformLayout = null,
-                     isRootDir = false,
-                     isCodesignEnabled = false,
-                     moduleOutputPatcher = ModuleOutputPatcher(),
-                     dryRun = dryRun)
+    JarPackager.pack(
+      includedModules = layout.includedModules,
+      outputDir = tempDir,
+      isRootDir = false,
+      isCodesignEnabled = false,
+      layout = layout,
+      platformLayout = null,
+      moduleOutputPatcher = ModuleOutputPatcher(),
+      dryRun = dryRun,
+      context = context
+    )
 
     val targetFile = targetDir.resolve("standalone-jps-$buildNumber.zip")
     withContext(Dispatchers.IO) {
-      buildJar(targetFile = tempDir.resolve("jps-build-test-$buildNumber.jar"),
-               moduleNames = listOf(
-                 "intellij.platform.jps.build",
-                 "intellij.platform.jps.model.tests",
-                 "intellij.platform.jps.model.serialization.tests"
-               ),
-               context = context)
-
+      buildJar(
+        targetFile = tempDir.resolve("jps-build-test-$buildNumber.jar"),
+        moduleNames = listOf(
+          "intellij.platform.jps.build",
+          "intellij.platform.jps.model.tests",
+          "intellij.platform.jps.model.serialization.tests"
+        ),
+        context)
       zipWithCompression(targetFile = targetFile, dirs = mapOf(tempDir to ""))
     }
 
@@ -146,7 +152,7 @@ suspend fun buildCommunityStandaloneJpsBuilder(targetDir: Path,
   }
   finally {
     withContext(Dispatchers.IO + NonCancellable) {
-      deleteDir(tempDir)
+      NioFiles.deleteRecursively(tempDir)
     }
   }
 }

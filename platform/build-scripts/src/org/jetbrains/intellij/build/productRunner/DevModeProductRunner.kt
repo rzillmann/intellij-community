@@ -3,14 +3,12 @@
 
 package org.jetbrains.intellij.build.productRunner
 
-import com.intellij.platform.ijent.community.buildConstants.IJENT_BOOT_CLASSPATH_MODULE
-import com.intellij.platform.ijent.community.buildConstants.isMultiRoutingFileSystemEnabledForProduct
 import org.jetbrains.intellij.build.BuildContext
 import org.jetbrains.intellij.build.VmProperties
 import org.jetbrains.intellij.build.checkForNoDiskSpace
 import org.jetbrains.intellij.build.dev.BuildRequest
 import org.jetbrains.intellij.build.dev.buildProduct
-import org.jetbrains.intellij.build.dev.getIdeSystemProperties
+import org.jetbrains.intellij.build.dev.readVmOptions
 import java.nio.file.Path
 import kotlin.time.Duration
 
@@ -29,17 +27,20 @@ internal suspend fun createDevModeProductRunner(context: BuildContext, additiona
         isUnpackedDist = false,
         writeCoreClasspath = false,
         platformPrefix = context.productProperties.platformPrefix ?: "idea",
+        baseIdePlatformPrefixForFrontend = context.productProperties.baseIdePlatformPrefixForFrontend,
         additionalModules = additionalPluginModules,
         projectDir = homeDir,
         devRootDir = context.paths.tempDir.resolve("dev-run"),
         jarCacheDir = homeDir.resolve("out/dev-run/jar-cache"),
+        generateRuntimeModuleRepository = context.useModularLoader,
         productionClassOutput = context.classesOutputDirectory.resolve("production"),
         platformClassPathConsumer = { _, classPath, _ ->
           newClassPath = classPath
         },
         buildOptionsTemplate = context.options,
+        isBootClassPathCorrect = true,
       ),
-      createProductProperties = { context.productProperties }
+      createProductProperties = { context.productProperties },
     )
     DevModeProductRunner(context = context, homePath = runDir, classPath = newClassPath!!.map { it.toString() })
   }
@@ -51,23 +52,16 @@ private class DevModeProductRunner(
   private val classPath: Collection<String>,
 ) : IntellijProductRunner {
   override suspend fun runProduct(args: List<String>, additionalVmProperties: VmProperties, timeout: Duration) {
-    val multiRoutingFsBootClassPath: List<String> = if (isMultiRoutingFileSystemEnabledForProduct(context.productProperties.platformPrefix)) {
-      listOf(
-        "-Xbootclasspath/a:${homePath}/out/classes/production/$IJENT_BOOT_CLASSPATH_MODULE"
-      )
-    }
-    else {
-      listOf()
-    }
+    val vmOptionsFromBuild = readVmOptions(homePath)
     runApplicationStarter(
       context = context,
       classpath = classPath,
       args = args,
       timeout = timeout,
       homePath = homePath,
-      vmProperties = additionalVmProperties + getIdeSystemProperties(homePath),
+      vmProperties = additionalVmProperties,
       isFinalClassPath = true,
-      vmOptions = multiRoutingFsBootClassPath,
+      vmOptions = vmOptionsFromBuild,
     )
   }
 }

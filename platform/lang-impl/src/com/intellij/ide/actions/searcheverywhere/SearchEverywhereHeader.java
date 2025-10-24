@@ -34,6 +34,7 @@ import java.util.List;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import static com.intellij.ide.actions.searcheverywhere.SearchEverywhereFiltersStatisticsCollector.ContributorFilterCollector;
 import static com.intellij.ide.actions.searcheverywhere.statistics.SearchEverywhereUsageTriggerCollector.getReportableContributorID;
@@ -146,7 +147,8 @@ public final class SearchEverywhereHeader {
           SearchEverywhereUsageTriggerCollector.TAB_SWITCHED.log(myProject,
                                                                  SearchEverywhereUsageTriggerCollector.CONTRIBUTOR_ID_FIELD.with(
                                                                    tab.getReportableID()),
-                                                                 EventFields.InputEventByMouseEvent.with(e));
+                                                                 EventFields.InputEventByMouseEvent.with(e),
+                                                                 SearchEverywhereUsageTriggerCollector.IS_SPLIT.with(false));
         }
       });
       contributorsPanel.add(tabLabel);
@@ -168,7 +170,9 @@ public final class SearchEverywhereHeader {
         SETab selectedTab = myTabs.get(newUIHeaderView.tabbedPane.getSelectedIndex());
         switchToTab(selectedTab);
         SearchEverywhereUsageTriggerCollector.TAB_SWITCHED.log(
-          myProject, SearchEverywhereUsageTriggerCollector.CONTRIBUTOR_ID_FIELD.with(selectedTab.getReportableID()));
+          myProject,
+          SearchEverywhereUsageTriggerCollector.CONTRIBUTOR_ID_FIELD.with(selectedTab.getReportableID()),
+          SearchEverywhereUsageTriggerCollector.IS_SPLIT.with(false));
         if (SearchEverywhereUI.isExtendedInfoEnabled()) {
           ApplicationManager.getApplication().getMessageBus().syncPublisher(SETabSwitcherListener.Companion.getSE_TAB_TOPIC())
             .tabSwitched(new SETabSwitcherListener.SETabSwitchedEvent(selectedTab));
@@ -206,7 +210,14 @@ public final class SearchEverywhereHeader {
 
     for (SearchEverywhereContributor<?> contributor : separateTabContributors) {
       try {
-        result.add(createTab(contributor, onChanged));
+        if (FilesTabSEContributor.isMainFilesContributor(contributor)) {
+          var otherContributors =
+            Stream.concat(Stream.of(contributor), contributors.stream().filter(FilesTabSEContributor::isFilesTabContributor)).toList();
+          result.add(createTab(otherContributors, onChanged));
+        }
+        else {
+          result.add(createTab(contributor, onChanged));
+        }
       }
       catch (Exception e) {
         Logger.getInstance(SearchEverywhereHeader.class).error(e);
@@ -306,6 +317,11 @@ public final class SearchEverywhereHeader {
   private static SETab createTab(@NotNull SearchEverywhereContributor<?> contributor, Runnable onChanged) {
     return new SETab(contributor.getSearchProviderId(), contributor.getGroupName(), Collections.singletonList(contributor),
                      contributor.getActions(onChanged), null);
+  }
+
+  private static SETab createTab(@NotNull List<SearchEverywhereContributor<?>> contributors, Runnable onChanged) {
+    List<AnAction> actions = contributors.getFirst().getActions(onChanged);
+    return new SETab(contributors.getFirst().getSearchProviderId(), contributors.getFirst().getGroupName(), contributors, actions, null);
   }
 
   private @NotNull SETab createAllTab(List<? extends SearchEverywhereContributor<?>> contributors, @NotNull Runnable onChanged) {

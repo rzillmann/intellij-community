@@ -74,13 +74,16 @@ public class MethodReferenceInstruction extends ExpressionPushingInstruction {
         dfType = DfTypes.NOT_NULL_OBJECT;
       }
     } else {
-      dfType = typedObject(returnType, DfaPsiUtil.getElementNullability(returnType, method));
+      dfType = typedObject(returnType, DfaPsiUtil.getElementNullabilityForRead(returnType, method));
     }
     DfaValue defaultResult = interpreter.getFactory().fromDfType(dfType);
-    Nullability expectedNullability = DfaPsiUtil.getTypeNullability(LambdaUtil.getFunctionalInterfaceReturnType(methodRef));
-    if (expectedNullability == Nullability.NOT_NULL) {
-      CheckNotNullInstruction.checkNotNullable(interpreter, state, defaultResult, 
-                                               NullabilityProblemKind.nullableFunctionReturn.problem(methodRef, null));
+    PsiType type = LambdaUtil.getFunctionalInterfaceReturnType(methodRef);
+    if (!(type instanceof PsiPrimitiveType)) { // primitive type may be subject to boxing and handled separately
+      Nullability expectedNullability = DfaPsiUtil.getTypeNullability(type);
+      if (expectedNullability == Nullability.NOT_NULL) {
+        CheckNotNullInstruction.checkNotNullable(interpreter, state, defaultResult,
+                                                 NullabilityProblemKind.nullableFunctionReturn.problem(methodRef, null));
+      }
     }
     if (contracts.isEmpty() || !JavaMethodContractUtil.isPure(method)) return;
     Set<DfaCallState> currentStates = Collections.singleton(new DfaCallState(state.createClosureState(), callArguments, defaultResult));
@@ -135,7 +138,7 @@ public class MethodReferenceInstruction extends ExpressionPushingInstruction {
         if (idx >= arguments.length) break;
         PsiType parameterType = parameters[idx].getType();
         if (!(parameterType instanceof PsiEllipsisType)) {
-          Nullability nullability = DfaPsiUtil.getElementNullability(substitutor.substitute(parameterType), parameters[idx]);
+          Nullability nullability = DfaPsiUtil.getElementNullabilityForWrite(substitutor.substitute(parameterType), parameters[idx]);
           arguments[idx] = adaptMethodRefArgument(interpreter, state, value, methodRef, parameters[idx], nullability);
         }
       }

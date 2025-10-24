@@ -13,11 +13,17 @@ import org.jetbrains.kotlin.analysis.api.annotations.KaAnnotation
 import org.jetbrains.kotlin.analysis.api.annotations.KaAnnotationValue
 import org.jetbrains.kotlin.analysis.api.components.KaDataFlowExitPointSnapshot
 import org.jetbrains.kotlin.analysis.api.components.KaDiagnosticCheckerFilter
+import org.jetbrains.kotlin.analysis.api.components.diagnostics
+import org.jetbrains.kotlin.analysis.api.components.expandedSymbol
+import org.jetbrains.kotlin.analysis.api.components.resolveToSymbol
 import org.jetbrains.kotlin.analysis.api.fir.diagnostics.KaFirDiagnostic
+import org.jetbrains.kotlin.analysis.api.impl.base.components.KaBaseIllegalPsiException
 import org.jetbrains.kotlin.analysis.api.projectStructure.KaDanglingFileResolutionMode
 import org.jetbrains.kotlin.analysis.api.renderer.declarations.impl.KaDeclarationRendererForSource
 import org.jetbrains.kotlin.analysis.api.symbols.KaCallableSymbol
+import org.jetbrains.kotlin.analysis.api.symbols.findClass
 import org.jetbrains.kotlin.analysis.api.symbols.markers.KaAnnotatedSymbol
+import org.jetbrains.kotlin.analysis.api.symbols.symbol
 import org.jetbrains.kotlin.analysis.api.types.KaClassType
 import org.jetbrains.kotlin.analysis.api.types.KaType
 import org.jetbrains.kotlin.analysis.utils.printer.PrettyPrinter
@@ -123,9 +129,12 @@ internal class ExtractionDataAnalyzer(private val extractionData: ExtractionData
     }
 
     @OptIn(KaNonPublicApi::class)
-    override fun createOutputDescriptor(): OutputDescriptor<KaType> {
-        analyze(extractionData.commonParent) {
+    override fun createOutputDescriptor(): OutputDescriptor<KaType> = analyze(extractionData.commonParent) {
+        // FIXME: KTIJ-34278
+        @OptIn(KaImplementationDetail::class)
+        KaBaseIllegalPsiException.allowIllegalPsiAccess {
             val exitSnapshot: KaDataFlowExitPointSnapshot = computeExitPointSnapshot(extractionData.expressions)
+
             val defaultExpressionInfo = exitSnapshot.defaultExpressionInfo
             val typeOfDefaultFlow = defaultExpressionInfo?.type?.takeIf {
                 //extract as Unit function if the last expression is not used afterward
@@ -133,14 +142,14 @@ internal class ExtractionDataAnalyzer(private val extractionData: ExtractionData
             }
 
             val scope = extractionData.targetSibling
-            return OutputDescriptor(
+            OutputDescriptor(
                 defaultResultExpression = defaultExpressionInfo?.expression,
                 typeOfDefaultFlow = approximateWithResolvableType(typeOfDefaultFlow, scope) ?: builtinTypes.unit,
                 implicitReturn = exitSnapshot.valuedReturnExpressions.filter { it !is KtReturnExpression }.singleOrNull(),
                 lastExpressionHasNothingType = extractionData.expressions.lastOrNull()?.expressionType?.isNothingType == true,
                 valuedReturnExpressions = exitSnapshot.valuedReturnExpressions.filter { it is KtReturnExpression },
                 returnValueType = approximateWithResolvableType(exitSnapshot.returnValueType, scope) ?: builtinTypes.unit,
-                jumpExpressions = exitSnapshot.jumpExpressions.filter { it is KtBreakExpression || it is KtContinueExpression || it is KtReturnExpression && it.returnedExpression == null},
+                jumpExpressions = exitSnapshot.jumpExpressions.filter { it is KtBreakExpression || it is KtContinueExpression || it is KtReturnExpression && it.returnedExpression == null },
                 hasSingleTarget = !exitSnapshot.hasMultipleJumpTargets,
                 sameExitForDefaultAndJump = if (exitSnapshot.hasJumps) !exitSnapshot.hasEscapingJumps && defaultExpressionInfo != null else defaultExpressionInfo == null
             )
@@ -245,7 +254,7 @@ private data class ExperimentalMarkers(
     }
 }
 
-context(KaSession)
+context(_: KaSession)
 private fun IExtractionData.getExperimentalMarkers(): ExperimentalMarkers {
     fun KaAnnotation.isExperimentalMarker(): Boolean {
         val id = classId
@@ -337,7 +346,7 @@ fun ExtractableCodeDescriptor.validate(target: ExtractionTarget = ExtractionTarg
     }
 }
 
-context(KaSession)
+context(_: KaSession)
 @OptIn(KaExperimentalApi::class)
 private fun ExtractableCodeDescriptor.validateTempResult(
     result: ExtractionResult,
@@ -352,6 +361,7 @@ private fun ExtractableCodeDescriptor.validateTempResult(
 
     val namedFunction = result.declaration as? KtNamedFunction
     val valueParameterList = namedFunction?.valueParameterList
+    val contextReceiverList = namedFunction?.contextReceiverList
     val typeParameterList = namedFunction?.typeParameterList
 
     fun processReference(currentRefExpr: KtSimpleNameExpression) {
@@ -362,6 +372,7 @@ private fun ExtractableCodeDescriptor.validateTempResult(
 
         val currentDescriptor = currentRefExpr.mainReference.resolve()
         if (currentDescriptor is KtParameter && currentDescriptor.parent == valueParameterList) return
+        if (currentDescriptor is KtParameter && currentDescriptor.isContextParameter && currentDescriptor.parent == contextReceiverList) return
         if (currentDescriptor is KtTypeParameter && currentDescriptor.parent == typeParameterList) return
         if (currentDescriptor is KtProperty && currentDescriptor.isLocal
             && parameters.any { it.mirrorVarName == currentDescriptor.name }

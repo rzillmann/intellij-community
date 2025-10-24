@@ -9,6 +9,7 @@ import com.intellij.injected.editor.DocumentWindow;
 import com.intellij.lang.annotation.AnnotationSession;
 import com.intellij.lang.injection.InjectedLanguageManager;
 import com.intellij.openapi.application.ApplicationManager;
+import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.editor.colors.*;
@@ -25,7 +26,6 @@ import com.intellij.psi.impl.source.tree.injected.InjectedLanguageUtil;
 import com.intellij.util.CommonProcessors;
 import com.intellij.util.Processor;
 import com.intellij.util.containers.ContainerUtil;
-import it.unimi.dsi.fastutil.longs.LongList;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -36,7 +36,8 @@ import java.util.*;
  * Perform injections, run highlight visitors and annotators on discovered injected files
  */
 @ApiStatus.Internal
-public final class InjectedGeneralHighlightingPass extends ProgressableTextEditorHighlightingPass implements DumbAware {
+final class InjectedGeneralHighlightingPass extends ProgressableTextEditorHighlightingPass implements DumbAware {
+  private static final Logger LOG = Logger.getInstance(InjectedGeneralHighlightingPass.class);
   private final @Nullable List<? extends @NotNull TextRange> myReducedRanges;
   private final boolean myUpdateAll;
   private final ProperTextRange myPriorityRange;
@@ -47,18 +48,18 @@ public final class InjectedGeneralHighlightingPass extends ProgressableTextEdito
   private final boolean myHighlightErrorElements;
   private final HighlightInfoUpdater myHighlightInfoUpdater;
 
-  public InjectedGeneralHighlightingPass(@NotNull PsiFile psiFile,
-                                         @NotNull Document document,
-                                         @Nullable List<? extends @NotNull TextRange> reducedRanges,
-                                         int startOffset,
-                                         int endOffset,
-                                         boolean updateAll,
-                                         @NotNull ProperTextRange priorityRange,
-                                         @Nullable Editor editor,
-                                         boolean runAnnotators,
-                                         boolean runVisitors,
-                                         boolean highlightErrorElements,
-                                         @NotNull HighlightInfoUpdater highlightInfoUpdater) {
+  InjectedGeneralHighlightingPass(@NotNull PsiFile psiFile,
+                                  @NotNull Document document,
+                                  @Nullable List<? extends @NotNull TextRange> reducedRanges,
+                                  int startOffset,
+                                  int endOffset,
+                                  boolean updateAll,
+                                  @NotNull ProperTextRange priorityRange,
+                                  @Nullable Editor editor,
+                                  boolean runAnnotators,
+                                  boolean runVisitors,
+                                  boolean highlightErrorElements,
+                                  @NotNull HighlightInfoUpdater highlightInfoUpdater) {
     super(psiFile.getProject(), document, AnalysisBundle.message("highlighting.pass.injected.presentable.name"), psiFile, editor, TextRange.create(startOffset, endOffset), true, HighlightInfoProcessor.getEmpty());
     myReducedRanges = reducedRanges;
     myUpdateAll = updateAll;
@@ -120,12 +121,12 @@ public final class InjectedGeneralHighlightingPass extends ProgressableTextEdito
     for (DocumentWindow documentRange : cachedInjected) {
       ProgressManager.checkCanceled();
       if (!documentRange.isValid()) continue;
-      PsiFile file = psiDocumentManager.getPsiFile(documentRange);
-      if (file == null) continue;
-      PsiElement context = injectedLanguageManager.getInjectionHost(file);
+      PsiFile psiFile = psiDocumentManager.getPsiFile(documentRange);
+      if (psiFile == null) continue;
+      PsiElement context = injectedLanguageManager.getInjectionHost(psiFile);
       if (context != null
           && context.isValid()
-          && !file.getProject().isDisposed()
+          && !psiFile.getProject().isDisposed()
           && (myUpdateAll || myRestrictRange.contains(context.getTextRange()))) { // consider strict if partial update
         if (myReducedRanges != null && !ContainerUtil.exists(myReducedRanges, reducedRange -> reducedRange.contains(context.getTextRange()))) { // skip if not in reduced
           continue;
@@ -153,12 +154,18 @@ public final class InjectedGeneralHighlightingPass extends ProgressableTextEdito
 
     if (!JobLauncher.getInstance().invokeConcurrentlyUnderProgress(new ArrayList<>(hosts), progress, element -> {
         ApplicationManager.getApplication().assertReadAccessAllowed();
+      try {
         injectedLanguageManager.enumerateEx(element, myFile, false, (injectedPsi, places) -> {
           if (visitedInjected.add(injectedPsi.getViewProvider())) {
             visitor.visit(injectedPsi, places);
           }
         });
-        advanceProgress(1);
+      }
+      catch (Exception e) {
+        if (Logger.shouldRethrow(e)) throw e;
+        LOG.error(e);
+      }
+      advanceProgress(1);
         return true;
       })) {
       throw new ProcessCanceledException();
@@ -192,18 +199,17 @@ public final class InjectedGeneralHighlightingPass extends ProgressableTextEdito
     AnnotatorRunner annotatorRunner = myRunAnnotators ? new AnnotatorRunner(session, false) : null;
     Divider.divideInsideAndOutsideAllRoots(injectedPsi, injectedPsi.getTextRange(), injectedPsi.getTextRange(), GeneralHighlightingPass.SHOULD_HIGHLIGHT_FILTER, dividedElements -> {
       List<? extends @NotNull PsiElement> inside = dividedElements.inside();
-      LongList insideRanges = dividedElements.insideRanges();
       Runnable runnable = () -> {
         HighlightVisitorRunner highlightVisitorRunner = new HighlightVisitorRunner(injectedPsi, myGlobalScheme, myRunVisitors, myHighlightErrorElements);
 
         highlightVisitorRunner.createHighlightVisitorsFor(visitors -> {
           int chunkSize = Math.max(1, inside.size() / 100); // one percent precision is enough
-          highlightVisitorRunner.runVisitors(injectedPsi, injectedPsi.getTextRange(), inside,
-                                               insideRanges, List.of(), LongList.of(), visitors, false, chunkSize, true,
-                                               () -> createInfoHolder(injectedPsi), (toolId, psiElement, infos) -> {
+          highlightVisitorRunner.runVisitors(injectedPsi, inside,
+                                             List.of(), visitors, false, chunkSize, true,
+                                             () -> createInfoHolder(injectedPsi), (toolId, psiElement, infos) -> {
               // convert injected infos to host
               List<? extends HighlightInfo> hostInfos = infos.isEmpty()
-                                                        ? infos
+                                                        ? List.of()
                                                         : ContainerUtil.flatMap(infos, info -> createPatchedInfos(info, injectedPsi, documentWindow, injectedLanguageManager));
               resultSink.accept(toolId, psiElement, hostInfos);
             });
@@ -247,10 +253,10 @@ public final class InjectedGeneralHighlightingPass extends ProgressableTextEdito
     }
     resultSink.accept(InjectedLanguageManagerImpl.INJECTION_BACKGROUND_TOOL_ID, injectedPsi, result);
   }
-  private static @NotNull List<HighlightInfo> createPatchedInfos(@NotNull HighlightInfo info,
-                                                                 @NotNull PsiFile injectedPsi,
-                                                                 @NotNull DocumentWindow documentWindow,
-                                                                 @NotNull InjectedLanguageManager injectedLanguageManager) {
+  private static @NotNull List<@NotNull HighlightInfo> createPatchedInfos(@NotNull HighlightInfo info,
+                                                                          @NotNull PsiFile injectedPsi,
+                                                                          @NotNull DocumentWindow documentWindow,
+                                                                          @NotNull InjectedLanguageManager injectedLanguageManager) {
     ProperTextRange infoRange = new ProperTextRange(info.startOffset, info.endOffset);
     List<TextRange> editables = injectedLanguageManager.intersectWithAllEditableFragments(injectedPsi, infoRange);
     List<HighlightInfo> result = new ArrayList<>(editables.size());
@@ -270,11 +276,11 @@ public final class InjectedGeneralHighlightingPass extends ProgressableTextEdito
         }
       }
 
-      //noinspection deprecation
-      HighlightInfo patched = new HighlightInfo(info.forcedTextAttributes, info.forcedTextAttributesKey, info.type,
-                          hostRange.getStartOffset(), hostRange.getEndOffset(),
-                          info.getDescription(), info.getToolTip(), info.getSeverity(), isAfterEndOfLine, null,
-                          false, 0, info.getProblemGroup(), info.getToolId(), info.getGutterIconRenderer(), info.getGroup(), info.hasHint(), info.getLazyQuickFixes());
+      HighlightInfo.Builder builder = info.copy(false).range(hostRange);
+      if (isAfterEndOfLine) {
+        builder.endOfLine();
+      }
+      HighlightInfo patched = builder.createUnconditionally();
 
       info.findRegisteredQuickFix((descriptor, quickfixTextRange) -> {
         List<TextRange> editableQF = injectedLanguageManager.intersectWithAllEditableFragments(injectedPsi, quickfixTextRange);

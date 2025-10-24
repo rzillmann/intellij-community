@@ -2,14 +2,7 @@
 package org.jetbrains.uast.kotlin.psi
 
 import com.intellij.openapi.util.NlsSafe
-import com.intellij.psi.PsiAnnotationMemberValue
-import com.intellij.psi.PsiAnnotationParameterList
-import com.intellij.psi.PsiElement
-import com.intellij.psi.PsiElementFactory
-import com.intellij.psi.PsiIdentifier
-import com.intellij.psi.PsiJavaCodeReferenceElement
-import com.intellij.psi.PsiLiteralExpression
-import com.intellij.psi.PsiNameValuePair
+import com.intellij.psi.*
 import com.intellij.psi.impl.PsiImplUtil
 import com.intellij.psi.impl.compiled.ClsJavaCodeReferenceElementImpl
 import com.intellij.psi.impl.light.LightIdentifier
@@ -33,9 +26,8 @@ internal class UastFakeDeserializedSymbolAnnotation(
     private val parentOriginal: KaSymbolPointer<KaDeclarationSymbol>,
     private val classId: ClassId?,
     private val parent: KtElement,
+    override val kotlinOrigin: KtCallElement?,
 ) : KtLightAbstractAnnotation(parent) {
-    override val kotlinOrigin: KtCallElement?
-        get() = null
 
     override fun getQualifiedName(): @NlsSafe String? =
         classId?.asFqNameString()
@@ -90,10 +82,10 @@ internal class UastFakeDeserializedSymbolAnnotation(
         override val kotlinOrigin: KtElement?
             get() = null
 
-        override fun getNameIdentifier(): PsiIdentifier? =
+        override fun getNameIdentifier(): PsiIdentifier =
             LightIdentifier(parent.manager, _name)
 
-        override fun getName(): @NonNls String? =
+        override fun getName(): @NonNls String =
             _name
 
         override fun getValue(): PsiAnnotationMemberValue? =
@@ -121,6 +113,6 @@ internal class UastFakeDeserializedSymbolAnnotation(
     override fun findDeclaredAttributeValue(attributeName: @NonNls String?): PsiAnnotationMemberValue? =
         PsiImplUtil.findDeclaredAttributeValue(this, attributeName)
 
-    override fun <T : PsiAnnotationMemberValue?> setDeclaredAttributeValue(attributeName: @NonNls String?, value: T?): T? =
+    override fun <T : PsiAnnotationMemberValue?> setDeclaredAttributeValue(attributeName: @NonNls String?, value: T?): T =
         cannotModify()
 }

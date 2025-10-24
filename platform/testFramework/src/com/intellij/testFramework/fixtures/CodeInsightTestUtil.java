@@ -9,7 +9,7 @@ import com.intellij.codeInsight.intention.IntentionAction;
 import com.intellij.codeInsight.lookup.Lookup;
 import com.intellij.codeInsight.lookup.LookupManager;
 import com.intellij.codeInsight.lookup.impl.LookupImpl;
-import com.intellij.codeInsight.multiverse.FileViewProviderUtil;
+import com.intellij.codeInsight.multiverse.EditorContextManager;
 import com.intellij.codeInsight.navigation.GotoImplementationHandler;
 import com.intellij.codeInsight.navigation.GotoTargetHandler;
 import com.intellij.codeInsight.template.Template;
@@ -22,6 +22,7 @@ import com.intellij.injected.editor.EditorWindow;
 import com.intellij.lang.annotation.Annotation;
 import com.intellij.lang.annotation.Annotator;
 import com.intellij.lang.annotation.ExternalAnnotator;
+import com.intellij.lang.injection.InjectedLanguageManager;
 import com.intellij.lang.surroundWith.Surrounder;
 import com.intellij.openapi.Disposable;
 import com.intellij.openapi.actionSystem.AnAction;
@@ -38,7 +39,10 @@ import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.JBListUpdater;
 import com.intellij.openapi.ui.popup.JBPopup;
-import com.intellij.openapi.util.*;
+import com.intellij.openapi.util.Conditions;
+import com.intellij.openapi.util.Disposer;
+import com.intellij.openapi.util.Ref;
+import com.intellij.openapi.util.TextRange;
 import com.intellij.openapi.util.io.FileUtilRt;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.psi.PsiElement;
@@ -68,6 +72,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
 import static junit.framework.Assert.assertTrue;
@@ -341,18 +346,18 @@ public final class CodeInsightTestUtil {
     });
   }
 
-  public static void runIdentifierHighlighterPass(@NotNull PsiFile psiFile, @NotNull Editor editor) {
-    IdentifierHighlighterPass pass = new IdentifierHighlighterPassFactory().createHighlightingPass(psiFile, editor, psiFile.getTextRange());
-    assert pass != null;
+  @NotNull
+  public static IdentifierHighlightingResult runIdentifierHighlighterPass(@NotNull PsiFile psiFile, @NotNull Editor editor) {
+    IdentifierHighlighterUpdater pass = new IdentifierHighlighterUpdater(psiFile, editor, EditorContextManager.getEditorContext(editor, psiFile.getProject()),
+                                                                         InjectedLanguageManager.getInstance(psiFile.getProject()).getTopLevelFile(psiFile));
     try {
-      ReadAction.nonBlocking(() -> {
+      return ReadAction.nonBlocking(() -> {
         DaemonProgressIndicator indicator = new DaemonProgressIndicator();
+        AtomicReference<IdentifierHighlightingResult> result = new AtomicReference<>();
         ProgressManager.getInstance().runProcess(() -> {
-          // todo IJPL-339 figure out what is the correct context here
-          HighlightingSessionImpl.runInsideHighlightingSession(psiFile, FileViewProviderUtil.getCodeInsightContext(psiFile), editor.getColorsScheme(), ProperTextRange.create(psiFile.getTextRange()), false, session -> {
-            pass.doCollectInformation(session);
-          });
+          result.set(pass.doCollectInformationForTestsSynchronously());
         }, indicator);
+        return result.get();
       }).submit(AppExecutorUtil.getAppExecutorService()).get();
     }
     catch (InterruptedException | ExecutionException e) {

@@ -1,4 +1,4 @@
-// Copyright 2000-2022 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.java.refactoring;
 
 import com.intellij.JavaTestUtil;
@@ -17,12 +17,13 @@ import com.intellij.refactoring.rename.RenameProcessor;
 import com.intellij.refactoring.rename.RenameWrongRefHandler;
 import com.intellij.refactoring.rename.inplace.VariableInplaceRenameHandler;
 import com.intellij.testFramework.EditorTestUtil;
+import com.intellij.testFramework.LightJavaCodeInsightTestCase;
 import com.intellij.testFramework.fixtures.CodeInsightTestUtil;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.HashSet;
 
-public class RenameLocalTest extends LightRefactoringTestCase {
+public class RenameLocalTest extends LightJavaCodeInsightTestCase {
   private static final String BASE_PATH = "/refactoring/renameLocal/";
 
   @NotNull
@@ -113,8 +114,14 @@ public class RenameLocalTest extends LightRefactoringTestCase {
 
   public void testConflictWithPatternInline() {
     assertThrows(BaseRefactoringProcessor.ConflictsInTestsException.class, 
-                 "An existing pattern variable s has the same name",
+                 "Variable 's' Already Exists",
                  () -> doTestInplaceRename("s"));
+  }
+  
+  public void testConflictInLambdaParameter() {
+    assertThrows(BaseRefactoringProcessor.ConflictsInTestsException.class,
+                 "Variable 'o' Already Exists",
+                 () -> doTestInplaceRename("o"));
   }
 
   public void testConflictWithFutureVar() {
@@ -145,6 +152,10 @@ public class RenameLocalTest extends LightRefactoringTestCase {
 
   public void testRenameInPlaceInStaticContextWithConflictingField() {
     doTestInplaceRename("s");
+  }
+
+  public void testUnnamedVariableInLambda() {
+    doTestInplaceRename("pp");
   }
 
   public void testUndoAfterEditingOutsideOfTemplate() {

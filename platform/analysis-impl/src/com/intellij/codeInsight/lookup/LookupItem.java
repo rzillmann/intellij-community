@@ -1,4 +1,4 @@
-// Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 
 package com.intellij.codeInsight.lookup;
 
@@ -63,7 +63,7 @@ public class LookupItem<T> extends MutableLookupElement implements Comparable<Lo
   @Override
   public boolean equals(Object o){
     if (o == this) return true;
-    if (o instanceof LookupItem item){
+    if (o instanceof LookupItem<?> item){
       return Comparing.equal(myObject, item.myObject)
              && Objects.equals(myLookupString, item.myLookupString)
              && Comparing.equal(myAllLookupStrings, item.myAllLookupStrings)
@@ -185,8 +185,7 @@ public class LookupItem<T> extends MutableLookupElement implements Comparable<Lo
       return type;
     }
 
-    if (lookupElement instanceof LookupItem) {
-      final LookupItem<?> item = (LookupItem)lookupElement;
+    if (lookupElement instanceof LookupItem<?> item) {
       final TailType attr = item.getAttribute(TAIL_TYPE_ATTR);
       if (attr != null) {
         return attr;
@@ -244,7 +243,7 @@ public class LookupItem<T> extends MutableLookupElement implements Comparable<Lo
   }
 
   @Override
-  public AutoCompletionPolicy getAutoCompletionPolicy() {
+  public @NotNull AutoCompletionPolicy getAutoCompletionPolicy() {
     return myAutoCompletionPolicy;
   }
 
@@ -283,7 +282,7 @@ public class LookupItem<T> extends MutableLookupElement implements Comparable<Lo
   }
 
   @Override
-  public Set<String> getAllLookupStrings() {
+  public @NotNull Set<String> getAllLookupStrings() {
     return myAllLookupStrings;
   }
 

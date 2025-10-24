@@ -97,10 +97,8 @@ public interface PyFrameAccessor {
   @Nullable
   String execTableCommand(String command, TableCommandType commandType, @Nullable TableCommandParameters tableCommandParameters) throws PyDebuggerException;
 
-  /**
-   * @return result as a preview image packed into json array. Image can be compressed if necessary.
-   */
-  default String execImageCommand(String command) { return null; }
+  @Nullable
+  String execTableImageCommand(String command, TableCommandType commandType, @Nullable TableCommandParameters tableCommandParameters) throws PyDebuggerException;
 
   default @Nullable XCompositeNode getCurrentRootNode() {
     return null;

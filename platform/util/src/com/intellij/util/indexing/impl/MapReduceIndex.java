@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.util.indexing.impl;
 
 import com.intellij.openapi.diagnostic.Logger;
@@ -367,6 +367,11 @@ public abstract class MapReduceIndex<Key, Value, Input> implements InvertedIndex
 
   protected abstract void requestRebuild(@NotNull Throwable e);
 
+  @Internal
+  public boolean canUpdate() {
+    return !myStorage.isReadLockHeldByCurrentThread();
+  }
+
   private final UpdatedEntryProcessor<Key, Value> changedEntriesProcessor = new UpdatedEntryProcessor<Key, Value>() {
     @Override
     public void process(@NotNull UpdateKind kind, Key key, Value value, int inputId) throws StorageException {
@@ -418,7 +423,7 @@ public abstract class MapReduceIndex<Key, Value, Input> implements InvertedIndex
       throw e;
     }
     catch (Throwable e) { // e.g. IOException, AssertionError
-      throw new StorageException(e);
+      throw new StorageException("Processing of " + updateData + " failed", e);
     }
     finally {
       IndexDebugProperties.DEBUG_INDEX_ID.set(oldIndexId);

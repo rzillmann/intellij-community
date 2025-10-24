@@ -9,13 +9,11 @@ import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.util.PathUtil;
 import groovy.lang.GroovyObject;
-import org.gradle.internal.impldep.com.google.common.base.Optional;
 import org.gradle.tooling.ProjectConnection;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.plugins.gradle.settings.GradleSettings;
 import org.jetbrains.plugins.gradle.util.GradleConstants;
 
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -53,10 +51,6 @@ public final class GradleBuildProcessParametersProvider extends BuildProcessPara
       if (!StringUtil.isEmpty(gradleToolingApiJarPath)) {
         myGradleClasspath.add(gradleToolingApiJarPath);
       }
-      String gradleToolingApiImplDepJarPath = PathUtil.getJarPathForClass(Optional.class);
-      if (!StringUtil.isEmpty(gradleToolingApiImplDepJarPath)) {
-        myGradleClasspath.add(gradleToolingApiImplDepJarPath);
-      }
     }
     classpath.addAll(myGradleClasspath);
   }
@@ -76,13 +70,11 @@ public final class GradleBuildProcessParametersProvider extends BuildProcessPara
         return pathToAnt.toString();
       }
 
-      if (Files.isDirectory(gradleJar)) {
-        // Code runs from IDEA run configuration (code from .class file in out/ directory)
-        try {
-          return PathUtil.getJarPathForClass(Class.forName("org.apache.tools.ant.taskdefs.Ant"));
-        }
-        catch (ClassNotFoundException ignore) {
-        }
+      // Code runs from IDEA run configuration (code from .class file in out/ directory)
+      try {
+        return PathUtil.getJarPathForClass(Class.forName("org.apache.tools.ant.taskdefs.Ant"));
+      }
+      catch (ClassNotFoundException ignore) {
       }
     }
     LOG.warn("Unable to locate ant.jar for build process classpath");

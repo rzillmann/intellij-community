@@ -15,6 +15,8 @@ import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.unit.LayoutDirection.Ltr
 import androidx.compose.ui.unit.dp
+import org.jetbrains.annotations.ApiStatus
+import org.jetbrains.jewel.foundation.ExperimentalJewelApi
 import org.jetbrains.jewel.foundation.theme.LocalContentColor
 import org.jetbrains.jewel.markdown.MarkdownBlock.CustomBlock
 import org.jetbrains.jewel.markdown.extensions.MarkdownBlockRendererExtension
@@ -29,19 +31,21 @@ import org.jetbrains.jewel.markdown.rendering.MarkdownStyling
 import org.jetbrains.jewel.ui.component.Icon
 import org.jetbrains.jewel.ui.component.Text
 
+/** A [MarkdownBlockRendererExtension] that renders [GitHubAlert] blocks. */
+@ApiStatus.Experimental
+@ExperimentalJewelApi
 public class GitHubAlertBlockRenderer(private val styling: AlertStyling, private val rootStyling: MarkdownStyling) :
     MarkdownBlockRendererExtension {
     override fun canRender(block: CustomBlock): Boolean = block is GitHubAlert
 
     @Composable
-    override fun render(
+    override fun RenderCustomBlock(
         block: CustomBlock,
         blockRenderer: MarkdownBlockRenderer,
         inlineRenderer: InlineMarkdownRenderer,
         enabled: Boolean,
         modifier: Modifier,
         onUrlClick: (String) -> Unit,
-        onTextClick: () -> Unit,
     ) {
         // Smart cast doesn't work in this case, and then the detection for redundant suppression is
         // also borked
@@ -49,11 +53,11 @@ public class GitHubAlertBlockRenderer(private val styling: AlertStyling, private
         val alert = block as? GitHubAlert
 
         when (alert) {
-            is Caution -> Alert(alert, modifier, styling.caution, enabled, blockRenderer, onUrlClick, onTextClick)
-            is Important -> Alert(alert, modifier, styling.important, enabled, blockRenderer, onUrlClick, onTextClick)
-            is Note -> Alert(alert, modifier, styling.note, enabled, blockRenderer, onUrlClick, onTextClick)
-            is Tip -> Alert(alert, modifier, styling.tip, enabled, blockRenderer, onUrlClick, onTextClick)
-            is Warning -> Alert(alert, modifier, styling.warning, enabled, blockRenderer, onUrlClick, onTextClick)
+            is Caution -> Alert(alert, styling.caution, enabled, blockRenderer, onUrlClick, modifier)
+            is Important -> Alert(alert, styling.important, enabled, blockRenderer, onUrlClick, modifier)
+            is Note -> Alert(alert, styling.note, enabled, blockRenderer, onUrlClick, modifier)
+            is Tip -> Alert(alert, styling.tip, enabled, blockRenderer, onUrlClick, modifier)
+            is Warning -> Alert(alert, styling.warning, enabled, blockRenderer, onUrlClick, modifier)
             else -> error("Unsupported block of type ${block.javaClass.name} cannot be rendered")
         }
     }
@@ -61,12 +65,11 @@ public class GitHubAlertBlockRenderer(private val styling: AlertStyling, private
     @Composable
     private fun Alert(
         block: GitHubAlert,
-        modifier: Modifier,
         styling: BaseAlertStyling,
         enabled: Boolean,
         blockRenderer: MarkdownBlockRenderer,
         onUrlClick: (String) -> Unit,
-        onTextClick: () -> Unit,
+        modifier: Modifier = Modifier,
     ) {
         Column(
             modifier
@@ -111,7 +114,7 @@ public class GitHubAlertBlockRenderer(private val styling: AlertStyling, private
             CompositionLocalProvider(
                 LocalContentColor provides styling.textColor.takeOrElse { LocalContentColor.current }
             ) {
-                blockRenderer.render(block.content, enabled, onUrlClick, onTextClick, Modifier)
+                blockRenderer.RenderBlocks(block.content, enabled, onUrlClick, Modifier)
             }
         }
     }

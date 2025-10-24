@@ -1,41 +1,53 @@
 // Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.platform.testFramework.junit5.eel.params.impl.junit5
 
-import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.components.Service
-import com.intellij.openapi.components.service
-import com.intellij.openapi.util.SystemInfo
 import com.intellij.platform.core.nio.fs.MultiRoutingFileSystemProvider
-import com.intellij.platform.ijent.IjentApi
+import com.intellij.platform.testFramework.junit5.eel.params.api.EelHolder
+import com.intellij.platform.testFramework.junit5.eel.params.api.EelSource
 import com.intellij.platform.testFramework.junit5.eel.params.api.TestApplicationWithEel
-import com.intellij.platform.testFramework.junit5.eel.params.impl.providers.LocalEelTestProvider
-import com.intellij.platform.testFramework.junit5.eel.params.impl.providers.getEelTestProviders
-import com.intellij.platform.testFramework.junit5.eel.params.spi.EelTestProvider
-import com.intellij.platform.testFramework.junit5.eel.params.spi.EelTestProvider.StartResult.Skipped
-import com.intellij.platform.testFramework.junit5.eel.params.spi.EelTestProvider.StartResult.Started
-import com.intellij.platform.util.coroutines.childScope
-import kotlinx.coroutines.*
+import com.intellij.platform.testFramework.junit5.eel.params.impl.providers.getIjentTestProviders
+import com.intellij.platform.testFramework.junit5.eel.params.spi.EelIjentTestProvider
+import com.intellij.testFramework.junit5.fixture.EelForFixturesProvider
+import com.intellij.testFramework.junit5.fixture.EelForFixturesProvider.Companion.makeFixturesEelAware
+import com.intellij.testFramework.junit5.impl.TypedStoreKey
+import com.intellij.testFramework.junit5.impl.TypedStoreKey.Companion.getTyped
 import org.jetbrains.annotations.TestOnly
-import org.junit.jupiter.api.extension.BeforeAllCallback
-import org.junit.jupiter.api.extension.ExtensionContext
-import org.junit.jupiter.api.extension.InvocationInterceptor
-import org.junit.jupiter.api.extension.ReflectiveInvocationContext
-import org.junit.platform.commons.util.AnnotationUtils
-import org.opentest4j.TestAbortedException
-import java.io.Closeable
+import org.junit.jupiter.api.condition.OS
+import org.junit.jupiter.api.extension.*
+import org.junit.platform.commons.util.AnnotationUtils.findAnnotation
+import java.lang.reflect.Constructor
 import java.lang.reflect.Method
+import kotlin.jvm.optionals.getOrNull
 
 @TestOnly
-internal class EelInterceptor : InvocationInterceptor, BeforeAllCallback {
+internal class EelInterceptor : InvocationInterceptor, BeforeAllCallback, BeforeEachCallback, AfterEachCallback {
   private companion object {
-    const val REMOTE_EEL_EXECUTED = "REMOTE_EEL_EXECUTED"
     const val PROVIDER_PROP_NAME = "java.nio.file.spi.DefaultFileSystemProvider"
-
     val ExtensionContext.atLeastOneRemoteEelRequired: Boolean
       get() =
-        AnnotationUtils.findAnnotation(testClass.get(), TestApplicationWithEel::class.java).get().atLeastOneRemoteEelRequired
+        OS.current() !in findAnnotation(testClass.get(), TestApplicationWithEel::class.java).get().osesMayNotHaveRemoteEels
 
-    val ExtensionContext.store: ExtensionContext.Store get() = getStore(ExtensionContext.Namespace.GLOBAL)
+    val ReflectiveInvocationContext<Method>.eelHolderArgs: List<EelHolder>
+      get() =
+        arguments.filterIsInstance<EelHolder>()
+
+    val eelForFixturesProvider = EelForFixturesProvider { invocationContext ->
+      invocationContext.eelHolderArgs.firstOrNull()?.eel
+    }
+
+    /**
+     * When created by parametrized class ctor or parametrized test, saved in ext. context to be closed later
+     */
+    private val KEY_FOR_MANAGER: TypedStoreKey<EelsManager> = TypedStoreKey.createKey()
+  }
+
+  override fun beforeEach(context: ExtensionContext) {
+    val testMethod = context.testMethod.getOrNull() ?: return
+    if (testMethod.annotations.filterIsInstance<EelSource>().any() ||
+        testMethod.parameters.any { it.annotations.filterIsInstance<EelSource>().any() }
+    ) {
+      context.makeFixturesEelAware(eelForFixturesProvider)
+    }
   }
 
   override fun beforeAll(context: ExtensionContext) {
@@ -45,113 +57,41 @@ internal class EelInterceptor : InvocationInterceptor, BeforeAllCallback {
       "Please add `-D$PROVIDER_PROP_NAME=$name` as VMOption as eel needs custom nio provider"
     }
     if (context.atLeastOneRemoteEelRequired) {
-      assert(getEelTestProviders().any { it !is LocalEelTestProvider }) {
+      assert(getIjentTestProviders().isNotEmpty()) {
         """
           No remote (ijent-based) eel implementation was found on class-path. 
           You have 2 options:
-          1. Disable ${TestApplicationWithEel::atLeastOneRemoteEelRequired} and stick with the local eel only (not recommended).
-          2. Make sure at least one ${EelTestProvider::class} exists on the class-path.
+          1. Add your OS to ${TestApplicationWithEel::osesMayNotHaveRemoteEels} and stick with the local eel only (not recommended).
+          2. Make sure at least one ${EelIjentTestProvider::class} exists on the class-path.
         """.trimIndent()
       }
     }
   }
 
+  override fun <T : Any> interceptTestClassConstructor(invocation: InvocationInterceptor.Invocation<T>, invocationContext: ReflectiveInvocationContext<Constructor<T>>, extensionContext: ExtensionContext): T {
+    createEelManager(invocationContext, extensionContext)
+    return super.interceptTestClassConstructor(invocation, invocationContext, extensionContext)
+  }
 
   override fun interceptTestTemplateMethod(
     invocation: InvocationInterceptor.Invocation<Void>,
     invocationContext: ReflectiveInvocationContext<Method>,
     extensionContext: ExtensionContext,
   ) {
-    val scope = ApplicationManager.getApplication().service<EelTestService>().scope.childScope("Eel test child scope")
-    val closeAfterTest = mutableListOf<Closeable>()
-    val annotations = extensionContext.element.get().annotations + extensionContext.testClass.get().annotations
-    val eelHolders = invocationContext.arguments.filterIsInstance<EelHolderImpl>()
-
-
-    val testContext = extensionContext.parent.get()
-    testContext.getStore(ExtensionContext.Namespace.GLOBAL).put("remoteEelCallback", object : ExtensionContext.Store.CloseableResource {
-      override fun close() {
-        if (testContext.store.get(REMOTE_EEL_EXECUTED) == null && extensionContext.atLeastOneRemoteEelRequired) {
-
-          val advice = buildString {
-            if (SystemInfo.isWindows) {
-              append("Install WSL2. ")
-            }
-            append("Install docker. ")
-          }
-
-          error("""
-            Although some remote (ijent) eel implementations were found on a class-path, all of them were skipped.
-            That means, you've tested the local eel implementation only! 
-            If that was your plan, set ${TestApplicationWithEel::atLeastOneRemoteEelRequired} and stick with the local eel only (not recommended).
-            But much better to do the following: $advice
-            Testing something against local eel only is not recommended. 
-          """.trimIndent())
-        }
-      }
-    })
-
-
-
-    runBlocking {
-      for (eelHolderImpl in eelHolders) {
-        val (eel, closable) = eelHolderImpl.eelTestProvider.startIjentProvider(scope, annotations)
-        closable?.let {
-          closeAfterTest.add(it)
-        }
-        eelHolderImpl.eel = eel
-        testContext.store.put(REMOTE_EEL_EXECUTED, true)
-      }
-    }
-
-
-    try {
-      super.interceptTestTemplateMethod(invocation, invocationContext, extensionContext)
-    }
-    finally {
-      runBlocking {
-        for (arg in eelHolders) {
-          (arg.eel as? IjentApi)?.apply {
-            close()
-            waitUntilExit()
-          }
-        }
-        for (closeable in closeAfterTest) {
-          closeable.close()
-        }
-        scope.coroutineContext.job.cancelAndJoin()
-        scope.cancel()
-      }
-    }
+    createEelManager(invocationContext, extensionContext)
+    super.interceptTestTemplateMethod(invocation, invocationContext, extensionContext)
   }
 
-
-}
-
-@Service
-private class EelTestService(val scope: CoroutineScope)
-
-
-@TestOnly
-private suspend fun <T : Any> EelTestProvider<T>.startIjentProvider(
-  scope: CoroutineScope,
-  annotations: Array<Annotation>,
-): Started {
-  val mandatoryAnnotation = mandatoryAnnotationClass?.let { annotationClass ->
-    annotations.filterIsInstance(annotationClass.java).firstOrNull()
+  override fun afterEach(context: ExtensionContext) {
+    context.store.getTyped(KEY_FOR_MANAGER)?.close()
   }
-  when (val r = start(scope, mandatoryAnnotation)) {
-    is Started -> {
-      return r
-    }
-    is Skipped -> {
-      val skippedReason = r.skippedReason
-      if (mandatoryAnnotation != null) {
-        throw IllegalStateException("Test is marked with mandatory annotation $mandatoryAnnotation but $this is not available: $skippedReason")
-      }
-      else {
-        throw TestAbortedException(skippedReason)
-      }
-    }
+
+  private fun createEelManager(
+    invocationContext: ReflectiveInvocationContext<*>,
+    extensionContext: ExtensionContext,
+  ) {
+    val eelManager = EelsManager.create(invocationContext, extensionContext) ?: return
+    extensionContext.makeFixturesEelAware(eelForFixturesProvider)
+    extensionContext.store.put(KEY_FOR_MANAGER, eelManager)
   }
 }

@@ -6,6 +6,8 @@ import com.intellij.codeInspection.LocalInspectionTool;
 import com.intellij.codeInspection.classCanBeRecord.ClassCanBeRecordInspection;
 import com.intellij.codeInspection.classCanBeRecord.ClassCanBeRecordInspection.ConversionStrategy;
 import com.intellij.refactoring.BaseRefactoringProcessor;
+import com.intellij.testFramework.LightProjectDescriptor;
+import com.intellij.testFramework.fixtures.LightJavaCodeInsightFixtureTestCase;
 import org.jetbrains.annotations.NotNull;
 
 public class ClassCanBeRecordInspectionTest extends LightQuickFixParameterizedTestCase {
@@ -19,12 +21,26 @@ public class ClassCanBeRecordInspectionTest extends LightQuickFixParameterizedTe
   }
 
   @Override
+  protected @NotNull LightProjectDescriptor getProjectDescriptor() {
+    return LightJavaCodeInsightFixtureTestCase.JAVA_21;
+  }
+
+  @Override
   protected String getBasePath() {
     return "/inspection/classCanBeRecord";
   }
 
   @Override
   public void runSingle() throws Throwable {
+    try {
+      super.runSingle();
+    }
+    catch (BaseRefactoringProcessor.ConflictsInTestsException e) {
+      // Verify that no content was changed. See IDEA-371645.
+      checkResultByFile(getTestName(false) + ".java", getBasePath() + "/before" + getTestName(false), false);
+    }
+
+
     BaseRefactoringProcessor.ConflictsInTestsException.withIgnoredConflicts(super::runSingle);
   }
 }

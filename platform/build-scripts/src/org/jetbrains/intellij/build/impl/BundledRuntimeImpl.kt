@@ -12,12 +12,13 @@ import org.jetbrains.intellij.build.BuildPaths
 import org.jetbrains.intellij.build.CompilationContext
 import org.jetbrains.intellij.build.JetBrainsRuntimeDistribution
 import org.jetbrains.intellij.build.JvmArchitecture
+import org.jetbrains.intellij.build.LibcImpl
+import org.jetbrains.intellij.build.LinuxLibcImpl
 import org.jetbrains.intellij.build.OsFamily
 import org.jetbrains.intellij.build.ProductProperties
 import org.jetbrains.intellij.build.dependencies.BuildDependenciesDownloader
 import org.jetbrains.intellij.build.dependencies.BuildDependenciesExtractOptions
 import org.jetbrains.intellij.build.dependencies.DependenciesProperties
-import org.jetbrains.intellij.build.dependencies.LinuxLibcImpl
 import org.jetbrains.intellij.build.downloadFileToCacheLocation
 import org.jetbrains.intellij.build.telemetry.TraceManager.spanBuilder
 import org.jetbrains.intellij.build.telemetry.use
@@ -40,11 +41,7 @@ class BundledRuntimeImpl(
   private val info: (String) -> Unit,
 ) : BundledRuntime {
   constructor(context: CompilationContext) : this(
-    options = context.options,
-    paths = context.paths,
-    dependenciesProperties = context.dependenciesProperties,
-    productProperties = (context as? BuildContext)?.productProperties,
-    info = context.messages::info,
+    context.options, context.paths, context.dependenciesProperties, (context as? BuildContext)?.productProperties, context.messages::info
   )
 
   override val prefix: String
@@ -52,7 +49,7 @@ class BundledRuntimeImpl(
       val bundledRuntimePrefix = options.bundledRuntimePrefix
       return when {
         // no JCEF distribution for musl, see https://github.com/JetBrains/JetBrainsRuntime/releases
-        LinuxLibcImpl.isLinuxMusl -> "jbrsdk-"
+        LibcImpl.current(OsFamily.currentOs) == LinuxLibcImpl.MUSL -> JetBrainsRuntimeDistribution.LIGHTWEIGHT.artifactPrefix
         // required as a runtime for debugger tests
         System.getProperty("intellij.build.jbr.setupSdk", "false").toBoolean() -> "jbrsdk-"
         bundledRuntimePrefix != null -> bundledRuntimePrefix
@@ -75,7 +72,8 @@ class BundledRuntimeImpl(
       if (result != null) return result
       val os = OsFamily.currentOs
       val arch = JvmArchitecture.currentJvmArch
-      val path = extract(os, arch)
+      val libc = LibcImpl.current(os)
+      val path = extract(os, arch, libc)
       val home = if (os == OsFamily.MACOS) path.resolve("jbr/Contents/Home") else path.resolve("jbr")
       val releaseFile = home.resolve("release")
       check(Files.exists(releaseFile)) {
@@ -86,12 +84,13 @@ class BundledRuntimeImpl(
     }
   }
 
-  override suspend fun extract(os: OsFamily, arch: JvmArchitecture, prefix: String): Path {
-    val isMusl = os == OsFamily.LINUX && LinuxLibcImpl.isLinuxMusl
-    val targetDir = paths.communityHomeDir.resolve("build/download/${prefix}${build}-${os.jbrArchiveSuffix}-${if (isMusl) "musl-" else ""}$arch")
+  override suspend fun extract(os: OsFamily, arch: JvmArchitecture, libc: LibcImpl, prefix: String): Path {
+    val isMusl = os == OsFamily.LINUX && libc == LinuxLibcImpl.MUSL
+    val effectivePrefix = if (libc == LinuxLibcImpl.MUSL) JetBrainsRuntimeDistribution.LIGHTWEIGHT.artifactPrefix else prefix
+    val targetDir = paths.communityHomeDir.resolve("build/download/${effectivePrefix}${build}-${os.jbrArchiveSuffix}-${if (isMusl) "musl-" else ""}$arch")
     val jbrDir = targetDir.resolve("jbr")
 
-    val archive = findArchive(os, arch, prefix)
+    val archive = findArchive(os, arch, libc, effectivePrefix)
     BuildDependenciesDownloader.extractFile(
       archive, jbrDir,
       paths.communityHomeDirRoot,
@@ -108,22 +107,22 @@ class BundledRuntimeImpl(
     return targetDir
   }
 
-  override suspend fun extractTo(os: OsFamily, arch: JvmArchitecture, destinationDir: Path) {
-    doExtract(findArchive(os, arch, prefix), destinationDir, os)
+  override suspend fun extractTo(os: OsFamily, arch: JvmArchitecture, libc: LibcImpl, destinationDir: Path) {
+    doExtract(findArchive(os, arch, libc, prefix), destinationDir, os)
   }
 
-  override fun downloadUrlFor(os: OsFamily, arch: JvmArchitecture, prefix: String): String =
-    "https://cache-redirector.jetbrains.com/intellij-jbr/${archiveName(os, arch, prefix)}"
+  override fun downloadUrlFor(os: OsFamily, arch: JvmArchitecture, libc: LibcImpl, prefix: String): String =
+    "https://cache-redirector.jetbrains.com/intellij-jbr/${archiveName(os, arch, libc, prefix)}"
 
-  override suspend fun findArchive(os: OsFamily, arch: JvmArchitecture, prefix: String): Path =
-    downloadFileToCacheLocation(downloadUrlFor(os, arch, prefix), paths.communityHomeDirRoot)
+  override suspend fun findArchive(os: OsFamily, arch: JvmArchitecture, libc: LibcImpl, prefix: String): Path =
+    downloadFileToCacheLocation(downloadUrlFor(os, arch, libc, prefix), paths.communityHomeDirRoot)
 
   /**
    * Update this method together with:
-   * - [UploadingAndSigning.getMissingJbrs]
+   * - `UploadingAndSigning.getMissingJbrs`
    * - [org.jetbrains.intellij.build.dependencies.JdkDownloader.getUrl]
    */
-  override fun archiveName(os: OsFamily, arch: JvmArchitecture, prefix: String, forceVersionWithUnderscores: Boolean): String {
+  override fun archiveName(os: OsFamily, arch: JvmArchitecture, libc: LibcImpl, prefix: String, forceVersionWithUnderscores: Boolean): String {
     val split = build.split('b')
     if (split.size != 2) {
       throw IllegalArgumentException("$build doesn't match '<update>b<build_number>' format (e.g.: 17.0.2b387.1)")
@@ -131,7 +130,7 @@ class BundledRuntimeImpl(
     val version = if (forceVersionWithUnderscores) split[0].replace(".", "_") else split[0]
     val buildNumber = "b${split[1]}"
     val archSuffix = getArchSuffix(arch)
-    val muslSuffix = if (LinuxLibcImpl.isLinuxMusl) "-musl" else ""
+    val muslSuffix = if (libc == LinuxLibcImpl.MUSL) "-musl" else ""
     return "${prefix}${version}-${os.jbrArchiveSuffix}${muslSuffix}-${archSuffix}-${runtimeBuildPrefix()}${buildNumber}.tar.gz"
   }
 
@@ -164,65 +163,61 @@ class BundledRuntimeImpl(
       }
     }
   }
-}
-
-private fun getArchSuffix(arch: JvmArchitecture): String {
-  return when (arch) {
+  private fun getArchSuffix(arch: JvmArchitecture): String = when (arch) {
     JvmArchitecture.x64 -> "x64"
     JvmArchitecture.aarch64 -> "aarch64"
   }
-}
 
-private suspend fun doExtract(archive: Path, destinationDir: Path, os: OsFamily) {
-  spanBuilder("extract JBR")
-    .setAttribute("archive", archive.toString())
-    .setAttribute("os", os.osName)
-    .setAttribute("destination", destinationDir.toString())
-    .use {
-      NioFiles.deleteRecursively(destinationDir)
-      unTar(archive, destinationDir)
-      fixPermissions(destinationDir, os == OsFamily.WINDOWS)
-    }
-}
-
-private fun unTar(archive: Path, destination: Path) {
-  // CompressorStreamFactory requires stream with mark support
-  val rootDir = createTarGzInputStream(archive).use {
-    it.nextEntry?.name
-  }
-  if (rootDir == null) {
-    throw IllegalStateException("Unable to detect root dir of $archive")
+  private suspend fun doExtract(archive: Path, destinationDir: Path, os: OsFamily) {
+    spanBuilder("extract JBR")
+      .setAttribute("archive", archive.toString())
+      .setAttribute("os", os.osName)
+      .setAttribute("destination", destinationDir.toString())
+      .use {
+        NioFiles.deleteRecursively(destinationDir)
+        unTar(archive, destinationDir)
+        fixPermissions(destinationDir, os == OsFamily.WINDOWS)
+      }
   }
 
-  unTar(archive, destination, if (rootDir.startsWith("jbr")) rootDir else null)
-}
-
-private fun createTarGzInputStream(archive: Path): TarArchiveInputStream {
-  return TarArchiveInputStream(GZIPInputStream(Files.newInputStream(archive), 64 * 1024))
-}
-
-private fun fixPermissions(destinationDir: Path, forWin: Boolean) {
-  val exeOrDir = EnumSet.of(OWNER_READ, OWNER_WRITE, OWNER_EXECUTE, GROUP_READ, GROUP_EXECUTE, OTHERS_READ, OTHERS_EXECUTE)
-  val regular = EnumSet.of(OWNER_READ, OWNER_WRITE, GROUP_READ, OTHERS_READ)
-
-  Files.walkFileTree(destinationDir, object : SimpleFileVisitor<Path>() {
-    @Override
-    override fun preVisitDirectory(dir: Path, attrs: BasicFileAttributes): FileVisitResult {
-      if (dir != destinationDir && SystemInfoRt.isUnix) {
-        Files.setPosixFilePermissions(dir, exeOrDir)
-      }
-      return FileVisitResult.CONTINUE
+  private fun unTar(archive: Path, destination: Path) {
+    // CompressorStreamFactory requires stream with mark support
+    val rootDir = createTarGzInputStream(archive).use {
+      it.nextEntry?.name
+    }
+    if (rootDir == null) {
+      throw IllegalStateException("Unable to detect root dir of $archive")
     }
 
-    override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
-      if (SystemInfoRt.isUnix) {
-        val noExec = forWin || OWNER_EXECUTE !in Files.getPosixFilePermissions(file)
-        Files.setPosixFilePermissions(file, if (noExec) regular else exeOrDir)
+    unTar(archive, destination, if (rootDir.startsWith("jbr")) rootDir else null)
+  }
+
+  private fun createTarGzInputStream(archive: Path): TarArchiveInputStream =
+    TarArchiveInputStream(GZIPInputStream(Files.newInputStream(archive), 64 * 1024))
+
+  private fun fixPermissions(destinationDir: Path, forWin: Boolean) {
+    val exeOrDir = EnumSet.of(OWNER_READ, OWNER_WRITE, OWNER_EXECUTE, GROUP_READ, GROUP_EXECUTE, OTHERS_READ, OTHERS_EXECUTE)
+    val regular = EnumSet.of(OWNER_READ, OWNER_WRITE, GROUP_READ, OTHERS_READ)
+
+    Files.walkFileTree(destinationDir, object : SimpleFileVisitor<Path>() {
+      @Override
+      override fun preVisitDirectory(dir: Path, attrs: BasicFileAttributes): FileVisitResult {
+        if (dir != destinationDir && SystemInfoRt.isUnix) {
+          Files.setPosixFilePermissions(dir, exeOrDir)
+        }
+        return FileVisitResult.CONTINUE
       }
-      else {
-        Files.getFileAttributeView(file, DosFileAttributeView::class.java).setReadOnly(false)
+
+      override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
+        if (SystemInfoRt.isUnix) {
+          val noExec = forWin || OWNER_EXECUTE !in Files.getPosixFilePermissions(file)
+          Files.setPosixFilePermissions(file, if (noExec) regular else exeOrDir)
+        }
+        else {
+          Files.getFileAttributeView(file, DosFileAttributeView::class.java).setReadOnly(false)
+        }
+        return FileVisitResult.CONTINUE
       }
-      return FileVisitResult.CONTINUE
-    }
-  })
+    })
+  }
 }

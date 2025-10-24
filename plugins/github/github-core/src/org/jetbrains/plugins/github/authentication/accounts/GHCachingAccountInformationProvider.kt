@@ -2,13 +2,14 @@
 package org.jetbrains.plugins.github.authentication.accounts
 
 import com.github.benmanes.caffeine.cache.Caffeine
+import com.intellij.collaboration.async.childScope
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
-import com.intellij.platform.util.coroutines.childScope
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
+import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.plugins.github.api.GithubApiRequestExecutor
 import org.jetbrains.plugins.github.api.GithubApiRequests
 import org.jetbrains.plugins.github.api.data.GithubAuthenticatedUser
@@ -19,9 +20,10 @@ import java.time.temporal.ChronoUnit
 /**
  * Loads the account information or provides it from cache
  */
+@ApiStatus.Internal
 @Service(Service.Level.APP)
-internal class GHCachingAccountInformationProvider(serviceCs: CoroutineScope) {
-  private val cs = serviceCs.childScope()
+class GHCachingAccountInformationProvider(serviceCs: CoroutineScope) {
+  private val cs = serviceCs.childScope(this::class)
 
   private val informationCache = Caffeine.newBuilder()
     .expireAfterWrite(Duration.of(30, ChronoUnit.MINUTES))

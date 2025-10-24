@@ -15,7 +15,6 @@ import com.intellij.openapi.vfs.newvfs.events.VFileCreateEvent;
 import com.intellij.openapi.vfs.newvfs.events.VFileEvent;
 import com.intellij.openapi.vfs.newvfs.events.VFileMoveEvent;
 import com.intellij.openapi.vfs.newvfs.events.VFilePropertyChangeEvent;
-import com.intellij.psi.search.GlobalSearchScope;
 import com.intellij.util.Query;
 import com.intellij.util.concurrency.ThreadingAssertions;
 import com.intellij.util.messages.MessageBusConnection;
@@ -38,27 +37,29 @@ public final class DirectoryIndexImpl extends DirectoryIndex implements Disposab
   private static final Logger LOG = Logger.getInstance(DirectoryIndexImpl.class);
 
   private final Project myProject;
-  private final MessageBusConnection myConnection;
   private final WorkspaceFileIndexEx myWorkspaceFileIndex;
 
   private volatile boolean myDisposed;
   private volatile RootIndex myRootIndex;
 
+  /**
+   * This constructor is used in Analyzer to initialize with a pre-built OrderEntryGraph
+   * */
+  public DirectoryIndexImpl(@NotNull Project project, @NotNull RootIndex rootIndex, @NotNull WorkspaceFileIndexEx workspaceFileIndex) {
+    myWorkspaceFileIndex = workspaceFileIndex;
+    myProject = project;
+    myRootIndex = rootIndex;
+  }
+
+  /**
+   * This constructor is actually being used by service container in IDEA
+   * */
+  @SuppressWarnings("unused")
   public DirectoryIndexImpl(@NotNull Project project) {
     myWorkspaceFileIndex = (WorkspaceFileIndexEx)WorkspaceFileIndex.getInstance(project);
     myProject = project;
-    myConnection = project.getMessageBus().connect();
-    subscribeToFileChanges();
-  }
-
-  @Override
-  public void dispose() {
-    myDisposed = true;
-    myRootIndex = null;
-  }
-
-  private void subscribeToFileChanges() {
-    myConnection.subscribe(VirtualFileManager.VFS_CHANGES, new BulkFileListener() {
+    var connection = project.getMessageBus().connect();
+    connection.subscribe(VirtualFileManager.VFS_CHANGES, new BulkFileListener() {
       @Override
       public void after(@NotNull List<? extends @NotNull VFileEvent> events) {
         RootIndex rootIndex = myRootIndex;
@@ -72,6 +73,12 @@ public final class DirectoryIndexImpl extends DirectoryIndex implements Disposab
         }
       }
     });
+  }
+
+  @Override
+  public void dispose() {
+    myDisposed = true;
+    myRootIndex = null;
   }
 
   public static boolean shouldResetOnEvents(@NotNull List<? extends VFileEvent> events) {
@@ -102,18 +109,9 @@ public final class DirectoryIndexImpl extends DirectoryIndex implements Disposab
     return myWorkspaceFileIndex.getDirectoriesByPackageName(packageName, includeLibrarySources);
   }
 
-  @Override
-  public @NotNull Query<VirtualFile> getFilesByPackageName(@NotNull String packageName) {
-    return myWorkspaceFileIndex.getFilesByPackageName(packageName);
-  }
-
-  @Override
-  public Query<VirtualFile> getDirectoriesByPackageName(@NotNull String packageName,
-                                                        @NotNull GlobalSearchScope scope) {
-    return myWorkspaceFileIndex.getDirectoriesByPackageName(packageName, scope);
-  }
-
-  private RootIndex getRootIndex() {
+  @NotNull
+  @ApiStatus.Internal
+  public RootIndex getRootIndex() {
     RootIndex rootIndex = myRootIndex;
     if (rootIndex == null) {
       myRootIndex = rootIndex = new RootIndex(myProject);
@@ -122,16 +120,10 @@ public final class DirectoryIndexImpl extends DirectoryIndex implements Disposab
   }
 
   @Override
-  public String getPackageName(@NotNull VirtualFile dir) {
-    checkAvailability();
-    return myWorkspaceFileIndex.getPackageName(dir);
-  }
-
-  @Override
   public @NotNull List<OrderEntry> getOrderEntries(@NotNull VirtualFile fileOrDir) {
     checkAvailability();
     if (myProject.isDefault()) return Collections.emptyList();
-    WorkspaceFileInternalInfo fileInfo = myWorkspaceFileIndex.getFileInfo(fileOrDir, true, true, true, true, false);
+    WorkspaceFileInternalInfo fileInfo = myWorkspaceFileIndex.getFileInfo(fileOrDir, true, true, true, true, true, false);
     WorkspaceFileSetWithCustomData<?> fileSet = fileInfo.findFileSet(data -> true);
     if (fileSet == null) return Collections.emptyList();
     return getRootIndex().getOrderEntries(fileSet.getRoot());

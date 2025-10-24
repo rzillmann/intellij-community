@@ -57,5 +57,13 @@ internal class OldPlainTerminalView(project: Project,
     widget.executeCommand(shellCommand)
   }
 
+  override fun getText(): CharSequence {
+    return widget.text
+  }
+
+  override fun getCurrentDirectory(): String? {
+    return widget.currentDirectory
+  }
+
   override fun dispose() {}
 }

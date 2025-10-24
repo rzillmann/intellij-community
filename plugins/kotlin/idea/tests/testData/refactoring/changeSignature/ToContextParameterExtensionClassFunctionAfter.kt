@@ -3,7 +3,8 @@
 class MyClass {
     val value: Int = 42
 
-    context(param1: String) fun Int.doSomething(param: String) {
+    context(param1: String)
+    fun Int.doSomething(param: String) {
         println("Value: $value, Param: $param1")
         with(param1) {
             withContext()
@@ -32,6 +33,11 @@ class MyClass {
 }
 
 context(s: String)
+fun MyClass.caller() {
+    42.doSomething("param")
+}
+
+context(s: String)
 fun withContext() {}
 
 fun MyClass.foo() {
@@ -42,18 +48,14 @@ fun MyClass.foo() {
 
 fun String.bar(m: MyClass) {
     with(m) {
-        with(this@bar) {
-            4.doSomething(this@bar)
-        }
+        4.doSomething(this@bar)
     }
 }
 
 class Bar {
     fun String.bar(m: MyClass) {
         with(m) {
-            with(this@bar) {
-                5.doSomething(this@bar)
-            }
+            5.doSomething(this@bar)
         }
     }
 }

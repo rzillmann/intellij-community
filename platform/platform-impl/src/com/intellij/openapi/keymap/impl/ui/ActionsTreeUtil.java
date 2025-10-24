@@ -9,6 +9,7 @@ import com.intellij.ide.plugins.IdeaPluginDescriptor;
 import com.intellij.ide.plugins.PluginManagerCore;
 import com.intellij.ide.ui.customization.ActionUrl;
 import com.intellij.ide.ui.customization.CustomisedActionGroup;
+import com.intellij.ide.ui.customization.NonCustomizableAction;
 import com.intellij.ide.ui.search.SearchUtil;
 import com.intellij.ide.ui.search.SearchableOptionsRegistrar;
 import com.intellij.idea.ActionsBundle;
@@ -109,7 +110,7 @@ public final class ActionsTreeUtil {
         result.put(actionId, descriptor.getName());
       }
     }
-    for (PluginId id : PluginId.getRegisteredIds()) {
+    for (PluginId id : PluginManagerCore.getPluginSet().buildPluginIdMap().keySet()) {
       if (visited.contains(id)) {
         continue;
       }
@@ -127,7 +128,7 @@ public final class ActionsTreeUtil {
       .sort(Comparator.comparing(IdeaPluginDescriptor::getName));
     Map<PluginId, String> pluginNames = plugins.toMap(PluginDescriptor::getPluginId, PluginDescriptor::getName);
     List<PluginId> pluginsIds = plugins.map(PluginDescriptor::getPluginId)
-      .append(JBIterable.from(PluginId.getRegisteredIds()).sort(PluginId::compareTo))
+      .append(JBIterable.from(PluginManagerCore.getPluginSet().buildPluginIdMap().keySet()).sort(PluginId::compareTo))
       .unique().toList();
     for (PluginId pluginId : pluginsIds) {
       if (PluginManagerCore.CORE_ID.equals(pluginId)
@@ -375,6 +376,9 @@ public final class ActionsTreeUtil {
     }
 
     for (AnAction action : children) {
+      if (action instanceof NonCustomizableAction) {
+        continue;
+      }
       if (action instanceof ActionGroup) {
         group.addGroup(createCorrectedGroup((ActionGroup)action, getName(action), path, actionUrls));
       }

@@ -9,8 +9,11 @@ import com.intellij.openapi.actionSystem.DataContext
 import com.intellij.openapi.progress.runBlockingCancellable
 import com.intellij.openapi.projectRoots.Sdk
 import com.intellij.util.concurrency.annotations.RequiresBackgroundThread
+import com.jetbrains.python.getOrThrow
 import com.jetbrains.python.packaging.management.PythonPackageManager
+import com.jetbrains.python.packaging.pyRequirement
 import com.jetbrains.python.packaging.repository.PyPackageRepository
+import com.jetbrains.python.packaging.repository.PythonRepositoryManagerBase
 import com.jetbrains.python.sdk.isTargetBased
 import com.jetbrains.python.sdk.pythonSdk
 import com.jetbrains.python.statistics.modules
@@ -25,8 +28,10 @@ abstract class PyRunAnythingPackageProvider : RunAnythingCommandLineProvider() {
   private var cacheInitialized = AtomicBoolean(false)
 
   @RequiresBackgroundThread
-  override fun suggestCompletionVariants(dataContext: DataContext,
-                                         commandLine: CommandLine): Sequence<String> {
+  override fun suggestCompletionVariants(
+    dataContext: DataContext,
+    commandLine: CommandLine,
+  ): Sequence<String> {
     if (getSdk(dataContext)?.isTargetBased() == true) return emptySequence()
     if (commandLine.parameters.isEmpty() || (commandLine.parameters.size == 1 && !commandLine.toComplete.isEmpty())) {
       return getDefaultCommands()
@@ -43,7 +48,7 @@ abstract class PyRunAnythingPackageProvider : RunAnythingCommandLineProvider() {
           it.startsWith(commandLine.toComplete)
         }.asSequence()
       }
-      return packageManager.installedPackages.map { it.name }.filter { it.startsWith(commandLine.toComplete) }.asSequence()
+      return packageManager.listInstalledPackagesSnapshot().map { it.name }.filter { it.startsWith(commandLine.toComplete) }.asSequence()
     }
     val last = commandLine.parameters.last()
     if (isInstall) {
@@ -52,10 +57,10 @@ abstract class PyRunAnythingPackageProvider : RunAnythingCommandLineProvider() {
       val packageName = last.substring(0, ind)
       val packageManager = getPackageManager(dataContext) ?: return emptySequence()
       initCaches(packageManager)
-      val packageSpec = getPackageRepository(dataContext)?.createPackageSpecification(packageName) ?: return emptySequence()
+      val packageSpec = getPackageRepository(dataContext)?.findPackageSpecification(pyRequirement(packageName)) ?: return emptySequence()
       return runBlockingCancellable {
         withContext(Dispatchers.Default) {
-          val packageInfo = packageManager.repositoryManager.getPackageDetails(packageSpec)
+          val packageInfo = packageManager.repositoryManager.getPackageDetails(packageSpec.name, packageSpec.repository).getOrThrow()
           val versionPrefix = last.substring(ind + operator.length)
           packageInfo.availableVersions.distinct().asSequence().filter { it.startsWith(versionPrefix) }.map { packageName + operator + it }
         }
@@ -72,7 +77,7 @@ abstract class PyRunAnythingPackageProvider : RunAnythingCommandLineProvider() {
 
   private fun initCaches(packageManager: PythonPackageManager) {
     if (!cacheInitialized.getAndSet(true)) {
-      runBlockingCancellable { packageManager.repositoryManager.initCaches() }
+      runBlockingCancellable { (packageManager.repositoryManager as? PythonRepositoryManagerBase)?.waitForInit() }
     }
   }
 

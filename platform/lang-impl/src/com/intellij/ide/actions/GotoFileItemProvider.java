@@ -41,6 +41,7 @@ import java.util.HashMap;
 import java.util.function.Function;
 
 import static com.intellij.ide.actions.searcheverywhere.statistics.SearchEverywhereUsageTriggerCollector.*;
+import static com.intellij.ide.util.gotoByName.FuzzyFileSearchExperimentOptionKt.isFuzzyFileSearchEnabled;
 
 public class GotoFileItemProvider extends DefaultChooseByNameItemProvider {
   private static final Logger LOG = Logger.getInstance(GotoFileItemProvider.class);
@@ -89,7 +90,7 @@ public class GotoFileItemProvider extends DefaultChooseByNameItemProvider {
       // For example, if there are too many results,
       // `ContainerUtil.process(matchedFiles, trackingProcessor)` in `SuffixMatcher.processFiles()` returns false
       // and `processItems == false`
-      if (!processItems && (!FuzzyFileSearchExperimentOption.isFuzzyFileSearchEnabled() || hasSuggestions.get())) {
+      if (!processItems && (!isFuzzyFileSearchEnabled() || hasSuggestions.get())) {
         return false;
       }
 
@@ -99,12 +100,12 @@ public class GotoFileItemProvider extends DefaultChooseByNameItemProvider {
         // With fuzzy search: The process was interrupt but there are suggestions.
         if (fixedPattern != null &&
             !processItemsForPattern(base, parameters.withCompletePattern(fixedPattern), consumer, indicator, hasSuggestionsFixedPattern) &&
-            (!FuzzyFileSearchExperimentOption.isFuzzyFileSearchEnabled() || hasSuggestionsFixedPattern.get())) {
+            (!isFuzzyFileSearchEnabled() || hasSuggestionsFixedPattern.get())) {
           return false;
         }
       }
 
-      return !FuzzyFileSearchExperimentOption.isFuzzyFileSearchEnabled() ||
+      return !isFuzzyFileSearchEnabled() ||
              hasSuggestions.get() ||
              hasSuggestionsFixedPattern.get() ||
              processItemsForPatternWithLevenshtein(base, parameters, consumer, indicator);
@@ -186,6 +187,8 @@ public class GotoFileItemProvider extends DefaultChooseByNameItemProvider {
 
     // Find all directories and files names similar to the last component in patternComponents
     List<MatchResult> matchingNames = new ArrayList<>();
+    final String fullPattern = String.join("", patternComponents);
+    final MinusculeMatcher fullMatcher = buildPatternMatcher(fullPattern, true);
     String lastPatternComponent = patternComponents.get(patternComponents.size() - 1);
     MinusculeMatcher matcher = buildPatternMatcher(lastPatternComponent, true);
     var nameMatchingCheck = new ProcessorWithThrottledCancellationCheck<>(
@@ -193,7 +196,7 @@ public class GotoFileItemProvider extends DefaultChooseByNameItemProvider {
         indicator.checkCanceled();
         if (fileNameCharSeq != null) {
           String fileName = fileNameCharSeq.toString();
-          MatchResult result = matches(base, parameters.getCompletePattern(), matcher, fileName);
+          MatchResult result = matchesWithFullMatcherCheck(base, fullMatcher, parameters.getCompletePattern(), matcher, fileName);
           if (result != null) {
             matchingNames.add(result);
           }
@@ -289,7 +292,7 @@ public class GotoFileItemProvider extends DefaultChooseByNameItemProvider {
     processNames(parameters, name -> grouper.processName(name));
 
     DirectoryPathMatcher dirMatcher = DirectoryPathMatcher.root(myModel, sanitized.substring(0, qualifierEnd));
-    DirectoryConsumer directoryConsumer = new DirectoryConsumer(FuzzyFileSearchExperimentOption.isFuzzyFileSearchEnabled());
+    DirectoryConsumer directoryConsumer = new DirectoryConsumer(isFuzzyFileSearchEnabled());
     while (dirMatcher != null) {
       int index = grouper.index;
       SuffixMatches group = grouper.nextGroup(base);
@@ -331,7 +334,7 @@ public class GotoFileItemProvider extends DefaultChooseByNameItemProvider {
     }
   }
 
-  public static @NotNull String getSanitizedPattern(@NotNull String pattern, @NotNull GotoFileModel model) {
+  public static @NotNull String getSanitizedPattern(@NotNull String pattern, @Nullable GotoFileModel model) {
     return removeSlashes(StringUtil.replace(ChooseByNamePopup.getTransformedPattern(pattern, model), "\\", "/"));
   }
 
@@ -507,6 +510,15 @@ public class GotoFileItemProvider extends DefaultChooseByNameItemProvider {
     return pos;
   }
 
+  /// Splits filenames into groups based on the longest suffix this name could match (i.e. contains all chars from it in
+  /// the right order)
+  ///
+  /// Example: pattern "abcd"
+  /// - "abacada" placed to group 0, since it contains all chars.
+  /// - "cdcd" placed to group 2 since it contains chars from suffix "cd"
+  /// - "abab" placed to group 4, because there is no suffix such as it contains all chars from it
+  ///
+  /// @see NameGrouper#findMatchStartingPosition
   private final class NameGrouper {
     private final String namePattern;
     private final char[] NAME_PATTERN; // upper cased namePattern
@@ -532,6 +544,9 @@ public class GotoFileItemProvider extends DefaultChooseByNameItemProvider {
       this.indicator = indicator;
     }
 
+    /**
+     * @see com.intellij.ide.actions.GotoFileItemProvider#findMatchStartingPosition
+     */
     boolean processName(@NotNull String name) {
       indicator.checkCanceled();
       int position = findMatchStartingPosition(name, name_pattern, NAME_PATTERN);
@@ -559,6 +574,7 @@ public class GotoFileItemProvider extends DefaultChooseByNameItemProvider {
 
   private final class SuffixMatches {
     final String patternSuffix;
+    final MinusculeMatcher fullMatcher;
     final MinusculeMatcher matcher;
     final List<MatchResult> matchingNames = new ArrayList<>();
     final ProgressIndicator indicator;
@@ -573,6 +589,12 @@ public class GotoFileItemProvider extends DefaultChooseByNameItemProvider {
         builder.preferringStartMatches();
       }
 
+      final var fullBuilder = NameUtil.buildMatcher(patternSuffix).withCaseSensitivity(NameUtil.MatchingCaseSensitivity.NONE);
+      if (preferStartMatches) {
+        builder.preferringStartMatches();
+      }
+
+      this.fullMatcher = fullBuilder.build();
       this.matcher = builder.build();
       this.indicator = indicator;
     }
@@ -586,7 +608,7 @@ public class GotoFileItemProvider extends DefaultChooseByNameItemProvider {
     }
 
     boolean matchName(@NotNull ChooseByNameViewModel base, String name) {
-      MatchResult result = matches(base, patternSuffix, matcher, name);
+      MatchResult result = matchesWithFullMatcherCheck(base, fullMatcher, patternSuffix, matcher, name);
       if (result != null) {
         matchingNames.add(result);
         return true;

@@ -1,10 +1,9 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 @file:Suppress("ReplacePutWithAssignment")
 
 package com.intellij.openapi.components.impl.stores
 
 import com.intellij.application.options.PathMacrosCollector
-import com.intellij.application.options.PathMacrosImpl
 import com.intellij.openapi.components.CompositePathMacroFilter
 import com.intellij.openapi.components.PathMacroSubstitutor
 import com.intellij.openapi.components.TrackingPathMacroSubstitutor
@@ -32,9 +31,7 @@ object ComponentStorageUtil {
     pathMacroSubstitutor?.expandPaths(rootElement)
 
     var children = rootElement.getChildren(COMPONENT)
-    if (children.isEmpty() &&
-        rootElement.name == COMPONENT &&
-        rootElement.getAttributeValue(NAME) != null) {
+    if (children.isEmpty() && rootElement.name == COMPONENT && rootElement.getAttributeValue(NAME) != null) {
       // must be modifiable
       children = SmartList(rootElement)
     }
@@ -50,17 +47,20 @@ object ComponentStorageUtil {
         continue
       }
 
-      // so, PathMacroFilter can easily find component name (null parent)
+      // so, PathMacroFilter can easily find the component name (null parent)
       iterator.remove()
 
       if (pathMacroSubstitutor is TrackingPathMacroSubstitutor && !isKotlinSerializable(element)) {
         if (filter == null) {
           filter = CompositePathMacroFilter(PathMacrosCollector.MACRO_FILTER_EXTENSION_POINT_NAME.extensionList)
         }
-        pathMacroSubstitutor.addUnknownMacros(name, PathMacrosCollector.getMacroNames(element, filter, PathMacrosImpl.getInstanceEx()))
+        pathMacroSubstitutor.addUnknownMacros(
+          componentName = name,
+          unknownMacros = PathMacrosCollector.getMacroNames(root = element, filter = filter),
+        )
       }
 
-      // remove only after "getMacroNames" - some PathMacroFilter requires element name attribute
+      // remove only after "getMacroNames" - some PathMacroFilter requires an element name attribute
       element.removeAttribute(NAME)
 
       map.put(name, element)

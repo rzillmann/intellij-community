@@ -2,7 +2,7 @@
 package com.intellij.workspaceModel.test.api.impl
 
 import com.intellij.platform.workspace.storage.*
-import com.intellij.platform.workspace.storage.annotations.Child
+import com.intellij.platform.workspace.storage.annotations.Parent
 import com.intellij.platform.workspace.storage.impl.EntityLink
 import com.intellij.platform.workspace.storage.impl.ModifiableWorkspaceEntityBase
 import com.intellij.platform.workspace.storage.impl.WorkspaceEntityBase
@@ -15,17 +15,19 @@ import com.intellij.platform.workspace.storage.instrumentation.MutableEntityStor
 import com.intellij.platform.workspace.storage.metadata.model.EntityMetadata
 import com.intellij.platform.workspace.storage.url.VirtualFileUrl
 import com.intellij.workspaceModel.test.api.EntityWithManyImports
+import com.intellij.workspaceModel.test.api.EntityWithManyImportsBuilder
 import com.intellij.workspaceModel.test.api.SimpleEntity
+import com.intellij.workspaceModel.test.api.SimpleEntityBuilder
 import java.net.URL
 
 @GeneratedCodeApiVersion(3)
-@GeneratedCodeImplVersion(6)
+@GeneratedCodeImplVersion(7)
 @OptIn(WorkspaceEntityInternalApi::class)
 internal class SimpleEntityImpl(private val dataSource: SimpleEntityData) : SimpleEntity, WorkspaceEntityBase(dataSource) {
 
   private companion object {
-    internal val PARENT_CONNECTION_ID: ConnectionId =
-      ConnectionId.create(EntityWithManyImports::class.java, SimpleEntity::class.java, ConnectionId.ConnectionType.ONE_TO_MANY, false)
+    internal val PARENT_CONNECTION_ID: ConnectionId = ConnectionId.create(EntityWithManyImports::class.java, SimpleEntity::class.java,
+                                                                          ConnectionId.ConnectionType.ONE_TO_MANY, false)
 
     private val connections = listOf<ConnectionId>(
       PARENT_CONNECTION_ID,
@@ -53,8 +55,8 @@ internal class SimpleEntityImpl(private val dataSource: SimpleEntityData) : Simp
   }
 
 
-  internal class Builder(result: SimpleEntityData?) : ModifiableWorkspaceEntityBase<SimpleEntity, SimpleEntityData>(result),
-                                                      SimpleEntity.Builder {
+  internal class Builder(result: SimpleEntityData?) : ModifiableWorkspaceEntityBase<SimpleEntity, SimpleEntityData>(
+    result), SimpleEntityBuilder {
     internal constructor() : this(SimpleEntityData())
 
     override fun applyToBuilder(builder: MutableEntityStorage) {
@@ -133,16 +135,16 @@ internal class SimpleEntityImpl(private val dataSource: SimpleEntityData) : Simp
         if (_diff != null) index(this, "url", value)
       }
 
-    override var parent: EntityWithManyImports.Builder
+    override var parent: EntityWithManyImportsBuilder
       get() {
         val _diff = diff
         return if (_diff != null) {
           @OptIn(EntityStorageInstrumentationApi::class)
-          ((_diff as MutableEntityStorageInstrumentation).getParentBuilder(PARENT_CONNECTION_ID, this) as? EntityWithManyImports.Builder)
-          ?: (this.entityLinks[EntityLink(false, PARENT_CONNECTION_ID)]!! as EntityWithManyImports.Builder)
+          ((_diff as MutableEntityStorageInstrumentation).getParentBuilder(PARENT_CONNECTION_ID, this) as? EntityWithManyImportsBuilder)
+          ?: (this.entityLinks[EntityLink(false, PARENT_CONNECTION_ID)]!! as EntityWithManyImportsBuilder)
         }
         else {
-          this.entityLinks[EntityLink(false, PARENT_CONNECTION_ID)]!! as EntityWithManyImports.Builder
+          this.entityLinks[EntityLink(false, PARENT_CONNECTION_ID)]!! as EntityWithManyImportsBuilder
         }
       }
       set(value) {
@@ -183,7 +185,7 @@ internal class SimpleEntityData : WorkspaceEntityData<SimpleEntity>() {
 
   internal fun isUrlInitialized(): Boolean = ::url.isInitialized
 
-  override fun wrapAsModifiable(diff: MutableEntityStorage): WorkspaceEntity.Builder<SimpleEntity> {
+  override fun wrapAsModifiable(diff: MutableEntityStorage): WorkspaceEntityBuilder<SimpleEntity> {
     val modifiable = SimpleEntityImpl.Builder(null)
     modifiable.diff = diff
     modifiable.id = createEntityId()
@@ -209,9 +211,9 @@ internal class SimpleEntityData : WorkspaceEntityData<SimpleEntity>() {
     return SimpleEntity::class.java
   }
 
-  override fun createDetachedEntity(parents: List<WorkspaceEntity.Builder<*>>): WorkspaceEntity.Builder<*> {
+  override fun createDetachedEntity(parents: List<WorkspaceEntityBuilder<*>>): WorkspaceEntityBuilder<*> {
     return SimpleEntity(url, entitySource) {
-      parents.filterIsInstance<EntityWithManyImports.Builder>().singleOrNull()?.let { this.parent = it }
+      parents.filterIsInstance<EntityWithManyImportsBuilder>().singleOrNull()?.let { this.parent = it }
     }
   }
 

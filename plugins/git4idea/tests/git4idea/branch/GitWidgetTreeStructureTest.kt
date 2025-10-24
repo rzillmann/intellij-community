@@ -8,17 +8,21 @@ import com.intellij.openapi.vcs.Executor.cd
 import com.intellij.testFramework.PlatformTestUtil
 import com.intellij.testFramework.TestDataPath
 import com.intellij.testFramework.assertions.Assertions
+import com.intellij.testFramework.utils.io.deleteRecursively
 import com.intellij.ui.SeparatorWithText
 import com.intellij.ui.tree.TreeTestUtil
 import com.intellij.ui.treeStructure.Tree
+import com.intellij.vcs.git.branch.popup.GitBranchesPopupStepBase
+import com.intellij.vcs.git.branch.popup.GitDefaultBranchesPopupStep
+import com.intellij.vcs.git.branch.popup.GitDefaultBranchesTreeRenderer
+import com.intellij.vcs.git.branch.tree.GitBranchesTreeRenderer
+import com.intellij.vcs.git.repo.GitRepositoriesHolder
+import git4idea.GitUtil
 import git4idea.config.GitVcsSettings
 import git4idea.repo.GitRepository
 import git4idea.test.*
 import git4idea.ui.branch.GitBranchManager
-import git4idea.ui.branch.popup.GitBranchesTreePopup
-import git4idea.ui.branch.popup.GitBranchesTreePopupRenderer
-import git4idea.ui.branch.popup.GitBranchesTreePopupStepBase
-import git4idea.ui.branch.tree.GitBranchesTreeRenderer
+import kotlinx.coroutines.runBlocking
 import java.nio.file.Path
 
 private const val TEST_DATA_SUBFOLDER = "widgetTree"
@@ -28,7 +32,7 @@ class GitWidgetTreeStructureTest : GitPlatformTest() {
   private lateinit var repo: GitRepository
   private lateinit var broRepoPath: Path
 
-  private lateinit var popupStep: GitBranchesTreePopupStepBase
+  private lateinit var popupStep: GitBranchesPopupStepBase
 
   override fun setUp() {
     super.setUp()
@@ -39,6 +43,11 @@ class GitWidgetTreeStructureTest : GitPlatformTest() {
     cd(projectPath)
     refresh()
     repositoryManager.updateAllRepositories()
+
+    runBlocking {
+      // Ensure that the state holder is initialized
+      GitRepositoriesHolder.getInstance(project).init()
+    }
   }
 
   fun testSingleRepo() {
@@ -155,13 +164,10 @@ class GitWidgetTreeStructureTest : GitPlatformTest() {
 
 
   fun testMultiRepoWithFilterMatchingRepo() {
-    createRefs(repo)
-    registerBroRepo().also {
-      createRefs(it)
-    }
-    repo.branch("bro")
+    registerBroRepo()
+    repo.branch("project-branch")
 
-    compareWithSnapshot(buildTestTree("bro"))
+    compareWithSnapshot(buildTestTree("ro"))
   }
 
   fun testMultiRepoWithFilter() {
@@ -172,6 +178,30 @@ class GitWidgetTreeStructureTest : GitPlatformTest() {
     }
 
     compareWithSnapshot(buildTestTree("group"))
+  }
+
+  fun testSingleFreshRepo() {
+    resetToFreshState(repo)
+    compareWithSnapshot(buildTestTree())
+  }
+
+  fun testMultipleFreshRepos() {
+    resetToFreshState(repo)
+    registerBroRepo().also { resetToFreshState(it) }
+    compareWithSnapshot(buildTestTree())
+  }
+
+  fun testMultipleFreshReposNoSync() {
+    settings.syncSetting = DvcsSyncSettings.Value.DONT_SYNC
+
+    resetToFreshState(repo)
+    registerBroRepo().also { resetToFreshState(it) }
+    compareWithSnapshot(buildTestTree())
+  }
+
+  private fun resetToFreshState(repo: GitRepository) {
+    repo.root.toNioPath().resolve(GitUtil.DOT_GIT).deleteRecursively()
+    repo.git("init")
   }
 
   private fun createRefs(repo: GitRepository, ensureTags: Boolean = false) {
@@ -219,10 +249,13 @@ class GitWidgetTreeStructureTest : GitPlatformTest() {
     repositoryManager.updateAllRepositories()
 
     return invokeAndWaitIfNeeded {
+      val holder = GitRepositoriesHolder.getInstance(project)
+      val repositories = holder.getAll()
       //TODO replace with the actual tree from GitBranchesTreePopupBase
       val tree = Tree()
-      popupStep = GitBranchesTreePopup.createBranchesTreePopupStep(project, repo)
-      tree.cellRenderer = GitBranchesTreePopupRenderer(popupStep)
+      val preferredSelection = checkNotNull(holder.get(repo.rpcId))
+      popupStep = GitDefaultBranchesPopupStep.create(project, preferredSelection, repositories)
+      tree.cellRenderer = GitDefaultBranchesTreeRenderer(popupStep)
       tree.model = popupStep.treeModel
       popupStep.updateTreeModelIfNeeded(tree, filter)
       popupStep.setSearchPattern(filter)

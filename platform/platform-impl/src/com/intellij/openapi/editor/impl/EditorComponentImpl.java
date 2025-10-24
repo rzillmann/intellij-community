@@ -124,7 +124,11 @@ public final class EditorComponentImpl extends JTextComponent implements Scrolla
 
         EditorComponentImpl.this.editor.setFontSize(size);
         if (isChangePersistent) {
-          EditorComponentImpl.this.editor.adjustGlobalFontSize(UISettingsUtils.scaleFontSize(size, 1 / UISettingsUtils.getInstance().getCurrentIdeScale()));
+          // Has to be performed with the correct modality because there's an
+          // EditorColorsManagerImpl.dropPsiCaches call inside, and it requires a write-safe context.
+          ApplicationManager.getApplication().invokeLater(() -> {
+            EditorComponentImpl.this.editor.adjustGlobalFontSize(UISettingsUtils.scaleFontSize(size, 1 / UISettingsUtils.getInstance().getCurrentIdeScale()));
+          }, ModalityState.stateForComponent(EditorComponentImpl.this));
         }
 
         return EditorComponentImpl.this.editor.visualPositionToXY(magnificationPosition);
@@ -313,7 +317,7 @@ public final class EditorComponentImpl extends JTextComponent implements Scrolla
   @DirtyUI
   @Override
   public int getScrollableUnitIncrement(Rectangle visibleRect, int orientation, int direction) {
-    return ReadAction.compute(() -> {
+    return EditorThreading.compute(() -> {
       if (orientation == SwingConstants.VERTICAL) {
         return editor.getLineHeight();
       }
@@ -441,7 +445,7 @@ public final class EditorComponentImpl extends JTextComponent implements Scrolla
       final @NotNull var primaryCaret = caretModel.getPrimaryCaret();
 
       myLastKnownPrimaryCaret = new WeakReference<>(primaryCaret);
-      ReadAction.run(() -> {
+      EditorThreading.run(() -> {
         myPrimaryCaretLastKnownDot = primaryCaret.getOffset();
         myPrimaryCaretLastKnownMark = primaryCaret.getLeadSelectionOffset();
       });
@@ -666,13 +670,13 @@ public final class EditorComponentImpl extends JTextComponent implements Scrolla
 
   @Override
   public int getCaretPosition() {
-    return ReadAction.compute(() -> editor.getCaretModel().getOffset());
+    return EditorThreading.compute(() -> editor.getCaretModel().getOffset());
   }
 
   @DirtyUI
   @Override
   public void updateUI() {
-    ReadAction.run(() -> {
+    EditorThreading.run(() -> {
       // Don't use the default TextUI, BaseTextUI, which does a lot of unnecessary
       // work. We do however need to provide a TextUI implementation since some
       // screen reader support code will invoke it
@@ -800,8 +804,7 @@ public final class EditorComponentImpl extends JTextComponent implements Scrolla
 
     @Override
     public String getText(final int offset, final int length) {
-      return ReadAction
-        .compute(() -> editor.getDocument().getText(new TextRange(offset, offset + length)));
+      return EditorThreading.compute(() -> editor.getDocument().getText(new TextRange(offset, offset + length)));
     }
 
     @Override
@@ -1182,9 +1185,6 @@ public final class EditorComponentImpl extends JTextComponent implements Scrolla
       final Integer pos = event.getOffset();
       if (ApplicationManager.getApplication().isDispatchThread()) {
         firePropertyChange(ACCESSIBLE_TEXT_PROPERTY, null, pos);
-        // Fire caret changed event when the document changes because caretPositionChanged might not be called in some cases
-        // (e.g., when deleting text or adding/removing tab indentation, see CaretListener#caretPositionChanged).
-        firePropertyChange(ACCESSIBLE_CARET_PROPERTY, null, pos);
         if (SystemInfo.isMac) {
           // For MacOSX we also need to fire a JTextComponent event to anyone listening
           // to our Document, since *that* rather than the accessible property
@@ -1194,7 +1194,6 @@ public final class EditorComponentImpl extends JTextComponent implements Scrolla
       } else {
         ApplicationManager.getApplication().invokeLater(() -> {
           firePropertyChange(ACCESSIBLE_TEXT_PROPERTY, null, pos);
-          firePropertyChange(ACCESSIBLE_CARET_PROPERTY, null, pos);
           fireJTextComponentDocumentChange(event);
         });
       }
@@ -1289,7 +1288,7 @@ public final class EditorComponentImpl extends JTextComponent implements Scrolla
 
     @Override
     public int getCaretPosition() {
-      return ReadAction.compute(() -> editor.getCaretModel().getOffset());
+      return EditorThreading.compute(() -> editor.getCaretModel().getOffset());
     }
 
     @Override
@@ -1326,17 +1325,17 @@ public final class EditorComponentImpl extends JTextComponent implements Scrolla
 
     @Override
     public int getSelectionStart() {
-      return ReadAction.compute(() -> editor.getSelectionModel().getSelectionStart());
+      return EditorThreading.compute(() -> editor.getSelectionModel().getSelectionStart());
     }
 
     @Override
     public int getSelectionEnd() {
-      return ReadAction.compute(() -> editor.getSelectionModel().getSelectionEnd());
+      return EditorThreading.compute(() -> editor.getSelectionModel().getSelectionEnd());
     }
 
     @Override
     public @Nullable String getSelectedText() {
-      return ReadAction.compute(() -> editor.getSelectionModel().getSelectedText());
+      return EditorThreading.compute(() -> editor.getSelectionModel().getSelectedText());
     }
 
     // ---- Implements AccessibleEditableText ----
@@ -1388,7 +1387,7 @@ public final class EditorComponentImpl extends JTextComponent implements Scrolla
 
     @Override
     public void selectText(int startIndex, int endIndex) {
-      ReadAction.run(() -> {
+      EditorThreading.run(() -> {
         editor.getSelectionModel().setSelection(startIndex, endIndex);
         editor.getCaretModel().moveToOffset(endIndex);
       });

@@ -69,8 +69,26 @@ public final class PyInjectionUtil {
   public static @NotNull InjectionResult registerStringLiteralInjection(@NotNull PsiElement element,
                                                                         @NotNull MultiHostRegistrar registrar,
                                                                         @NotNull Language language) {
+    return registerStringLiteralInjection(element, registrar, language, "", "");
+  }
+
+  /**
+   * Registers language injections like {@link #registerStringLiteralInjection} but wraps the entire injected range with parentheses.
+   * This is useful when the injected fragment must be implicitly parenthesized like a type annotation string injection.
+   */
+  public static @NotNull InjectionResult registerStringLiteralInjectionWithParenthesis(@NotNull PsiElement element,
+                                                                        @NotNull MultiHostRegistrar registrar,
+                                                                        @NotNull Language language) {
+    return registerStringLiteralInjection(element, registrar, language, "(", ")");
+  }
+
+  private static @NotNull InjectionResult registerStringLiteralInjection(@NotNull PsiElement element,
+                                                                        @NotNull MultiHostRegistrar registrar,
+                                                                        @NotNull Language language,
+                                                                        @NotNull String prefix,
+                                                                        @NotNull String suffix) {
     registrar.startInjecting(language);
-    final InjectionResult result = processStringLiteral(element, registrar, "", "", Formatting.NONE);
+    final InjectionResult result = processStringLiteral(element, registrar, prefix, suffix, Formatting.NONE);
     if (result.isInjected()) {
       registrar.frankensteinInjection(!result.isStrict())
         .doneInjecting();
@@ -129,7 +147,7 @@ public final class PyInjectionUtil {
         final int nodeOffsetInParent = stringElem.getTextOffset() - expr.getTextRange().getStartOffset();
         final TextRange contentRange = stringElem.getContentRange();
         final int contentStartOffset = contentRange.getStartOffset();
-        if (formatting != Formatting.NONE || stringElem.isFormatted()) {
+        if (formatting != Formatting.NONE || stringElem.isFormatted() || stringElem.isTemplate()) {
           // Each range is relative to the start of the string element
           final List<TextRange> subsRanges;
           if (formatting != Formatting.NONE) {

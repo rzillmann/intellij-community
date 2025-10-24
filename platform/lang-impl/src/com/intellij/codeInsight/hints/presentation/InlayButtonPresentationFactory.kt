@@ -2,6 +2,7 @@
 package com.intellij.codeInsight.hints.presentation
 
 import com.intellij.codeInsight.hints.InlayHintsUtils
+import com.intellij.codeInsight.hints.InlayPresentationFactory
 import com.intellij.codeInsight.hints.presentation.InlayButtonPresentationFactory.InlayButtonPresentationBuilder.InlayButtonPresentation
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.editor.DefaultLanguageHighlighterColors
@@ -11,6 +12,7 @@ import com.intellij.openapi.editor.colors.TextAttributesKey
 import com.intellij.openapi.util.NlsContexts
 import org.jetbrains.annotations.ApiStatus
 import java.awt.Cursor
+import java.util.EnumSet
 import javax.swing.Icon
 
 @ApiStatus.Internal
@@ -28,7 +30,6 @@ open class InlayButtonPresentationFactory(
     private const val ICON_TEXT_LEFT_PADDING = 4
     private const val HINT_LEFT_PADDING = 8
     private const val CLOSE_LEFT_PADDING = 8
-    private const val ADDITIONAL_SPACING_BETWEEN_COMPONENTS = 2
     private const val DEFAULT_BORDER_WIDTH = 1
 
     val onePixelBorderProvider: InsetValueProvider = object : InsetValueProvider {
@@ -44,9 +45,6 @@ open class InlayButtonPresentationFactory(
   }
 
   private val textMetricsStorage = InlayHintsUtils.getTextMetricStorage(editor)
-
-  constructor(editor: Editor) : this(editor, PresentationFactory(editor))
-  constructor(editor: Editor, delegate: PresentationFactory) : this(editor, delegate, DefaultLanguageHighlighterColors.INLAY_BUTTON_DEFAULT)
 
   fun icon(icon: Icon): InlayButtonPresentationBuilder =
     createBuilder(ScaleAwareIconPresentation(icon = icon, editor = editor, fontShift = 0))
@@ -100,6 +98,7 @@ open class InlayButtonPresentationFactory(
     private val factory: InlayButtonPresentationFactory,
     private var presentation: InlayPresentation,
     private var rightCornerRadius: Int = DEFAULT_CORNER_RADIUS,
+    private var clickListener: InlayPresentationFactory.ClickListener? = null,
   ) {
     internal fun get(): InlayPresentation = presentation
 
@@ -133,16 +132,22 @@ open class InlayButtonPresentationFactory(
     }
 
     fun withTooltip(tooltip: @NlsContexts.Tooltip String): InlayButtonPresentationBuilder {
-      presentation = factory.delegate.withTooltip(tooltip, presentation)
+      return withTooltip(tooltip, showAbove = true)
+    }
+
+    fun withTooltip(tooltip: @NlsContexts.Tooltip String, showAbove: Boolean): InlayButtonPresentationBuilder {
+      presentation = factory.delegate.withTooltip(tooltip, presentation, showAbove)
       return this
     }
 
-    fun build(): InlayPresentation = factory.createPaddedPresentation(
-      factory.delegate.withCursorOnHover(
+    fun onClick(clickListener: InlayPresentationFactory.ClickListener): InlayButtonPresentationBuilder {
+      this.clickListener = clickListener
+      return this
+    }
+
+    fun build(): InlayPresentation = factory.delegate.withCursorOnHover(
         withInlayAttributes(border(), factory.defaultAttributesKey), Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
-      ),
-      left = ADDITIONAL_SPACING_BETWEEN_COMPONENTS
-    )
+      )
 
     fun buildFocused(): InlayPresentation = factory.delegate.withCursorOnHover(
       withInlayAttributes(border(2), factory.focusedAttributesKey), Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
@@ -158,6 +163,16 @@ open class InlayButtonPresentationFactory(
     }
 
     private fun border(borderWidth: Int = DEFAULT_BORDER_WIDTH): InlayPresentation {
+      clickListener?.run {
+        val hovered = factory.delegate.onClick(
+          base = factory.delegate.withReferenceAttributes(presentation),
+          buttons = EnumSet.of(MouseButton.Left, MouseButton.Middle),
+          onClick = { e, p ->
+            onClick(e, p)
+          }
+        )
+        presentation = ChangeOnHoverPresentation(presentation, { hovered })
+      }
       val rounding = RoundWithBackgroundBorderedPresentation(
         PillWithBackgroundPresentation(
           DynamicInsetPresentation(

@@ -44,7 +44,7 @@ class NoRealMavenServerManager : MavenServerManager {
     noRealMavenAllowed()
   }
 
-  override fun restartMavenConnectors(project: Project, wait: Boolean, condition: Predicate<MavenServerConnector>) {
+  override fun shutdownMavenConnectors(project: Project, condition: Predicate<MavenServerConnector>) {
     noRealMavenAllowed()
   }
 
@@ -65,11 +65,6 @@ class NoRealMavenServerManager : MavenServerManager {
   }
 
   override fun getMavenEventListener(): File {
-    noRealMavenAllowed()
-  }
-
-  @Deprecated("Deprecated in Java")
-  override fun createIndexer(project: Project): MavenIndexerWrapper {
     noRealMavenAllowed()
   }
 

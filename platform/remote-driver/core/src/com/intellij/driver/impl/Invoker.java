@@ -2,10 +2,7 @@ package com.intellij.driver.impl;
 
 import com.intellij.driver.model.*;
 import com.intellij.driver.model.transport.*;
-import com.intellij.ide.plugins.IdeaPluginDescriptor;
-import com.intellij.ide.plugins.IdeaPluginDescriptorImpl;
-import com.intellij.ide.plugins.PluginContentDescriptor;
-import com.intellij.ide.plugins.PluginManagerCore;
+import com.intellij.ide.plugins.*;
 import com.intellij.openapi.application.*;
 import com.intellij.openapi.application.ex.ApplicationEx;
 import com.intellij.openapi.application.impl.ApplicationInfoImpl;
@@ -154,7 +151,8 @@ public class Invoker implements InvokerMBean {
       };
       if (call.getLockSemantics() == LockSemantics.NO_LOCK && app instanceof ApplicationEx applicationEx) {
         applicationEx.invokeAndWaitRelaxed(runnable, modalityState[0]);
-      } else {
+      }
+      else {
         app.invokeAndWait(runnable, modalityState[0]);
       }
       result = res[0];
@@ -420,7 +418,11 @@ public class Invoker implements InvokerMBean {
     }
     catch (ClassNotFoundException e) {
       throw new DriverIllegalStateException(
-        (rdTarget == RdTarget.DEFAULT ? "" : rdTarget + ": ") + "No such class '" + call.getClassName() + "' in plugin " + call.getPluginId(), e);
+        (rdTarget == RdTarget.DEFAULT ? "" : rdTarget + ": ") +
+        "No such class '" +
+        call.getClassName() +
+        "' in plugin " +
+        call.getPluginId(), e);
     }
     return clazz;
   }
@@ -436,10 +438,10 @@ public class Invoker implements InvokerMBean {
       IdeaPluginDescriptor plugin = PluginManagerCore.getPlugin(PluginId.getId(mainId));
       if (plugin == null) throw new DriverIllegalStateException("No such plugin " + mainId);
 
-      List<PluginContentDescriptor.ModuleItem> modules = ((IdeaPluginDescriptorImpl)plugin).getContent().modules;
-      for (PluginContentDescriptor.ModuleItem module : modules) {
-        if (Objects.equals(moduleId, module.name)) {
-          return requireNonNull(module.requireDescriptor().getPluginClassLoader());
+      List<ContentModuleDescriptor> modules = IdeaPluginDescriptorImplKt.getContentModules((IdeaPluginDescriptorImpl)plugin);
+      for (var module : modules) {
+        if (Objects.equals(moduleId, module.getModuleNameString())) {
+          return requireNonNull(module.getPluginClassLoader());
         }
       }
 
@@ -502,7 +504,7 @@ public class Invoker implements InvokerMBean {
         return instance;
       }
 
-      if(isKotlinClass(clazz)) {
+      if (isKotlinClass(clazz)) {
         if (clazz.getName().endsWith("$Companion")) { //getting an instance of companion class
           try {
             instance = clazz.getEnclosingClass().getDeclaredField("Companion").get(null);
@@ -573,7 +575,7 @@ public class Invoker implements InvokerMBean {
       return result;
     }
     if (arg instanceof List<?> && !((List<?>)arg).isEmpty() && ContainerUtil.and(((List<?>)arg), item -> item instanceof Ref)) {
-      return ContainerUtil.map(((List<?>) arg), item -> getReference(call.getSessionId(), ((Ref)item).id()));
+      return ContainerUtil.map(((List<?>)arg), item -> getReference(call.getSessionId(), ((Ref)item).id()));
     }
     if (arg instanceof Ref) {
       return getReference(call.getSessionId(), ((Ref)arg).id());

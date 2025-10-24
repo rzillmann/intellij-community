@@ -1,8 +1,8 @@
 package com.intellij.terminal.backend
 
 import com.intellij.idea.AppMode
-import com.intellij.terminal.session.*
-import com.intellij.terminal.session.dto.toTermSize
+import com.intellij.openapi.diagnostic.trace
+import com.jediterm.core.util.TermSize
 import com.jediterm.terminal.RequestOrigin
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.Channel
@@ -11,6 +11,7 @@ import kotlinx.coroutines.channels.SendChannel
 import kotlinx.coroutines.launch
 import org.jetbrains.plugins.terminal.block.reworked.TerminalUsageLocalStorage
 import org.jetbrains.plugins.terminal.block.ui.withLock
+import org.jetbrains.plugins.terminal.session.impl.*
 import org.jetbrains.plugins.terminal.util.STOP_EMULATOR_TIMEOUT
 import org.jetbrains.plugins.terminal.util.waitFor
 import java.util.concurrent.CancellationException
@@ -49,11 +50,23 @@ private suspend fun handleInputEvents(channel: ReceiveChannel<TerminalInputEvent
 }
 
 private fun handleInputEvent(event: TerminalInputEvent, services: JediTermServices) {
+  BackendTerminalSession.LOG.trace { "Input event received: $event" }
+
   val terminalStarter = services.terminalStarter
+
+  TerminalActivityTracker.getInstance().registerActivity()
 
   when (event) {
     is TerminalWriteBytesEvent -> {
-      terminalStarter.sendTrackedBytes(event.bytes, event.id, eventTime = TimeSource.Monotonic.markNow())
+      val eventTime = TimeSource.Monotonic.markNow()
+
+      if (isTypingBytes(event.bytes)) {
+        terminalStarter.sendTypedBytes(event.bytes, eventTime)
+      }
+      else {
+        terminalStarter.sendBytes(event.bytes, false)
+      }
+
       // We count enter key presses on the backend separately, because it's used in the settings
       // to show the feedback notification, and the settings are currently shown on the backend through Lux.
       if (event.bytes.firstOrNull()?.toInt() == '\r'.code && AppMode.isRemoteDevHost()) {
@@ -61,7 +74,8 @@ private fun handleInputEvent(event: TerminalInputEvent, services: JediTermServic
       }
     }
     is TerminalResizeEvent -> {
-      terminalStarter.postResize(event.newSize.toTermSize(), RequestOrigin.User)
+      val termSize = TermSize(event.newSize.columns, event.newSize.rows)
+      terminalStarter.postResize(termSize, RequestOrigin.User)
     }
     is TerminalCloseEvent -> {
       terminalStarter.close()
@@ -90,5 +104,16 @@ private fun handleInputEvent(event: TerminalInputEvent, services: JediTermServic
         }
       }
     }
+    is TerminalHyperlinkClickedEvent -> { } // handled by BackendTerminalHyperlinkFacade
   }
+}
+
+/**
+ * Consider the byte sequence as typing if it contains the single character that is not a special symbol.
+ */
+private fun isTypingBytes(bytes: ByteArray): Boolean {
+  val string = String(bytes, Charsets.UTF_8)
+  if (string.length > 1) return false
+  val char = string[0]
+  return !Character.isISOControl(char) || char == '\r' || char.code == 127 // backspace (del)
 }

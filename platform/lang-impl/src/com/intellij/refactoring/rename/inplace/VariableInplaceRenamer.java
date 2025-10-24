@@ -262,7 +262,7 @@ public class VariableInplaceRenamer extends InplaceRefactoring {
 
   static int restoreCaretOffset(@NotNull RangeMarker caretRangeMarker, int offset) {
     if (caretRangeMarker.isValid()) {
-      if (caretRangeMarker.getStartOffset() <= offset && caretRangeMarker.getEndOffset() >= offset) {
+      if (caretRangeMarker.getTextRange().containsInclusive(offset)) {
         return offset;
       }
       return caretRangeMarker.getEndOffset();
@@ -348,7 +348,7 @@ public class VariableInplaceRenamer extends InplaceRefactoring {
     @Override
     public void showUI() {
       RangeHighlighter highlighter = highlightConflictingElement(collision.getElement());
-      String description = StringUtil.stripHtml(collision.getDescription(), false);
+      String description = collision.getShortDescription();
       if (ApplicationManager.getApplication().isUnitTestMode()) {
         throw new BaseRefactoringProcessor.ConflictsInTestsException(List.of(description));
       }
@@ -392,6 +392,12 @@ public class VariableInplaceRenamer extends InplaceRefactoring {
       ModCommandExecutor.getInstance().executeInBatch(ActionContext.from(null, psiFile), myRevertCommand);
     }, getCommandName(), null);
     myEditor.getCaretModel().moveToOffset(myOrigOffset);
+  }
+
+  @Override
+  protected @Nullable PsiElement checkLocalScope() {
+    PsiElement scope = super.checkLocalScope();
+    return scope != null && !(scope instanceof PsiFileSystemItem) ? scope.getParent() : scope;
   }
 
   private @Nullable RangeHighlighter highlightConflictingElement(PsiElement conflictingElement) {
@@ -522,7 +528,7 @@ public class VariableInplaceRenamer extends InplaceRefactoring {
     boolean bind = false;
     if (myInsertedName != null) {
       final CommandProcessor commandProcessor = CommandProcessor.getInstance();
-      if (commandProcessor.getCurrentCommand() != null && getVariable() != null) {
+      if (commandProcessor.isCommandInProgress() && getVariable() != null) {
         commandProcessor.setCurrentCommandName(getCommandName());
       }
 

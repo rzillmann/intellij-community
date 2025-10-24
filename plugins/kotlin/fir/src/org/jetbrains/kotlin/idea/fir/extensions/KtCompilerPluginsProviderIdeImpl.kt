@@ -15,7 +15,10 @@ import com.intellij.openapi.roots.CompilerModuleExtension
 import com.intellij.openapi.util.registry.Registry
 import com.intellij.openapi.util.registry.RegistryValue
 import com.intellij.openapi.util.registry.RegistryValueListener
-import com.intellij.platform.backend.workspace.WorkspaceModel
+import com.intellij.openapi.vfs.VirtualFile
+import com.intellij.platform.backend.workspace.workspaceModel
+import com.intellij.platform.eel.provider.getEelDescriptor
+import com.intellij.platform.eel.provider.utils.Path
 import com.intellij.platform.workspace.jps.entities.FacetEntity
 import com.intellij.util.concurrency.SynchronizedClearableLazy
 import com.intellij.util.containers.ContainerUtil
@@ -23,9 +26,14 @@ import com.intellij.util.containers.orNull
 import com.intellij.util.lang.UrlClassLoader
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
+import org.jetbrains.kotlin.analysis.api.KaExperimentalApi
 import org.jetbrains.kotlin.analysis.api.platform.projectStructure.KotlinCompilerPluginsProvider
 import org.jetbrains.kotlin.analysis.api.platform.projectStructure.KotlinCompilerPluginsProvider.CompilerPluginType
+import org.jetbrains.kotlin.analysis.api.platform.projectStructure.areCompilerPluginsSupported
+import org.jetbrains.kotlin.analysis.api.projectStructure.KaModule
+import org.jetbrains.kotlin.analysis.api.projectStructure.KaScriptModule
 import org.jetbrains.kotlin.analysis.api.projectStructure.KaSourceModule
+import org.jetbrains.kotlin.analysis.low.level.api.fir.LLFirInternals
 import org.jetbrains.kotlin.cli.common.arguments.CommonCompilerArguments
 import org.jetbrains.kotlin.cli.common.arguments.K2JVMCompilerArguments
 import org.jetbrains.kotlin.cli.plugins.processCompilerPluginsOptions
@@ -40,19 +48,25 @@ import org.jetbrains.kotlin.fir.extensions.FirAssignExpressionAltererExtension
 import org.jetbrains.kotlin.fir.extensions.FirExtensionRegistrar
 import org.jetbrains.kotlin.fir.extensions.FirExtensionRegistrarAdapter
 import org.jetbrains.kotlin.idea.base.projectStructure.KaSourceModuleKind
-import org.jetbrains.kotlin.idea.base.projectStructure.sourceModuleKind
 import org.jetbrains.kotlin.idea.base.projectStructure.openapiModule
+import org.jetbrains.kotlin.idea.base.projectStructure.sourceModuleKind
 import org.jetbrains.kotlin.idea.base.util.caching.getChanges
 import org.jetbrains.kotlin.idea.compiler.configuration.KotlinCommonCompilerArgumentsHolder
+import org.jetbrains.kotlin.idea.compiler.configuration.KotlinCompilerPluginsScriptConfigurationListener
 import org.jetbrains.kotlin.idea.compiler.configuration.KotlinCompilerSettingsListener
 import org.jetbrains.kotlin.idea.facet.KotlinFacet
 import org.jetbrains.kotlin.idea.facet.isKotlinFacet
+import org.jetbrains.kotlin.idea.util.getOriginalOrDelegateFileOrSelf
 import org.jetbrains.kotlin.idea.workspaceModel.KotlinSettingsEntity
+import org.jetbrains.kotlin.scripting.compiler.plugin.impl.makeScriptCompilerArguments
+import org.jetbrains.kotlin.scripting.definitions.findScriptDefinition
 import org.jetbrains.kotlin.util.ServiceLoaderLite
 import java.io.File
 import java.nio.file.Path
 import java.util.*
 import java.util.concurrent.ConcurrentMap
+import kotlin.script.experimental.api.ScriptCompilationConfiguration
+import kotlin.script.experimental.api.compilerOptions
 
 @OptIn(ExperimentalCompilerApi::class)
 internal class KtCompilerPluginsProviderIdeImpl(
@@ -63,15 +77,14 @@ internal class KtCompilerPluginsProviderIdeImpl(
     private val pluginsCache: PluginsCache?
         get() = pluginsCacheCachedValue.value
 
-    private val onlyBundledPluginsEnabledRegistryValue: RegistryValue =
-        Registry.get("kotlin.k2.only.bundled.compiler.plugins.enabled")
+    private val onlyBundledPluginsEnabledRegistryValue: RegistryValue = Registry.get("kotlin.k2.only.bundled.compiler.plugins.enabled")
 
     private val onlyBundledPluginsEnabled: Boolean
         get() = onlyBundledPluginsEnabledRegistryValue.asBoolean()
 
     init {
         cs.launch {
-            WorkspaceModel.getInstance(project).eventLog.collect { event ->
+            project.workspaceModel.eventLog.collect { event ->
                 val facetChanges = event.getChanges<FacetEntity>() + event.getChanges<KotlinSettingsEntity>()
 
                 val hasChanges = facetChanges.any { change ->
@@ -84,28 +97,32 @@ internal class KtCompilerPluginsProviderIdeImpl(
             }
         }
         val messageBusConnection = project.messageBus.connect(this)
-        messageBusConnection.subscribe(KotlinCompilerSettingsListener.TOPIC,
-            object : KotlinCompilerSettingsListener {
+        messageBusConnection.subscribe(
+            KotlinCompilerSettingsListener.TOPIC, object : KotlinCompilerSettingsListener {
                 override fun <T> settingsChanged(oldSettings: T?, newSettings: T?) {
                     resetPluginsCache()
                 }
-            }
-        )
+            })
+        messageBusConnection.subscribe(
+            KotlinCompilerPluginsScriptConfigurationListener.TOPIC, object : KotlinCompilerPluginsScriptConfigurationListener {
+                override fun scriptConfigurationsChanged() {
+                    resetScriptCache(pluginsCacheCachedValue.valueIfInitialized ?: return)
+                }
+            })
 
         onlyBundledPluginsEnabledRegistryValue.addListener(
             object : RegistryValueListener {
                 override fun afterValueChanged(value: RegistryValue) {
                     resetPluginsCache()
                 }
-            },
-            this
+            }, this
         )
     }
 
     private fun createNewCache(): PluginsCache? {
         if (!TrustedProjects.isProjectTrusted(project)) return null
         val pluginsClassLoader: UrlClassLoader = UrlClassLoader.build().apply {
-            parent(KaSourceModule::class.java.classLoader)
+            parent(KaModule::class.java.classLoader)
 
             val allModules = ModuleManager.getInstance(project).modules
             val pluginClasspaths = collectSubstitutedPluginClasspaths(allModules.map { it.getCompilerArguments() })
@@ -114,39 +131,82 @@ internal class KtCompilerPluginsProviderIdeImpl(
         }.get()
         return PluginsCache(
             pluginsClassLoader,
-            ContainerUtil.createConcurrentWeakMap<KaSourceModule, Optional<CompilerPluginRegistrar.ExtensionStorage>>()
-        )
+            ContainerUtil.createConcurrentWeakMap(),
+            SynchronizedClearableLazy { ContainerUtil.createConcurrentWeakMap() })
     }
 
     private class PluginsCache(
         val pluginsClassLoader: UrlClassLoader,
-        val registrarForModule: ConcurrentMap<KaSourceModule, Optional<CompilerPluginRegistrar.ExtensionStorage>>
+        val registrarForSourceModule: ConcurrentMap<KaSourceModule, Optional<CompilerPluginRegistrar.ExtensionStorage>>,
+        /**
+         * As scripts might be associated with injections,
+         * it's better to have a more stable anchor such as a top-level file.
+         */
+        val registrarForScriptModule: SynchronizedClearableLazy<ConcurrentMap<VirtualFile, Optional<CompilerPluginRegistrar.ExtensionStorage>>>
     )
 
-    override fun <T : Any> getRegisteredExtensions(module: KaSourceModule, extensionType: ProjectExtensionDescriptor<T>): List<T> {
-        val registrarForModule = pluginsCache?.registrarForModule ?: return emptyList()
-        val extensionStorage = registrarForModule.computeIfAbsent(module) {
-            Optional.ofNullable(computeExtensionStorage(module))
-        }.orNull() ?: return emptyList()
-        val registrars = extensionStorage.registeredExtensions[extensionType] ?: return emptyList()
-        @Suppress("UNCHECKED_CAST")
-        return registrars as List<T>
+    @OptIn(KaExperimentalApi::class)
+    override fun <T : Any> getRegisteredExtensions(module: KaModule, extensionType: ProjectExtensionDescriptor<T>): List<T> {
+        if (!module.areCompilerPluginsSupported()) return emptyList()
+
+        return when (module) {
+            is KaSourceModule -> {
+                val registrarForModule = pluginsCache?.registrarForSourceModule ?: return emptyList()
+                module.getExtensionsForModule(registrarForModule, module, extensionType)
+            }
+
+            is KaScriptModule -> {
+                val registrarForModule = pluginsCache?.registrarForScriptModule?.value ?: return emptyList()
+                val cacheKey = module.file.virtualFile.getOriginalOrDelegateFileOrSelf()
+
+                module.getExtensionsForModule(registrarForModule, cacheKey, extensionType)
+            }
+
+            else -> emptyList()
+        }
     }
 
-    override fun isPluginOfTypeRegistered(module: KaSourceModule, pluginType: CompilerPluginType): Boolean {
+    @OptIn(KaExperimentalApi::class)
+    private fun <T : Any, K : Any> KaModule.getExtensionsForModule(
+        registrarForModule: ConcurrentMap<K, Optional<CompilerPluginRegistrar.ExtensionStorage>>,
+        cacheKey: K,
+        extensionType: ProjectExtensionDescriptor<T>
+    ): List<T> {
+        val extensionStorage = registrarForModule.computeIfAbsent(cacheKey) {
+            Optional.ofNullable(computeExtensionStorage(this))
+        }.orNull() ?: return emptyList()
+        val registrars = extensionStorage.registeredExtensions[extensionType] ?: return emptyList()
+        @Suppress("UNCHECKED_CAST") return registrars as List<T>
+    }
+
+    override fun isPluginOfTypeRegistered(module: KaModule, pluginType: CompilerPluginType): Boolean {
         val extension = when (pluginType) {
             CompilerPluginType.ASSIGNMENT -> FirAssignExpressionAltererExtension::class
             else -> return false
         }
 
-        return getRegisteredExtensions(module, FirExtensionRegistrarAdapter)
-            .map { (it as FirExtensionRegistrar).configure() }
+        return getRegisteredExtensions(module, FirExtensionRegistrarAdapter).map { (it as FirExtensionRegistrar).configure() }
             .any { it.extensions[extension]?.isNotEmpty() == true }
     }
 
-    private fun computeExtensionStorage(module: KaSourceModule): CompilerPluginRegistrar.ExtensionStorage? {
+    @OptIn(KaExperimentalApi::class, LLFirInternals::class)
+    private fun computeExtensionStorage(module: KaModule): CompilerPluginRegistrar.ExtensionStorage? {
         val classLoader = pluginsCache?.pluginsClassLoader ?: return null
-        val compilerArguments = module.openapiModule.getCompilerArguments()
+
+        val compilerArguments = when (module) {
+            is KaSourceModule -> module.openapiModule.getCompilerArguments()
+            is KaScriptModule -> {
+                val scriptDefinition = module.file.findScriptDefinition() ?: return null
+                val scriptConfiguration = scriptDefinition.compilationConfiguration
+
+                val providedOptions = scriptConfiguration[ScriptCompilationConfiguration.compilerOptions] ?: return null
+                makeScriptCompilerArguments(providedOptions)
+            }
+
+            else -> {
+                return null
+            }
+        }
         val pluginClasspaths = collectSubstitutedPluginClasspaths(listOf(compilerArguments)).map { it.toFile() }
         if (pluginClasspaths.isEmpty()) return null
 
@@ -156,8 +216,7 @@ internal class KtCompilerPluginsProviderIdeImpl(
 
         val pluginRegistrars =
             logger.runAndLogException { ServiceLoaderLite.loadImplementations<CompilerPluginRegistrar>(pluginClasspaths, classLoader) }
-            ?.takeIf { it.isNotEmpty() }
-            ?: return null
+                ?.takeIf { it.isNotEmpty() } ?: return null
 
         ProgressManager.checkCanceled()
 
@@ -167,22 +226,22 @@ internal class KtCompilerPluginsProviderIdeImpl(
 
         ProgressManager.checkCanceled()
 
-        val compilerConfiguration = CompilerConfiguration().apply {
-            // Temporary work-around for KTIJ-24320. Calls to 'setupCommonArguments()' and 'setupJvmSpecificArguments()'
-            // (or even a platform-agnostic alternative) should be added.
-            if (compilerArguments is K2JVMCompilerArguments) {
-                val compilerExtension = CompilerModuleExtension.getInstance(module.openapiModule)
-                val outputUrl = when (module.sourceModuleKind) {
-                    KaSourceModuleKind.TEST -> compilerExtension?.compilerOutputUrlForTests
-                    KaSourceModuleKind.PRODUCTION, null -> compilerExtension?.compilerOutputUrl
+        val compilerConfiguration =
+            CompilerConfiguration().apply { // Temporary work-around for KTIJ-24320. Calls to 'setupCommonArguments()' and 'setupJvmSpecificArguments()'
+                // (or even a platform-agnostic alternative) should be added.
+                if (compilerArguments is K2JVMCompilerArguments && module is KaSourceModule) {
+                    val compilerExtension = CompilerModuleExtension.getInstance(module.openapiModule)
+                    val outputUrl = when (module.sourceModuleKind) {
+                        KaSourceModuleKind.TEST -> compilerExtension?.compilerOutputUrlForTests
+                        KaSourceModuleKind.PRODUCTION, null -> compilerExtension?.compilerOutputUrl
+                    }
+
+                    putIfNotNull(JVMConfigurationKeys.JVM_TARGET, compilerArguments.jvmTarget?.let(JvmTarget::fromString))
+                    putIfNotNull(JVMConfigurationKeys.OUTPUT_DIRECTORY, outputUrl?.let { File(it) })
                 }
 
-                putIfNotNull(JVMConfigurationKeys.JVM_TARGET, compilerArguments.jvmTarget?.let(JvmTarget::fromString))
-                putIfNotNull(JVMConfigurationKeys.OUTPUT_DIRECTORY, outputUrl?.let { File(it) })
+                processCompilerPluginsOptions(this, compilerArguments.pluginOptions?.toList(), commandLineProcessors)
             }
-
-            processCompilerPluginsOptions(this, compilerArguments.pluginOptions?.toList(), commandLineProcessors)
-        }
 
         val storage = CompilerPluginRegistrar.ExtensionStorage()
         for (pluginRegistrar in pluginRegistrars) {
@@ -194,11 +253,9 @@ internal class KtCompilerPluginsProviderIdeImpl(
                         pluginRegistrar, compilerConfiguration
                     ) ?: compilerConfiguration
                     storage.registerExtensions(configuration)
-                }
-                catch (e : ProcessCanceledException) {
+                } catch (e: ProcessCanceledException) {
                     throw e
-                }
-                catch (e: Throwable) {
+                } catch (e: Throwable) {
                     LOG.error(e)
                 }
             }
@@ -218,8 +275,8 @@ internal class KtCompilerPluginsProviderIdeImpl(
 
         val pathMacroManager = PathMacroManager.getInstance(project)
         val expandedPluginClassPaths = pluginClassPaths.map { pathMacroManager.expandPath(it) }
-
-        return expandedPluginClassPaths.map { Path.of(it).toAbsolutePath() }
+        val eel = project.getEelDescriptor()
+        return expandedPluginClassPaths.map { Path(it, eel).toAbsolutePath() }
     }
 
     /**
@@ -230,9 +287,7 @@ internal class KtCompilerPluginsProviderIdeImpl(
      * compiler plugins jars.
      */
     private fun collectSubstitutedPluginClasspaths(compilerArguments: List<CommonCompilerArguments>): List<Path> {
-        val combinedOriginalClasspaths = compilerArguments.asSequence()
-            .flatMap { it.getOriginalPluginClasspaths() }
-            .distinct()
+        val combinedOriginalClasspaths = compilerArguments.asSequence().flatMap { it.getOriginalPluginClasspaths() }.distinct()
 
         val substitutedClasspaths = combinedOriginalClasspaths.mapNotNull(::substitutePluginJar).distinct()
 
@@ -255,8 +310,9 @@ internal class KtCompilerPluginsProviderIdeImpl(
 
 
     private fun Module.getCompilerArguments(): CommonCompilerArguments {
-        return KotlinFacet.get(this)?.configuration?.settings?.mergedCompilerArguments
-            ?: KotlinCommonCompilerArgumentsHolder.getInstance(project).settings
+        return KotlinFacet.get(this)?.configuration?.settings?.mergedCompilerArguments ?: KotlinCommonCompilerArgumentsHolder.getInstance(
+            project
+        ).settings
     }
 
     override fun dispose() {
@@ -270,9 +326,22 @@ internal class KtCompilerPluginsProviderIdeImpl(
     private fun resetPluginsCache() {
         val droppedCache = pluginsCacheCachedValue.drop() ?: return
 
-        val extensionStorages = droppedCache.registrarForModule.values.mapNotNull { it.orNull() }
+        droppedCache.registrarForSourceModule.values.mapNotNull { it.orNull() }.disposeAll()
 
-        for (storage in extensionStorages) {
+        resetScriptCache(droppedCache)
+    }
+
+    /**
+     * Throws away only part of the cache related to the scripts, leaving other storage intact.
+     */
+    private fun resetScriptCache(pluginsCache: PluginsCache) {
+        val scriptsCache = pluginsCache.registrarForScriptModule.drop() ?: return
+
+        scriptsCache.values.mapNotNull { it.orNull() }.disposeAll()
+    }
+
+    private fun Collection<CompilerPluginRegistrar.ExtensionStorage>.disposeAll() {
+        for (storage in this) {
             for (disposable in storage.disposables) {
                 LOG.runAndLogException {
                     disposable.dispose()
@@ -285,6 +354,7 @@ internal class KtCompilerPluginsProviderIdeImpl(
         fun getInstance(project: Project): KtCompilerPluginsProviderIdeImpl {
             return KotlinCompilerPluginsProvider.getInstance(project) as KtCompilerPluginsProviderIdeImpl
         }
+
         private val LOG = logger<KtCompilerPluginsProviderIdeImpl>()
     }
 }

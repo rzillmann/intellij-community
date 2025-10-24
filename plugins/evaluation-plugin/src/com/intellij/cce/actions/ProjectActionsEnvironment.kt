@@ -4,7 +4,10 @@ package com.intellij.cce.actions
 import com.intellij.cce.core.*
 import com.intellij.cce.evaluable.EvaluationStrategy
 import com.intellij.cce.evaluable.common.CommonActionsInvoker
-import com.intellij.cce.evaluation.*
+import com.intellij.cce.evaluation.EvaluationChunk
+import com.intellij.cce.evaluation.EvaluationEnvironment
+import com.intellij.cce.evaluation.EvaluationRootInfo
+import com.intellij.cce.evaluation.EvaluationStep
 import com.intellij.cce.evaluation.step.runInIntellij
 import com.intellij.cce.interpreter.*
 import com.intellij.cce.processor.DefaultEvaluationRootProcessor
@@ -21,14 +24,11 @@ import com.intellij.cce.workspace.EvaluationWorkspace
 import com.intellij.cce.workspace.info.FileErrorInfo
 import com.intellij.cce.workspace.storages.storage.ActionsSingleFileStorage
 import com.intellij.configurationStore.StoreUtil.saveSettings
-import com.intellij.ide.impl.runUnderModalProgressIfIsEdt
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.warmup.util.importOrOpenProjectAsync
-import java.nio.file.FileSystems
 import java.util.*
 import kotlin.random.Random
 
@@ -48,18 +48,24 @@ open class ProjectActionsEnvironment(
     val sf = this ?: ""
     if (sf.isNotBlank()) {
       DatasetRef.parse(sf)
-    } else {
+    }
+    else {
       null
     }
   }
-  private var datasetRefIsHandled = false
 
   override val preparationDescription: String = "Generating actions by selected files"
 
-  override fun prepare(datasetContext: DatasetContext, progress: Progress) {
+  override fun initialize(datasetContext: DatasetContext) {
+    datasetRef?.prepare(datasetContext)
+  }
+
+  override fun prepareDataset(datasetContext: DatasetContext, progress: Progress) {
     if (datasetRef != null) {
-      ensureDataRefIsHandled(datasetContext)
-    } else {
+      val finalPath = DatasetRefConverter().convert(datasetRef, datasetContext, project) ?: datasetContext.path(datasetRef)
+      datasetContext.replaceActionsStorage(ActionsSingleFileStorage(finalPath))
+    }
+    else {
       val filesForEvaluation = ReadAction.compute<List<VirtualFile>, Throwable> {
         FilesHelper.getFilesOfLanguage(project, config.evaluationRoots, config.ignoreFileNames, config.language)
       }
@@ -76,36 +82,26 @@ open class ProjectActionsEnvironment(
     }
   }
 
-  private fun ensureDataRefIsHandled(datasetContext: DatasetContext) {
-    if (!datasetRefIsHandled) {
-      if (datasetRef != null) {
-        datasetRef.prepare(datasetContext)
-        val path = datasetContext.path(datasetRef)
-        val finalPath = DatasetRefConverter().convert(datasetRef, datasetContext, project) ?: path
-        datasetContext.replaceActionsStorage(ActionsSingleFileStorage(finalPath))
-     }
-      datasetRefIsHandled = true
-    }
-  }
-
   override fun sessionCount(datasetContext: DatasetContext): Int {
-    ensureDataRefIsHandled(datasetContext)
     return datasetContext.actionsStorage.computeSessionsCount()
   }
 
-  override fun chunks(datasetContext: DatasetContext): Iterator<EvaluationChunk> {
-    ensureDataRefIsHandled(datasetContext)
+  override fun chunks(datasetContext: DatasetContext): Sequence<EvaluationChunk> {
     val files = datasetContext.actionsStorage.getActionFiles()
-    return files.shuffled(FILES_RANDOM).asSequence().map { file ->
+    return files.shuffled(FILES_RANDOM).asSequence().mapNotNull { file ->
       val fileActions = datasetContext.actionsStorage.getActions(file)
-      val fileText = FilesHelper.getFile(project, fileActions.path).text()
+      val virtualFile = FilesHelper.getFile(project, fileActions.path)
+      if (virtualFile == null) {
+        return@mapNotNull null
+      }
+      val fileText = virtualFile.text()
       FileActionsChunk(fileActions, fileText)
-    }.iterator()
+    }
   }
 
   protected fun generateActions(
     datasetContext: DatasetContext,
-    languageName: String,
+    languageName: String?,
     files: Collection<VirtualFile>,
     evaluationRootInfo: EvaluationRootInfo,
     indicator: Progress,
@@ -145,6 +141,7 @@ open class ProjectActionsEnvironment(
           else -> throw IllegalStateException("Parent psi and offset are null.")
         }
         val codeFragment = codeFragmentBuilder.build(file, rootVisitor, featureName)
+        if (codeFragment == null) continue
         val fileActions = actionsGenerator.generate(codeFragment)
         actionsSummarizer.update(fileActions)
         datasetContext.actionsStorage.saveActions(fileActions)
@@ -255,7 +252,7 @@ open class ProjectActionsEnvironment(
       handler: InterpretationHandler,
       filter: InterpretFilter,
       order: InterpretationOrder,
-      sessionHandler: (Session) -> Unit
+      sessionHandler: (Session) -> Unit,
     ): EvaluationChunk.Result {
       val factory = object : InvokersFactory {
         override fun createActionsInvoker(): ActionsInvoker = CommonActionsInvoker(project)
@@ -270,13 +267,8 @@ open class ProjectActionsEnvironment(
   }
 
   companion object {
-    fun<T> open(projectPath: String, init: (Project) -> T): T {
-      println("Open and load project $projectPath. Operation may take a few minutes.")
-      @Suppress("DEPRECATION")
-      val project = runUnderModalProgressIfIsEdt {
-        importOrOpenProjectAsync(OpenProjectArgsData(FileSystems.getDefault().getPath(projectPath)))
-      }
-      println("Project loaded!")
+    fun <T> open(projectPath: String, init: (Project) -> T): T {
+      val project = ProjectOpeningUtils.open(projectPath)
 
       val environment = try {
         init(project)

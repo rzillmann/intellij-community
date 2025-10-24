@@ -39,13 +39,13 @@ public class ModulesScope extends GlobalSearchScope implements CodeInsightContex
     }
   }
 
-  @ApiStatus.Internal
+  @ApiStatus.Experimental
   @Override
   public @NotNull CodeInsightContextInfo getCodeInsightContextInfo() {
     return this;
   }
 
-  @ApiStatus.Internal
+  @ApiStatus.Experimental
   @Override
   public @NotNull CodeInsightContextFileInfo getFileInfo(@NotNull VirtualFile file) {
     Set<Module> modulesOfFile = myProjectFileIndex.getModulesForFile(file, true);
@@ -60,15 +60,15 @@ public class ModulesScope extends GlobalSearchScope implements CodeInsightContex
     }
   }
 
-  @ApiStatus.Internal
+  @ApiStatus.Experimental
   @Override
   public boolean contains(@NotNull VirtualFile file, @NotNull CodeInsightContext context) {
     if (!CodeInsightContexts.isSharedSourceSupportEnabled(Objects.requireNonNull(getProject()))) {
       return contains(file);
     }
 
-    if (!(context instanceof ModuleContext)) return false;
-    Module contextModule = ((ModuleContext)context).getModule();
+    if (!(context instanceof ModuleContext moduleContext)) return false;
+    Module contextModule = moduleContext.getModule();
     Set<Module> modulesOfFile = myProjectFileIndex.getModulesForFile(file, true);
     return contextModule != null && myModules.contains(contextModule) && modulesOfFile.contains(contextModule);
   }

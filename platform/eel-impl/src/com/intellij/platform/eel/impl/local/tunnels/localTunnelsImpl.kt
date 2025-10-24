@@ -5,16 +5,16 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.fileLogger
-import com.intellij.platform.eel.*
+import com.intellij.platform.eel.EelConnectionError
+import com.intellij.platform.eel.EelIpPreference
 import com.intellij.platform.eel.EelTunnelsApi.*
+import com.intellij.platform.eel.EelTunnelsPosixApi
+import com.intellij.platform.eel.EelTunnelsWindowsApi
 import com.intellij.platform.eel.channels.EelReceiveChannel
 import com.intellij.platform.eel.channels.EelSendChannel
-import com.intellij.platform.eel.impl.NetworkError
-import com.intellij.platform.eel.impl.NetworkOk
-import com.intellij.platform.eel.impl.UnknownFailure
 import com.intellij.platform.eel.impl.asResolvedSocketAddress
-import com.intellij.platform.eel.provider.ResultErrImpl
-import com.intellij.platform.eel.provider.ResultOkImpl
+import com.intellij.platform.eel.path.EelPath
+import com.intellij.platform.eel.provider.LocalEelDescriptor
 import com.intellij.platform.eel.provider.utils.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
@@ -34,12 +34,14 @@ import kotlin.io.path.pathString
 private val logger = fileLogger()
 
 internal object EelLocalTunnelsApiImpl : EelTunnelsPosixApi, EelTunnelsWindowsApi {
-  override suspend fun listenOnUnixSocket(path: CreateFilePath): ListenOnUnixSocketResult = withContext(Dispatchers.IO) {
-    val socketFile = when (path) {
-      is CreateFilePath.Fixed -> Path(path.path)
-      is CreateFilePath.MkTemp -> with(path) {
+  override suspend fun listenOnUnixSocket(fixedPath: EelPath): ListenOnUnixSocketResult =
+    listenOnUnixSocket(Path(fixedPath.toString()))
+
+  override suspend fun listenOnUnixSocket(temporaryPathOptions: ListenOnUnixSocketTemporaryPathOptions): ListenOnUnixSocketResult {
+    val socketFile: Path = withContext(Dispatchers.IO) {
+      with(temporaryPathOptions) {
         createTempFile(
-          directory = if (directory.isEmpty()) null else Path(directory),
+          directory = parentDirectory?.toString()?.let(::Path),
           prefix = prefix,
           suffix = suffix,
         ).also {
@@ -49,7 +51,10 @@ internal object EelLocalTunnelsApiImpl : EelTunnelsPosixApi, EelTunnelsWindowsAp
         }
       }
     }
+    return listenOnUnixSocket(socketFile)
+  }
 
+  private suspend fun listenOnUnixSocket(socketFile: Path): ListenOnUnixSocketResult = withContext(Dispatchers.IO) {
     val tx = EelPipe()
     val rx = EelPipe()
     val serverChannel = ServerSocketChannel.open(StandardProtocolFamily.UNIX)
@@ -68,17 +73,17 @@ internal object EelLocalTunnelsApiImpl : EelTunnelsPosixApi, EelTunnelsWindowsAp
       deleteFileSilently(socketFile)
       bind()
     }
-    ApplicationManager.getApplication().service<MyService>().scope.launch(Dispatchers.IO + CoroutineName("UDS for $path")) {
+    ApplicationManager.getApplication().service<MyService>().scope.launch(Dispatchers.IO + CoroutineName("UDS for $socketFile")) {
       val client = serverChannel.accept()
       serverChannel.close()
       client.use {
         val fromClient = launch {
-          copyWithLoggingAndErrorHandling(client.consumeAsEelChannel(), rx.sink, "fromClient $path") {
+          copyWithLoggingAndErrorHandling(client.consumeAsEelChannel(), rx.sink, "fromClient $socketFile") {
             rx.closePipe(it)
           }
         }
         val toClient = launch {
-          copyWithLoggingAndErrorHandling(tx.source, client.asEelChannel(), "toClient $path") {
+          copyWithLoggingAndErrorHandling(tx.source, client.asEelChannel(), "toClient $socketFile") {
             tx.closePipe(it)
           }
         }
@@ -87,19 +92,19 @@ internal object EelLocalTunnelsApiImpl : EelTunnelsPosixApi, EelTunnelsWindowsAp
         tx.closePipe()
       }
     }
-    ListenOnUnixSocketResult(
-      unixSocketPath = socketFile.pathString,
-      tx = tx.sink,
-      rx = rx.source
-    )
+    object : ListenOnUnixSocketResult {
+      override val unixSocketPath = EelPath.parse(socketFile.pathString, LocalEelDescriptor)
+      override val tx = tx.sink
+      override val rx = rx.source
+    }
 
   }
 
 
-  override suspend fun getConnectionToRemotePort(args: GetConnectionToRemotePortArgs): EelResult<Connection, EelConnectionError> =
+  override suspend fun getConnectionToRemotePort(args: GetConnectionToRemotePortArgs): Connection =
     getConnectionToRemotePortImpl(args)
 
-  override suspend fun getAcceptorForRemotePort(args: GetAcceptorForRemotePort): EelResult<ConnectionAcceptor, EelConnectionError> =
+  override suspend fun getAcceptorForRemotePort(args: GetAcceptorForRemotePort): ConnectionAcceptor =
     getAcceptorForRemotePortImpl(args)
 }
 
@@ -113,7 +118,7 @@ private suspend fun deleteFileSilently(file: Path) {
   }
 }
 
-private suspend fun getConnectionToRemotePortImpl(args: GetConnectionToRemotePortArgs): EelResult<Connection, EelConnectionError> = withContext(Dispatchers.IO) {
+private suspend fun getConnectionToRemotePortImpl(args: GetConnectionToRemotePortArgs): Connection = withContext(Dispatchers.IO) {
   val socketChannel = args.protocolPreference.protocolFamily?.let {
     SocketChannel.open(it)
   } ?: SocketChannel.open()
@@ -124,17 +129,17 @@ private suspend fun getConnectionToRemotePortImpl(args: GetConnectionToRemotePor
   }
   return@withContext try {
     socketChannel.connect(args.asInetSocketAddress)
-    NetworkOk(SocketAdapter(socketChannel))
+    SocketAdapter(socketChannel)
   }
   catch (e: IOException) {
-    NetworkError(UnknownFailure(e.toString()))
+    throw EelConnectionError.UnknownFailure(e.toString())
   }
   finally {
     connKiller.cancel()
   }
 }
 
-private fun getAcceptorForRemotePortImpl(args: GetAcceptorForRemotePort): EelResult<ConnectionAcceptor, EelConnectionError> {
+private fun getAcceptorForRemotePortImpl(args: GetAcceptorForRemotePort): ConnectionAcceptor {
   val channel = try {
     ServerSocketChannel.open().apply {
       bind(args.asInetSocketAddress)
@@ -142,10 +147,10 @@ private fun getAcceptorForRemotePortImpl(args: GetAcceptorForRemotePort): EelRes
     }
   }
   catch (e: IOException) {
-    return ResultErrImpl(UnknownFailure(e.localizedMessage))
+    throw EelConnectionError.UnknownFailure(e.localizedMessage)
   }
   args.configureServerSocket(ConfigurableServerSocketImpl(channel.socket()))
-  return ResultOkImpl(ConnectionAcceptorImpl(channel))
+  return ConnectionAcceptorImpl(channel)
 }
 
 private val EelIpPreference.protocolFamily: ProtocolFamily?
@@ -199,20 +204,19 @@ private class ConnectionAcceptorImpl(private val boundServerSocket: ServerSocket
 @Service
 private class MyService(val scope: CoroutineScope)
 
-private suspend fun copyWithLoggingAndErrorHandling(src: EelReceiveChannel<IOException>, dest: EelSendChannel<IOException>, title: String, onError: (IOException) -> Unit) {
-  when (val r = copy(src, dest)) {
-    is EelResult.Error -> {
-      when (val e = r.error) {
-        is CopyResultError.InError -> {
-          logger.warn("$title input error", e.inError)
-          onError(e.inError)
-        }
-        is CopyResultError.OutError -> {
-          logger.warn("$title output error", e.outError)
-          onError(e.outError)
-        }
+private suspend fun copyWithLoggingAndErrorHandling(src: EelReceiveChannel, dest: EelSendChannel, title: String, onError: (IOException) -> Unit) {
+  try {
+    copy(src, dest)
+  } catch (e: CopyError) {
+    when (e) {
+      is CopyError.InError -> {
+        logger.warn("$title input error", e.cause)
+        onError(e.cause as IOException)
+      }
+      is CopyError.OutError -> {
+        logger.warn("$title output error", e.cause)
+        onError(e.cause as IOException)
       }
     }
-    is EelResult.Ok -> Unit
   }
 }

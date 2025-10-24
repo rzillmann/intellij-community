@@ -3,17 +3,17 @@ package com.intellij.marketplaceMl
 
 import com.github.benmanes.caffeine.cache.Cache
 import com.github.benmanes.caffeine.cache.Caffeine
-import com.intellij.ide.plugins.IdeaPluginDescriptor
 import com.intellij.ide.plugins.marketplace.ranking.MarketplaceLocalRanker
 import com.intellij.ide.plugins.marketplace.statistics.features.PluginManagerMarketplaceSearchFeatureProvider
 import com.intellij.ide.plugins.marketplace.statistics.features.PluginManagerSearchResultFeatureProvider
 import com.intellij.ide.plugins.marketplace.statistics.features.PluginManagerSearchResultsFeatureProvider
 import com.intellij.ide.plugins.marketplace.statistics.features.PluginManagerUserQueryFeatureProvider
+import com.intellij.ide.plugins.newui.PluginUiModel
 import com.intellij.ide.plugins.newui.SearchQueryParser
+import com.intellij.marketplaceMl.MarketplaceMLExperiment.ExperimentOption
 import com.intellij.marketplaceMl.model.MarketplaceRankingModel
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
-import com.intellij.marketplaceMl.MarketplaceMLExperiment.ExperimentOption
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.toJavaDuration
 
@@ -28,9 +28,9 @@ class MarketplaceLocalRankingService : MarketplaceLocalRanker {
 
   override fun rankPlugins(
     queryParser: SearchQueryParser.Marketplace,
-    plugins: MutableList<IdeaPluginDescriptor>
-  ): Map<IdeaPluginDescriptor, Double> {
-    val pluginToScore = mutableMapOf<IdeaPluginDescriptor, Double>()
+    plugins: MutableList<PluginUiModel>
+  ): Map<PluginUiModel, Double> {
+    val pluginToScore = mutableMapOf<PluginUiModel, Double>()
     val searchQuery = queryParser.searchQuery
 
     val queryFeatures = PluginManagerUserQueryFeatureProvider.getSearchStateFeatures(searchQuery)

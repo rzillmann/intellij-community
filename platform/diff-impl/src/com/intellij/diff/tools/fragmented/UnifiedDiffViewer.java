@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.diff.tools.fragmented;
 
 import com.intellij.codeInsight.breadcrumbs.FileBreadcrumbsCollector;
@@ -71,6 +71,7 @@ import com.intellij.util.concurrency.annotations.RequiresEdt;
 import com.intellij.util.concurrency.annotations.RequiresWriteLock;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.ui.UIUtil;
+import com.intellij.util.ui.update.Activatable;
 import com.intellij.util.ui.update.MergingUpdateQueue;
 import com.intellij.util.ui.update.Update;
 import com.intellij.xml.breadcrumbs.NavigatableCrumb;
@@ -81,6 +82,7 @@ import java.awt.*;
 import java.awt.geom.Point2D;
 import java.util.*;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.IntPredicate;
 import java.util.function.IntUnaryOperator;
 
@@ -169,7 +171,22 @@ public class UnifiedDiffViewer extends ListenerDiffViewerBase implements EditorD
     myPanel.setPersistentNotifications(DiffUtil.createCustomNotifications(this, myContext, myRequest));
     DiffTitleHandler.createHandler(() -> createTitles(), myContentPanel, myRequest, this);
 
-    DiffUtil.installShowNotifyListener(getComponent(), () -> myMarkupUpdater.scheduleUpdate());
+    DiffUtil.installShowNotifyListener(getComponent(), new Activatable() {
+      @Override
+      public void showNotify() {
+        myMarkupUpdater.scheduleUpdate();
+      }
+
+      @Override
+      public void hideNotify() {
+        Project project = myProject;
+        if (project == null) return;
+
+        //force re-highlighting the document which may be opened in other editor tab and miss highlighters because of com.intellij.openapi.editor.impl.MarkupModelImpl#removeHighlighter
+        Document document = getContent2().getDocument();
+        DiffEditorHighlighterUpdater.restartHighlighterFor(project, myEditor, document, "UnifiedDiffViewer.hide");
+      }
+    });
   }
 
   @Override
@@ -473,6 +490,7 @@ public class UnifiedDiffViewer extends ListenerDiffViewerBase implements EditorD
       myEditor.getGutterComponentEx().revalidateMarkup();
     };
   }
+
 
   private @NotNull RangeMarker createGuardedBlock(int start, int end) {
     RangeMarker block = myDocument.createGuardedBlock(start, end);
@@ -1584,7 +1602,7 @@ public class UnifiedDiffViewer extends ListenerDiffViewerBase implements EditorD
   }
 
   private class UnifiedImaginaryEditor extends ImaginaryEditor {
-    private static final Set<String> ourReportedMockMethods = ContainerUtil.newConcurrentSet();
+    private static final Set<String> ourReportedMockMethods = ConcurrentHashMap.newKeySet();
     private static boolean ourDisableImaginaryEditor = false;
 
     private final Side mySide;
@@ -1603,7 +1621,7 @@ public class UnifiedDiffViewer extends ListenerDiffViewerBase implements EditorD
 
     protected void warnMockImplementation(@NotNull String methodName) {
       if (ourReportedMockMethods.add(methodName)) {
-        String message = "Method is not applicable. Consider using 'editor instanceOf ImaginaryEditor'";
+        String message = "Method + '" + methodName + "' is not applicable. Consider using 'editor instanceOf ImaginaryEditor'";
         if (ApplicationManager.getApplication().isInternal() ||
             ApplicationManager.getApplication().isUnitTestMode()) {
           LOG.error(message);
@@ -1615,6 +1633,8 @@ public class UnifiedDiffViewer extends ListenerDiffViewerBase implements EditorD
     }
 
     @Override
+    @Nullable
+    @ApiStatus.Obsolete
     public VirtualFile getVirtualFile() {
       return FileDocumentManager.getInstance().getFile(getDocument());
     }

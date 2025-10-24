@@ -47,10 +47,12 @@ import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.pom.java.LanguageLevel;
 import com.intellij.psi.*;
 import com.intellij.psi.impl.JavaConstantExpressionEvaluator;
+import com.intellij.psi.impl.source.javadoc.PsiDocMethodOrFieldRef;
 import com.intellij.psi.impl.source.javadoc.PsiSnippetDocTagImpl;
 import com.intellij.psi.impl.source.tree.ElementType;
 import com.intellij.psi.impl.source.tree.JavaDocElementType;
 import com.intellij.psi.impl.source.tree.JavaElementType;
+import com.intellij.psi.impl.source.tree.TreeElement;
 import com.intellij.psi.javadoc.*;
 import com.intellij.psi.search.GlobalSearchScope;
 import com.intellij.psi.tree.IElementType;
@@ -205,7 +207,7 @@ public class JavaDocInfoGenerator {
     boolean isGenerationForRenderedDoc,
     boolean doHighlightSignatures,
     boolean doHighlightCodeBlocks,
-    @NotNull InlineCodeHighlightingMode inlineCodeBlocksHighlightingMode,
+    @NotNull InlineCodeHighlightingMode ignoredInlineCodeBlocksHighlightingMode,
     boolean doSemanticHighlightingOfLinks,
     float highlightingSaturationFactor
   ) {
@@ -692,23 +694,16 @@ public class JavaDocInfoGenerator {
   public @Nls @Nullable String generateRenderedDocInfo() {
     StringBuilder buffer = new StringBuilder();
 
-    if (myElement instanceof PsiClass) {
-      generateClassJavaDoc(buffer, (PsiClass)myElement, true);
-    }
-    else if (myElement instanceof PsiMethod) {
-      generateMethodJavaDoc(buffer, (PsiMethod)myElement, true);
-    }
-    else if (myElement instanceof PsiField) {
-      generateFieldJavaDoc(buffer, (PsiField)myElement, true);
-    }
-    else if (myElement instanceof PsiJavaModule) {
-      generateModuleJavaDoc(buffer, (PsiJavaModule)myElement, true);
-    }
-    else if (myElement instanceof PsiDocComment) { // package-info case
-      generatePackageJavaDoc(buffer, (PsiDocComment)myElement, true);
-    }
-    else {
-      return null;
+    switch (myElement) {
+      case PsiClass aClass -> generateClassJavaDoc(buffer, aClass, true);
+      case PsiMethod method -> generateMethodJavaDoc(buffer, method, true);
+      case PsiField field -> generateFieldJavaDoc(buffer, field, true);
+      case PsiJavaModule module -> generateModuleJavaDoc(buffer, module, true);
+      // package-info case
+      case PsiDocComment comment -> generatePackageJavaDoc(buffer, comment, true);
+      case null, default -> {
+        return null;
+      }
     }
 
     return sanitizeHtml(buffer);
@@ -1207,8 +1202,8 @@ public class JavaDocInfoGenerator {
   }
 
   private void generateAuthorAndVersionSections(StringBuilder buffer, PsiDocComment docComment) {
-    generateAuthorSection(buffer, docComment);
     generateSingleTagSection(buffer, docComment, "version", JavaBundle.messagePointer("javadoc.version"));
+    generateAuthorSection(buffer, docComment);
   }
 
   private void generateApiSection(StringBuilder buffer, PsiDocComment comment) {
@@ -1569,10 +1564,10 @@ public class JavaDocInfoGenerator {
     generateThrowsSection(buffer, method, comment);
 
     if (comment != null) {
-      generateApiSection(buffer, comment);
       generateSinceSection(buffer, comment);
-      generateSeeAlsoSection(buffer, comment);
       generateAuthorAndVersionSections(buffer, comment);
+      generateApiSection(buffer, comment);
+      generateSeeAlsoSection(buffer, comment);
       generateUnknownTagsSections(buffer, comment);
     }
 
@@ -2080,18 +2075,14 @@ public class JavaDocInfoGenerator {
               String label;
               boolean externalTarget = resolve.getContainingFile() != containingFile;
               if (doSemanticHighlightingOfLinks() || doHighlightCodeBlocks() && !externalTarget) {
-                TextAttributes attributes = null;
-                if (resolve instanceof PsiClass) {
-                  attributes = manager.getClassNameAttributes();
-                }
-                else if (resolve instanceof PsiMethod) {
-                  attributes = manager.getMethodCallAttributes();
-                }
-                else if (resolve instanceof PsiField) {
-                  attributes = externalTarget
-                               ? manager.getFieldDeclarationAttributes((PsiField)resolve)
-                               : manager.getLocalVariableAttributes();
-                }
+                TextAttributes attributes = switch (resolve) {
+                  case PsiClass ignored -> manager.getClassNameAttributes();
+                  case PsiMethod ignored -> manager.getMethodCallAttributes();
+                  case PsiField field -> externalTarget
+                                         ? manager.getFieldDeclarationAttributes(field)
+                                         : manager.getLocalVariableAttributes();
+                  default -> null;
+                };
                 label = attributes != null ? getStyledSpan(true, attributes, text) : text;
               }
               else {
@@ -2108,16 +2099,12 @@ public class JavaDocInfoGenerator {
             attributes = manager.getKeywordAttributes();
           }
           else if (e instanceof PsiIdentifier) {
-            PsiElement parent = e.getParent();
-            if (parent instanceof PsiField) {
-              attributes = manager.getLocalVariableAttributes();
-            }
-            else if (parent instanceof PsiParameter) {
-              attributes = manager.getParameterAttributes();
-            }
-            else if (parent instanceof PsiTypeParameter) {
-              attributes = manager.getTypeParameterNameAttributes();
-            }
+            attributes = switch (e.getParent()) {
+              case PsiField ignored -> manager.getLocalVariableAttributes();
+              case PsiParameter ignored -> manager.getParameterAttributes();
+              case PsiTypeParameter ignored -> manager.getTypeParameterNameAttributes();
+              case null, default -> null;
+            };
           }
           else if (e instanceof PsiJavaToken) {
             IElementType tokenType = ((PsiJavaToken)e).getTokenType();
@@ -2151,9 +2138,12 @@ public class JavaDocInfoGenerator {
   private void generateInlineReturnValue(@NotNull StringBuilder buffer,
                                          @NotNull PsiInlineDocTag tag,
                                          InheritDocProvider<PsiElement[]> provider) {
-    // According to the spec (https://docs.oracle.com/en/java/javase/16/docs/specs/javadoc/doc-comment-spec.html#return), the format is "Returns<description>."
-    buffer.append("Returns");
-    generateValue(buffer, tag.getDataElements(), 0, provider);
+    // According to the spec (https://docs.oracle.com/en/java/javase/16/docs/specs/javadoc/doc-comment-spec.html#return), the format is "Returns <description>."
+    buffer.append("Returns ");
+    final var elements = Arrays.stream(tag.getDataElements())
+      .dropWhile(e -> e instanceof PsiWhiteSpace)
+      .toArray(PsiElement[]::new);
+    generateValue(buffer, elements, 0, provider);
     buffer.append(".");
   }
 
@@ -2303,10 +2293,13 @@ public class JavaDocInfoGenerator {
 
   private void generateLinkValue(PsiInlineDocTag tag, StringBuilder buffer, boolean plainLink) {
     PsiElement[] tagElements = tag.getDataElements();
-    String text = createLinkText(tagElements);
-    if (!text.isEmpty()) {
-      generateLink(buffer, text, tagElements[0], plainLink);
-    }
+    PsiElement ref = getRefElement(tagElements);
+    String label = getLinkLabel(tagElements, ref);
+    StringBuilder b = new StringBuilder();
+    collectElementText(b, ref != null ? ref : tag);
+    PsiElement context = tag;
+    if (ref instanceof PsiDocFragmentRef) context = ref;
+    generateLink(buffer, b.toString(), label, context, plainLink, !hasLinkLabel(tagElements, ref));
   }
 
   private void generateMarkdownLinkValue(PsiMarkdownReferenceLink referenceLink, StringBuilder buffer) {
@@ -2314,7 +2307,7 @@ public class JavaDocInfoGenerator {
     PsiElement label = referenceLink.getLabel();
 
     String referenceText = reference != null ? reference.getText() : "";
-    String labelText = label != null ? label.getText() : "";
+    String labelText = label instanceof PsiMarkdownReferenceLabel ? label.getText() : null;
 
     // JEP 467 requires reference brackets to be escaped, remove the escape to match the reference
     referenceText = referenceText.replace("\\[", "[").replace("\\]", "]");
@@ -2322,7 +2315,7 @@ public class JavaDocInfoGenerator {
   }
 
   private void generateValueValue(PsiInlineDocTag tag, StringBuilder buffer, PsiElement element) {
-    String text = createLinkText(tag.getDataElements());
+    String text = getRefText(tag.getDataElements());
     PsiField valueField = null;
     if (text.isEmpty()) {
       if (myElement instanceof PsiField) valueField = (PsiField)myElement;
@@ -2364,16 +2357,54 @@ public class JavaDocInfoGenerator {
     }
   }
 
-  protected String createLinkText(PsiElement[] tagElements) {
-    int predictOffset = tagElements.length > 0 ? tagElements[0].getTextOffset() + tagElements[0].getText().length() : 0;
-    StringBuilder buffer = new StringBuilder();
-    for (PsiElement tagElement : tagElements) {
-      if (tagElement.getTextOffset() > predictOffset) buffer.append(' ');
-      predictOffset = tagElement.getTextOffset() + tagElement.getText().length();
+  protected String getLinkLabel(PsiElement[] tagElements, @Nullable PsiElement ref) {
+    if (!hasLinkLabel(tagElements, ref)) return null;
 
-      collectElementText(buffer, tagElement);
-    }
+    StringBuilder buffer = new StringBuilder();
+    Arrays.stream(tagElements)
+      .skip(ref == null ? 0 : ContainerUtil.indexOf(tagElements, e -> e == ref) + 1)
+      .forEach(element -> collectElementText(buffer, element));
     return buffer.toString().trim();
+  }
+
+  private String getRefText(PsiElement[] tagElements) {
+    StringBuilder buffer = new StringBuilder();
+    PsiElement ref =  getRefElement(tagElements);
+    if (ref != null) collectElementText(buffer, ref);
+    return buffer.toString().trim();
+  }
+
+  private @Nullable PsiElement getRefElement(PsiElement[] tagElements) {
+    for (PsiElement element : tagElements) {
+      if (element instanceof PsiWhiteSpace) { continue; }
+      if (element instanceof PsiDocToken && element.getText().isBlank())  { continue; }
+      if (isRefElement(element)) return element;
+      break;
+    }
+    return null;
+  }
+
+  /**
+   * @return true if {@code element} is the reference from a link. E.g. {@code String} in {@code {@link String myLink}}.
+   */
+  protected boolean isRefElement(PsiElement element) {
+    return switch (element) {
+      case PsiDocMethodOrFieldRef ignored -> true;
+      case PsiDocFragmentRef ignored -> true;
+      case TreeElement treeElement when treeElement.getTokenType() == JavaDocElementType.DOC_REFERENCE_HOLDER -> true;
+      case PsiDocTagValue docTagValue -> {
+        PsiElement firstChild = docTagValue.getFirstChild();
+        yield firstChild instanceof PsiJavaModuleReferenceElement || firstChild instanceof PsiJavaModuleReference;
+      }
+      default -> false;
+    };
+  }
+
+  /**
+   * Returns true if the link has a custom label.
+   */
+  private static boolean hasLinkLabel(PsiElement[] tagElements, PsiElement ref) {
+    return !(ContainerUtil.and(tagElements, element -> element == ref || element.getText().isBlank()));
   }
 
   protected void collectElementText(StringBuilder buffer, PsiElement element) {
@@ -2426,15 +2457,17 @@ public class JavaDocInfoGenerator {
         PsiDocTag tag = tags[i];
         PsiElement[] elements = tag.getDataElements();
         if (elements.length > 0) {
-          String text = createLinkText(elements);
-          if (StringUtil.startsWithChar(text, '<')) {
-            buffer.append(text);
+          PsiElement ref = getRefElement(elements);
+          String linkLabel = getLinkLabel(elements, ref);
+          if (StringUtil.startsWithChar(linkLabel, '<')) {
+            buffer.append(linkLabel);
           }
-          else if (StringUtil.startsWithChar(text, '"')) {
-            appendPlainText(buffer, text);
+          else if (StringUtil.startsWithChar(linkLabel, '"')) {
+            appendPlainText(buffer, linkLabel);
           }
           else {
-            generateLink(buffer, text, comment, false);
+            boolean plain = hasLinkLabel(elements, ref);
+            generateLink(buffer, ref != null ? ref.getText() : tag.getText(), plain ? linkLabel : null, tag, plain);
           }
         }
         if (i < tags.length - 1) {
@@ -2706,13 +2739,6 @@ public class JavaDocInfoGenerator {
     }
   }
 
-  private void generateLink(StringBuilder buffer, String linkText, @NotNull PsiElement context, boolean plainLink) {
-    int index = JavaDocUtil.extractReference(linkText);
-    String refText = linkText.substring(0, index).trim();
-    String label = StringUtil.nullize(linkText.substring(index).trim());
-    generateLink(buffer, refText, label, context, plainLink);
-  }
-
   void generateLink(StringBuilder buffer, PsiElement element, String label, boolean plainLink) {
     String refText = JavaDocUtil.getReferenceText(element.getProject(), element);
     if (refText != null) {
@@ -2721,13 +2747,22 @@ public class JavaDocInfoGenerator {
   }
 
   /**
+   * @param refText The text of the target element.
+   * @param label   An optional user-defined label. When not null, it will always be used as the link text.
    * @return Length of the generated label.
    */
   int generateLink(StringBuilder buffer, String refText, String label, @NotNull PsiElement context, boolean plainLink) {
-    if (label == null) {
-      PsiManager manager = context.getManager();
-      label = JavaDocUtil.getLabelText(manager.getProject(), manager, refText, context);
-    }
+    return generateLink(buffer, refText, label, context, plainLink, !plainLink);
+  }
+
+  /**
+   * @param refText             The text of the target element.
+   * @param label               An optional user-defined label. When not null, it will always be used as the link text.
+   * @param shouldHighlightLabel True if syntax highlighting should be applied to the link (package, class, …).
+   * @return Length of the generated label.
+   */
+  int generateLink(StringBuilder buffer, String refText, String label, @NotNull PsiElement context, boolean plainLink, boolean shouldHighlightLabel) {
+    // Resolve link target
     LOG.assertTrue(refText != null, "refText appears to be null.");
     PsiElement target = null;
     try {
@@ -2736,8 +2771,16 @@ public class JavaDocInfoGenerator {
     catch (IndexNotReadyException e) {
       LOG.debug(e);
     }
-    appendMaybeUnresolvedLink(buffer, target, label, context.getProject(), plainLink);
-    return StringUtil.stripHtml(label, true).length();
+
+    // Resolve link text
+    String linkLabel = label;
+    if (label == null) {
+      PsiManager manager = context.getManager();
+      linkLabel = JavaDocUtil.getLabelText(manager.getProject(), manager, refText, context);
+    }
+
+    appendMaybeUnresolvedLink(buffer, target, linkLabel, context.getProject(), plainLink, shouldHighlightLabel);
+    return StringUtil.stripHtml(linkLabel, true).length();
   }
 
   public void appendMaybeUnresolvedLink(
@@ -2747,6 +2790,20 @@ public class JavaDocInfoGenerator {
     @NotNull Project project,
     boolean plainLink
   ) {
+    appendMaybeUnresolvedLink(buffer, target, label, project, plainLink, true);
+  }
+
+  /**
+   * @param canHighlightLink false if the link should not receive syntax highlighting (e.g., it has a custom label)
+   */
+  public void appendMaybeUnresolvedLink(
+    StringBuilder buffer,
+    @Nullable PsiElement target,
+    String label,
+    @NotNull Project project,
+    boolean plainLink,
+    boolean canHighlightLink
+  ) {
     if (target == null && DumbService.isDumb(project)) {
       buffer.append(label);
     }
@@ -2754,9 +2811,8 @@ public class JavaDocInfoGenerator {
       buffer.append(getSpanForUnresolvedItem()).append(label).append("</span>");
     }
     else {
-      String highlightedLabel = myIsSignatureGenerationInProgress && doHighlightSignatures() || doSemanticHighlightingOfLinks()
-                                ? tryHighlightLinkLabel(target, label)
-                                : label;
+      boolean doHighlight = canHighlightLink && ((myIsSignatureGenerationInProgress && doHighlightSignatures() || doSemanticHighlightingOfLinks()));
+      String highlightedLabel = doHighlight ? tryHighlightLinkLabel(target, label) : label;
       generateLink(buffer, target, highlightedLabel, plainLink);
     }
   }
@@ -2794,23 +2850,16 @@ public class JavaDocInfoGenerator {
   }
 
   private @NotNull String tryHighlightLinkLabel(@NotNull PsiElement element, @NotNull String label) {
-    if (element instanceof PsiClass) {
-      return getStyledSpan(true, tuneAttributesForLink(getHighlightingManager().getClassDeclarationAttributes((PsiClass)element)), label);
-    }
-    if (element instanceof PsiPackage) {
-      return getStyledSpan(true, tuneAttributesForLink(getHighlightingManager().getClassNameAttributes()), label);
-    }
-    else if (element instanceof PsiMethod) {
-      return tryHighlightLinkOnClassMember(
-        (PsiMember)element, tuneAttributesForLink(getHighlightingManager().getMethodDeclarationAttributes((PsiMethod)element)), label);
-    }
-    else if (element instanceof PsiField) {
-      return tryHighlightLinkOnClassMember(
-        (PsiField)element, tuneAttributesForLink(getHighlightingManager().getFieldDeclarationAttributes((PsiField)element)), label);
-    }
-    else {
-      return getHighlightedByLexerAndEncodedAsHtmlCodeSnippet(element.getProject(), element.getLanguage(), label);
-    }
+    return switch (element) {
+      case PsiClass aClass ->
+        getStyledSpan(true, tuneAttributesForLink(getHighlightingManager().getClassDeclarationAttributes(aClass)), label);
+      case PsiPackage ignored -> getStyledSpan(true, tuneAttributesForLink(getHighlightingManager().getClassNameAttributes()), label);
+      case PsiMethod method -> tryHighlightLinkOnClassMember(
+        method, tuneAttributesForLink(getHighlightingManager().getMethodDeclarationAttributes(method)), label);
+      case PsiField field -> tryHighlightLinkOnClassMember(
+        field, tuneAttributesForLink(getHighlightingManager().getFieldDeclarationAttributes(field)), label);
+      default -> getHighlightedByLexerAndEncodedAsHtmlCodeSnippet(element.getProject(), element.getLanguage(), label);
+    };
   }
 
   private @NotNull String tryHighlightLinkOnClassMember(

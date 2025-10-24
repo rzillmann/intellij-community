@@ -38,7 +38,10 @@ internal object RenameLightElementsHelper {
             jvmNameAnnotation?.delete()
             return
         }
-        val nameExpression = jvmNameAnnotation?.findAttributeValue("name")?.unwrapped as? KtStringTemplateExpression
+        val jvmExposeBoxedAnnotation =
+            lightMethod.modifierList.findAnnotation(JvmStandardClassIds.JVM_EXPOSE_BOXED_ANNOTATION_FQ_NAME.asString())
+        val nameExpression = (jvmNameAnnotation?.findAttributeValue("name")
+            ?: jvmExposeBoxedAnnotation?.findAttributeValue("jvmName"))?.unwrapped as? KtStringTemplateExpression
         if (nameExpression != null) {
             nameExpression.replace(KtPsiFactory(lightMethod.project).createStringTemplate(name))
         } else {

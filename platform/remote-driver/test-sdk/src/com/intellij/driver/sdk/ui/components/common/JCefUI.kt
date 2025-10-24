@@ -1,10 +1,13 @@
 package com.intellij.driver.sdk.ui.components.common
 
 import com.intellij.driver.client.Remote
+import com.intellij.driver.sdk.remoteDev.BeControlAdapter
+import com.intellij.driver.sdk.remoteDev.JCefUiAdapter
 import com.intellij.driver.sdk.ui.Finder
 import com.intellij.driver.sdk.ui.components.ComponentData
 import com.intellij.driver.sdk.ui.components.UiComponent
 import com.intellij.driver.sdk.ui.remote.REMOTE_ROBOT_MODULE_ID
+import com.intellij.driver.sdk.ui.xQuery
 import com.intellij.driver.sdk.waitFor
 import com.intellij.driver.sdk.waitForOne
 import com.intellij.driver.sdk.withRetries
@@ -40,11 +43,11 @@ htmlElement.click()
 ```
  */
 fun Finder.jcef(@Language("xpath") xpath: String? = null, action: JCefUI.() -> Unit = {}): JCefUI {
-  return x(xpath ?: "//div[contains(@class, 'Canvas') or contains(@class, 'JBCef')]", JCefUI::class.java).apply(action)
+  return x(xpath ?: xQuery { byType("com.intellij.ui.jcef.JBCefBrowser${"$"}MyPanel") }, JCefUI::class.java).apply(action)
 }
 
 class JCefUI(data: ComponentData) : UiComponent(data) {
-  private val jcefWorker by lazy { driver.new(JcefComponentWrapper::class, component) }
+  val jcefWorker by lazy { driver.new(JcefComponentWrapper::class, component) }
 
   private val json = Json {
     ignoreUnknownKeys = true
@@ -93,7 +96,7 @@ class JCefUI(data: ComponentData) : UiComponent(data) {
   }
 
   fun callJs(@Language("JavaScript") js: String, timeout: Long = 3000): String {
-    waitFor("document exists", 10.seconds) { hasDocument() }
+    waitFor("document loaded", 10.seconds) { getUrl().isNotEmpty() && !jcefWorker.isLoading() }
     injectElementFinderIfNeeded()
     return jcefWorker.callJs(js, timeout)
   }
@@ -206,9 +209,11 @@ class JCefUI(data: ComponentData) : UiComponent(data) {
 }
 
 @Remote("com.jetbrains.performancePlugin.remotedriver.jcef.JcefComponentWrapper", plugin = REMOTE_ROBOT_MODULE_ID)
-private interface JcefComponentWrapper {
+@BeControlAdapter(JCefUiAdapter::class)
+interface JcefComponentWrapper {
   fun runJs(@Language("JavaScript") js: String)
   fun callJs(@Language("JavaScript") js: String, executeTimeoutMs: Long): String
   fun hasDocument(): Boolean
   fun getUrl(): String
+  fun isLoading(): Boolean
 }

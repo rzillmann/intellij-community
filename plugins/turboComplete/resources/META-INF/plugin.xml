@@ -11,11 +11,12 @@
     to improve code completion's performance perception. Currently, it works only for Kotlin.
   ]]></description>
 
-  <content>
+  <content namespace="jetbrains">
     <module name="intellij.turboComplete.languages.kotlin.k1"/>
   </content>
 
   <dependencies>
+    <module name="intellij.platform.ml.impl"/>
     <plugin id="com.intellij.completion.ml.ranking"/>
   </dependencies>
 

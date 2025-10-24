@@ -3,31 +3,27 @@ package com.intellij.platform.debugger.impl.backend
 
 import com.intellij.ide.ui.icons.rpcId
 import com.intellij.openapi.util.NlsContexts
+import com.intellij.platform.debugger.impl.rpc.*
 import com.intellij.platform.util.coroutines.childScope
 import com.intellij.ui.SimpleTextAttributes
+import com.intellij.util.awaitCancellationAndInvoke
 import com.intellij.xdebugger.Obsolescent
 import com.intellij.xdebugger.XDebuggerBundle
 import com.intellij.xdebugger.XSourcePosition
-import com.intellij.xdebugger.frame.XCompositeNode
-import com.intellij.xdebugger.frame.XDebuggerTreeNodeHyperlink
+import com.intellij.xdebugger.frame.*
 import com.intellij.xdebugger.frame.XFullValueEvaluator.XFullValueEvaluationCallback
-import com.intellij.xdebugger.frame.XInlineDebuggerDataCallback
-import com.intellij.xdebugger.frame.XNavigatable
-import com.intellij.xdebugger.frame.XValue
-import com.intellij.xdebugger.frame.XValueChildrenList
-import com.intellij.xdebugger.frame.XValueContainer
 import com.intellij.xdebugger.impl.XDebugSessionImpl
-import com.intellij.xdebugger.impl.rpc.*
+import com.intellij.xdebugger.impl.rpc.XValueGroupId
+import com.intellij.xdebugger.impl.rpc.XValueId
 import com.intellij.xdebugger.impl.rpc.models.BackendXValueModel
-import com.intellij.xdebugger.impl.ui.tree.actions.computeSourcePositionWithTimeout
+import com.intellij.xdebugger.impl.rpc.models.findValue
+import com.intellij.xdebugger.impl.rpc.models.getOrStoreGlobally
+import com.intellij.xdebugger.impl.rpc.models.toXValueDto
+import com.intellij.xdebugger.impl.rpc.toRpc
 import fleet.rpc.core.toRpc
 import kotlinx.coroutines.*
-import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.channels.SendChannel
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.channelFlow
-import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.channels.*
+import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.future.await
 import org.jetbrains.concurrency.asCompletableFuture
 import java.awt.Font
@@ -44,15 +40,33 @@ internal class BackendXValueApi : XValueApi {
     return computeContainerChildren(xValueModel.cs, xValueModel.xValue, xValueModel.session)
   }
 
+  override suspend fun computeXValueGroupChildren(xValueGroupId: XValueGroupId): Flow<XValueComputeChildrenEvent> {
+    val xValueModel = xValueGroupId.findValue() ?: return emptyFlow()
+    return computeContainerChildren(xValueModel.cs, xValueModel.xValueGroup, xValueModel.session)
+  }
+
   override suspend fun disposeXValue(xValueId: XValueId) {
     BackendXValueModel.findById(xValueId)?.delete()
   }
 
-  override suspend fun evaluateFullValue(xValueId: XValueId): Deferred<XFullValueEvaluatorResult> {
-    val xFullValueEvaluator = BackendXValueModel.findById(xValueId)?.fullValueEvaluator?.value
-                              ?: return CompletableDeferred(XFullValueEvaluatorResult.EvaluationError(XDebuggerBundle.message("xdebugger.evaluate.full.value.evaluator.not.available")))
+  /**
+   * Implementation note:
+   *
+   * The return value might be simplified to a single [XFullValueEvaluatorResult],
+   * but the [com.intellij.xdebugger.frame.XFullValueEvaluator.XFullValueEvaluationCallback.evaluated] method might be called multiple times.
+   */
+  override suspend fun evaluateFullValue(xValueId: XValueId): Flow<XFullValueEvaluatorResult> = channelFlow {
+    val xValueModel = BackendXValueModel.findById(xValueId)
+    if (xValueModel == null) {
+      send(XFullValueEvaluatorResult.EvaluationError(XDebuggerBundle.message("xdebugger.evaluate.full.value.evaluator.not.available")))
+      return@channelFlow
+    }
+    val xFullValueEvaluator = xValueModel.fullValueEvaluator.value
+    if (xFullValueEvaluator == null) {
+      send(XFullValueEvaluatorResult.EvaluationError(XDebuggerBundle.message("xdebugger.evaluate.full.value.evaluator.not.available")))
+      return@channelFlow
+    }
 
-    val result = CompletableDeferred<XFullValueEvaluatorResult>()
     var isObsolete = false
 
     val callback = object : XFullValueEvaluationCallback, Obsolescent {
@@ -61,27 +75,25 @@ internal class BackendXValueApi : XValueApi {
       }
 
       override fun evaluated(fullValue: String) {
-        result.complete(XFullValueEvaluatorResult.Evaluated(fullValue))
+        trySend(XFullValueEvaluatorResult.Evaluated(fullValue))
       }
 
       override fun evaluated(fullValue: String, font: Font?) {
         // TODO[IJPL-160146]: support Font?
-        result.complete(XFullValueEvaluatorResult.Evaluated(fullValue))
+        trySend(XFullValueEvaluatorResult.Evaluated(fullValue))
       }
 
       override fun errorOccurred(errorMessage: @NlsContexts.DialogMessage String) {
-        result.complete(XFullValueEvaluatorResult.EvaluationError(errorMessage))
+        trySend(XFullValueEvaluatorResult.EvaluationError(errorMessage))
       }
-    }
-
-    result.invokeOnCompletion {
-      isObsolete = true
     }
 
     xFullValueEvaluator.startEvaluation(callback)
 
-    return result
-  }
+    awaitClose {
+      isObsolete = true
+    }
+  }.buffer(Channel.UNLIMITED)
 
   override suspend fun computeExpression(xValueId: XValueId): XExpressionDto? {
     val xValueModel = BackendXValueModel.findById(xValueId) ?: return null
@@ -101,7 +113,7 @@ internal class BackendXValueApi : XValueApi {
     }
   }
 
-  private suspend fun computePosition(xValueId: XValueId, compute: (XValue, XNavigatable)-> Unit): XSourcePositionDto? {
+  private suspend fun computePosition(xValueId: XValueId, compute: (XValue, XNavigatable) -> Unit): XSourcePositionDto? {
     val xValueModel = BackendXValueModel.findById(xValueId) ?: return null
     val sourcePosition = computeSourcePositionWithTimeout { navigatable ->
       compute(xValueModel.xValue, navigatable)
@@ -111,16 +123,14 @@ internal class BackendXValueApi : XValueApi {
 
   override suspend fun computeInlineData(xValueId: XValueId): XInlineDebuggerDataDto? {
     val xValueModel = BackendXValueModel.findById(xValueId) ?: return null
-    val flow = MutableSharedFlow<XSourcePositionDto>()
+    val channel = Channel<XSourcePositionDto>(Channel.UNLIMITED)
     val state = xValueModel.xValue.computeInlineDebuggerData(object : XInlineDebuggerDataCallback() {
       override fun computed(position: XSourcePosition?) {
         if (position == null) return
-        xValueModel.cs.launch {
-          flow.emit(position.toRpc())
-        }
+        channel.trySend(position.toRpc())
       }
     })
-    return XInlineDebuggerDataDto(state, flow.toRpc())
+    return XInlineDebuggerDataDto(state, channel.asColdFlow().toRpc())
   }
 }
 
@@ -164,6 +174,7 @@ private class AddNextChildrenCallbackHandler(cs: CoroutineScope) {
   }
 }
 
+@Suppress("OPT_IN_USAGE")
 internal fun computeContainerChildren(
   parentCs: CoroutineScope,
   xValueContainer: XValueContainer,
@@ -172,12 +183,16 @@ internal fun computeContainerChildren(
   val rawEvents = Channel<RawComputeChildrenEvent>(capacity = Int.MAX_VALUE)
 
   return channelFlow {
+    parentCs.awaitCancellationAndInvoke {
+      rawEvents.close()
+    }
     val addNextChildrenCallbackHandler = AddNextChildrenCallbackHandler(this@channelFlow)
 
-    var isObsolete = false
     val xCompositeBridgeNode = object : XCompositeNode {
+      @Volatile
+      var obsolete = false
       override fun isObsolete(): Boolean {
-        return isObsolete
+        return obsolete
       }
 
       override fun addChildren(children: XValueChildrenList, last: Boolean) {
@@ -209,20 +224,14 @@ internal fun computeContainerChildren(
       }
     }
 
-    xValueContainer.computeChildren(xCompositeBridgeNode)
-
-    // mark xCompositeBridgeNode as obsolete when the channel collection is canceled
-    launch {
-      try {
-        awaitCancellation()
-      }
-      finally {
-        isObsolete = true
+    try {
+      xValueContainer.computeChildren(xCompositeBridgeNode)
+      for (event in rawEvents) {
+        send(event.convertToRpcEvent(parentCs, session))
       }
     }
-
-    for (event in rawEvents) {
-      send(event.convertToRpcEvent(parentCs, session))
+    finally {
+      xCompositeBridgeNode.obsolete = true
     }
   }
 }
@@ -244,7 +253,19 @@ private sealed interface RawComputeChildrenEvent {
           }
         }
       }.awaitAll()
-      return XValueComputeChildrenEvent.AddChildren(names, childrenXValueDtos, last)
+
+      fun List<XValueGroup>.toDto() = map {
+        it.getOrStoreGlobally(parentCoroutineScope, session).toXValueGroupDto()
+      }
+
+      val topGroups = children.topGroups.toDto()
+      val bottomGroups = children.bottomGroups.toDto()
+
+      val topValues: List<XValueDto> = children.topValues.map {
+        newChildXValueModel(it, parentCoroutineScope, session).toXValueDto()
+      }
+
+      return XValueComputeChildrenEvent.AddChildren(names, childrenXValueDtos, last, topGroups, bottomGroups, topValues)
     }
   }
 
@@ -273,5 +294,11 @@ private sealed interface RawComputeChildrenEvent {
     override suspend fun convertToRpcEvent(parentCoroutineScope: CoroutineScope, session: XDebugSessionImpl): XValueComputeChildrenEvent {
       return XValueComputeChildrenEvent.TooManyChildren(remaining, addNextChildrenCallbackHandler.setAddNextChildrenCallback(addNextChildren))
     }
+  }
+}
+
+private fun <T> ReceiveChannel<T>.asColdFlow(): Flow<T> = flow {
+  consumeEach {
+    emit(it)
   }
 }

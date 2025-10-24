@@ -2,8 +2,8 @@
 package com.intellij.execution.eel
 
 import com.intellij.platform.eel.*
-import com.intellij.platform.eel.EelTunnelsApi.CreateFilePath
 import com.intellij.platform.eel.channels.sendWholeBuffer
+import com.intellij.platform.eel.provider.asEelPath
 import com.intellij.platform.eel.provider.localEel
 import com.intellij.platform.eel.provider.utils.consumeAsInputStream
 import com.intellij.platform.eel.provider.utils.sendWholeText
@@ -26,7 +26,6 @@ import java.net.UnixDomainSocketAddress
 import java.nio.ByteBuffer
 import java.nio.channels.SocketChannel
 import java.nio.file.Path
-import kotlin.io.path.pathString
 import kotlin.test.assertEquals
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
@@ -48,9 +47,11 @@ class EelLocalTunnelApiTest {
 
   @Test
   fun testCheckFailureConnection(): Unit = timeoutRunBlocking(5.minutes) {
-    when (localEel.tunnels.getConnectionToRemotePort().port(22U).hostname("google.com").timeout(5.seconds).eelIt()) {
-      is EelResult.Error -> Unit
-      is EelResult.Ok -> Assertions.fail("Connection should fail")
+    try {
+      localEel.tunnels.getConnectionToRemotePort().port(22U).hostname("google.com").timeout(5.seconds).eelIt()
+      Assertions.fail("Connection should fail")
+    } catch (_: EelConnectionError) {
+      // ok
     }
   }
 
@@ -58,22 +59,22 @@ class EelLocalTunnelApiTest {
   fun testClientSuccessConnection(): Unit = timeoutRunBlocking(1.minutes) {
     withServer { connection, _ ->
       val buffer = ByteBuffer.allocate(4096)
-      connection.receiveChannel.receive(buffer).getOrThrow()
+      connection.receiveChannel.receive(buffer)
       Assertions.assertEquals(NetworkConstants.HELLO_FROM_SERVER, NetworkConstants.fromByteBuffer(buffer.flip()))
-      connection.sendChannel.sendWholeBuffer(NetworkConstants.HELLO_FROM_CLIENT.toBuffer()).getOrThrow() //      Helper closes the stream, so does the channel
-      Assertions.assertEquals(ReadResult.EOF, connection.receiveChannel.receive(ByteBuffer.allocate(1)).getOrThrow())
+      connection.sendChannel.sendWholeBuffer(NetworkConstants.HELLO_FROM_CLIENT.toBuffer()) //      Helper closes the stream, so does the channel
+      Assertions.assertEquals(ReadResult.EOF, connection.receiveChannel.receive(ByteBuffer.allocate(1)))
     }
   }
 
   @Test
   fun testServerListensForConnection(): Unit = timeoutRunBlocking(1.minutes) {
-    val helper = clientExecutor.createBuilderToExecuteMain(localEel.exec).getOrThrow()
-    val acceptor = localEel.tunnels.getAcceptorForRemotePort().getOrThrow()
-    helper.stdin.sendWholeText(acceptor.boundAddress.port.toString() + "\n").getOrThrow()
+    val helper = clientExecutor.createBuilderToExecuteMain(localEel.exec).eelIt()
+    val acceptor = localEel.tunnels.getAcceptorForRemotePort().eelIt()
+    helper.stdin.sendWholeText(acceptor.boundAddress.port.toString() + "\n")
     val conn = acceptor.incomingConnections.receive()
     try {
       val buff = ByteBuffer.allocate(1024)
-      conn.receiveChannel.receive(buff).getOrThrow()
+      conn.receiveChannel.receive(buff)
       val fromServer = NetworkConstants.fromByteBuffer(buff.flip())
       assertEquals(NetworkConstants.HELLO_FROM_CLIENT, fromServer)
     }
@@ -85,14 +86,15 @@ class EelLocalTunnelApiTest {
   @ParameterizedTest
   @ValueSource(booleans = [true, false])
   fun testUnixSocket(explicitSocket: Boolean, @TempDir tempDir: Path): Unit = timeoutRunBlocking {
-    val path = if (explicitSocket) {
-      CreateFilePath.Fixed(tempDir.resolve("file.sock").pathString)
-    }
-    else {
-      CreateFilePath.MkTemp()
-    }
     repeat(5) {
-      val (socketPathStr, tx, rx) = localEel.tunnels.listenOnUnixSocket(path)
+      val unixSocketResult =
+        if (explicitSocket)
+          localEel.tunnels.listenOnUnixSocket(tempDir.resolve("file.sock").asEelPath())
+        else
+          localEel.tunnels.listenOnUnixSocket().eelIt()
+      val socketPathStr = unixSocketResult.unixSocketPath.toString()
+      val tx = unixSocketResult.tx
+      val rx = unixSocketResult.rx
       val socketPath = Path.of(socketPathStr)
       val helloFromClient = "fromClient".encodeToByteArray()
       val helloFromServer = "fromServer".encodeToByteArray()
@@ -109,24 +111,24 @@ class EelLocalTunnelApiTest {
           }
         }
       }
-      tx.sendWholeBuffer(ByteBuffer.wrap(helloFromServer)).getOrThrow()
+      tx.sendWholeBuffer(ByteBuffer.wrap(helloFromServer))
       val bufferRecv = ByteBuffer.allocate(helloFromClient.size)
       while (bufferRecv.hasRemaining()) {
         rx.receive(bufferRecv)
       }
       Assertions.assertEquals(helloFromClient.decodeToString(), bufferRecv.flip().decodeString())
       client.join()
-      rx.close()
+      rx.closeForReceive()
       tx.close()
     }
   }
 
   private suspend fun withServer(block: suspend CoroutineScope.(EelTunnelsApi.Connection, EelProcess) -> Unit) {
 
-    val helper = serverExecutor.createBuilderToExecuteMain(localEel.exec).getOrThrow()
+    val helper = serverExecutor.createBuilderToExecuteMain(localEel.exec).eelIt()
     try {
       val port = helper.stdout.consumeAsInputStream().bufferedReader().readLine().trim().toInt()
-      val connection = localEel.tunnels.getConnectionToRemotePort().port(port.toUShort()).preferV4().getOrThrow()
+      val connection = localEel.tunnels.getConnectionToRemotePort().port(port.toUShort()).preferV4().eelIt()
       coroutineScope {
         block(connection, helper)
       }

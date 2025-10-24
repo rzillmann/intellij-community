@@ -5,12 +5,15 @@ import org.jetbrains.tools.model.updater.GeneratorPreferences.ArtifactMode
 import org.jetbrains.tools.model.updater.impl.*
 
 private const val ktGroup = "org.jetbrains.kotlin"
-internal const val BOOTSTRAP_VERSION = "2.2.255-dev-255"
+
+/** The version should be aligned with gradle.properties#defaultSnapshotVersion from the Kotlin repo */
+internal const val BOOTSTRAP_VERSION = "2.3.255-dev-255"
 
 // see .idea/jarRepositories.xml
-private val KOTLIN_IDE_DEPS_REPOSITORY = JpsRemoteRepository(
-    "kotlin-ide-plugin-deps",
-    "https://cache-redirector.jetbrains.com/maven.pkg.jetbrains.space/kotlin/p/kotlin/kotlin-ide-plugin-dependencies"
+// This is the new repository where artifacts SINCE `2.2.20-dev-2414` are published to.
+private val INTELLIJ_DEPENDENCIES_REPOSITORY = JpsRemoteRepository(
+    "intellij-dependencies",
+    "https://cache-redirector.jetbrains.com/packages.jetbrains.team/maven/p/ij/intellij-dependencies",
 )
 
 private class ArtifactCoordinates(private val originalVersion: String, val mode: ArtifactMode) {
@@ -25,15 +28,24 @@ private val GeneratorPreferences.kotlincArtifactCoordinates: ArtifactCoordinates
     get() = ArtifactCoordinates(kotlincVersion, kotlincArtifactsMode)
 
 private val GeneratorPreferences.jpsArtifactCoordinates: ArtifactCoordinates
-    get() = ArtifactCoordinates(jpsPluginVersion, jpsPluginArtifactsMode)
+    get() = if (jpsPluginVersion != "dev") {
+        ArtifactCoordinates(jpsPluginVersion, jpsPluginArtifactsMode)
+    } else {
+        kotlincArtifactCoordinates
+    }
+
+internal val GeneratorPreferences.kotlincArtifactVersion: String
+    get() = kotlincArtifactCoordinates.version
+
+internal val GeneratorPreferences.jpsArtifactVersion: String
+    get() = jpsArtifactCoordinates.version
 
 internal fun generateKotlincLibraries(preferences: GeneratorPreferences, isCommunity: Boolean): List<JpsLibrary> {
     val kotlincCoordinates = preferences.kotlincArtifactCoordinates
-    val jpsPluginCoordinates = preferences.jpsArtifactCoordinates.takeIf { it.version != "dev" } ?: kotlincCoordinates
+    val jpsPluginCoordinates = preferences.jpsArtifactCoordinates
 
     return buildLibraryList(isCommunity) {
         kotlincForIdeWithStandardNaming("kotlinc.allopen-compiler-plugin", kotlincCoordinates)
-        kotlincForIdeWithStandardNaming("kotlinc.android-extensions-compiler-plugin", kotlincCoordinates)
         kotlincForIdeWithStandardNaming("kotlinc.analysis-api-k2-tests", kotlincCoordinates)
         kotlincForIdeWithStandardNaming("kotlinc.analysis-api-k2", kotlincCoordinates)
         kotlincForIdeWithStandardNaming("kotlinc.analysis-api-fe10", kotlincCoordinates)
@@ -75,12 +87,9 @@ internal fun generateKotlincLibraries(preferences: GeneratorPreferences, isCommu
         kotlincWithStandardNaming("kotlinc.kotlin-scripting-jvm", kotlincCoordinates)
         kotlincWithStandardNaming("kotlinc.kotlin-script-runtime", kotlincCoordinates, transitive = true)
 
-        kotlincForIdeWithStandardNaming("kotlinc.kotlin-jps-plugin-tests", jpsPluginCoordinates)
-        kotlincWithStandardNaming("kotlinc.kotlin-dist", jpsPluginCoordinates, postfix = "-for-ide")
-        kotlincWithStandardNaming("kotlinc.kotlin-jps-plugin-classpath", jpsPluginCoordinates)
-
-        // TODO: KTIJ-32993
-        kotlincWithStandardNaming("kotlinc.kotlin-dist", kotlincCoordinates, postfix = "-for-ide", jpsLibraryName = "kotlinc.kotlin-ide-dist")
+        kotlincForIdeWithStandardNaming("kotlinc.kotlin-jps-plugin-tests", jpsPluginCoordinates, repository = INTELLIJ_DEPENDENCIES_REPOSITORY)
+        kotlincWithStandardNaming("kotlinc.kotlin-dist", jpsPluginCoordinates, postfix = "-for-ide", repository = INTELLIJ_DEPENDENCIES_REPOSITORY)
+        kotlincWithStandardNaming("kotlinc.kotlin-jps-plugin-classpath", jpsPluginCoordinates, repository = INTELLIJ_DEPENDENCIES_REPOSITORY)
 
         // bootstrap version of kotlin-jps-plugin-classpath required for testing
         kotlincWithStandardNaming(
@@ -107,9 +116,10 @@ private fun buildLibraryList(isCommunity: Boolean, builder: LibraryListBuilder.(
 private fun LibraryListBuilder.kotlincForIdeWithStandardNaming(
     name: String,
     coordinates: ArtifactCoordinates,
-    includeSources: Boolean = true
+    includeSources: Boolean = true,
+    repository: JpsRemoteRepository = INTELLIJ_DEPENDENCIES_REPOSITORY,
 ) {
-    kotlincWithStandardNaming(name, coordinates, includeSources, "-for-ide")
+    kotlincWithStandardNaming(name, coordinates, includeSources, "-for-ide", repository = repository)
 }
 
 private fun LibraryListBuilder.kotlincWithStandardNaming(
@@ -119,7 +129,7 @@ private fun LibraryListBuilder.kotlincWithStandardNaming(
     postfix: String = "",
     transitive: Boolean = false,
     excludes: List<MavenId> = emptyList(),
-    repository: JpsRemoteRepository = KOTLIN_IDE_DEPS_REPOSITORY,
+    repository: JpsRemoteRepository = INTELLIJ_DEPENDENCIES_REPOSITORY,
     jpsLibraryName: String = name,
 ) {
     require(name.startsWith("kotlinc."))
@@ -155,7 +165,10 @@ private fun JpsLibrary.convertMavenUrlToCooperativeIfNeeded(artifactsMode: Artif
     fun convertUrl(url: JpsUrl): JpsUrl {
         return when (url.path) {
             is JpsPath.ProjectDir -> url
-            is JpsPath.MavenRepository -> JpsUrl.Jar(JpsPath.ProjectDir("../build/repo/${url.path.relativePath}", isCommunity))
+            is JpsPath.MavenRepository -> {
+                val snapshotDirectoryPath = KotlinTestsDependenciesUtil.kotlinCompilerSnapshotLocationInsideCommunity
+                JpsUrl.Jar(JpsPath.ProjectDir("$snapshotDirectoryPath/${url.path.relativePath}", isCommunity))
+            }
         }
     }
 

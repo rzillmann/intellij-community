@@ -19,11 +19,13 @@ import com.intellij.ui.dsl.builder.TopGap
 import com.intellij.ui.dsl.builder.bind
 import com.intellij.ui.dsl.builder.bindSelected
 import com.intellij.ui.dsl.builder.panel
+import com.intellij.util.PlatformUtils
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.ThreeStateCheckBox
 import com.intellij.util.ui.ThreeStateCheckBox.State
 import org.jetbrains.annotations.Nls
 import java.awt.BorderLayout
+import java.awt.Color
 import javax.swing.BoxLayout
 import javax.swing.JCheckBox
 import javax.swing.JComponent
@@ -97,7 +99,12 @@ internal class SettingsSyncPanelHolder() {
           radioButton(message("settings.cross.product.sync.choice.only.this.product", productName), false)
         }
         row {
-          radioButton(message("settings.cross.product.sync.choice.all.products"), true)
+          val allProductsText = if (PlatformUtils.getPlatformPrefix() == "AndroidStudio") {
+            message("settings.cross.product.sync.choice.all.products.android")
+          } else {
+            message("settings.cross.product.sync.choice.all.products")
+          }
+          radioButton(allProductsText, true)
         }
       }.bind(::isCrossIdeSyncEnabled)
     }
@@ -161,6 +168,7 @@ internal class SettingsSyncPanelHolder() {
       .visible(holder.secondaryGroup!!.getDescriptors().size > 1 || !holder.secondaryGroup!!.isComplete())
       .onReset {
         subcategoryLinkCell.visible(holder.secondaryGroup!!.getDescriptors().size > 1 || !holder.secondaryGroup!!.isComplete())
+        subcategoryLink.isEnabled = holder.secondaryGroup!!.isComplete() || holder.isSynchronized
       }
     topCheckBox.addActionListener {
       holder.isSynchronized = topCheckBox.state != State.NOT_SELECTED
@@ -247,6 +255,7 @@ internal class SettingsSyncPanelHolder() {
     val scrollPane = JBScrollPane(checkboxList)
     panel.add(scrollPane, BorderLayout.CENTER)
     scrollPane.border = JBUI.Borders.empty(5)
+    scrollPane.viewportBorder = JBUI.Borders.emptyRight(JBUI.scale(8))
     val chooserBuilder = JBPopupFactory.getInstance().createComponentPopupBuilder(panel, checkboxList)
     chooserBuilder.createPopup().showUnderneathOf(owner)
   }
@@ -254,6 +263,11 @@ internal class SettingsSyncPanelHolder() {
   private class PluginsCheckboxList(
     val descriptors: List<SettingsSyncSubcategoryDescriptor>,
     listener : CheckBoxListListener) : CheckBoxList<SettingsSyncSubcategoryDescriptor>(listener) {
+
+
+    override fun getBackground(isSelected: Boolean): Color? {
+      return super.getBackground(false)
+    }
 
     override fun adjustRendering(rootComponent: JComponent,
                                  checkBox: JCheckBox?,

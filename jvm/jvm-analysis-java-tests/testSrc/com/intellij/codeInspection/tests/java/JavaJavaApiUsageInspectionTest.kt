@@ -260,7 +260,7 @@ class JavaJavaApiUsageInspectionTest : JavaApiUsageInspectionTestBase() {
       import java.time.Duration;
       
       class Main {
-        {
+        static {
           try {
             Thread.sl<caret>eep(Duration.ofSeconds(5));
           } catch (InterruptedException e) { }
@@ -284,6 +284,101 @@ class JavaJavaApiUsageInspectionTest : JavaApiUsageInspectionTestBase() {
           System.out.write(buff); // call to PrintStream in JDK 14
           ((FilterOutputStream) System.out).write(buff); // call to FilterOutputStream in JDK below 14
         }
+      }
+    """.trimIndent())
+  }
+
+  fun `test import for static methods`() {
+    myFixture.addClass("""
+      package java.lang;
+      public class IO {
+        public static void println() {}
+        public static void println(Object o) {}
+      }
+    """.trimIndent())
+    myFixture.setLanguageLevel(LanguageLevel.JDK_1_8)
+    myFixture.testHighlighting(JvmLanguage.JAVA, """
+      import static java.lang.<error descr="Usage of API documented as @since 25+">IO</error>.println;
+
+      class SimpleClass {
+          public static void main(String[] args) {
+          }
+          void foo() {
+              String s = "";
+              println();
+          }
+      }
+    """.trimIndent())
+  }
+  
+  fun `test non preview level suggested`() {
+    myFixture.setLanguageLevel(LanguageLevel.JDK_11)
+    // Expect 15+, not 13+, as it was in preview in JDK 13
+    myFixture.testHighlighting(JvmLanguage.JAVA, """
+      class X {
+        void test() {
+          "xyz".<error descr="Usage of API documented as @since 15+">translateEscapes</error>();
+        }
+      }
+    """)
+  }
+
+  fun `test language level 24 with JDK 25`() {
+    myFixture.setLanguageLevel(LanguageLevel.JDK_24)
+    myFixture.testHighlighting(JvmLanguage.JAVA, """
+      import <error descr="java.util.concurrent.StructuredTaskScope is a preview API and is disabled by default">java.util.concurrent.StructuredTaskScope</error>;
+
+        class Main {
+          static void main() {
+              <error descr="java.util.concurrent.StructuredTaskScope is a preview API and is disabled by default">StructuredTaskScope</error> a; // JEP 505
+              <error descr="Usage of preview API documented as @since 25+"><error descr="java.lang.StableValue is a preview API and is disabled by default">StableValue<String></error></error> b = <error descr="Usage of preview API documented as @since 25+"><error descr="java.lang.StableValue is a preview API and is disabled by default">StableValue</error></error>.<caret>of("foo");
+          }
+      }
+    """.trimIndent())
+
+    myFixture.runQuickFix("Set language level to 25 (Preview) - Primitive Types in Patterns, etc.")
+    assertEquals(LanguageLevel.JDK_25_PREVIEW, LanguageLevelUtil.getEffectiveLanguageLevel(myFixture.module))
+  }
+
+  fun `test language level 24 preview with JDK 25`() {
+    myFixture.setLanguageLevel(LanguageLevel.JDK_24_PREVIEW)
+    myFixture.testHighlighting(JvmLanguage.JAVA, """
+      import java.util.concurrent.StructuredTaskScope;
+
+        class Main {
+          static void main() {
+              StructuredTaskScope a; // JEP 505
+              <error descr="Usage of preview API documented as @since 25+">StableValue<String></error> b = <error descr="Usage of preview API documented as @since 25+">StableValue</error>.<caret>of("foo");
+          }
+      }
+    """.trimIndent())
+
+    myFixture.runQuickFix("Set language level to 25 (Preview) - Primitive Types in Patterns, etc.")
+    assertEquals(LanguageLevel.JDK_25_PREVIEW, LanguageLevelUtil.getEffectiveLanguageLevel(myFixture.module))
+  }
+
+  fun `test gatherer language level 22 with JDK 25`() {
+    myFixture.setLanguageLevel(LanguageLevel.JDK_22)
+    myFixture.testHighlighting(JvmLanguage.JAVA, """
+      import java.util.stream.Gatherers;
+      
+      class Main {
+          public static void main(String[] args) {
+              <error descr="Usage of API documented as @since 24+">Gatherers</error> gatherers = null;
+          }
+      }
+    """.trimIndent())
+  }
+
+  fun `test gatherer language level 22 preview with JDK 25`() {
+    myFixture.setLanguageLevel(LanguageLevel.JDK_22_PREVIEW)
+    myFixture.testHighlighting(JvmLanguage.JAVA, """
+      import java.util.stream.Gatherers;
+      
+      class Main {
+          public static void main(String[] args) {
+              Gatherers gatherers = null;
+          }
       }
     """.trimIndent())
   }

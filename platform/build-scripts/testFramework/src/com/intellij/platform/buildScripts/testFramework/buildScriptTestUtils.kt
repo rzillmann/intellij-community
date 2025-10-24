@@ -16,7 +16,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.assertj.core.api.SoftAssertions
 import org.jetbrains.intellij.build.BuildContext
-import org.jetbrains.intellij.build.BuildMessages
 import org.jetbrains.intellij.build.BuildOptions
 import org.jetbrains.intellij.build.ProductProperties
 import org.jetbrains.intellij.build.ProprietaryBuildTools
@@ -24,7 +23,6 @@ import org.jetbrains.intellij.build.closeKtorClient
 import org.jetbrains.intellij.build.dependencies.TeamCityHelper.isUnderTeamCity
 import org.jetbrains.intellij.build.getDevModeOrTestBuildDateInSeconds
 import org.jetbrains.intellij.build.impl.BuildContextImpl
-import org.jetbrains.intellij.build.impl.SnapshotBuildNumber
 import org.jetbrains.intellij.build.impl.buildDistributions
 import org.jetbrains.intellij.build.telemetry.JaegerJsonSpanExporterManager
 import org.jetbrains.intellij.build.telemetry.TraceManager
@@ -35,11 +33,24 @@ import org.opentest4j.TestAbortedException
 import java.net.http.HttpConnectTimeoutException
 import java.nio.file.Files
 import java.nio.file.Path
+import kotlin.io.path.ExperimentalPathApi
+import kotlin.io.path.OnErrorResult
+import kotlin.io.path.copyToRecursively
+import kotlin.io.path.exists
+import kotlin.io.path.name
 
-fun createBuildOptionsForTest(productProperties: ProductProperties, homeDir: Path, skipDependencySetup: Boolean = false, testInfo: TestInfo? = null): BuildOptions {
+fun createBuildOptionsForTest(
+  productProperties: ProductProperties,
+  homeDir: Path,
+  skipDependencySetup: Boolean = false,
+  testInfo: TestInfo? = null,
+): BuildOptions {
+  
   val outDir = createTestBuildOutDir(productProperties)
   val options = BuildOptions(
     cleanOutDir = false,
+    //TODO: figure out what to do on bazel
+    // affects org.jetbrains.intellij.build.impl.CompilationContextImpl.overrideClassesOutputDirectory
     useCompiledClassesFromProjectOutput = true,
     jarCacheDir = homeDir.resolve("out/dev-run/jar-cache"),
     buildDateInSeconds = getDevModeOrTestBuildDateInSeconds(),
@@ -61,7 +72,6 @@ private inline fun createBuildOptionsForTest(productProperties: ProductPropertie
 fun customizeBuildOptionsForTest(options: BuildOptions, outDir: Path, skipDependencySetup: Boolean = false, testInfo: TestInfo?) {
   options.skipDependencySetup = skipDependencySetup
   options.isTestBuild = true
-  options.buildNumber = "${SnapshotBuildNumber.BASE}.1"  // differs from [SnapshotBuildNumber] to closer match the production
   options.buildStepsToSkip += listOf(
     BuildOptions.LIBRARY_URL_CHECK_STEP,
     BuildOptions.TEAMCITY_ARTIFACTS_PUBLICATION_STEP,
@@ -97,6 +107,7 @@ fun runTestBuild(
   productProperties: ProductProperties,
   buildTools: ProprietaryBuildTools,
   testInfo: TestInfo,
+  onSuccess: suspend (BuildContext) -> Unit = {},
   buildOptionsCustomizer: (BuildOptions) -> Unit = {},
 ) {
   runTestBuild(
@@ -105,6 +116,7 @@ fun runTestBuild(
     testInfo = testInfo,
     buildTools = buildTools,
     isReproducibilityTestAllowed = true,
+    onSuccess = onSuccess,
     buildOptionsCustomizer = buildOptionsCustomizer,
   )
 }
@@ -130,13 +142,15 @@ fun runTestBuild(
             productProperties,
             setupTracer = false,
             buildTools,
-            createBuildOptionsForTest(productProperties, homeDir, testInfo, buildOptionsCustomizer).also {
+            createBuildOptionsForTest(productProperties = productProperties, homeDir = homeDir, testInfo = testInfo, 
+                                               customizer = buildOptionsCustomizer).also {
               reproducibilityTest.configure(it)
             }
           ),
           traceSpanName = "${testInfo.spanName}#${iterationNumber}",
           writeTelemetry = false,
           checkIntegrityOfEmbeddedFrontend = checkIntegrityOfEmbeddedFrontend,
+          checkThatBundledPluginInFrontendArePresent = checkIntegrityOfEmbeddedFrontend,
           build = { context ->
             build(context)
             onSuccess(context)
@@ -153,10 +167,12 @@ fun runTestBuild(
         productProperties = productProperties,
         setupTracer = false,
         proprietaryBuildTools = buildTools,
-        options = createBuildOptionsForTest(productProperties = productProperties, homeDir = homeDir, testInfo = testInfo, customizer = buildOptionsCustomizer),
+        options = createBuildOptionsForTest(productProperties = productProperties, homeDir = homeDir, testInfo = testInfo, 
+                                            customizer = buildOptionsCustomizer),
       ),
       writeTelemetry = true,
       checkIntegrityOfEmbeddedFrontend = checkIntegrityOfEmbeddedFrontend,
+      checkThatBundledPluginInFrontendArePresent = checkIntegrityOfEmbeddedFrontend,
       traceSpanName = testInfo.spanName,
       build = { context ->
         build(context)
@@ -170,26 +186,33 @@ fun runTestBuild(
 suspend fun runTestBuild(
   testInfo: TestInfo,
   context: suspend () -> BuildContext,
+  checkThatBundledPluginInFrontendArePresent: Boolean = true,
   build: suspend (BuildContext) -> Unit = { buildDistributions(it) }
 ) {
-  doRunTestBuild(context = context(), traceSpanName = testInfo.spanName, writeTelemetry = true, checkIntegrityOfEmbeddedFrontend = true, build = build)
+  doRunTestBuild(context = context(), traceSpanName = testInfo.spanName, writeTelemetry = true, 
+                 checkIntegrityOfEmbeddedFrontend = true,
+                 checkThatBundledPluginInFrontendArePresent = checkThatBundledPluginInFrontendArePresent,
+                 build = build)
 }
 
 private val defaultLogFactory = Logger.getFactory()
 
 private suspend fun doRunTestBuild(context: BuildContext, traceSpanName: String, writeTelemetry: Boolean,
                                    checkIntegrityOfEmbeddedFrontend: Boolean,
+                                   checkThatBundledPluginInFrontendArePresent: Boolean,
                                    build: suspend (context: BuildContext) -> Unit) {
   var outDir: Path? = null
   var traceFile: Path? = null
   var error: Throwable? = null
+  val buildLogsDir = TestLoggerFactory.getTestLogDir().resolve("${context.productProperties.baseFileName}-$traceSpanName")
+  Logger.setFactory(TestLoggerFactory::class.java)
   try {
     spanBuilder(traceSpanName).use { span ->
       context.cleanupJarCache()
       outDir = context.paths.buildOutputDir
       span.setAttribute("outDir", outDir.toString())
       if (writeTelemetry) {
-        traceFile = TestLoggerFactory.getTestLogDir().resolve("${context.productProperties.baseFileName}-$traceSpanName-trace.json").also {
+        traceFile = buildLogsDir.resolve("trace.json").also {
           JaegerJsonSpanExporterManager.setOutput(it, addShutDownHook = false)
         }
       }
@@ -200,12 +223,16 @@ private suspend fun doRunTestBuild(context: BuildContext, traceSpanName: String,
         if (checkIntegrityOfEmbeddedFrontend) {
           val frontendRootModule = context.productProperties.embeddedFrontendRootModule
           if (frontendRootModule != null && context.generateRuntimeModuleRepository) {
+            RuntimeModuleRepositoryChecker.checkProductModules(productModulesModule = frontendRootModule, context = context, softly = softly)
+            if (checkThatBundledPluginInFrontendArePresent) {
+              RuntimeModuleRepositoryChecker.checkBundledPluginsArePresent(productModulesModule = frontendRootModule, context = context, isEmbeddedVariant = true, softly = softly)
+            }
             RuntimeModuleRepositoryChecker.checkIntegrityOfEmbeddedFrontend(frontendRootModule, context, softly)
             checkKeymapPluginsAreBundledWithFrontend(frontendRootModule, context, softly)
           }
         }
 
-        checkPrivatePluginModulesAreNotBundled(context, softly)
+        checkPrivatePluginModulesAreNotPublic(context, softly)
         softly.assertAll()
       }
       catch (e: CancellationException) {
@@ -217,7 +244,7 @@ private suspend fun doRunTestBuild(context: BuildContext, traceSpanName: String,
         }
         span.setStatus(StatusCode.ERROR)
 
-        copyDebugLog(context.productProperties, context.messages)
+        copyLogs(context, buildLogsDir)
 
         if (ExceptionUtilRt.causedBy(e, HttpConnectTimeoutException::class.java)) {
           error = TestAbortedException("failed to load data for build scripts", e)
@@ -264,10 +291,10 @@ private suspend fun checkKeymapPluginsAreBundledWithFrontend(
   context: BuildContext,
   softly: SoftAssertions,
 ) {
-  val productModules = context.getOriginalModuleRepository().loadProductModules(jetBrainsClientMainModule, ProductMode.FRONTEND)
+  val productModules = context.loadRawProductModules(jetBrainsClientMainModule, ProductMode.FRONTEND)
   val keymapPluginModulePrefix = "intellij.keymap."
-  val keymapPluginsBundledWithFrontend = productModules.bundledPluginModuleGroups
-    .map { it.mainModule.moduleId.stringId }
+  val keymapPluginsBundledWithFrontend = productModules.bundledPluginMainModules
+    .map { it.stringId }
     .filter { it.startsWith(keymapPluginModulePrefix) }
   val keymapPluginsBundledWithMonolith = context.getBundledPluginModules().filter { it.startsWith(keymapPluginModulePrefix) }
   softly.assertThat(keymapPluginsBundledWithFrontend)
@@ -276,13 +303,21 @@ private suspend fun checkKeymapPluginsAreBundledWithFrontend(
     .containsExactlyInAnyOrder(*keymapPluginsBundledWithMonolith.toTypedArray())
 }
 
-private fun copyDebugLog(productProperties: ProductProperties, messages: BuildMessages) {
+@OptIn(ExperimentalPathApi::class)
+private fun copyLogs(context: BuildContext, buildLogsDir: Path) {
   try {
-    val debugLogFile = messages.getDebugLog()
-    if (!debugLogFile.isNullOrEmpty()) {
-      val targetFile = TestLoggerFactory.getTestLogDir().resolve("${productProperties.baseFileName}-test-build-debug.log")
-      Files.createDirectories(targetFile.parent)
-      Files.writeString(targetFile, debugLogFile)
+    if (context.paths.logDir.exists()) {
+      Files.createDirectories(buildLogsDir)
+      context.paths.logDir.copyToRecursively(buildLogsDir, followLinks = false, onError = { source, target, exception ->
+        Span.current().addEvent("failed to copy log file: ${source.name} -> ${target.name}: ${exception.message}")
+        OnErrorResult.SKIP_SUBTREE
+      })
+    }
+    
+    val debugLogText = context.messages.getDebugLog()
+    if (!debugLogText.isNullOrEmpty()) {
+      val targetFile = buildLogsDir.resolve("test-build-debug.log")
+      Files.writeString(targetFile, debugLogText)
       Span.current().addEvent("debug log copied to $targetFile")
     }
   }

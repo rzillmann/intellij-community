@@ -1,14 +1,17 @@
 // Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.ide.plugins.marketplace.statistics.features
 
-import com.intellij.ide.plugins.IdeaPluginDescriptor
-import com.intellij.ide.plugins.PluginNode
-import com.intellij.internal.statistic.eventLog.events.*
+import com.intellij.ide.plugins.newui.PluginUiModel
+import com.intellij.internal.statistic.eventLog.events.EventField
+import com.intellij.internal.statistic.eventLog.events.EventFields
+import com.intellij.internal.statistic.eventLog.events.EventPair
 import com.intellij.internal.statistic.utils.getPluginInfoByDescriptor
+import com.intellij.openapi.util.IntellijInternalApi
 import org.jetbrains.annotations.ApiStatus
 import kotlin.math.round
 
 @ApiStatus.Internal
+@IntellijInternalApi
 object PluginManagerSearchResultFeatureProvider {
   private val NAME_LENGTH_DATA_KEY = EventFields.Int("nameLength")
   private val DEVELOPED_BY_JETBRAINS_DATA_KEY = EventFields.Boolean("byJetBrains")
@@ -22,21 +25,21 @@ object PluginManagerSearchResultFeatureProvider {
     )
   }
 
-  fun getSearchStateFeatures(userQuery: String?, descriptor: IdeaPluginDescriptor,
-                             pluginToScore: Map<IdeaPluginDescriptor, Double>? = null): List<EventPair<*>> {
+  fun getSearchStateFeatures(userQuery: String?, descriptor: PluginUiModel,
+                             pluginToScore: Map<PluginUiModel, Double>? = null): List<EventPair<*>> {
     return buildList {
-      val pluginInfo = getPluginInfoByDescriptor(descriptor)
+      val pluginInfo = getPluginInfoByDescriptor(descriptor.getDescriptor())
 
-      add(NAME_LENGTH_DATA_KEY.with(descriptor.name.length))
+      add(NAME_LENGTH_DATA_KEY.with(descriptor.name!!.length))
       add(DEVELOPED_BY_JETBRAINS_DATA_KEY.with(pluginInfo.isDevelopedByJetBrains()))
       add(EventFields.PluginInfo.with(pluginInfo))
-      if (pluginInfo.isSafeToReport() && descriptor is PluginNode) {
+      if (pluginInfo.isSafeToReport() && descriptor.isFromMarketplace) {
         addAll(PluginManagerSearchResultMarketplaceFeatureProvider.getSearchStateFeatures(descriptor))
       }
 
       if (userQuery != null) {
         MarketplaceTextualFeaturesProvider.getInstanceIfEnabled()
-          ?.getTextualFeatures(userQuery, descriptor.name)
+          ?.getTextualFeatures(userQuery, descriptor.name!!)
           ?.also { addAll(it) }
       }
 

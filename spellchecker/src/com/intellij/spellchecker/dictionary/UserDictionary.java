@@ -1,7 +1,7 @@
 // Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.spellchecker.dictionary;
 
-import com.intellij.util.containers.CollectionFactory;
+import com.intellij.spellchecker.util.Strings;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -9,13 +9,25 @@ import org.jetbrains.annotations.Nullable;
 import java.util.Collection;
 import java.util.Set;
 
+import static com.intellij.util.containers.CollectionFactory.createSmallMemoryFootprintSet;
+
 public final class UserDictionary implements EditableDictionary {
   private final String name;
 
-  private final @NotNull Set<String> words = CollectionFactory.createSmallMemoryFootprintSet();
+  private final @NotNull Set<String> words;
+  private final @NotNull Set<String> camelCaseWords;
 
   public UserDictionary(@NotNull String name) {
     this.name = name;
+    this.words = createSmallMemoryFootprintSet();
+    this.camelCaseWords = createSmallMemoryFootprintSet();
+  }
+
+  public UserDictionary(@NotNull String name, @Nullable Collection<String> words) {
+    this.name = name;
+    this.words = words == null ? createSmallMemoryFootprintSet() : createSmallMemoryFootprintSet(words.size());
+    this.camelCaseWords = createSmallMemoryFootprintSet();
+    addToDictionary(words);
   }
 
   @Override
@@ -25,8 +37,7 @@ public final class UserDictionary implements EditableDictionary {
 
   @Override
   public @Nullable Boolean contains(@NotNull String word) {
-    boolean contains = words.contains(word);
-    return contains ? true : null;
+    return words.contains(word) ? true : null;
   }
 
   @Override
@@ -40,8 +51,14 @@ public final class UserDictionary implements EditableDictionary {
   }
 
   @Override
+  public @NotNull Set<String> getCamelCaseWords() {
+    return camelCaseWords;
+  }
+
+  @Override
   public void clear() {
     words.clear();
+    camelCaseWords.clear();
   }
 
   @Override
@@ -50,6 +67,9 @@ public final class UserDictionary implements EditableDictionary {
       return;
     }
     words.add(word);
+    if (Strings.isMixedCase(word)) {
+      camelCaseWords.add(word);
+    }
   }
 
   @Override
@@ -58,6 +78,7 @@ public final class UserDictionary implements EditableDictionary {
       return;
     }
     words.remove(word);
+    camelCaseWords.remove(word);
   }
 
   @Override

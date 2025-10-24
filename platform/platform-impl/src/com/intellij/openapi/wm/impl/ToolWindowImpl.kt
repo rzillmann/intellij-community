@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 @file:OptIn(FlowPreview::class)
 
 package com.intellij.openapi.wm.impl
@@ -12,6 +12,7 @@ import com.intellij.ide.actions.ToolWindowMoveAction
 import com.intellij.ide.actions.ToolwindowFusEventFields
 import com.intellij.ide.actions.speedSearch.SpeedSearchAction
 import com.intellij.ide.impl.ContentManagerWatcher
+import com.intellij.ide.ui.UISettings
 import com.intellij.ide.util.PropertiesComponent
 import com.intellij.idea.ActionsBundle
 import com.intellij.internal.statistic.eventLog.events.EventPair
@@ -19,6 +20,7 @@ import com.intellij.openapi.Disposable
 import com.intellij.openapi.actionSystem.*
 import com.intellij.openapi.actionSystem.ex.ActionUtil
 import com.intellij.openapi.actionSystem.impl.FusAwareAction
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.diagnostic.debug
@@ -74,7 +76,7 @@ import java.util.function.Supplier
 import javax.swing.*
 import kotlin.math.abs
 
-internal class ToolWindowImpl(
+@ApiStatus.Internal class ToolWindowImpl(
   @JvmField val toolWindowManager: ToolWindowManagerImpl,
   private val id: String,
   private val canCloseContent: Boolean,
@@ -108,7 +110,10 @@ internal class ToolWindowImpl(
   private var contentUi: ToolWindowContentUi? = null
 
   internal var decorator: InternalDecoratorImpl? = null
-    private set
+    private set(value) {
+      check(field == null) { "Decorator already set" }
+      field = value
+    }
   private var scrollPaneTracker: ScrollPaneTracker? = null
 
   private var hideOnEmptyContent = false
@@ -129,6 +134,8 @@ internal class ToolWindowImpl(
   private var helpId: String? = null
 
   internal var icon: Icon? = null
+
+  private var tabsSplittingAllowed: Boolean = false
 
   private val contentManager = SynchronizedClearableLazy {
     val result = createContentManager()
@@ -170,6 +177,20 @@ internal class ToolWindowImpl(
     override fun contentAdded(event: ContentManagerEvent) {
       InternalDecoratorImpl.setBackgroundRecursively(event.content.component, JBUI.CurrentTheme.ToolWindow.background())
     }
+
+    override fun selectionChanged(event: ContentManagerEvent) {
+      if (event.operation == ContentManagerEvent.ContentOperation.add && UISettings.getInstance().differentToolwindowBackground) {
+        ApplicationManager.getApplication().invokeLater { contentAdded(event) }
+      }
+    }
+  }
+
+  internal fun updateContentBackgroundColors() {
+    val color = JBUI.CurrentTheme.ToolWindow.background()
+
+    for (content in contentManager.value.contents) {
+      InternalDecoratorImpl.setBackgroundRecursively(content.component, color)
+    }
   }
 
   internal fun getOrCreateDecoratorComponent(): InternalDecoratorImpl {
@@ -185,12 +206,17 @@ internal class ToolWindowImpl(
   }
 
   private fun createContentManager(): ContentManagerImpl {
-    val contentManager = ContentManagerImpl(canCloseContent, toolWindowManager.project, parentDisposable,
-                                            ContentManagerImpl.ContentUiProducer { contentManager, componentGetter ->
-                                              val result = ToolWindowContentUi(this, contentManager, componentGetter.get())
-                                              contentUi = result
-                                              result
-                                            })
+    val contentManager = ContentManagerImpl(
+      /* canCloseContents = */ canCloseContent,
+      /* project = */ toolWindowManager.project,
+      /* parentDisposable = */ parentDisposable,
+      /* contentUiProducer = */
+      ContentManagerImpl.ContentUiProducer { contentManager, componentGetter ->
+        val result = ToolWindowContentUi(this, contentManager, componentGetter.get())
+        contentUi = result
+        result
+      },
+    )
 
     addContentNotInHierarchyComponents(contentUi!!)
 
@@ -478,6 +504,8 @@ internal class ToolWindowImpl(
     toolWindowManager.stretchHeight(this, value)
   }
 
+  internal fun getNullableDecorator() = decorator
+
   override fun getDecorator(): InternalDecoratorImpl = decorator!!
 
   override fun setAdditionalGearActions(value: ActionGroup?) {
@@ -629,6 +657,19 @@ internal class ToolWindowImpl(
     contentUi?.update()
   }
 
+  override fun canSplitTabs(): Boolean {
+    return tabsSplittingAllowed
+  }
+
+  override fun setTabsSplittingAllowed(allowed: Boolean) {
+    tabsSplittingAllowed = allowed
+
+    val header = decorator?.header ?: return
+    if (header.isShowing) {
+      header.manageWestPanelTabComponentAndToolbar(true)
+    }
+  }
+
   fun fireActivated(source: ToolWindowEventSource) {
     toolWindowManager.activated(this, source)
   }
@@ -710,10 +751,9 @@ internal class ToolWindowImpl(
     ToolWindowContentUi.toggleContentPopup(contentUi!!, contentManager.value)
   }
 
-  @JvmOverloads
   fun createPopupGroup(skipHideAction: Boolean = false): ActionGroup {
     return object : ActionGroupWrapper(GearActionGroup()) {
-      override fun getChildren(e: AnActionEvent?): Array<out AnAction?> {
+      override fun getChildren(e: AnActionEvent?): Array<AnAction> {
         val result = mutableListOf<AnAction>()
         result.addAll(super.getChildren(e))
         if (!skipHideAction) {
@@ -765,7 +805,7 @@ internal class ToolWindowImpl(
       templatePresentation.text = IdeBundle.message("show.options.menu")
     }
 
-    override fun getChildren(e: AnActionEvent?): Array<out AnAction?> {
+    override fun getChildren(e: AnActionEvent?): Array<AnAction> {
       val group = DefaultActionGroup()
       val additionalGearActions = additionalGearActions
       if (additionalGearActions != null) {
@@ -820,22 +860,6 @@ internal class ToolWindowImpl(
     init {
       ActionUtil.copyFrom(this, InternalDecoratorImpl.HIDE_ACTIVE_WINDOW_ACTION_ID)
       templatePresentation.text = UIBundle.message("tool.window.hide.action.name")
-    }
-  }
-
-  private inner class ResizeActionGroup : DefaultActionGroup(
-    ActionsBundle.groupText("ResizeToolWindowGroup"),
-    ActionManager.getInstance().let { actionManager ->
-      listOf(
-        actionManager.getAction("ResizeToolWindowLeft"),
-        actionManager.getAction("ResizeToolWindowRight"),
-        actionManager.getAction("ResizeToolWindowUp"),
-        actionManager.getAction("ResizeToolWindowDown"),
-        actionManager.getAction("MaximizeToolWindow")
-      )
-    }) {
-    init {
-      isPopup = true
     }
   }
 
@@ -906,6 +930,22 @@ internal class ToolWindowImpl(
     SwingUtilities.invokeLater {
       isAboutToReceiveFocus = false
     }
+  }
+}
+
+private class ResizeActionGroup : DefaultActionGroup(
+  ActionsBundle.groupText("ResizeToolWindowGroup"),
+  ActionManager.getInstance().let { actionManager ->
+    listOf(
+      actionManager.getAction("ResizeToolWindowLeft"),
+      actionManager.getAction("ResizeToolWindowRight"),
+      actionManager.getAction("ResizeToolWindowUp"),
+      actionManager.getAction("ResizeToolWindowDown"),
+      actionManager.getAction("MaximizeToolWindow")
+    )
+  }) {
+  init {
+    isPopup = true
   }
 }
 

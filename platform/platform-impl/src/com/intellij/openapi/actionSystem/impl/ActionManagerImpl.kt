@@ -30,7 +30,6 @@ import com.intellij.openapi.actionSystem.ex.*
 import com.intellij.openapi.actionSystem.ex.ActionUtil.getActionUnavailableMessage
 import com.intellij.openapi.actionSystem.impl.ActionConfigurationCustomizer.LightCustomizeStrategy
 import com.intellij.openapi.application.*
-import com.intellij.openapi.application.impl.RawSwingDispatcher
 import com.intellij.openapi.components.ComponentManager
 import com.intellij.openapi.components.ComponentManagerEx
 import com.intellij.openapi.components.service
@@ -43,9 +42,7 @@ import com.intellij.openapi.extensions.*
 import com.intellij.openapi.keymap.KeymapManager
 import com.intellij.openapi.keymap.impl.ActionProcessor
 import com.intellij.openapi.keymap.impl.KeymapImpl
-import com.intellij.openapi.keymap.impl.UpdateResult
 import com.intellij.openapi.progress.ProcessCanceledException
-import com.intellij.openapi.progress.blockingContext
 import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.IndexNotReadyException
 import com.intellij.openapi.project.ProjectType
@@ -69,6 +66,7 @@ import com.intellij.util.concurrency.*
 import com.intellij.util.containers.ContainerUtil
 import com.intellij.util.containers.with
 import com.intellij.util.containers.without
+import com.intellij.util.ui.RawSwingDispatcher
 import com.intellij.util.ui.StartupUiUtil.addAwtListener
 import com.intellij.util.ui.UIUtil
 import com.intellij.util.xml.dom.XmlElement
@@ -1130,13 +1128,20 @@ open class ActionManagerImpl protected constructor(private val coroutineScope: C
     val component = event.getData(PlatformCoreDataKeys.CONTEXT_COMPONENT)
     val actionId = getId(action)
                    ?: if (action is EmptyAction) runnable.javaClass.name else action.javaClass.name
+    if (event.presentation.getClientProperty(ActionUtil.SKIP_ACTION_EXECUTION) == true) {
+      LOG.debug("Action execution was skipped: action=$actionId")
+      val actionResult = AnActionResult.ignored("action is skipped")
+      fireAfterActionPerformed(action, event, actionResult)
+      return actionResult
+    }
     if (component != null && !UIUtil.isShowing(component) &&
         event.place != ActionPlaces.TOUCHBAR_GENERAL &&
         ClientProperty.get(component, ActionUtil.ALLOW_ACTION_PERFORM_WHEN_HIDDEN) != true) {
       LOG.warn("Action is not performed because target component is not showing: " +
                "action=$actionId, component=${component.javaClass.name}")
-      fireAfterActionPerformed(action, event, AnActionResult.IGNORED)
-      return AnActionResult.IGNORED
+      val actionResult = AnActionResult.ignored("target component is not showing")
+      fireAfterActionPerformed(action, event, actionResult)
+      return actionResult
     }
     val container =
       if (!event.presentation.isApplicationScope && project is ComponentManagerEx) project
@@ -1153,7 +1158,8 @@ open class ActionManagerImpl protected constructor(private val coroutineScope: C
                              ModalityState.current().asContextElement() +
                              ClientId.coroutineContext() +
                              ActionContextElement.create(actionId, event.place, event.inputEvent, component)
-      installThreadContext(coroutineContext.minusKey(ContinuationInterceptor), replace = true).use { _ ->
+      val coroutineContext2 = coroutineContext + ThreadScopeCheckpoint(coroutineContext) // permit `currentThreadCoroutineScope` inside
+      installThreadContext(coroutineContext2.minusKey(ContinuationInterceptor), replace = true) {
         SlowOperations.startSection(SlowOperations.ACTION_PERFORM).use { _ ->
           runnable.run()
         }
@@ -1170,19 +1176,24 @@ open class ActionManagerImpl protected constructor(private val coroutineScope: C
       fireAfterActionPerformed(action, event, result)
     }
     catch (ex: Throwable) {
-      if (result.isPerformed) throw ex
-      else result.failureCause.addSuppressed(ex)
+      if (result is AnActionResult.Performed) throw ex
+      else (result as? AnActionResult.Failed)?.cause?.addSuppressed(ex)
     }
-    when {
-      result.isPerformed -> Unit
-      result.failureCause is IndexNotReadyException -> {
-        LOG.info(result.failureCause)
-        if (project != null) {
-          DumbService.getInstance(project)
-            .showDumbModeNotificationForFailedAction(getActionUnavailableMessage(event.presentation.text), getId(action))
+    when (result) {
+      is AnActionResult.Performed -> Unit
+      is AnActionResult.Failed -> {
+        if (result.cause is IndexNotReadyException) {
+          LOG.info(result.cause)
+          if (project != null) {
+            DumbService.getInstance(project)
+              .showDumbModeNotificationForFailedAction(getActionUnavailableMessage(event.presentation.text), getId(action))
+          }
+        }
+        else {
+          throw result.cause
         }
       }
-      else -> throw result.failureCause
+      is AnActionResult.Ignored -> Unit
     }
     return result
   }
@@ -1211,7 +1222,7 @@ open class ActionManagerImpl protected constructor(private val coroutineScope: C
       }
       finally {
         if (!result.isProcessed) {
-          result.setRejected()
+          result.reject("unknown error")
         }
       }
     }
@@ -1222,9 +1233,7 @@ open class ActionManagerImpl protected constructor(private val coroutineScope: C
         }
         finally {
           if (!result.isProcessed) {
-            blockingContext {
-              result.setRejected()
-            }
+            result.reject("unknown error")
           }
         }
       }
@@ -1316,7 +1325,7 @@ private fun doPerformAction(action: AnAction,
       result = ActionUtil.performAction(action, event)
     }
     finally {
-      if (result.isIgnored) callback.setRejected()
+      if (result is AnActionResult.Ignored) callback.reject(result.reason)
       else callback.setDone()
     }
   }
@@ -1333,26 +1342,20 @@ private fun tryToExecuteNow(action: AnAction,
     if (contextComponent == null) it.dataContext else it.getDataContext(contextComponent)
   }
   val wrappedContext = Utils.createAsyncDataContext(dataContext)
-  val componentAdjusted = PlatformDataKeys.CONTEXT_COMPONENT.getData(wrappedContext) ?: contextComponent
   val actionProcessor = object : ActionProcessor() {}
   val inputEventAdjusted = inputEvent ?: KeyEvent(
-    componentAdjusted ?: JLabel(), KeyEvent.KEY_PRESSED, 0L, 0, KeyEvent.VK_UNDEFINED, '\u0000')
-  val event = Utils.runWithInputEventEdtDispatcher(componentAdjusted) block@{
-    Utils.runUpdateSessionForInputEvent(
-      listOf(action), inputEventAdjusted, wrappedContext, place, actionProcessor, presentationFactory) { rearranged, updater, events ->
-      val presentation = updater(action)
-      val event = events[presentation]
-      if (event == null || !presentation.isEnabled) {
-        null
-      }
-      else {
-        UpdateResult(action, event, 0L)
-      }
-    }
-  }?.event
-  if (event != null && event.presentation.isEnabled) {
-    doPerformAction(action, event, callback)
+    contextComponent ?: JLabel(), KeyEvent.KEY_PRESSED, 0L, 0, KeyEvent.VK_UNDEFINED, '\u0000')
+  val updateEvent = Utils.runUpdateSessionForInputEvent(
+    listOf(action), inputEventAdjusted, wrappedContext, place, actionProcessor, presentationFactory) { _, updater, events ->
+    val presentation = updater(action)
+    events[presentation]
   }
+  if (updateEvent == null || !updateEvent.presentation.isEnabled) {
+    callback.reject("action is disabled (early check)")
+    return
+  }
+
+  doPerformAction(action, updateEvent, callback)
 }
 
 private suspend fun tryToExecuteSuspend(action: AnAction,
@@ -1374,14 +1377,16 @@ private suspend fun tryToExecuteSuspend(action: AnAction,
   val presentationFactory = PresentationFactory()
   Utils.expandActionGroupSuspend(DefaultActionGroup(action), presentationFactory, wrappedContext, place, uiKind, false)
   val presentation = presentationFactory.getPresentation(action)
-  val event = if (presentation.isEnabled) AnActionEvent(
-    wrappedContext, presentation, place, uiKind, inputEvent, 0, actionManager)
-  else null
-  if (event != null && event.presentation.isEnabled) {
-    //todo fix all clients and move locks into them
-    writeIntentReadAction {
-      doPerformAction(action, event, callback)
-    }
+  if (!presentation.isEnabled) {
+    callback.reject("action is disabled (early check)")
+    return
+  }
+
+  val event = AnActionEvent(wrappedContext, presentation, place, uiKind, inputEvent, 0, actionManager)
+
+  //todo fix all clients and move locks into them
+  writeIntentReadAction {
+    doPerformAction(action, event, callback)
   }
 }
 

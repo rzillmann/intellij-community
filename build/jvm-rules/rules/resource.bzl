@@ -1,4 +1,6 @@
+load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("@rules_java//java:defs.bzl", "JavaInfo", "java_common")
+load("//:rules/impl/transitions.bzl", "jvm_platform_transition", "scrubbed_host_platform_transition")
 
 visibility("private")
 
@@ -12,22 +14,29 @@ def _jvm_resources_impl(ctx):
     else:
         strip_prefix = strip_prefix_dir.path
 
+    java_runtime = ctx.attr._tool_java_runtime[java_common.JavaRuntimeInfo]
+
     ctx.actions.run(
         mnemonic = "PackageResources",
         inputs = ctx.files.files,
         # avoid creating small files on disk – trick Bazel using this workaround
-        arguments = ["--flagfile=|jar|" + resultJar.path + "|" + strip_prefix],
+        arguments = ctx.attr._worker_jvm_flags[BuildSettingInfo].value + [
+            ctx.file._worker_launcher.path,
+            ctx.file._worker.path,
+            "--flagfile=|jar|" + resultJar.path + "|" + ctx.attr.add_prefix + "|" + strip_prefix,
+        ],
         #         arguments = [args],
         outputs = [resultJar],
-        use_default_shell_env = True,
-        executable = ctx.executable._worker,
+        tools = [ctx.file._worker_launcher, ctx.file._worker],
+        executable = java_runtime.java_executable_exec_path,
         execution_requirements = {
             "supports-workers": "1",
             "supports-multiplex-workers": "1",
             "supports-worker-cancellation": "1",
+            "supports-path-mapping": "1",
+            "supports-multiplex-sandboxing": "1",
         },
         env = {
-            # for Java source files
             "LC_CTYPE": "en_US.UTF-8",
         },
     )
@@ -50,20 +59,62 @@ jvm_resources = rule(
             doc = """The list of resource files to create the target""",
             allow_files = True,
             mandatory = True,
-            providers = ["FileProvider"],
+        ),
+        "add_prefix": attr.string(
+            doc = """The path prefix to prepend to Java resources, after applying `strip_prefix` (if any) to each file's relative path""",
+            default = "",
         ),
         "strip_prefix": attr.label(
-            doc = """The path prefix to strip from Java resources""",
+            doc = """The path prefix to remove from Java resources""",
             allow_single_file = True,
             providers = ["FileProvider"],
         ),
         # see https://bazel.build/extending/rules#private_attributes_and_implicit_dependencies about implicit dependencies
         "_worker": attr.label(
-            default = Label("//:worker-impl"),
-            executable = True,
-            allow_files = True,
+            default = "//:resource-packager",
+            allow_single_file = True,
+            cfg = scrubbed_host_platform_transition,
+        ),
+        "_worker_jvm_flags": attr.label(
+            default = "//:resource-packager-jvm_flags",
+        ),
+        "_worker_launcher": attr.label(
+            default = "//:rules/impl/MemoryLauncher.java",
+            allow_single_file = True,
+        ),
+        "_tool_java_runtime": attr.label(
+            default = "@bazel_tools//tools/jdk:current_java_runtime",
             cfg = "exec",
         ),
     },
     provides = [JavaInfo],
+    cfg = jvm_platform_transition,
+)
+
+ResourceGroupInfo = provider(fields = ["files", "strip_prefix", "add_prefix"])
+
+def _resourcegroup_impl(ctx):
+    return [
+        ResourceGroupInfo(files = ctx.files.srcs, strip_prefix = ctx.file.strip_prefix, add_prefix = ctx.attr.add_prefix),
+    ]
+
+resourcegroup = rule(
+    doc = """This rule specifies resources layout in a .jar file.""",
+    implementation = _resourcegroup_impl,
+    attrs = {
+        "srcs": attr.label_list(
+            doc = """The list of resource files""",
+            allow_files = True,
+            mandatory = True,
+        ),
+        "strip_prefix": attr.label(
+            doc = """The path prefix to remove from Java resources""",
+            allow_single_file = True,
+            providers = ["FileProvider"],
+        ),
+        "add_prefix": attr.string(
+            doc = """The path prefix to prepend to Java resources, after applying `strip_prefix` (if any) to each file's relative path""",
+            default = "",
+        ),
+    },
 )

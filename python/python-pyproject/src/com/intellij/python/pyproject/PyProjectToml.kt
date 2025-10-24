@@ -2,12 +2,9 @@
 package com.intellij.python.pyproject
 
 import com.intellij.openapi.module.Module
-import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.openapi.vfs.toNioPathOrNull
 import com.jetbrains.python.Result
 import com.jetbrains.python.Result.Companion.success
-import com.jetbrains.python.sdk.basePath
 import com.jetbrains.python.sdk.findAmongRoots
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -15,14 +12,23 @@ import org.apache.tuweni.toml.Toml
 import org.apache.tuweni.toml.TomlParseError
 import org.apache.tuweni.toml.TomlTable
 import org.jetbrains.annotations.ApiStatus.Internal
-import java.io.InputStream
 import java.nio.file.Path
+import kotlin.io.path.isRegularFile
 
 /**
  * Stores the file name of `pyproject.toml`.
  */
 @Internal
 const val PY_PROJECT_TOML: String = "pyproject.toml"
+
+@Internal
+const val PY_PROJECT_TOML_PROJECT: String = "project"
+
+@Internal
+const val PY_PROJECT_TOML_BUILD_SYSTEM: String = "build-system"
+
+@Internal
+const val PY_PROJECT_TOML_TOOL_PREFIX: String = "tool."
 
 /**
  * Represents an issue that could occur in [PyProjectToml.parse].
@@ -106,15 +112,15 @@ data class PyProjectToml(
      * val hatch = pyProject.getTool(HatchPyProject)
      * ```
      */
-    fun parse(inputStream: InputStream): Result<PyProjectToml, List<TomlParseError>> {
+    fun parse(tomlFileContent: String): Result<PyProjectToml, List<TomlParseError>> {
       val issues = mutableListOf<PyProjectIssue>()
-      val toml = Toml.parse(inputStream)
+      val toml = Toml.parse(tomlFileContent)
 
       if (toml.hasErrors()) {
         return Result.failure(toml.errors())
       }
 
-      val projectTable = toml.safeGet<TomlTable>("project").getOrIssue(issues)
+      val projectTable = toml.safeGet<TomlTable>(PY_PROJECT_TOML_PROJECT).getOrIssue(issues)
 
       if (projectTable == null) {
         return success(PyProjectToml(null, issues, toml))
@@ -235,22 +241,9 @@ data class PyProjectToml(
         findAmongRoots(module, PY_PROJECT_TOML)
       }
 
-    /**
-     * Attempts to find the module's working directory.
-     * Returns a pair of [VirtualFile] to [Path], either of which may be null if not found.
-     */
-    suspend fun findModuleWorkingDirectory(module: Module): Pair<VirtualFile?, Path?> {
-      val file = findFile(module)
-      return Pair(file, file?.toNioPathOrNull()?.parent ?: module.basePath?.let { Path.of(it) })
+    suspend fun findInRoot(moduleBasePath: Path): Path? = withContext(Dispatchers.IO) {
+      moduleBasePath.resolve(PY_PROJECT_TOML).takeIf { it.isRegularFile() }
     }
-
-    /**
-     * Attempts to find the project's working directory.
-     * Returns null if not found.
-     */
-    fun findProjectWorkingDirectory(project: Project): Path? =
-      project.basePath?.let { Path.of(it) }
-
 
     private fun TomlTable.parseContacts(
       key: String,

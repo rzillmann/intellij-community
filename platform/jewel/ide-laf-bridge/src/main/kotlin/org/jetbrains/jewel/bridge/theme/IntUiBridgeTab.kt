@@ -1,12 +1,13 @@
 package org.jetbrains.jewel.bridge.theme
 
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.takeOrElse
 import com.intellij.util.ui.JBUI
 import org.jetbrains.jewel.bridge.retrieveColorOrUnspecified
 import org.jetbrains.jewel.bridge.retrieveInsetsAsPaddingValues
-import org.jetbrains.jewel.bridge.retrieveIntAsDpOrUnspecified
+import org.jetbrains.jewel.bridge.retrieveIntAsNonNegativeDpOrUnspecified
 import org.jetbrains.jewel.bridge.toComposeColor
 import org.jetbrains.jewel.bridge.toComposeColorOrUnspecified
 import org.jetbrains.jewel.ui.component.styling.TabColors
@@ -46,11 +47,12 @@ internal fun readDefaultTabStyle(): TabStyle {
         colors = colors,
         metrics =
             TabMetrics(
-                underlineThickness = retrieveIntAsDpOrUnspecified("TabbedPane.tabSelectionHeight").takeOrElse { 2.dp },
-                tabPadding = retrieveInsetsAsPaddingValues("TabbedPane.tabInsets"),
+                underlineThickness =
+                    retrieveIntAsNonNegativeDpOrUnspecified("TabbedPane.tabSelectionHeight").takeOrElse { 2.dp },
+                tabPadding = retrieveInsetsAsPaddingValues("TabbedPane.tabInsets", PaddingValues(horizontal = 8.dp)),
                 closeContentGap = 4.dp,
                 tabContentSpacing = 4.dp,
-                tabHeight = retrieveIntAsDpOrUnspecified("TabbedPane.tabHeight").takeOrElse { 24.dp },
+                tabHeight = retrieveIntAsNonNegativeDpOrUnspecified("TabbedPane.tabHeight").takeOrElse { 24.dp },
             ),
         icons = TabIcons(close = AllIconsKeys.General.CloseSmall),
         contentAlpha =
@@ -99,11 +101,12 @@ internal fun readEditorTabStyle(): TabStyle {
         colors = colors,
         metrics =
             TabMetrics(
-                underlineThickness = retrieveIntAsDpOrUnspecified("TabbedPane.tabSelectionHeight").takeOrElse { 2.dp },
-                tabPadding = retrieveInsetsAsPaddingValues("TabbedPane.tabInsets"),
+                underlineThickness =
+                    retrieveIntAsNonNegativeDpOrUnspecified("TabbedPane.tabSelectionHeight").takeOrElse { 2.dp },
+                tabPadding = retrieveInsetsAsPaddingValues("TabbedPane.tabInsets", PaddingValues(horizontal = 8.dp)),
                 closeContentGap = 4.dp,
                 tabContentSpacing = 4.dp,
-                tabHeight = retrieveIntAsDpOrUnspecified("TabbedPane.tabHeight").takeOrElse { 24.dp },
+                tabHeight = retrieveIntAsNonNegativeDpOrUnspecified("TabbedPane.tabHeight").takeOrElse { 24.dp },
             ),
         icons = TabIcons(close = AllIconsKeys.General.CloseSmall),
         contentAlpha =

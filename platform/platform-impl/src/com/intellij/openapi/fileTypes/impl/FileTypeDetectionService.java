@@ -18,6 +18,7 @@ import com.intellij.openapi.util.Key;
 import com.intellij.openapi.util.io.ByteArraySequence;
 import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.util.io.FileUtilRt;
+import com.intellij.openapi.util.registry.Registry;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.util.text.StringUtilRt;
 import com.intellij.openapi.vfs.*;
@@ -36,10 +37,7 @@ import com.intellij.util.xmlb.Constants;
 import kotlinx.coroutines.CoroutineScope;
 import kotlinx.coroutines.JobKt;
 import org.jdom.Element;
-import org.jetbrains.annotations.ApiStatus;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
-import org.jetbrains.annotations.TestOnly;
+import org.jetbrains.annotations.*;
 
 import java.io.*;
 import java.nio.channels.FileChannel;
@@ -93,9 +91,11 @@ public final class FileTypeDetectionService {
   private int cachedDetectFileBufferSize = -1;
   private volatile boolean myCanUseCachedDetectedFileType = true;
   private final FileTypeManagerImpl myFileTypeManager;
+  private final CoroutineScope scope;
 
   FileTypeDetectionService(@NotNull FileTypeManagerImpl fileTypeManager, @NotNull CoroutineScope coroutineScope) {
     myFileTypeManager = fileTypeManager;
+    scope = coroutineScope;
 
     JobKt.getJob(coroutineScope.getCoroutineContext()).invokeOnCompletion(throwable -> {
       LOG.info(String.format("%s auto-detected files. Detection took %s ms", counterAutoDetect, elapsedAutoDetect));
@@ -401,6 +401,10 @@ public final class FileTypeDetectionService {
     }
   }
 
+  @ApiStatus.Internal
+  public void clearDetectedFromContentData(@NotNull VirtualFile file) {
+    file.putUserData(DETECTED_FROM_CONTENT_FILE_TYPE_KEY, null);
+  }
   private void awakeReDetectExecutor() {
     reDetectExecutor.execute(() -> {
       List<VirtualFile> files = new ArrayList<>(CHUNK_SIZE);
@@ -502,7 +506,8 @@ public final class FileTypeDetectionService {
     }
   }
 
-  boolean wasAutoDetectedBefore(@NotNull VirtualFile file) {
+  @VisibleForTesting
+  public boolean wasAutoDetectedBefore(@NotNull VirtualFile file) {
     if (file.getUserData(DETECTED_FROM_CONTENT_FILE_TYPE_KEY) != null) {
       return true;
     }
@@ -689,8 +694,14 @@ public final class FileTypeDetectionService {
            null;
   }
 
-  private static void reparseLater(@NotNull List<? extends VirtualFile> changed) {
-    ApplicationManager.getApplication().invokeLater(() -> FileContentUtilCore.reparseFiles(changed), ApplicationManager.getApplication().getDisposed());
+  private void reparseLater(@NotNull List<? extends VirtualFile> changed) {
+    if (Registry.is("filetype.reparse.with.coroutines")) {
+      ReparseUtilKt.reparseLaterWithCoroutines(scope, changed);
+    }
+    else {
+      ApplicationManager.getApplication()
+        .invokeLater(() -> FileContentUtilCore.reparseFiles(changed), ApplicationManager.getApplication().getDisposed());
+    }
   }
 
   // for diagnostics
@@ -733,7 +744,7 @@ public final class FileTypeDetectionService {
   }
 
   @TestOnly
-  void drainReDetectQueue() {
+  public void drainReDetectQueue() {
     reDetectExecutor.waitAllTasksExecuted(1, TimeUnit.MINUTES);
   }
 

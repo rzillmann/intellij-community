@@ -1,6 +1,8 @@
-<idea-plugin>
+<idea-plugin visibility="public">
   <dependencies>
     <module name="intellij.platform.vcs.impl"/>
+    <module name="intellij.platform.vcs.log"/>
+    <module name="intellij.platform.vcs.log.graph.impl"/>
     <module name="intellij.platform.vcs.impl.shared"/>
   </dependencies>
 
@@ -58,7 +60,9 @@
     <logHighlighterFactory implementation="com.intellij.vcs.log.ui.highlighters.CurrentBranchHighlighter$Factory"/>
     <logHighlighterFactory implementation="com.intellij.vcs.log.ui.highlighters.IndexHighlighter$Factory"/>
 
-    <postStartupActivity implementation="com.intellij.vcs.log.impl.VcsProjectLog$InitLogStartupActivity"/>
+    <projectService serviceInterface="com.intellij.vcs.log.impl.VcsProjectLog"
+                    serviceImplementation="com.intellij.vcs.log.impl.IdeVcsProjectLog"/>
+    <postStartupActivity implementation="com.intellij.vcs.log.impl.IdeVcsProjectLog$InitLogStartupActivity"/>
 
     <cachesInvalidator implementation="com.intellij.vcs.log.impl.VcsLogCachesInvalidator"/>
 
@@ -96,7 +100,7 @@
 
     <virtualFileSystem key="vcs-log" implementationClass="com.intellij.vcs.log.ui.editor.VcsLogVirtualFileSystem"/>
     <fileIconProvider implementation="com.intellij.vcs.log.ui.editor.VcsLogIconProvider"/>
-    <fileEditorProvider id="VcsLogEditor" implementation="com.intellij.vcs.log.ui.editor.VcsLogEditorProvider" fileType="VcsLog"/>
+    <fileEditorProvider id="VcsLogEditor" implementation="com.intellij.vcs.log.ui.editor.VcsLogEditorProvider"/>
     <editorTabTitleProvider implementation="com.intellij.vcs.log.ui.editor.DefaultVcsLogFileTabTitleProvider"/>
     <openTelemetryExporterProvider implementation="com.intellij.vcs.log.statistics.VcsLogTelemetryExporter"/>
 

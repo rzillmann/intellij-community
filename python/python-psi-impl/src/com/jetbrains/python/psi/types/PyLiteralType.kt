@@ -7,6 +7,7 @@ import com.jetbrains.python.PyTokenTypes
 import com.jetbrains.python.codeInsight.stdlib.PyStdlibTypeProvider
 import com.jetbrains.python.codeInsight.typing.PyTypingTypeProvider
 import com.jetbrains.python.psi.*
+import com.jetbrains.python.psi.impl.PyBuiltinCache
 import com.jetbrains.python.psi.impl.PyEvaluator
 import com.jetbrains.python.psi.resolve.PyResolveContext
 import org.jetbrains.annotations.ApiStatus
@@ -174,7 +175,7 @@ class PyLiteralType private constructor(cls: PyClass, val expression: PyExpressi
       val substitution = if (substitutions != null) PyTypeChecker.substitute(expected, substitutions, context) else expected
       val substitutionOrBound = if (substitution is PyTypeVarType) PyTypeUtil.getEffectiveBound(substitution) else substitution
       if (substitutionOrBound == null) return null
-      return TypePromoter(context, containsLiteral(substitutionOrBound)).promoteToType (substitutionOrBound, expression)
+      return TypePromoter(context, containsLiteral(substitutionOrBound)).promoteToType(substitutionOrBound, expression)
     }
 
     private fun containsLiteral(type: PyType?): Boolean {
@@ -186,14 +187,14 @@ class PyLiteralType private constructor(cls: PyClass, val expression: PyExpressi
     @ApiStatus.Internal
     @JvmStatic
     fun isNone(expression: PyExpression): Boolean {
-      return expression is PyNoneLiteralExpression && !expression.isEllipsis ||
+      return expression is PyNoneLiteralExpression ||
              expression is PyReferenceExpression &&
              expression.name == PyNames.NONE &&
              LanguageLevel.forElement(expression).isPython2
     }
 
     private fun createFromLiteralParameter(expression: PyExpression, context: TypeEvalContext): PyType? {
-      if (isNone(expression)) return PyNoneType.INSTANCE
+      if (isNone(expression)) return PyBuiltinCache.getInstance(expression).noneType
 
       if (expression is PyReferenceExpression || expression is PySubscriptionExpression) {
         val subLiteralType = Ref.deref(PyTypingTypeProvider.getType(expression, context))
@@ -234,7 +235,7 @@ class PyLiteralType private constructor(cls: PyClass, val expression: PyExpressi
     private fun literalType(expression: PyExpression, context: TypeEvalContext, index: Boolean): PyLiteralType? {
       if (expression is PyReferenceExpression && expression.isQualified) {
         val type = PyUtil.multiResolveTopPriority(expression, PyResolveContext.defaultContext(context)).firstNotNullOfOrNull {
-          PyStdlibTypeProvider.getEnumMemberType(it, context)
+          PyStdlibTypeProvider.getEnumMemberType(it!!, context)
         }
         if (type != null) {
           return type
@@ -249,6 +250,8 @@ class PyLiteralType private constructor(cls: PyClass, val expression: PyExpressi
 
         expression is PyStringLiteralExpression ->
           if (isAcceptableStringLiteral(expression, index)) getPyClass(expression, context) else null
+
+        expression is PyEllipsisLiteralExpression -> null
 
         expression is PyLiteralExpression -> getPyClass(expression, context)
 

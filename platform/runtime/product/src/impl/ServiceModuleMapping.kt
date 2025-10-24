@@ -6,6 +6,7 @@ import com.intellij.platform.runtime.product.ProductModules
 import com.intellij.platform.runtime.product.RuntimeModuleGroup
 import com.intellij.platform.runtime.repository.MalformedRepositoryException
 import com.intellij.platform.runtime.repository.RuntimeModuleDescriptor
+import com.intellij.platform.runtime.repository.RuntimeModuleId
 import com.intellij.util.SmartList
 import com.intellij.util.containers.FList
 
@@ -33,9 +34,13 @@ interface ServiceModuleMapping {
           if (dependency !in mainGroupModulesSet && dependency !in pluginGroupModules) {
             val previousGroup = moduleOutsideGroupsToPlugin[dependency]
             if (previousGroup == null) {
-              moduleOutsideGroupsToPlugin[dependency] = pluginGroup
-              if (dependencyPathToModule != null && dependencyPath != null) {
-                dependencyPathToModule[dependency] = dependencyPath
+              /* if a runtime module corresponds to a library in the source code, it's safe to include it in the classpath of multiple 
+                 plugins */
+              if (!dependency.moduleId.stringId.startsWith(RuntimeModuleId.LIB_NAME_PREFIX)) {
+                moduleOutsideGroupsToPlugin[dependency] = pluginGroup
+                if (dependencyPathToModule != null && dependencyPath != null) {
+                  dependencyPathToModule[dependency] = dependencyPath
+                }
               }
               serviceModules.getOrPut(pluginGroup) { ArrayList() }.add(dependency)
               collectDependencies(dependency, pluginGroup, dependencyPath?.prepend(dependency))
@@ -43,8 +48,13 @@ interface ServiceModuleMapping {
             else if (previousGroup != pluginGroup) {
               val currentPath = showPath(dependency, dependencyPath)
               val previousPath = showPath(dependency, dependencyPathToModule?.get(dependency))
-              errors.add("Modules from two plugins depend on module '${dependency.moduleId.stringId}': " +
-                         "'${previousGroup.mainModule.moduleId.stringId}'$previousPath and '${pluginGroup.mainModule.moduleId.stringId}'$currentPath")
+              errors.add("""
+                |Modules from two plugins depend on module '${dependency.moduleId.stringId}': 
+                | '${previousGroup.mainModule.moduleId.stringId}'$previousPath and '${pluginGroup.mainModule.moduleId.stringId}'$currentPath
+                |Currently every module should belong to some plugin, but the system cannot automatically determine which plugin should be used.
+                |To fix the problem, register '${dependency.moduleId.stringId}' in some plugin explicitly or include it in the main module
+                |in product-modules.xml.
+                """.trimMargin())
             }
           }
         }

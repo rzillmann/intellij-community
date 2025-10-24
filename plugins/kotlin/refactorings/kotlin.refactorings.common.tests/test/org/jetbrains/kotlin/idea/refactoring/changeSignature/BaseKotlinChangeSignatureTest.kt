@@ -408,13 +408,6 @@ public @interface NotNull {
         }
     }
 
-    fun testPreferContainedInClass() {
-        configureFiles()
-        doTestWithIgnoredDirective {
-            assertEquals("param", createChangeInfo().newParameters[0].name)
-        }
-    }
-
     fun testBadSelection() {
         myFixture.configureByFile(getTestName(false) + "Before.kt")
         assertNull(findTargetElement())
@@ -586,6 +579,10 @@ public @interface NotNull {
     }
 
     fun testAddNewLastParameterWithDefaultValue() = doTest {
+        addNewIntParameterWithValue(true)
+    }
+
+    fun testAddNewLastParameterWithDefaultValueSkipFirstDefaultValue() = doTest {
         addNewIntParameterWithValue(true)
     }
 
@@ -782,6 +779,8 @@ public @interface NotNull {
     fun testRemoveLastNonLambdaParameter2() = doTest { removeParameter(1) }
 
     fun testRemoveParameterPreserveReceiver() = doTest { removeParameter(1) }
+
+    fun testRemoveParameterWithNextDefaults() = doTest { removeParameter(2) }
 
     fun testRemoveParameterInParentConflict() = doTestConflict {
         removeParameter(0)

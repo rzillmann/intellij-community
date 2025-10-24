@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.psi.codeStyle;
 
 import com.intellij.application.options.CodeStyle;
@@ -44,7 +44,12 @@ public class CodeStyleSettingsManager implements PersistentStateComponentWithMod
   private static final WeakList<CodeStyleSettings> ourReferencedSettings = new WeakList<>();
 
   public @NotNull CodeStyleSettings createSettings() {
-    CodeStyleSettings newSettings = new CodeStyleSettings(true, false);
+    return createSettings(true);
+  }
+
+  @ApiStatus.Internal
+  public @NotNull CodeStyleSettings createSettings(boolean loadExtensions) {
+    CodeStyleSettings newSettings = new CodeStyleSettings(loadExtensions, false);
     registerSettings(newSettings);
     return newSettings;
   }
@@ -264,6 +269,7 @@ public class CodeStyleSettingsManager implements PersistentStateComponentWithMod
   public final void unregisterCustomSettings(@NotNull Collection<? extends CodeStyleSettings> allSettings,
                                              @NotNull CustomCodeStyleSettingsFactory provider) {
     allSettings.forEach(settings -> settings.removeCustomSettings(provider));
+    CodeStyleSettings.getDefaults().removeCustomSettings(provider);
     notifyCodeStyleSettingsChanged();
   }
 
@@ -380,10 +386,15 @@ public class CodeStyleSettingsManager implements PersistentStateComponentWithMod
     getMessageBus().connect().subscribe(CodeStyleSettingsListener.TOPIC, listener);
   }
 
-  public void fireCodeStyleSettingsChanged(@NotNull VirtualFile file) {
+  @ApiStatus.Internal
+  public void fireCodeStyleSettingsChanged(@NotNull VirtualFile file, @Nullable CodeStyleSettings settings) {
     if (getProject() != null) {
-      fireCodeStyleSettingsChanged(new CodeStyleSettingsChangeEvent(getProject(), file));
+      fireCodeStyleSettingsChanged(new CodeStyleSettingsChangeEvent(getProject(), file, settings));
     }
+  }
+
+  public void fireCodeStyleSettingsChanged(@NotNull VirtualFile file) {
+    fireCodeStyleSettingsChanged(file, null);
   }
 
   public void fireCodeStyleSettingsChanged() {

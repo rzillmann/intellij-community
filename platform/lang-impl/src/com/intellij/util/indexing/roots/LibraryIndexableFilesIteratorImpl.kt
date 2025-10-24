@@ -8,6 +8,7 @@ import com.intellij.openapi.roots.OrderRootType
 import com.intellij.openapi.roots.impl.libraries.LibraryEx
 import com.intellij.openapi.roots.libraries.Library
 import com.intellij.openapi.util.NlsSafe
+import com.intellij.openapi.util.registry.Registry
 import com.intellij.openapi.vfs.VfsUtil
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.vfs.VirtualFileFilter
@@ -26,9 +27,16 @@ private constructor(private val libraryName: @NlsSafe String?,
                     private val classRoots: List<VirtualFile>,
                     private val sourceRoots: List<VirtualFile>) : LibraryIndexableFilesIterator {
 
-  override fun getDebugName(): String = "Library ${presentableLibraryName} " +
-                                        "(#${classRoots.validCount()} class roots, " +
-                                        "#${sourceRoots.validCount()} source roots)"
+  override fun getDebugName(): String {
+    val debugMessage = if (classRoots.isNotEmpty()) {
+      "(class root ${classRoots.first().name})"
+    } else if (sourceRoots.isNotEmpty()) {
+      "(source root ${sourceRoots.first().name})"
+    } else {
+      "(no root)"
+    }
+    return "Library ${presentableLibraryName} $debugMessage"
+  }
 
   override fun getIndexingProgressText(): String = IndexingBundle.message("indexable.files.provider.indexing.library.name",
                                                                           presentableLibraryName)

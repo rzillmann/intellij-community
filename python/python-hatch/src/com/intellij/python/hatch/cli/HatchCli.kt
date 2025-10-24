@@ -1,29 +1,31 @@
 // Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.python.hatch.cli
 
-import com.intellij.execution.process.ProcessOutput
 import com.intellij.openapi.util.NlsSafe
+import com.intellij.platform.eel.provider.utils.EelProcessExecutionResultInfo
 import com.intellij.platform.eel.provider.utils.sendWholeText
+import com.intellij.platform.eel.provider.utils.stderrString
+import com.intellij.platform.eel.provider.utils.stdoutString
 import com.intellij.python.community.execService.ProcessOutputTransformer
 import com.intellij.python.hatch.PyHatchBundle
 import com.intellij.python.hatch.runtime.HatchConstants
 import com.intellij.python.hatch.runtime.HatchRuntime
 import com.jetbrains.python.Result
-import com.jetbrains.python.errorProcessing.ExecError
 import com.jetbrains.python.errorProcessing.PyResult
 import io.github.z4kn4fein.semver.Version
 import io.github.z4kn4fein.semver.VersionFormatException
+import java.io.IOException
 import java.nio.file.Path
 
 /**
  * Handles hatch-specific errors, runs [transformer] only on outputs with codes 0 or 1 without tracebacks.
  */
-private suspend fun <T> HatchRuntime.executeAndHandleErrors(vararg arguments: String, transformer: ProcessOutputTransformer<T>): Result<T, ExecError> {
+private suspend fun <T> HatchRuntime.executeAndHandleErrors(vararg arguments: String, transformer: ProcessOutputTransformer<T>): PyResult<T> {
   val errorHandlerTransformer: ProcessOutputTransformer<T> = { output ->
     when {
       output.exitCode !in 0..1 -> Result.failure(null)
-      output.exitCode == 1 && output.stdout.substringBefore('\n').contains("Traceback (most recent call last)") -> {
-        val hatchErrorDescription = output.stdout.split('\n').lastOrNull { it.isNotEmpty() } ?: ""
+      output.exitCode == 1 && output.stdoutString.substringBefore('\n').contains("Traceback (most recent call last)") -> {
+        val hatchErrorDescription = output.stdoutString.split('\n').lastOrNull { it.isNotEmpty() } ?: ""
         Result.failure(hatchErrorDescription)
       }
       else -> transformer.invoke(output)
@@ -36,9 +38,9 @@ private suspend fun <T> HatchRuntime.executeAndHandleErrors(vararg arguments: St
 private suspend fun <T> HatchRuntime.executeAndMatch(
   vararg arguments: String,
   expectedOutput: Regex,
-  outputContentSupplier: (ProcessOutput) -> String = ProcessOutput::getStdout,
+  outputContentSupplier: (EelProcessExecutionResultInfo) -> String = { it.stdoutString },
   transformer: (MatchResult) -> Result<T, @NlsSafe String?>,
-): Result<T, ExecError> {
+): PyResult<T> {
   return this.executeAndHandleErrors(*arguments) { processOutput ->
     if (processOutput.exitCode != 0) return@executeAndHandleErrors Result.failure(null)
 
@@ -57,11 +59,11 @@ sealed class HatchCommand(private val command: Array<String>, protected val runt
   @Suppress("unused")
   constructor(command: String, runtime: HatchRuntime) : this(arrayOf(command), runtime)
 
-  protected suspend fun <T> executeAndHandleErrors(vararg arguments: String, transformer: ProcessOutputTransformer<T>): Result<T, ExecError> {
+  protected suspend fun <T> executeAndHandleErrors(vararg arguments: String, transformer: ProcessOutputTransformer<T>): PyResult<T> {
     return runtime.executeAndHandleErrors(*command, *arguments, transformer = transformer)
   }
 
-  protected suspend fun <T> executeAndMatch(vararg arguments: String, expectedOutput: Regex, transformer: (MatchResult) -> Result<T, @NlsSafe String?>): Result<T, ExecError> {
+  protected suspend fun <T> executeAndMatch(vararg arguments: String, expectedOutput: Regex, transformer: (MatchResult) -> Result<T, @NlsSafe String?>): PyResult<T> {
     return runtime.executeAndMatch(*command, *arguments, expectedOutput = expectedOutput, transformer = transformer)
   }
 }
@@ -70,12 +72,12 @@ class HatchCli(private val runtime: HatchRuntime) {
   /**
    * Build a project
    */
-  fun build(): Result<Unit, ExecError> = TODO()
+  fun build(): PyResult<Unit> = TODO()
 
   /**
    * Remove build artifacts
    */
-  fun clean(): Result<Unit, ExecError> = TODO()
+  fun clean(): PyResult<Unit> = TODO()
 
   /**
    * Manage the config file
@@ -95,7 +97,7 @@ class HatchCli(private val runtime: HatchRuntime) {
   /**
    * Format and lint source code
    */
-  fun fmt(): Result<Unit, ExecError> = TODO()
+  fun fmt(): PyResult<Unit> = TODO()
 
   /**
    * Create or initialize a project.
@@ -120,9 +122,14 @@ class HatchCli(private val runtime: HatchRuntime) {
       true to projectName,
       (location != null) to location,
     ).makeOptions()
-    return runtime.executeInteractive("new", *options) { eelProcess ->
+    return runtime.executeInteractive("new", *options) { eelProcess, _ ->
       if (initExistingProject) {
-        eelProcess.stdin.sendWholeText("$projectName\n")
+        try {
+          eelProcess.sendWholeText("$projectName\n")
+        }
+        catch (error: IOException) {
+          return@executeInteractive Result.failure("Failed to write to process: ${error.localizedMessage}")
+        }
       }
       Result.success("Created")
     }
@@ -136,7 +143,7 @@ class HatchCli(private val runtime: HatchRuntime) {
   /**
    * Publish build artifacts
    */
-  fun publish(): Result<Unit, ExecError> = TODO()
+  fun publish(): PyResult<Unit> = TODO()
 
   /**
    * Manage Python installations
@@ -146,19 +153,16 @@ class HatchCli(private val runtime: HatchRuntime) {
   /**
    * Run commands within project environments
    */
-  suspend fun run(envName: String, vararg command: String): Result<String, ExecError> {
-    val envRuntime = runtime.withEnv(HatchConstants.AppEnvVars.ENV to envName)
+  suspend fun run(envName: String? = null, vararg command: String): PyResult<String> {
+    val envRuntime = envName?.let { runtime.withEnv(HatchConstants.AppEnvVars.ENV to it) } ?: runtime
     return envRuntime.executeAndHandleErrors("run", *command) { output ->
-      val scenario = output.stderr.trim()
-      val content = when {
-        output.exitCode == 0 -> {
-          val installDetailsContent = output.stdout.replace("─", "").trim()
-          val info = installDetailsContent.lines().drop(1).dropLast(2).joinToString("\n")
-          "$scenario\n$info"
-        }
-        else -> scenario
-      }
-      Result.success(content)
+      if (output.exitCode != 0) return@executeAndHandleErrors Result.failure(null)
+
+      val scenario = output.stderrString.trim()
+      val installDetailsContent = output.stdoutString.replace("─", "").trim()
+      val info = installDetailsContent.lines().drop(1).dropLast(2).joinToString("\n")
+
+      Result.success("$scenario\n$info")
     }
   }
 
@@ -170,17 +174,17 @@ class HatchCli(private val runtime: HatchRuntime) {
   /**
    * Enter a shell within a project's environment
    */
-  fun shell(): Result<Unit, ExecError> = TODO()
+  fun shell(): PyResult<Unit> = TODO()
 
   data class HatchStatus(val project: String, val location: Path, val config: Path)
 
   /**
    * Show information about the current environment
    */
-  suspend fun status(): Result<HatchStatus, ExecError> {
+  suspend fun status(): PyResult<HatchStatus> {
     val expectedOutput = """^\[Project] - (.*)\n\[Location] - (.*)\n\[Config] - (.*)\n$""".toRegex()
 
-    return runtime.executeAndMatch("status", expectedOutput = expectedOutput, outputContentSupplier = { it.stderr }) { matchResult ->
+    return runtime.executeAndMatch("status", expectedOutput = expectedOutput, outputContentSupplier = { it.stderrString }) { matchResult ->
       val (project, location, config) = matchResult.destructured
       try {
         Result.success(HatchStatus(project, Path.of(location), Path.of(config)))
@@ -194,16 +198,16 @@ class HatchCli(private val runtime: HatchRuntime) {
   /**
    * Run tests
    */
-  fun test(): Result<Unit, ExecError> = TODO()
+  fun test(): PyResult<Unit> = TODO()
 
   /**
    * View a project's version.
    *
    * @return Project Version
    */
-  suspend fun getVersion(): Result<Version, ExecError> {
+  suspend fun getVersion(): PyResult<Version> {
     return runtime.executeAndHandleErrors("version") { processOutput ->
-      val output = processOutput.takeIf { it.exitCode == 0 }?.stdout?.trim()
+      val output = processOutput.takeIf { it.exitCode == 0 }?.stdoutString?.trim()
                    ?: return@executeAndHandleErrors Result.failure(null)
       try {
         Result.success(Version.parse(output))
@@ -222,7 +226,7 @@ class HatchCli(private val runtime: HatchRuntime) {
   suspend fun setVersion(desiredVersion: String): PyResult<Pair<Version, Version>> {
     val expectedOutput = """^Old: (.*)\nNew: (.*)\n$""".toRegex()
 
-    return runtime.executeAndMatch("version", desiredVersion, expectedOutput = expectedOutput, outputContentSupplier = { it.stderr }) { matchResult ->
+    return runtime.executeAndMatch("version", desiredVersion, expectedOutput = expectedOutput, outputContentSupplier = { it.stderrString }) { matchResult ->
       val (oldVersion, newVersion) = matchResult.destructured
       try {
         Result.success(Version.parse(oldVersion) to Version.parse(newVersion))

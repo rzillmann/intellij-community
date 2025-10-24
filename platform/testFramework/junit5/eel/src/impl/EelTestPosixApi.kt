@@ -9,11 +9,15 @@ import com.intellij.platform.eel.provider.asEelPath
 import com.intellij.platform.eel.provider.utils.toEelArch
 import com.intellij.platform.testFramework.junit5.eel.impl.nio.EelUnitTestFileSystem
 import com.intellij.util.system.CpuArch
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Deferred
 import java.nio.file.Files
 import java.nio.file.Path
 
 internal class EelTestPosixApi(override val descriptor: EelTestDescriptor, fileSystem: EelUnitTestFileSystem, localPrefix: String) : EelPosixApi {
   override val userInfo: EelUserPosixInfo = EelTestPosixUserInfo(descriptor)
+
+  override val platform: EelPlatform.Posix = EelPlatform.Linux(CpuArch.CURRENT.toEelArch())
 
   override val fs: PosixNioBasedEelFileSystemApi = EelTestFileSystemPosixApi(descriptor, fileSystem)
 
@@ -21,21 +25,20 @@ internal class EelTestPosixApi(override val descriptor: EelTestDescriptor, fileS
     get() = TODO()
   override val tunnels: EelTunnelsPosixApi
     get() = TODO()
-  override val exec: EelExecApi
-    get() = object : EelExecApi {
+  override val exec: EelExecPosixApi
+    get() = object : EelExecPosixApi {
       override val descriptor: EelDescriptor get() = this@EelTestPosixApi.descriptor
-      override suspend fun execute(generatedBuilder: EelExecApi.ExecuteProcessOptions) = TODO()
+      override suspend fun spawnProcess(generatedBuilder: EelExecApi.ExecuteProcessOptions) = TODO()
       override suspend fun fetchLoginShellEnvVariables(): Map<String, String> = emptyMap()
+      override fun environmentVariables(opts: EelExecApi.EnvironmentVariablesOptions): Deferred<Map<String, String>> =
+        CompletableDeferred(emptyMap())
       override suspend fun findExeFilesInPath(binaryName: String) = TODO()
+      override suspend fun createExternalCli(options: EelExecApi.ExternalCliOptions): EelExecApi.ExternalCliEntrypoint = TODO()
     }
 
 }
 
 private class EelTestFileSystemPosixApi(override val descriptor: EelTestDescriptor, fileSystem: EelUnitTestFileSystem) : PosixNioBasedEelFileSystemApi(fileSystem, EelTestPosixUserInfo(descriptor)) {
-
-  override suspend fun readFully(path: EelPath, limit: ULong, overflowPolicy: EelFileSystemApi.OverflowPolicy): EelResult<EelFileSystemApi.FullReadResult, EelFileSystemApi.FullReadError> {
-    TODO("Not yet implemented")
-  }
 
   override suspend fun createTemporaryDirectory(options: EelFileSystemApi.CreateTemporaryEntryOptions): EelResult<EelPath, EelFileSystemApi.CreateTemporaryEntryError> {
     return wrapIntoEelResult {
@@ -45,7 +48,10 @@ private class EelTestFileSystemPosixApi(override val descriptor: EelTestDescript
   }
 
   override suspend fun createTemporaryFile(options: EelFileSystemApi.CreateTemporaryEntryOptions): EelResult<EelPath, EelFileSystemApi.CreateTemporaryEntryError> {
-    TODO("Not yet implemented")
+    return wrapIntoEelResult {
+      val nioTempFile = Files.createTempFile(options.prefix, options.suffix)
+      Path.of(nioTempFile.toString()).asEelPath()
+    }
   }
 }
 

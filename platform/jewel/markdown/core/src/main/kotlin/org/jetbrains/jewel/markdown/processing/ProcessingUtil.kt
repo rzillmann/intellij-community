@@ -12,6 +12,7 @@ import org.commonmark.node.SoftLineBreak as CMSoftLineBreak
 import org.commonmark.node.StrongEmphasis as CMStrongEmphasis
 import org.commonmark.node.Text as CMText
 import org.commonmark.parser.beta.ParsedInline
+import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.jewel.foundation.ExperimentalJewelApi
 import org.jetbrains.jewel.foundation.util.JewelLogger
 import org.jetbrains.jewel.markdown.InlineMarkdown
@@ -26,15 +27,19 @@ import org.jetbrains.jewel.markdown.WithTextContent
  * @return A list of the contents as parsed [InlineMarkdown].
  * @see toInlineMarkdownOrNull
  */
+@ApiStatus.Experimental
 @ExperimentalJewelApi
-public fun Node.readInlineMarkdown(markdownProcessor: MarkdownProcessor): List<InlineMarkdown> = buildList {
-    var current = this@readInlineMarkdown.firstChild
-    while (current != null) {
-        val inline = current.toInlineMarkdownOrNull(markdownProcessor)
-        if (inline != null) add(inline)
+public fun Node.readInlineMarkdown(markdownProcessor: MarkdownProcessor): List<InlineMarkdown> {
+    val inlines = buildList {
+        var current = this@readInlineMarkdown.firstChild
+        while (current != null) {
+            val inline = current.toInlineMarkdownOrNull(markdownProcessor)
+            if (inline != null) add(inline)
 
-        current = current.next
+            current = current.next
+        }
     }
+    return markdownProcessor.convertHtmlInlines(inlines)
 }
 
 /**
@@ -46,6 +51,8 @@ public fun Node.readInlineMarkdown(markdownProcessor: MarkdownProcessor): List<I
  *   registered to [markdownProcessor].
  * @see readInlineMarkdown
  */
+@ExperimentalJewelApi
+@ApiStatus.Experimental
 public fun Node.toInlineMarkdownOrNull(markdownProcessor: MarkdownProcessor): InlineMarkdown? =
     when (this) {
         is CMText -> InlineMarkdown.Text(literal)

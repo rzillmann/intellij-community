@@ -26,6 +26,10 @@ import org.jetbrains.annotations.Nls
 import org.jetbrains.kotlin.analysis.api.KaExperimentalApi
 import org.jetbrains.kotlin.analysis.api.KaSession
 import org.jetbrains.kotlin.analysis.api.analyze
+import org.jetbrains.kotlin.analysis.api.components.expressionType
+import org.jetbrains.kotlin.analysis.api.components.render
+import org.jetbrains.kotlin.analysis.api.components.resolveToCall
+import org.jetbrains.kotlin.analysis.api.components.returnType
 import org.jetbrains.kotlin.analysis.api.permissions.KaAllowAnalysisFromWriteAction
 import org.jetbrains.kotlin.analysis.api.permissions.KaAllowAnalysisOnEdt
 import org.jetbrains.kotlin.analysis.api.permissions.allowAnalysisFromWriteAction
@@ -34,10 +38,15 @@ import org.jetbrains.kotlin.analysis.api.renderer.types.impl.KaTypeRendererForSo
 import org.jetbrains.kotlin.analysis.api.renderer.types.renderers.KaFunctionalTypeRenderer
 import org.jetbrains.kotlin.analysis.api.resolution.KaCallableMemberCall
 import org.jetbrains.kotlin.analysis.api.resolution.KaImplicitReceiverValue
+import org.jetbrains.kotlin.analysis.api.resolution.KaReceiverValue
 import org.jetbrains.kotlin.analysis.api.resolution.successfulCallOrNull
-import org.jetbrains.kotlin.analysis.api.symbols.KaCallableSymbol
+import org.jetbrains.kotlin.analysis.api.resolution.symbol
+import org.jetbrains.kotlin.analysis.api.symbols.KaContextParameterSymbol
+import org.jetbrains.kotlin.analysis.api.symbols.KaParameterSymbol
+import org.jetbrains.kotlin.analysis.api.symbols.KaReceiverParameterSymbol
 import org.jetbrains.kotlin.analysis.api.types.KaType
 import org.jetbrains.kotlin.idea.base.analysis.api.utils.analyzeInModalWindow
+import org.jetbrains.kotlin.idea.base.analysis.api.utils.unwrapSmartCasts
 import org.jetbrains.kotlin.idea.base.codeInsight.KotlinDeclarationNameValidator
 import org.jetbrains.kotlin.idea.base.codeInsight.KotlinNameSuggestionProvider.ValidatorTarget
 import org.jetbrains.kotlin.idea.base.psi.moveInsideParenthesesAndReplaceWith
@@ -76,52 +85,54 @@ import java.util.*
 
 open class KotlinFirIntroduceParameterHandler(private val helper: KotlinIntroduceParameterHelper<KtNamedDeclaration> = KotlinIntroduceParameterHelper.Default()) : RefactoringActionHandler {
 
-    context(KaSession)
+    context(_: KaSession)
+    @OptIn(KaExperimentalApi::class)
     protected fun findInternalUsagesOfParametersAndReceiver(
         targetParent: KtNamedDeclaration
     ): MultiMap<KtElement, KtElement> {
         val usages = MultiMap<KtElement, KtElement>()
 
-        targetParent.getValueParameters()
-            .filter { !it.hasValOrVar() }
-            .forEach {
-                val paramUsages = ReferencesSearch.search(it).asIterable().map { reference -> reference.element as KtElement }
-                if (paramUsages.isNotEmpty()) {
-                    usages.put(it, paramUsages)
+        val receiverTypeRef = (targetParent as? KtFunction)?.receiverTypeReference
+        targetParent.acceptChildren(
+            object : KtTreeVisitorVoid() {
+                override fun visitThisExpression(expression: KtThisExpression) {
+                    super.visitThisExpression(expression)
+                    if (receiverTypeRef != null && expression.instanceReference.mainReference.resolve() == targetParent) {
+                        usages.putValue(receiverTypeRef, expression)
+                    }
+                }
+
+                override fun visitKtElement(element: KtElement) {
+                    super.visitKtElement(element)
+
+                    val symbol = element.resolveToCall()?.successfulCallOrNull<KaCallableMemberCall<*, *>>()?.partiallyAppliedSymbol
+
+                    val parameter = (symbol?.symbol as? KaParameterSymbol)?.psi as? KtParameter
+                    if (parameter != null && !parameter.hasValOrVar() && parameter.ownerDeclaration == targetParent) {
+                        usages.putValue(parameter, element)
+                    }
+
+                    symbol?.contextArguments?.forEach { arg ->
+                        val contextParameterSymbol = (arg.unwrapSmartCasts() as? KaImplicitReceiverValue)?.symbol as? KaContextParameterSymbol
+                        val targetParameter = contextParameterSymbol?.psi as? KtParameter
+                        if (targetParameter != null && targetParameter.ownerDeclaration == targetParent) {
+                            usages.putValue(targetParameter, element)
+                        }
+                    }
+
+                    fun isImplicitReceiverReference(receiverValue: KaReceiverValue?): Boolean =
+                        ((receiverValue?.unwrapSmartCasts() as? KaImplicitReceiverValue)?.symbol as? KaReceiverParameterSymbol)?.psi == receiverTypeRef
+                    if (receiverTypeRef != null && (isImplicitReceiverReference(symbol?.dispatchReceiver) || isImplicitReceiverReference(symbol?.extensionReceiver))) {
+                        usages.putValue(receiverTypeRef, element)
+                    }
                 }
             }
-
-
-        val receiverTypeRef = (targetParent as? KtFunction)?.receiverTypeReference
-        if (receiverTypeRef != null) {
-            targetParent.acceptChildren(
-                object : KtTreeVisitorVoid() {
-                    override fun visitThisExpression(expression: KtThisExpression) {
-                        super.visitThisExpression(expression)
-                        if (expression.instanceReference.mainReference.resolve() == targetParent) {
-                            usages.putValue(receiverTypeRef, expression)
-                        }
-                    }
-
-                    override fun visitKtElement(element: KtElement) {
-                        super.visitKtElement(element)
-
-                        val symbol = element.resolveToCall()?.successfulCallOrNull<KaCallableMemberCall<*, *>>()?.partiallyAppliedSymbol
-                        val callableSymbol = targetParent.symbol as? KaCallableSymbol
-                        if (callableSymbol != null) {
-                            if ((symbol?.dispatchReceiver as? KaImplicitReceiverValue)?.symbol == callableSymbol.receiverParameter || (symbol?.extensionReceiver as? KaImplicitReceiverValue)?.symbol == callableSymbol.receiverParameter) {
-                                usages.putValue(receiverTypeRef, element)
-                            }
-                        }
-                    }
-                }
-            )
-        }
+        )
         return usages
     }
 
 
-    context(KaSession)
+    context(_: KaSession)
     private fun getExpressionType(
         physicalExpression: KtExpression,
         expression: KtExpression
@@ -476,16 +487,24 @@ fun IntroduceParameterDescriptor<KtNamedDeclaration>.performRefactoring(editor: 
     val defaultValue = (if (newArgumentValue is KtProperty) (newArgumentValue as KtProperty).initializer else newArgumentValue)?.let { KtPsiUtil.safeDeparenthesize(it) }
 
     if (!withDefaultValue) {
+        parametersToRemove.filter { it is KtParameter && it.isContextParameter }
+            .map { it.parameterIndex() }
+            .sortedDescending()
+            .forEach {
+            changeInfo.removeContextParameter(it)
+        }
         val parameters = callable.getValueParameters()
         val withReceiver = methodDescriptor.receiver != null
-        parametersToRemove
+        parametersToRemove.filter { it is KtParameter && !it.isContextParameter || it !is KtParameter }
             .map {
                 if (it is KtParameter) {
                     parameters.indexOf(it) + if (withReceiver) 1 else 0
-                } else 0
+                }
+                else 0
             }
             .sortedDescending()
             .forEach { changeInfo.removeParameter(it) }
+
         //parametersToRemove already checked if it's possible
         changeInfo.checkUsedParameters = false
     }
@@ -526,7 +545,7 @@ open class KotlinFirIntroduceLambdaParameterHandler(
             project: Project,
             editor: Editor,
             lambdaExtractionDescriptor: ExtractableCodeDescriptor
-        ): KotlinIntroduceParameterDialog? {
+        ): KotlinIntroduceParameterDialog {
             val callable = lambdaExtractionDescriptor.extractionData.targetSibling as KtNamedDeclaration
             val originalRange = lambdaExtractionDescriptor.extractionData.originalRange
             val (parametersUsages, returnType) = analyzeInModalWindow(callable, KotlinBundle.message("fix.change.signature.prepare")) {
@@ -551,7 +570,7 @@ open class KotlinFirIntroduceLambdaParameterHandler(
                                                   lambdaExtractionDescriptor)
         }
 
-        context(KaSession)
+        context(_: KaSession)
         fun calculateFunctionalType(
             oldDescriptor: ExtractableCodeDescriptor,
         ): String {
@@ -580,7 +599,7 @@ open class KotlinFirIntroduceLambdaParameterHandler(
                 return
             }
 
-            val dialog = createDialog(project, editor, lambdaExtractionDescriptor) ?: return
+            val dialog = createDialog(project, editor, lambdaExtractionDescriptor)
             if (isUnitTestMode()) {
                 dialog.performRefactoring()
             } else {

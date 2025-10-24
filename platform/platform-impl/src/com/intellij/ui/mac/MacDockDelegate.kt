@@ -3,59 +3,63 @@ package com.intellij.ui.mac
 
 import com.intellij.ide.DataManager
 import com.intellij.ide.RecentProjectListActionProvider
-import com.intellij.ide.ReopenProjectAction
+import com.intellij.ide.SystemDock
 import com.intellij.openapi.actionSystem.ActionPlaces
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.ex.ActionUtil
+import com.intellij.openapi.application.UiWithModelAccess
+import com.intellij.openapi.components.serviceAsync
+import com.intellij.openapi.diagnostic.getOrHandleException
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.extensions.ExtensionPointName
-import com.intellij.openapi.wm.impl.SystemDock
 import com.intellij.openapi.wm.impl.headertoolbar.ProjectToolbarWidgetPresentable
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.awt.*
 
-internal class MacDockDelegate private constructor(private val recentProjectsMenu: Menu) : SystemDock.Delegate {
-  companion object {
-    val instance: SystemDock.Delegate by lazy {
-      val dockMenu = PopupMenu("DockMenu")
-      val recentProjectsMenu = Menu("Recent Projects")
-      try {
-        dockMenu.add(recentProjectsMenu)
-        ExtensionPointName.create<MacDockMenuActions>("com.intellij.mac.dockMenuActions").forEachExtensionSafe { actions ->
-          actions.createMenuItem()?.let {
-            dockMenu.add(it)
-          }
-        }
-        if (Taskbar.isTaskbarSupported() /* not supported in CWM/Projector environment */) {
-          Taskbar.getTaskbar().menu = dockMenu
+internal suspend fun createMacDelegate(): SystemDock {
+  // todo get rid of UI dispatcher here
+  val recentProjectsMenu = withContext(Dispatchers.UiWithModelAccess) {
+    val dockMenu = PopupMenu("DockMenu")
+    val recentProjectsMenu = Menu("Recent Projects")
+    runCatching {
+      dockMenu.add(recentProjectsMenu)
+      ExtensionPointName<MacDockMenuActions>("com.intellij.mac.dockMenuActions").forEachExtensionSafe { actions ->
+        actions.createMenuItem()?.let {
+          dockMenu.add(it)
         }
       }
-      catch (e: Exception) {
-        logger<MacDockDelegate>().error(e)
+      if (Taskbar.isTaskbarSupported() /* not supported in CWM/Projector environment */) {
+        Taskbar.getTaskbar().menu = dockMenu
       }
-
-      MacDockDelegate(recentProjectsMenu)
-    }
+    }.getOrHandleException { logger<MacDockDelegate>() }
+    recentProjectsMenu
   }
+  return MacDockDelegate(recentProjectsMenu)
+}
 
-  override fun updateRecentProjectsMenu() {
-    recentProjectsMenu.removeAll()
-    for (action in RecentProjectListActionProvider.getInstance().getActions(addClearListItem = false)) {
-      val displayName = when (action) {
-        is ReopenProjectAction -> action.projectDisplayName
-        is ProjectToolbarWidgetPresentable -> action.projectNameToDisplay
-        else -> continue
+private class MacDockDelegate(private val recentProjectsMenu: Menu) : SystemDock {
+  override suspend fun updateRecentProjectsMenu() {
+    val projectListActionProvider = serviceAsync<RecentProjectListActionProvider>()
+    // todo get rid of UI dispatcher here
+    withContext(Dispatchers.UiWithModelAccess) {
+      recentProjectsMenu.removeAll()
+      for (action in projectListActionProvider.getActionsWithoutGroups()) {
+        if (action !is ProjectToolbarWidgetPresentable) {
+          continue
+        }
+
+        val menuItem = MenuItem(action.nameToDisplayAsText)
+        menuItem.addActionListener {
+          // The newly opened project won't become an active window if another application is currently active.
+          // This is not what user expects, so we activate our application explicitly.
+          Desktop.getDesktop().requestForeground(false)
+          val event = AnActionEvent.createFromAnAction(
+            action, null, ActionPlaces.DOCK_MENU, DataManager.getInstance().getDataContext(null))
+          ActionUtil.performAction(action, event)
+        }
+        recentProjectsMenu.add(menuItem)
       }
-      val menuItem = MenuItem(displayName)
-      menuItem.addActionListener {
-        // The newly opened project won't become an active window if another application is currently active.
-        // This is not what user expects, so we activate our application explicitly.
-        Desktop.getDesktop().requestForeground(false)
-        ActionUtil.performActionDumbAwareWithCallbacks(
-          action,
-          AnActionEvent.createFromAnAction(action, null, ActionPlaces.DOCK_MENU, DataManager.getInstance().getDataContext(null))
-        )
-      }
-      recentProjectsMenu.add(menuItem)
     }
   }
 }

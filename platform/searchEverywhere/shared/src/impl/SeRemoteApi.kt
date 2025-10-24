@@ -4,9 +4,10 @@ package com.intellij.platform.searchEverywhere.impl
 import com.intellij.ide.rpc.DataContextId
 import com.intellij.platform.project.ProjectId
 import com.intellij.platform.rpc.RemoteApiProviderService
+import com.intellij.platform.scopes.SearchScopesInfo
 import com.intellij.platform.searchEverywhere.*
+import com.intellij.platform.searchEverywhere.providers.SeSortedProviderIds
 import com.intellij.platform.searchEverywhere.providers.target.SeTypeVisibilityStatePresentation
-import fleet.kernel.DurableRef
 import fleet.rpc.RemoteApi
 import fleet.rpc.Rpc
 import fleet.rpc.remoteApiDescriptor
@@ -30,43 +31,111 @@ interface SeRemoteApi : RemoteApi<Unit> {
   // 4. BE sends the next batch of items
   suspend fun getItems(
     projectId: ProjectId,
-    sessionRef: DurableRef<SeSessionEntity>,
-    providerId: SeProviderId,
+    session: SeSession,
+    providerIds: List<SeProviderId>,
+    isAllTab: Boolean,
     params: SeParams,
     dataContextId: DataContextId?,
     requestedCountChannel: ReceiveChannel<Int>,
-  ): Flow<SeItemData>
+  ): Flow<SeTransferEvent>
 
   suspend fun itemSelected(
     projectId: ProjectId,
-    sessionRef: DurableRef<SeSessionEntity>,
+    session: SeSession,
     itemData: SeItemData,
     modifiers: Int,
     searchText: String,
+    isAllTab: Boolean,
   ): Boolean
 
-  suspend fun getAvailableProviderIds(): List<SeProviderId>
-
-  suspend fun getSearchScopesInfoForProvider(
+  /**
+   * Defines if results can be shown in <i>Find</i> toolwindow.
+   */
+  suspend fun canBeShownInFindResults(
     projectId: ProjectId,
-    sessionRef: DurableRef<SeSessionEntity>,
+    session: SeSession,
+    dataContextId: DataContextId,
+    providerIds: List<SeProviderId>,
+    isAllTab: Boolean,
+  ): Boolean
+
+  suspend fun isShownInSeparateTab(
+    projectId: ProjectId,
+    session: SeSession,
     dataContextId: DataContextId,
     providerId: SeProviderId,
-  ): SeSearchScopesInfo?
+  ): Boolean
 
-  suspend fun getTypeVisibilityStatesForProvider(
+  suspend fun openInFindToolWindow(
     projectId: ProjectId,
-    sessionRef: DurableRef<SeSessionEntity>,
+    session: SeSession,
+    dataContextId: DataContextId?,
+    providerIds: List<SeProviderId>,
+    params: SeParams,
+    isAllTab: Boolean,
+  ): Boolean
+
+  @ApiStatus.Internal
+  suspend fun getAvailableProviderIds(
+    projectId: ProjectId,
+    session: SeSession,
     dataContextId: DataContextId,
-    providerId: SeProviderId,
-  ): List<SeTypeVisibilityStatePresentation>?
+  ): SeSortedProviderIds?
+
+  suspend fun getSearchScopesInfoForProviders(
+    projectId: ProjectId,
+    session: SeSession,
+    dataContextId: DataContextId,
+    providerIds: List<SeProviderId>,
+    isAllTab: Boolean,
+  ): Map<SeProviderId, SearchScopesInfo>
+
+  suspend fun getTypeVisibilityStatesForProviders(
+    index: Int,
+    projectId: ProjectId,
+    session: SeSession,
+    dataContextId: DataContextId,
+    providerIds: List<SeProviderId>,
+    isAllTab: Boolean,
+  ): List<SeTypeVisibilityStatePresentation>
 
   suspend fun getDisplayNameForProviders(
     projectId: ProjectId,
-    sessionRef: DurableRef<SeSessionEntity>,
+    session: SeSession,
     dataContextId: DataContextId,
     providerIds: List<SeProviderId>,
   ): Map<SeProviderId, @Nls String>
+
+  suspend fun getUpdatedPresentation(projectId: ProjectId, item: SeItemData): SeItemPresentation?
+
+  suspend fun performExtendedAction(
+    projectId: ProjectId,
+    session: SeSession,
+    itemData: SeItemData,
+    isAllTab: Boolean,
+  ): Boolean
+
+  suspend fun getPreviewInfo(
+    projectId: ProjectId,
+    session: SeSession,
+    itemData: SeItemData,
+    isAllTab: Boolean,
+  ): SePreviewInfo?
+
+
+  suspend fun isPreviewEnabled(
+    projectId: ProjectId,
+    session: SeSession,
+    dataContextId: DataContextId,
+    providerIds: List<SeProviderId>,
+    isAllTab: Boolean,
+  ): Boolean
+
+  suspend fun isExtendedInfoEnabled(projectId: ProjectId,
+                                    session: SeSession,
+                                    dataContextId: DataContextId,
+                                    providerIds: List<SeProviderId>,
+                                    isAllTab: Boolean): Boolean
 
   companion object {
     @JvmStatic

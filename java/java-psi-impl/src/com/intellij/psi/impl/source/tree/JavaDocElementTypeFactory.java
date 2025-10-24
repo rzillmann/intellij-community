@@ -1,10 +1,16 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.psi.impl.source.tree;
 
 import com.intellij.psi.impl.source.AbstractBasicJavaDocElementTypeFactory;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 
+/**
+ * @deprecated This class is planned to be removed.
+ *             Use {@link JavaDocElementType} directly.
+ */
+@Deprecated
+@ApiStatus.ScheduledForRemoval
 @ApiStatus.Experimental
 public class JavaDocElementTypeFactory extends AbstractBasicJavaDocElementTypeFactory {
   private JavaDocElementTypeFactory() {
@@ -29,7 +35,8 @@ public class JavaDocElementTypeFactory extends AbstractBasicJavaDocElementTypeFa
       JavaDocElementType.DOC_TYPE_HOLDER,
       JavaDocElementType.DOC_PARAMETER_REF,
       JavaDocElementType.DOC_MARKDOWN_CODE_BLOCK,
-      JavaDocElementType.DOC_MARKDOWN_REFERENCE_LINK
+      JavaDocElementType.DOC_MARKDOWN_REFERENCE_LINK,
+      JavaDocElementType.DOC_MARKDOWN_REFERENCE_LABEL
     );
   }
 

@@ -8,11 +8,12 @@ import com.intellij.codeInspection.dataFlow.lang.UnsatisfiedConditionProblem
 import com.intellij.codeInspection.dataFlow.memory.DfaMemoryState
 import com.intellij.codeInspection.dataFlow.types.DfTypes
 import com.intellij.codeInspection.dataFlow.value.DfaValue
-import com.intellij.codeInspection.dataFlow.value.DfaVariableValue
+import com.intellij.codeInspection.dataFlow.value.VariableDescriptor
 import com.intellij.debugger.engine.DebuggerUtils
 import com.intellij.debugger.engine.dfaassist.DebuggerDfaListener
 import com.intellij.debugger.engine.dfaassist.DfaAssistProvider
 import com.intellij.debugger.jdi.StackFrameProxyEx
+import com.intellij.openapi.application.readAction
 import com.intellij.psi.PsiComment
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiWhiteSpace
@@ -34,15 +35,18 @@ import org.jetbrains.kotlin.psi.psiUtil.parentsWithSelf
 import org.jetbrains.kotlin.resolve.bindingContextUtil.getAbbreviatedTypeOrType
 import org.jetbrains.kotlin.resolve.descriptorUtil.fqNameSafe
 import org.jetbrains.kotlin.resolve.lazy.BodyResolveMode
+import java.util.*
 import org.jetbrains.org.objectweb.asm.Type as AsmType
 
-class KotlinDfaAssistProvider : DfaAssistProvider {
-    override fun locationMatches(element: PsiElement, location: Location): Boolean {
+private class KotlinDfaAssistProvider : DfaAssistProvider {
+    override suspend fun locationMatches(element: PsiElement, location: Location): Boolean {
         val jdiClassName = location.method().declaringType().name()
-        val file = element.containingFile
-        if (file !is KtFile) return false
-        val classNames = ClassNameCalculator.getClassNames(file)
-        return element.parentsWithSelf.any { e -> classNames[e] == jdiClassName }
+        return readAction {
+            val file = element.containingFile
+            if (file !is KtFile) return@readAction false
+            val classNames = ClassNameCalculator.getClassNames(file)
+            element.parentsWithSelf.any { e -> classNames[e] == jdiClassName }
+        }
     }
 
     override fun getAnchor(element: PsiElement): KtExpression? {
@@ -69,49 +73,57 @@ class KotlinDfaAssistProvider : DfaAssistProvider {
         }
     }
 
-    override fun getJdiValueForDfaVariable(proxy: StackFrameProxyEx, dfaVar: DfaVariableValue, anchor: PsiElement): Value? {
-        val qualifier = dfaVar.qualifier
-        val psiVariable = dfaVar.psiVariable
-        if (qualifier == null) {
-            val descriptor = dfaVar.descriptor
-            if (descriptor is KtThisDescriptor) {
-                val declarationDescriptor = descriptor.descriptor
-                if (declarationDescriptor is FunctionDescriptor) {
-                    val thisName = "\$this\$${declarationDescriptor.name}"
-                    val thisVar = proxy.visibleVariableByName(thisName)
-                    if (thisVar != null) {
-                        return postprocess(proxy.getVariableValue(thisVar))
-                    }
-                    return null
+    override suspend fun getJdiValueForDfaVariable(proxy: StackFrameProxyEx, descriptor: VariableDescriptor, anchor: PsiElement): Value? {
+        if (descriptor is KtThisDescriptor) {
+            val declarationDescriptor = descriptor.descriptor
+            if (declarationDescriptor is FunctionDescriptor) {
+                val thisName = readAction { "\$this\$${declarationDescriptor.name}" }
+                val thisVar = proxy.visibleVariableByName(thisName)
+                if (thisVar != null) {
+                    return postprocess(proxy.getVariableValue(thisVar))
                 }
-                val thisObject = proxy.thisObject()
-                if (thisObject != null) {
-                    val signature = AsmType.getType(thisObject.referenceType().signature()).className
-                    val jvmName = KotlinPsiHeuristics.getJvmName(declarationDescriptor.fqNameSafe)
-                    if (signature == jvmName) {
-                        return thisObject
-                    }
-                }
-                // TODO: support `this` references for outer types, etc.
                 return null
             }
-            else if (descriptor is KtVariableDescriptor && psiVariable is KtCallableDeclaration) {
-                // TODO: check/support inlined functions
-                val variable = proxy.visibleVariableByName((psiVariable as KtNamedDeclaration).name)
-                if (variable != null) {
-                    return postprocess(proxy.getVariableValue(variable))
+            val thisObject = proxy.thisObject()
+            if (thisObject != null) {
+                val signature = AsmType.getType(thisObject.referenceType().signature()).className
+                val jvmName = readAction { KotlinPsiHeuristics.getJvmName(declarationDescriptor.fqNameSafe) }
+                if (signature == jvmName) {
+                    return thisObject
                 }
             }
-        } else {
-            val jdiQualifier = getJdiValueForDfaVariable(proxy, qualifier, anchor)
-            if (jdiQualifier is ObjectReference && psiVariable is KtCallableDeclaration) {
-                val field = psiVariable.name?.let { DebuggerUtils.findField(jdiQualifier.referenceType(), it) }
-                if (field != null) {
-                    return postprocess(jdiQualifier.getValue(field))
-                }
+            return null
+        } else if (descriptor is KtVariableDescriptor) {
+            val name = readAction {
+                val psiVariable = descriptor.psiElement as? KtNamedDeclaration ?: return@readAction null
+                psiVariable.name
+            }
+            val variable = proxy.visibleVariableByName(name)
+            if (variable != null) {
+                return postprocess(proxy.getVariableValue(variable))
             }
         }
         return null
+    }
+
+    override suspend fun getJdiValuesForQualifier(
+        proxy: StackFrameProxyEx,
+        qualifier: Value,
+        descriptors: List<VariableDescriptor>,
+        anchor: PsiElement
+    ): Map<VariableDescriptor, Value> {
+        if (qualifier !is ObjectReference) return emptyMap()
+        // Avoid relying on hashCode/equals, as descriptors are known to be deduplicated here
+        val map = IdentityHashMap<VariableDescriptor, Value>()
+        for (descriptor in descriptors) {
+            val name = readAction {
+                val psiVariable = descriptor.psiElement as? KtCallableDeclaration ?: return@readAction null
+                psiVariable.name
+            } ?: continue
+            val field = DebuggerUtils.findField(qualifier.referenceType(), name) ?: continue
+            map[descriptor] = postprocess(qualifier.getValue(field))
+        }
+        return map
     }
 
     private fun postprocess(value: Value?): Value {

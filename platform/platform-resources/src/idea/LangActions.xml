@@ -1,5 +1,7 @@
 <!--suppress PluginXmlRegistrationCheck -->
 <idea-plugin>
+  <module value="com.intellij.modules.lang.actions"/>
+
   <actions>
     <action id="IncrementalSearch" class="com.intellij.codeInsight.navigation.actions.IncrementalSearchAction"/>
 
@@ -191,7 +193,7 @@
     <action id="ShowHoverInfo" class="com.intellij.openapi.editor.actions.ShowHoverInfoAction"/>
 
     <action id="ShowGutterIconsSettings" class="com.intellij.application.options.editor.GutterIconsConfigurable$ShowSettingsAction">
-      <add-to-group group-id="EditorGutterPopupMenu.Appearance" anchor="last"/>
+      <add-to-group group-id="EditorGutterPopupMenu" anchor="last"/>
       <add-to-group group-id="DocCommentGutterIconContextMenu"/>
     </action>
 
@@ -226,20 +228,16 @@
 
 
     <!-- Go To -->
-    <group id="GoToTargetEx">
-      <action id="GotoClass" class="com.intellij.ide.actions.GotoClassAction"/>
-      <action id="GotoFile" class="com.intellij.ide.actions.GotoFileAction">
-        <override-text place="MainMenu"/>
-        <add-to-group group-id="EditorTabsEntryPoint" anchor="after" relative-to-action="RecentLocations"/>
-      </action>
-      <action id="GotoSymbol" class="com.intellij.ide.actions.GotoSymbolAction">
-        <override-text place="MainMenu"/>
-      </action>
-      <action id="TextSearchAction" class="com.intellij.find.impl.TextSearchContributor$Companion$TextSearchAction"/>
-
-      <add-to-group group-id="GoToMenu" anchor="before" relative-to-action="GotoLine"/>
-
-    </group>
+    <action id="GotoClass" class="com.intellij.ide.actions.GotoClassAction">
+      <add-to-group group-id="GoToTargetEx" anchor="before" relative-to-action="GotoFile"/>
+    </action>
+    <action id="GotoSymbol" class="com.intellij.ide.actions.GotoSymbolAction">
+      <override-text place="MainMenu"/>
+      <add-to-group group-id="GoToTargetEx" anchor="after" relative-to-action="GotoFile"/>
+    </action>
+    <action id="TextSearchAction" class="com.intellij.find.impl.TextSearchContributor$Companion$TextSearchAction">
+      <add-to-group group-id="GoToTargetEx" anchor="after" relative-to-action="GotoSymbol"/>
+    </action>
 
     <group id="GoToCodeGroup">
       <separator/>
@@ -348,6 +346,8 @@
         <reference ref="InsertInlineCompletionAction"/>
         <reference ref="InsertInlineCompletionWordAction"/>
         <reference ref="InsertInlineCompletionLineAction"/>
+        <action class="com.intellij.codeInsight.completion.command.configuration.EnableCommandCompletionAction"
+                id="EnableCommandCompletion"/>
       </group>
 
       <group id="InspectCodeInCodeMenuGroup">
@@ -1073,7 +1073,8 @@
     <action id="RenameFile" class="com.intellij.refactoring.actions.RenameFileAction">
       <add-to-group group-id="EditorTabPopupMenuEx" anchor="last"/>
     </action>
-    <action id="UpdateRunningApplication" class="com.intellij.execution.update.UpdateRunningApplicationAction">
+    <action id="UpdateRunningApplication" class="com.intellij.execution.update.UpdateRunningApplicationAction"
+            icon="AllIcons.Javaee.UpdateRunningApplication">
       <keyboard-shortcut first-keystroke="control F10" keymap="$default"/>
       <add-to-group group-id="DebugReloadGroup" anchor="last"/>
     </action>
@@ -1147,6 +1148,7 @@
       <action id="DumpPluginDescriptorsAction" internal="true" class="com.intellij.internal.DumpPluginDescriptorsAction"/>
       <action id="DumpRunConfigurationTypesAction" internal="true" class="com.intellij.internal.DumpRunConfigurationTypesAction"/>
       <action id="DumpFormattingModel" class="com.intellij.internal.DumpFormattingModelAction" internal="true"/>
+      <action id="CheckClassLoading" internal="true" class="com.intellij.internal.CheckClassLoadingAction"/>
       <add-to-group group-id="Internal" anchor="last"/>
     </group>
   </actions>

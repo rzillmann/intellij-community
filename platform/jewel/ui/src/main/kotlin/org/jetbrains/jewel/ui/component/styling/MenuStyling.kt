@@ -1,3 +1,5 @@
+@file:Suppress("DEPRECATION")
+
 package org.jetbrains.jewel.ui.component.styling
 
 import androidx.compose.foundation.layout.PaddingValues
@@ -118,6 +120,7 @@ public class MenuItemColors(
     public val keybindingTintHovered: Color,
     public val separator: Color,
 ) {
+    @Deprecated("This is being made private")
     @Composable
     public fun backgroundFor(state: MenuItemState): State<Color> =
         rememberUpdatedState(
@@ -131,6 +134,7 @@ public class MenuItemColors(
             )
         )
 
+    @Deprecated("This is being made private")
     @Composable
     public fun contentFor(state: MenuItemState): State<Color> =
         rememberUpdatedState(
@@ -144,6 +148,7 @@ public class MenuItemColors(
             )
         )
 
+    @Deprecated("This is being made private")
     @Composable
     public fun iconTintFor(state: MenuItemState): State<Color> =
         rememberUpdatedState(
@@ -157,6 +162,7 @@ public class MenuItemColors(
             )
         )
 
+    @Deprecated("This is being made private")
     @Composable
     public fun keybindingTintFor(state: MenuItemState): State<Color> =
         rememberUpdatedState(

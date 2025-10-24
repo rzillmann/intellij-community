@@ -15,6 +15,8 @@ import com.intellij.openapi.command.undo.UndoUtil;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.diagnostic.ReportingClassSubstitutor;
 import com.intellij.openapi.editor.Editor;
+import com.intellij.openapi.editor.colors.EditorColors;
+import com.intellij.openapi.editor.colors.TextAttributesKey;
 import com.intellij.openapi.progress.ProcessCanceledException;
 import com.intellij.openapi.project.DumbService;
 import com.intellij.openapi.project.PossiblyDumbAware;
@@ -23,7 +25,6 @@ import com.intellij.openapi.util.Iconable;
 import com.intellij.psi.PsiElement;
 import com.intellij.psi.PsiFile;
 import com.intellij.util.IncorrectOperationException;
-import com.intellij.util.MathUtil;
 import com.intellij.util.containers.ContainerUtil;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -140,24 +141,24 @@ public final class QuickFixWrapper implements IntentionAction, PriorityAction, C
   }
 
   @Override
-  public boolean isAvailable(@NotNull Project project, Editor editor, PsiFile file) {
+  public boolean isAvailable(@NotNull Project project, Editor editor, PsiFile psiFile) {
     PsiElement psiElement = myDescriptor.getPsiElement();
     if (psiElement == null || !psiElement.isValid()) return false;
     PsiFile containingFile = psiElement.getContainingFile();
-    return containingFile == file || containingFile == null ||
-           containingFile.getViewProvider().getVirtualFile().equals(file.getViewProvider().getVirtualFile());
+    return containingFile == psiFile || containingFile == null ||
+           containingFile.getViewProvider().getVirtualFile().equals(psiFile.getViewProvider().getVirtualFile());
   }
 
   @Override
-  public void invoke(@NotNull Project project, Editor editor, PsiFile file) throws IncorrectOperationException {
+  public void invoke(@NotNull Project project, Editor editor, PsiFile psiFile) throws IncorrectOperationException {
     //if (!CodeInsightUtil.prepareFileForWrite(file)) return;
     // consider all local quick fixes do it themselves
 
     final PsiElement element = myDescriptor.getPsiElement();
     final PsiFile fileForUndo = element == null ? null : element.getContainingFile();
     myFix.applyFix(project, myDescriptor);
-    DaemonCodeAnalyzer.getInstance(project).restart();
-    if (fileForUndo != null && !fileForUndo.equals(file)) {
+    DaemonCodeAnalyzer.getInstance(project).restart(this);
+    if (fileForUndo != null && !fileForUndo.equals(psiFile)) {
       UndoUtil.markPsiFileForUndo(fileForUndo);
     }
   }
@@ -184,7 +185,7 @@ public final class QuickFixWrapper implements IntentionAction, PriorityAction, C
 
   @Override
   public @NotNull Priority getPriority() {
-    return myFix instanceof PriorityAction ? ((PriorityAction)myFix).getPriority() : Priority.NORMAL;
+    return myFix instanceof PriorityAction priority ? priority.getPriority() : Priority.NORMAL;
   }
 
   @TestOnly
@@ -268,8 +269,8 @@ public final class QuickFixWrapper implements IntentionAction, PriorityAction, C
         if (myDescriptor.getStartElement() == null) return null;
         ActionContext descriptorContext = ActionContext.from(myDescriptor);
         return myUnwrappedAction.getPresentation(
-          descriptorContext.withOffset(MathUtil.clamp(context.offset(), descriptorContext.selection().getStartOffset(),
-                                                      descriptorContext.selection().getEndOffset())));
+          descriptorContext.withOffset(Math.clamp(context.offset(), descriptorContext.selection().getStartOffset(),
+                                                  descriptorContext.selection().getEndOffset())));
       }
       PsiElement psiElement = myDescriptor.getPsiElement();
       if (psiElement == null || !psiElement.isValid()) return null;
@@ -282,7 +283,10 @@ public final class QuickFixWrapper implements IntentionAction, PriorityAction, C
       List<RangeToHighlight> highlight = myFix.getRangesToHighlight(context.project(), myDescriptor);
       if (!highlight.isEmpty()) {
         Presentation.HighlightRange[] ranges = ContainerUtil.map2Array(highlight, Presentation.HighlightRange.class,
-                                                          r -> new Presentation.HighlightRange(r.getRangeInFile(), r.getHighlightKey()));
+                                                          r -> {
+                                                            return new Presentation.HighlightRange(r.getRangeInFile(),
+                                                                                                   convertToHighlightingType(r.getHighlightKey()));
+                                                          });
         presentation = presentation.withHighlighting(ranges);
       }
       if (myFix instanceof Iconable iconable) {
@@ -292,6 +296,17 @@ public final class QuickFixWrapper implements IntentionAction, PriorityAction, C
         presentation = presentation.withPriority(priorityAction.getPriority());
       }
       return presentation;
+    }
+
+    private static @NotNull Presentation.HighlightingKind convertToHighlightingType(@NotNull TextAttributesKey key) {
+      if (key == EditorColors.SEARCH_RESULT_ATTRIBUTES) {
+        return Presentation.HighlightingKind.AFFECTED_RANGE;
+      }
+      else if (key == EditorColors.DELETED_TEXT_ATTRIBUTES) {
+        return Presentation.HighlightingKind.DELETED_RANGE;
+      }
+      //just fallback to the default highlighting type
+      return Presentation.HighlightingKind.AFFECTED_RANGE;
     }
 
     @Override

@@ -72,7 +72,8 @@ fun simpleEditor(
       xKind = EditorScrollKind.Smallest,
       yKind = EditorScrollKind.Smallest,
       timestamp = scrollCommandTimestamp)
-    else null
+    else null,
+    timestamp = 0
   )
 }
 
@@ -118,7 +119,14 @@ data class SimpleEditorLayout(
     )
   }
 
-  override fun unfold(affectedFolds: List<Interval<*, Fold>>) {}
+  override fun unfold(affectedFolds: List<Interval<*, Fold>>) {
+    toggleFolds(emptyList(), affectedFolds)
+  }
+
+  override fun toggleFolds(add: List<Interval<*, Fold>>, remove: List<Interval<*, Fold>>) {
+    folds = folds.removeByIds(remove.map { it.id as Long }).addIntervals(add as List<Interval<Long, Fold>>)
+  // we should update lines cache here, but right now simple editor with folds is used only in tests
+  }
 }
 
 class SimpleEditorLayoutComponent(var state: SimpleEditorLayout) : DocumentComponent {
@@ -142,6 +150,7 @@ data class SimpleEditorState(
   val focusPlace: EditorFocusPlace,
   val userActionTimestamp: Map<EditorCommandType, Long> = emptyMap(),
   override val composableTextRange: TextRange? = null,
+  override val timestamp: Long
 ) : Editor {
   override val undoLog: UndoLog get() = document.undoLog
   override val layout: EditorLayout
@@ -163,6 +172,7 @@ fun SimpleEditorState.mutate(f: MutableEditor.() -> Unit): SimpleEditorState {
                                           SimpleMutableMultiCaret(mutableDocument, multiCaret),
                                           oneLine,
                                           writable,
+                                          timestamp,
                                           editorLayoutComponent,
                                           focusPlace,
                                           scrollCommand,
@@ -176,7 +186,8 @@ fun SimpleEditorState.mutate(f: MutableEditor.() -> Unit): SimpleEditorState {
                    scrollCommand = mutableEditor.scrollCommand,
                    focusPlace = mutableEditor.focusPlace,
                    userActionTimestamp = mutableEditor.userActionTimestamp,
-                   composableTextRange = mutableEditor.composableTextRange)
+                   composableTextRange = mutableEditor.composableTextRange,
+                   timestamp = documentStateAfter.timestamp + 1)
 }
 
 data class SimpleMultiCaretState(
@@ -272,6 +283,7 @@ class SimpleMutableEditor(
   override val multiCaret: SimpleMutableMultiCaret,
   override val oneLine: Boolean,
   override val writable: Boolean,
+  override val timestamp: Long,
   val editorLayout: SimpleEditorLayoutComponent,
   var focusPlace: EditorFocusPlace,
   override var scrollCommand: EditorScrollCommand?,

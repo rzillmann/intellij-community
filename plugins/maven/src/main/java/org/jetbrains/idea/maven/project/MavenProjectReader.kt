@@ -18,9 +18,6 @@ import org.jetbrains.idea.maven.dom.converters.MavenConsumerPomUtil.isAutomaticV
 import org.jetbrains.idea.maven.internal.ReadStatisticsCollector
 import org.jetbrains.idea.maven.model.*
 import org.jetbrains.idea.maven.model.MavenConstants.MODEL_VERSION_4_0_0
-import org.jetbrains.idea.maven.project.MavenSettingsCache
-import org.jetbrains.idea.maven.server.MavenRemoteObjectWrapper
-import org.jetbrains.idea.maven.server.RemotePathTransformerFactory
 import org.jetbrains.idea.maven.telemetry.tracer
 import org.jetbrains.idea.maven.utils.MavenArtifactUtil
 import org.jetbrains.idea.maven.utils.MavenJDOMUtil
@@ -170,7 +167,8 @@ class MavenProjectReader(
   }
 
   private fun readModelBody(mavenModelBase: MavenModelBase, mavenBuildBase: MavenBuildBase, xmlModel: Element, projectFile: VirtualFile) {
-    val modules = findSubprojects(xmlModel, projectFile)
+    val modelVersion = xmlModel.getModelVersion()
+    val modules = if (isMaven4Model(modelVersion)) findSubprojects(xmlModel, projectFile) else findModules(xmlModel)
     mavenModelBase.modules = myReadHelper.filterModules(modules, projectFile)
     collectProperties(findChildByPath(xmlModel, "properties"), mavenModelBase)
 
@@ -179,21 +177,60 @@ class MavenProjectReader(
     mavenBuildBase.finalName = findChildValueByPath(xmlBuild, "finalName")
     mavenBuildBase.defaultGoal = findChildValueByPath(xmlBuild, "defaultGoal")
     mavenBuildBase.directory = findChildValueByPath(xmlBuild, "directory")
-    mavenBuildBase.resources = collectResources(
-      findChildrenByPath(xmlBuild, "resources", "resource"))
-    mavenBuildBase.testResources = collectResources(
-      findChildrenByPath(xmlBuild, "testResources", "testResource"))
+
+    if (isMaven4Model(modelVersion)) {
+      mavenBuildBase.mavenSources = collectMavenSources(xmlBuild)
+    }
+    else {
+      mavenBuildBase.resources = collectResources(
+        findChildrenByPath(xmlBuild, "resources", "resource"))
+      mavenBuildBase.testResources = collectResources(
+        findChildrenByPath(xmlBuild, "testResources", "testResource"))
+      if (mavenBuildBase is MavenBuild) {
+        val source = findChildValueByPath(xmlBuild, "sourceDirectory")
+        if (!source.isNullOrBlank()) mavenBuildBase.sources = listOf(source)
+        val testSource = findChildValueByPath(xmlBuild, "testSourceDirectory")
+        if (!testSource.isNullOrBlank()) mavenBuildBase.testSources = listOf(testSource)
+      }
+    }
+
+
     mavenBuildBase.filters = findChildrenValuesByPath(xmlBuild, "filters", "filter")
 
     if (mavenBuildBase is MavenBuild) {
-      val source = findChildValueByPath(xmlBuild, "sourceDirectory")
-      if (!source.isNullOrBlank()) mavenBuildBase.addSource(source)
-      val testSource = findChildValueByPath(xmlBuild, "testSourceDirectory")
-      if (!testSource.isNullOrBlank()) mavenBuildBase.addTestSource(testSource)
-
       mavenBuildBase.outputDirectory = findChildValueByPath(xmlBuild, "outputDirectory")
       mavenBuildBase.testOutputDirectory = findChildValueByPath(xmlBuild, "testOutputDirectory")
     }
+  }
+
+  private fun collectMavenSources(xmlBuild: Element?): List<MavenSource> {
+    if (xmlBuild == null) return emptyList()
+    val xmlSources = findChildrenByPath(xmlBuild, "sources", "source")
+    val result: MutableList<MavenSource> = ArrayList()
+    for (each in xmlSources) {
+
+      val targetPath = findChildValueByPath(each, "targetPath")
+      val targetVersion = findChildValueByPath(each, "targetVersion")
+      val scope = findChildValueByPath(each, "scope") ?: MavenSource.MAIN_SCOPE
+      val lang = findChildValueByPath(each, "lang") ?: MavenSource.JAVA_LANG
+      val includes = findChildrenValuesByPath(each, "includes", "include")
+      val excludes = findChildrenValuesByPath(each, "excludes", "exclude")
+      val filtered = "true" == findChildValueByPath(each, "filtering")
+      val enabled = "true" == findChildValueByPath(each, "enabled")
+      val directory = findChildValueByPath(each, "directory") ?: "src/${scope}/${lang}"
+      result.add(MavenSource.fromSourceTag(
+        directory,
+        includes,
+        excludes,
+        scope,
+        lang,
+        targetPath,
+        targetVersion,
+        filtered,
+        enabled
+      ))
+    }
+    return result
   }
 
   private fun Element.getModelVersion() = this.getChild("modelVersion")?.value
@@ -229,24 +266,20 @@ class MavenProjectReader(
   }
 
   private fun findSubprojects(xmlModel: Element, projectFile: VirtualFile): List<String> {
-    val modelVersion = xmlModel.getModelVersion()
+    val subprojects = findChildrenValuesByPath(xmlModel, "subprojects", "subproject")
+    if (!subprojects.isEmpty()) return subprojects
 
-    if (modelVersion != null && StringUtil.compareVersionNumbers(modelVersion, MODEL_VERSION_4_0_0) > 0) {
-      val subprojects = findChildrenValuesByPath(xmlModel, "subprojects", "subproject")
-      if (!subprojects.isEmpty()) return subprojects
+    val modules = findModules(xmlModel)
+    if (!modules.isEmpty()) return modules
 
-      val modules = findModules(xmlModel)
-      if (!modules.isEmpty()) return modules
+    if (MavenConstants.TYPE_POM != xmlModel.getChild("packaging")?.value) return emptyList()
 
-      if (MavenConstants.TYPE_POM != xmlModel.getChild("packaging")?.value) return emptyList()
-
-      // subprojects discovery
-      // see org.apache.maven.internal.impl.model.DefaultModelBuilder.DefaultModelBuilderSession#doReadFileModel
-      return projectFile.parent.children.filter { it.hasPomFile() }.map { it.name }
-    }
-
-    return findModules(xmlModel)
+    // subprojects discovery
+    // see org.apache.maven.internal.impl.model.DefaultModelBuilder.DefaultModelBuilderSession#doReadFileModel
+    return projectFile.parent.children.filter { it.hasPomFile() }.map { it.name }
   }
+
+  private fun isMaven4Model(modelVersion: String?): Boolean = modelVersion != null && StringUtil.compareVersionNumbers(modelVersion, MODEL_VERSION_4_0_0) > 0
 
   private fun findModules(xmlModel: Element): List<String> = findChildrenValuesByPath(xmlModel, "modules", "module")
 
@@ -254,7 +287,7 @@ class MavenProjectReader(
     model: MavenModel,
     file: VirtualFile,
     problems: MutableCollection<MavenProjectProblem>,
-    recursionGuard: MutableSet<VirtualFile>
+    recursionGuard: MutableSet<VirtualFile>,
   ): MavenModel {
     if (recursionGuard.contains(file)) {
       problems.add(MavenProjectProblem.createProblem(
@@ -296,13 +329,17 @@ class MavenProjectReader(
 
       // todo: it is a quick-hack here - we add inherited dummy profiles to correctly collect activated profiles in 'applyProfiles'.
       val profiles = model.profiles
-      for (each in parentModel.profiles) {
-        val copyProfile = MavenProfile(each.id, each.source)
-        if (each.activation != null) {
-          copyProfile.activation = each.activation.clone()
+      val parentProfiles = parentModel.profiles
+        .filter { !containsProfileId(profiles, it) }
+        .map {
+          val copyProfile = MavenProfile(it.id, it.source)
+          if (it.activation != null) {
+            copyProfile.activation = it.activation.clone()
+          }
+          copyProfile
         }
-
-        addProfileIfDoesNotExist(copyProfile, profiles)
+      if (parentProfiles.isNotEmpty()) {
+        model.profiles = profiles + parentProfiles
       }
       return model
     }
@@ -328,7 +365,7 @@ class MavenProjectReader(
   private suspend fun readRawResult(
     projectFile: VirtualFile,
     parentDesc: MavenParentDesc?,
-    recursionGuard: MutableSet<VirtualFile>
+    recursionGuard: MutableSet<VirtualFile>,
   ): Pair<VirtualFile, RawModelReadResult>? {
     if (parentDesc == null) {
       return null
@@ -394,11 +431,10 @@ class MavenProjectReader(
       mySettingsProfilesCache.set(SettingsProfilesCache(settingsProfiles, settingsAlwaysOnProfiles, settingsProblems))
     }
 
-    val modelProfiles: MutableList<MavenProfile> = ArrayList(model.profiles)
-    for (each in mySettingsProfilesCache.get()!!.profiles) {
-      addProfileIfDoesNotExist(each, modelProfiles)
-    }
-    model.profiles = modelProfiles
+    val modelProfiles = model.profiles
+    val settingsProfiles = mySettingsProfilesCache.get()!!.profiles
+      .filter { !containsProfileId(modelProfiles, it) }
+    model.profiles = modelProfiles + settingsProfiles
 
     problems.addAll(mySettingsProfilesCache.get()!!.problems)
     alwaysOnProfiles.addAll(mySettingsProfilesCache.get()!!.alwaysOnProfiles)
@@ -411,8 +447,8 @@ class MavenProjectReader(
       build.finalName = "\${project.artifactId}-\${project.version}"
     }
 
-    if (build.sources.isEmpty()) build.addSource("src/main/java")
-    if (build.testSources.isEmpty()) build.addTestSource("src/test/java")
+    if (build.sources.isEmpty()) build.sources = listOf("src/main/java")
+    if (build.testSources.isEmpty()) build.testSources = listOf("src/test/java")
 
     build.resources = repairResources(build.resources, "src/main/resources")
     build.testResources = repairResources(build.testResources, "src/test/resources")
@@ -445,9 +481,7 @@ class MavenProjectReader(
   }
 
   private fun collectProfiles(projectFile: VirtualFile, xmlProject: Element): List<MavenProfile> {
-    val result: MutableList<MavenProfile> = ArrayList()
-    collectProfiles(findChildrenByPath(xmlProject, "profiles", "profile"), result, MavenConstants.PROFILE_FROM_POM, projectFile)
-    return result
+    return collectProfiles(findChildrenByPath(xmlProject, "profiles", "profile"), MavenConstants.PROFILE_FROM_POM, projectFile)
   }
 
   private suspend fun collectProfilesFromSettingsXml(
@@ -470,18 +504,21 @@ class MavenProjectReader(
     }
 
     val xmlProfiles = findChildrenByPath(rootElement, "profiles", "profile")
-    collectProfiles(xmlProfiles, result, profilesSource, projectsFile)
+    result.addAll(collectProfiles(xmlProfiles, profilesSource, projectsFile))
 
     alwaysOnProfiles.addAll(findChildrenValuesByPath(rootElement, "activeProfiles", "activeProfile"))
   }
 
-  private fun collectProfiles(xmlProfiles: List<Element>, result: MutableList<MavenProfile>, source: String, projectFile: VirtualFile) {
+  private fun collectProfiles(xmlProfiles: List<Element>, source: String, projectFile: VirtualFile): List<MavenProfile> {
+    val result = mutableListOf<MavenProfile>()
     for (each in xmlProfiles) {
       val id = findChildValueByPath(each, "id")
       if (id.isNullOrBlank()) continue
 
       val profile = MavenProfile(id, source)
-      if (!addProfileIfDoesNotExist(profile, result)) continue
+      if (containsProfileId(result, profile)) continue
+
+      result.add(profile)
 
       val xmlActivation = findChildByPath(each, "activation")
       if (xmlActivation != null) {
@@ -518,6 +555,7 @@ class MavenProjectReader(
 
       readModelBody(profile, profile.build, each, projectFile)
     }
+    return result
   }
 
   private suspend fun getVersionFromParentPomRecursively(
@@ -550,12 +588,8 @@ class MavenProjectReader(
     return parentPath
   }
 
-  private fun addProfileIfDoesNotExist(profile: MavenProfile, result: MutableList<MavenProfile>): Boolean {
-    for (each in result) {
-      if (each.id == profile.id) return false
-    }
-    result.add(profile)
-    return true
+  private fun containsProfileId(result: List<MavenProfile>, profile: MavenProfile): Boolean {
+    return result.any { it.id == profile.id }
   }
 
   private fun VirtualFile.hasPomFile(): Boolean {

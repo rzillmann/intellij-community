@@ -50,19 +50,19 @@ public final class CachedIntentions implements IntentionContainer {
   private HighlightInfoType myHighlightInfoType;
 
   private final @Nullable Editor myEditor;
-  private final @NotNull PsiFile myFile;
+  private final @NotNull PsiFile myPsiFile;
   private final @NotNull Project myProject;
   private final @Nullable @NlsContexts.PopupTitle String myTitle;
 
   private final List<AnAction> myGuttersRaw = ContainerUtil.createLockFreeCopyOnWriteList();
 
-  public CachedIntentions(@NotNull Project project, @NotNull PsiFile file, @Nullable Editor editor) {
-    this(project, file, editor, null);
+  public CachedIntentions(@NotNull Project project, @NotNull PsiFile psiFile, @Nullable Editor editor) {
+    this(project, psiFile, editor, null);
   }
 
-  private CachedIntentions(@NotNull Project project, @NotNull PsiFile file, @Nullable Editor editor, @Nullable @NlsContexts.PopupTitle String title) {
+  private CachedIntentions(@NotNull Project project, @NotNull PsiFile psiFile, @Nullable Editor editor, @Nullable @NlsContexts.PopupTitle String title) {
     myProject = project;
-    myFile = file;
+    myPsiFile = psiFile;
     myEditor = editor;
     myTitle = title;
   }
@@ -99,7 +99,7 @@ public final class CachedIntentions implements IntentionContainer {
   }
 
   public @NotNull PsiFile getFile() {
-    return myFile;
+    return myPsiFile;
   }
 
   public @NotNull Project getProject() {
@@ -164,7 +164,7 @@ public final class CachedIntentions implements IntentionContainer {
     myGutters.clear();
 
     Predicate<IntentionAction> filter = action -> ContainerUtil.and(
-      IntentionActionFilter.EXTENSION_POINT_NAME.getExtensionList(), f -> f.accept(action, myFile, myOffset));
+      IntentionActionFilter.EXTENSION_POINT_NAME.getExtensionList(), f -> f.accept(action, myPsiFile, myOffset));
 
     DefaultActionGroup group = new DefaultActionGroup(new ArrayList<>(new LinkedHashSet<>(myGuttersRaw)));
     PresentationFactory presentationFactory = new PresentationFactory();
@@ -194,16 +194,16 @@ public final class CachedIntentions implements IntentionContainer {
     wrapActionsTo(descriptors, myGutters, false);
   }
 
-  private boolean addActionsTo(@NotNull List<? extends HighlightInfo.IntentionActionDescriptor> newDescriptors,
+  private boolean addActionsTo(@NotNull List<HighlightInfo.IntentionActionDescriptor> newDescriptors,
                                @NotNull Set<? super IntentionActionWithTextCaching> cachedActions) {
     boolean changed = false;
     for (HighlightInfo.IntentionActionDescriptor descriptor : newDescriptors) {
-      changed |= cachedActions.add(wrapAction(descriptor, myFile, myFile, myEditor));
+      changed |= cachedActions.add(wrapAction(descriptor, myPsiFile, myPsiFile, myEditor));
     }
     return changed;
   }
 
-  private boolean wrapActionsTo(@NotNull List<? extends HighlightInfo.IntentionActionDescriptor> newDescriptors,
+  private boolean wrapActionsTo(@NotNull List<HighlightInfo.IntentionActionDescriptor> newDescriptors,
                                 @NotNull Set<? super IntentionActionWithTextCaching> cachedActions,
                                 boolean shouldCallIsAvailable) {
     if (cachedActions.isEmpty() && newDescriptors.isEmpty()) return false;
@@ -211,31 +211,31 @@ public final class CachedIntentions implements IntentionContainer {
     if (myEditor == null) {
       LOG.assertTrue(!shouldCallIsAvailable);
       for (HighlightInfo.IntentionActionDescriptor descriptor : newDescriptors) {
-        changed |= cachedActions.add(wrapAction(descriptor, myFile, myFile, null));
+        changed |= cachedActions.add(wrapAction(descriptor, myPsiFile, myPsiFile, null));
       }
       return changed;
     }
     int caretOffset = myOffset >= 0 ? myOffset : myEditor.getCaretModel().getOffset();
-    int fileOffset = caretOffset > 0 && caretOffset == myFile.getTextLength() ? caretOffset - 1 : caretOffset;
+    int fileOffset = caretOffset > 0 && caretOffset == myPsiFile.getTextLength() ? caretOffset - 1 : caretOffset;
     PsiElement element;
     PsiElement hostElement;
-    if (myFile instanceof PsiCompiledElement || myFile.getTextLength() == 0) {
-      hostElement = element = myFile;
+    if (myPsiFile instanceof PsiCompiledElement || myPsiFile.getTextLength() == 0) {
+      hostElement = element = myPsiFile;
     }
     else if (PsiDocumentManager.getInstance(myProject).isUncommited(myEditor.getDocument())) {
       //???
-      FileViewProvider viewProvider = myFile.getViewProvider();
+      FileViewProvider viewProvider = myPsiFile.getViewProvider();
       hostElement = element = viewProvider.findElementAt(fileOffset, viewProvider.getBaseLanguage());
     }
     else {
-      hostElement = myFile.getViewProvider().findElementAt(fileOffset, myFile.getLanguage());
-      element = InjectedLanguageUtilBase.findElementAtNoCommit(myFile, fileOffset);
+      hostElement = myPsiFile.getViewProvider().findElementAt(fileOffset, myPsiFile.getLanguage());
+      element = InjectedLanguageUtilBase.findElementAtNoCommit(myPsiFile, fileOffset);
     }
     PsiFile injectedFile;
     Editor injectedEditor;
     int injectedOffset;
     if (element == null || element == hostElement) {
-      injectedFile = myFile;
+      injectedFile = myPsiFile;
       injectedEditor = myEditor;
       injectedOffset = caretOffset;
     }
@@ -259,8 +259,8 @@ public final class CachedIntentions implements IntentionContainer {
         IntentionActionWithTextCaching cachedAction = wrapAction(descriptor, element, injectedFile, injectedEditor);
         wrappedNew.add(cachedAction);
       }
-      else if (hostElement != null && (!shouldCallIsAvailable || ShowIntentionActionsHandler.availableFor(myFile, myEditor, fileOffset, action))) {
-        IntentionActionWithTextCaching cachedAction = wrapAction(descriptor, hostElement, myFile, myEditor);
+      else if (hostElement != null && (!shouldCallIsAvailable || ShowIntentionActionsHandler.availableFor(myPsiFile, myEditor, fileOffset, action))) {
+        IntentionActionWithTextCaching cachedAction = wrapAction(descriptor, hostElement, myPsiFile, myEditor);
         wrappedNew.add(cachedAction);
       }
     }
@@ -293,8 +293,9 @@ public final class CachedIntentions implements IntentionContainer {
       if (editor == null) continue;
       var problemOffset = myOffset >= 0 ? myOffset : editor.getCaretModel().getOffset();
       Pair<PsiFile, Editor> availableIn = ShowIntentionActionsHandler
-        .chooseBetweenHostAndInjected(myFile, editor, problemOffset, containingFile,
-                                      (f, e, o) -> ShowIntentionActionsHandler.availableFor(f, e, o, option));
+        .chooseBetweenHostAndInjected(myPsiFile, editor, problemOffset, containingFile, (f, e, o) -> {
+          return ShowIntentionActionsHandler.availableFor(f, e, o, option);
+        });
       if (availableIn == null) continue;
       IntentionActionWithTextCaching textCaching = new IntentionActionWithTextCaching(option);
       boolean isErrorFix = myErrorFixes.contains(textCaching);
@@ -314,7 +315,7 @@ public final class CachedIntentions implements IntentionContainer {
 
   private void markInvoked(@NotNull IntentionAction action) {
     if (myEditor != null) {
-      ShowIntentionsPass.markActionInvoked(myFile.getProject(), myEditor, action);
+      ShowIntentionsPass.markActionInvoked(myPsiFile.getProject(), myEditor, action);
     }
   }
 
@@ -350,7 +351,7 @@ public final class CachedIntentions implements IntentionContainer {
   public @NotNull IntentionGroup getGroup(@NotNull IntentionActionWithTextCaching action) {
     if (myErrorFixes.contains(action)) {
       TextRange problemRange = action.getFixRange();
-      return problemRange == null || problemRange.contains(getOffset()) ? IntentionGroup.ERROR : IntentionGroup.REMOTE_ERROR;
+      return problemRange == null || problemRange.containsOffset(getOffset()) ? IntentionGroup.ERROR : IntentionGroup.REMOTE_ERROR;
     }
     if (myInspectionFixes.contains(action)) {
       return IntentionGroup.INSPECTION;

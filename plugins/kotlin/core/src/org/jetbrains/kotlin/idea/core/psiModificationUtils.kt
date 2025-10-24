@@ -18,7 +18,6 @@ import org.jetbrains.kotlin.idea.FrontendInternals
 import org.jetbrains.kotlin.idea.base.projectStructure.languageVersionSettings
 import org.jetbrains.kotlin.idea.base.psi.addTypeParameter
 import org.jetbrains.kotlin.idea.base.psi.appendDeclaration
-import org.jetbrains.kotlin.idea.base.psi.getOrCreateCompanionObject
 import org.jetbrains.kotlin.idea.base.psi.moveInsideParenthesesAndReplaceWith
 import org.jetbrains.kotlin.idea.base.psi.predictImplicitModality
 import org.jetbrains.kotlin.idea.base.psi.setDefaultValue
@@ -26,7 +25,6 @@ import org.jetbrains.kotlin.idea.base.psi.shouldLambdaParameterBeNamed
 import org.jetbrains.kotlin.idea.caches.resolve.getResolutionFacade
 import org.jetbrains.kotlin.idea.caches.resolve.resolveToDescriptorIfAny
 import org.jetbrains.kotlin.idea.caches.resolve.safeAnalyzeNonSourceRootCode
-import org.jetbrains.kotlin.idea.refactoring.addElement
 import org.jetbrains.kotlin.idea.refactoring.getLastLambdaExpression
 import org.jetbrains.kotlin.idea.refactoring.isComplexCallWithLambdaArgument
 import org.jetbrains.kotlin.idea.refactoring.moveFunctionLiteralOutsideParentheses
@@ -192,12 +190,6 @@ private fun FunctionDescriptor.allowsMoveOfLastParameterOutsideParentheses(
     return movableParametersOfCandidateCount == lambdaAndCallableReferencesInOriginalCallCount
 }
 
-@ApiStatus.ScheduledForRemoval
-@Deprecated("Use addElement directly", ReplaceWith("addElement", "org.jetbrains.kotlin.idea.refactoring.addElement"))
-fun KtBlockExpression.appendElement(element: KtElement, addNewLine: Boolean = false): KtElement {
-   return addElement(element, addNewLine)
-}
-
 //TODO: git rid of this method
 fun PsiElement.deleteElementAndCleanParent() {
     val parent = parent
@@ -233,13 +225,6 @@ private fun deleteElementWithDelimiters(element: PsiElement) {
 
     parent.deleteChildRange(from, to)
 }
-
-@ApiStatus.ScheduledForRemoval
-@Deprecated(
-    "Use 'org.jetbrains.kotlin.idea.base.psi.KotlinPsiModificationUtils' instead",
-    ReplaceWith("this.getOrCreateCompanionObject()", "org.jetbrains.kotlin.idea.base.psi.getOrCreateCompanionObject")
-)
-fun KtClass.getOrCreateCompanionObject(): KtObjectDeclaration = getOrCreateCompanionObject()
 
 @Deprecated(
     "Use 'org.jetbrains.kotlin.idea.base.psi.KotlinPsiModificationUtils' instead",
@@ -451,12 +436,6 @@ private fun mapModalityToken(modalityToken: IElementType): Modality = when (moda
     KtTokens.OPEN_KEYWORD -> Modality.OPEN
     KtTokens.ABSTRACT_KEYWORD -> Modality.ABSTRACT
     else -> error("Unexpected modality keyword $modalityToken")
-}
-
-fun KtParameter.dropDefaultValue() {
-    val from = equalsToken ?: return
-    val to = defaultValue ?: from
-    deleteChildRange(from, to)
 }
 
 @Deprecated(

@@ -17,7 +17,6 @@ import com.intellij.pom.Navigatable;
 import com.intellij.ui.*;
 import com.intellij.ui.popup.util.DetailView;
 import com.intellij.util.concurrency.AppExecutorUtil;
-import com.intellij.xdebugger.breakpoints.XBreakpoint;
 import com.intellij.xdebugger.impl.breakpoints.ui.BreakpointItem;
 import com.intellij.xdebugger.impl.breakpoints.ui.XLightBreakpointPropertiesPanel;
 import com.intellij.xdebugger.impl.rpc.XBreakpointId;
@@ -85,7 +84,11 @@ public class XBreakpointItem extends BreakpointItem {
 
   @Override
   public String speedSearchText() {
-    return getDisplayText() + " " + StringUtil.notNullize(getUserDescription());
+    var logExpr = myBreakpointProxy.getLogExpressionObjectInt();
+    var condExpr = myBreakpointProxy.getConditionExpressionInt();
+    return getDisplayText() + " " + StringUtil.notNullize(getUserDescription()) + " " +
+           (logExpr != null ? logExpr.getExpression() : "") + " " +
+           (condExpr != null ? condExpr.getExpression() : "");
   }
 
   @Override

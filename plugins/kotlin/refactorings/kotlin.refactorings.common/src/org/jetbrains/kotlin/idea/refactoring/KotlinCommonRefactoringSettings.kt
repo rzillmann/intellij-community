@@ -57,6 +57,13 @@ interface KotlinCommonRefactoringSettings {
      */
     var renameTestMethods: Boolean
 
+    var PULL_UP_MEMBERS_JAVADOC: Int
+
+    var PUSH_DOWN_PREVIEW_USAGES: Boolean
+
+    var EXTRACT_INTERFACE_JAVADOC: Int
+    var EXTRACT_SUPERCLASS_JAVADOC: Int
+
     var INLINE_LOCAL_THIS: Boolean
     var INLINE_PROPERTY_KEEP: Boolean
     var INLINE_METHOD_THIS: Boolean

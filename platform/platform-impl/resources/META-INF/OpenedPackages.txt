@@ -11,8 +11,10 @@
 --add-opens=java.base/java.util.concurrent=ALL-UNNAMED
 --add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED
 --add-opens=java.base/java.util.concurrent.locks=ALL-UNNAMED
+--add-opens=java.base/jdk.internal.ref=ALL-UNNAMED
 --add-opens=java.base/jdk.internal.vm=ALL-UNNAMED
 --add-opens=java.base/sun.net.dns=ALL-UNNAMED
+--add-opens=java.base/sun.nio=ALL-UNNAMED
 --add-opens=java.base/sun.nio.ch=ALL-UNNAMED
 --add-opens=java.base/sun.nio.fs=ALL-UNNAMED
 --add-opens=java.base/sun.security.ssl=ALL-UNNAMED
@@ -32,6 +34,7 @@
 --add-opens=java.desktop/javax.swing.plaf.basic=ALL-UNNAMED
 --add-opens=java.desktop/javax.swing.text=ALL-UNNAMED
 --add-opens=java.desktop/javax.swing.text.html=ALL-UNNAMED
+--add-opens=java.desktop/javax.swing.text.html.parser=ALL-UNNAMED
 --add-opens=java.desktop/sun.awt=ALL-UNNAMED
 --add-opens=java.desktop/sun.awt.X11=ALL-UNNAMED
 --add-opens=java.desktop/sun.awt.datatransfer=ALL-UNNAMED

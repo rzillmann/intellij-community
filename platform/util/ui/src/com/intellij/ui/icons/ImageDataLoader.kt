@@ -20,7 +20,7 @@ interface ImageDataLoader {
   val url: URL?
 
   @Experimental
-  fun getCoords(): Pair<String, ClassLoader>? = null
+  fun getCoords(): Pair<String, ClassLoader>?
 
   fun patch(transform: IconTransform): ImageDataLoader?
 
@@ -28,8 +28,17 @@ interface ImageDataLoader {
 
   fun serializeToByteArray(): ImageDataLoaderDescriptor? = null
 
+  /**
+   * [com.intellij.ui.icons.ImageDescriptor]
+   */
   val flags: Int
     get() = 0
+
+  /**
+   * -1 for immutable loaders
+   */
+  val modificationCount: Int
+    get() = -1
 }
 
 @Serializable

@@ -5,28 +5,28 @@
       version: 4.30.2
     # kotlin JPS plugin
     - id: org.jetbrains.kotlin:kotlin-build-tools-api
-      version: 2.1.20
+      version: 2.2.0-RC
     - id: org.jetbrains.kotlin:kotlin-util-klib
-      version: 2.1.20
+      version: 2.2.0-RC
     - id: org.jetbrains.kotlin:kotlin-util-klib-metadata
-      version: 2.1.20
+      version: 2.2.0-RC
     # kotlin compiler
     - id: org.jetbrains.kotlin:kotlin-build-tools-impl
-      version: 2.1.20
+      version: 2.2.0-RC
     #- id: org.jetbrains.kotlin:kotlin-compiler
-    #  version: 2.1.20-RC
+    #  version: 2.2.0-RC-RC
     #  runtimeDeps:
     #    - "@lib//:jetbrains-annotations"
     #    - "@lib//:kotlinx-coroutines-core"
     - id: org.jetbrains.kotlin:kotlin-metadata-jvm
-      version: 2.1.20
+      version: 2.2.0-RC
     - id: org.jetbrains.kotlin:kotlin-jps-plugin
-      version: 2.1.20
+      version: 2.2.0-RC
     # kotlin compiler plugins
     - id: org.jetbrains.kotlin:kotlin-serialization-compiler-plugin
-      version: 2.1.20
+      version: 2.2.0-RC
     - id: org.jetbrains.kotlin:kotlin-compose-compiler-plugin
-      version: 2.1.20
+      version: 2.2.0-RC
     # other libs
     - id: com.dynatrace.hash4j:hash4j
       version: 0.22.0
@@ -66,7 +66,9 @@
     - id: org.jetbrains:annotations
       version: 26.0.2
     - id: org.jetbrains.kotlin:kotlin-stdlib
-      version: 2.1.20
+      version: 2.2.0-RC
+    - id: org.jetbrains.kotlin:kotlin-reflect
+      version: 2.2.0-RC
     - id: org.jetbrains.kotlinx:kotlinx-collections-immutable-jvm
       version: 0.3.8
     - id: org.slf4j:slf4j-api
@@ -118,13 +120,6 @@
       version: 1.49.0
     - id: io.opentelemetry:opentelemetry-exporter-sender-jdk
       version: 1.49.0
-    # Netty
-    - id: io.netty:netty-common
-      version: 4.2.0.Final
-    - id: io.netty:netty-buffer
-      version: 4.2.0.Final
-      runtimeDeps:
-        - ":netty-common"
 - url: https://dl.google.com/android/maven2
   libs:
     - id: androidx.collection:collection-jvm
@@ -133,9 +128,17 @@
   libs:
     - id: com.intellij.platform:kotlinx-coroutines-core-jvm
       version: 1.10.1-intellij-4
-    - id: jetbrains.fleet:expects-compiler-plugin
-      version: 2.1.20-0.2
     - id: org.jetbrains.intellij.deps:asm-all
       version: 9.6.1
     - id: org.jetbrains.intellij.deps.fastutil:intellij-deps-fastutil
       version: 8.5.15-jb1
+# https://github.com/netty/netty/pull/15131
+- url: https://packages.jetbrains.team/files/p/ij/intellij-build-dependencies
+  libs:
+    # Netty
+    - id: io.netty:netty-common
+      version: 4.2.2.Final-20250508.062804-10
+    - id: io.netty:netty-buffer
+      version: 4.2.2.Final-20250508.062804-10
+      runtimeDeps:
+        - ":netty-common"

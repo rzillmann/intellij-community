@@ -9,11 +9,13 @@ import com.intellij.codeInspection.IllegalDependencyOnInternalPackageInspection
 import com.intellij.codeInspection.deprecation.DeprecationInspection
 import com.intellij.codeInspection.deprecation.MarkedForRemovalInspection
 import com.intellij.codeInspection.java19modules.JavaModuleDefinitionInspection
+import com.intellij.java.codeserver.core.JavaPsiModuleUtil
 import com.intellij.java.testFramework.fixtures.LightJava9ModulesCodeInsightFixtureTestCase
 import com.intellij.java.testFramework.fixtures.MultiModuleJava9ProjectDescriptor.ModuleDescriptor
 import com.intellij.java.testFramework.fixtures.MultiModuleJava9ProjectDescriptor.ModuleDescriptor.*
 import com.intellij.java.workspace.entities.JavaModuleSettingsEntity
 import com.intellij.java.workspace.entities.javaSettings
+import com.intellij.mock.MockLocalFileSystem
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.WriteAction
 import com.intellij.openapi.application.runWriteActionAndWait
@@ -23,14 +25,19 @@ import com.intellij.openapi.module.Module
 import com.intellij.openapi.module.ModuleManager
 import com.intellij.openapi.projectRoots.JavaSdk
 import com.intellij.openapi.projectRoots.ProjectJdkTable
+import com.intellij.openapi.projectRoots.Sdk
 import com.intellij.openapi.projectRoots.impl.JavaAwareProjectJdkTableImpl
+import com.intellij.openapi.projectRoots.impl.JavaSdkImpl
 import com.intellij.openapi.roots.ModuleRootManager
 import com.intellij.openapi.roots.ModuleRootModificationUtil
 import com.intellij.openapi.roots.OrderRootType
 import com.intellij.openapi.roots.ProjectRootManager
 import com.intellij.openapi.roots.libraries.LibraryTablesRegistrar
 import com.intellij.openapi.util.Computable
+import com.intellij.openapi.util.Disposer
+import com.intellij.openapi.util.SystemInfo
 import com.intellij.openapi.util.TextRange
+import com.intellij.openapi.util.io.FileUtil
 import com.intellij.openapi.vfs.JarFileSystem
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
@@ -42,6 +49,7 @@ import com.intellij.platform.workspace.jps.entities.modifyModuleEntity
 import com.intellij.pom.java.JavaFeature
 import com.intellij.pom.java.LanguageLevel
 import com.intellij.psi.JavaCompilerConfigurationProxy
+import com.intellij.psi.PsiJavaFile
 import com.intellij.psi.PsiJavaModule
 import com.intellij.psi.PsiManager
 import com.intellij.psi.PsiResolveHelper
@@ -51,6 +59,7 @@ import com.intellij.psi.util.PsiUtilCore
 import com.intellij.testFramework.DumbModeTestUtils
 import com.intellij.testFramework.IdeaTestUtil
 import com.intellij.testFramework.VfsTestUtil
+import com.intellij.testFramework.replaceService
 import com.intellij.testFramework.workspaceModel.updateProjectModel
 import com.intellij.util.ThrowableRunnable
 import junit.framework.AssertionFailedError
@@ -59,12 +68,13 @@ import org.assertj.core.api.Assertions.assertThat
 import org.intellij.lang.annotations.Language
 import org.jetbrains.jps.model.java.JavaSourceRootType
 import java.io.File
+import java.nio.file.Path
 import java.util.jar.JarFile
 
 class ModuleHighlightingTest : LightJava9ModulesCodeInsightFixtureTestCase() {
   override fun setUp() {
     super.setUp()
-    
+
     myFixture.enableInspections(JavaModuleDefinitionInspection())
 
     addFile("module-info.java", "module M2 { }", M2)
@@ -75,15 +85,62 @@ class ModuleHighlightingTest : LightJava9ModulesCodeInsightFixtureTestCase() {
     try {
       JavaCompilerConfigurationProxy.setAdditionalOptions(project, module, arguments.toList())
       test()
-    } finally {
+    }
+    finally {
       JavaCompilerConfigurationProxy.setAdditionalOptions(project, module, emptyList())
     }
   }
 
-  fun testModuleImportDeclarationLevelCheck() {
+  fun testModuleImportDeclarationLevelCheck23() {
     IdeaTestUtil.withLevel(module, LanguageLevel.JDK_23) {
       highlight("Test.java", """
         <error descr="Module Import Declarations are not supported at language level '23'">import module java.sql;</error>
+        class Test {}
+      """.trimIndent())
+    }
+  }
+
+  fun testModuleImportDeclarationLevelCheck23Preview() {
+    IdeaTestUtil.withLevel(module, LanguageLevel.JDK_23_PREVIEW) {
+      highlight("Test.java", """
+        import module java.base;
+        class Test {}
+      """.trimIndent())
+    }
+  }
+
+  fun testModuleImportDeclarationLevelCheck24() {
+    IdeaTestUtil.withLevel(module, LanguageLevel.JDK_24) {
+      highlight("Test.java", """
+        <error descr="Module Import Declarations are not supported at language level '24'">import module java.sql;</error>
+        class Test {}
+      """.trimIndent())
+    }
+  }
+
+  fun testModuleImportDeclarationLevelCheck24Preview() {
+    IdeaTestUtil.withLevel(module, LanguageLevel.JDK_24_PREVIEW) {
+      highlight("Test.java", """
+        import module java.base;
+        class Test {}
+      """.trimIndent())
+    }
+  }
+
+  fun testModuleImportDeclarationLevelCheck25() {
+    IdeaTestUtil.withLevel(module, LanguageLevel.JDK_25) {
+      highlight("Test.java", """
+        import module java.base;
+        import module java.base;
+        class Test {}
+      """.trimIndent())
+    }
+  }
+
+  fun testModuleImportDeclarationLevelCheck25Preview() {
+    IdeaTestUtil.withLevel(module, LanguageLevel.JDK_25) {
+      highlight("Test.java", """
+        import module java.base;
         class Test {}
       """.trimIndent())
     }
@@ -138,7 +195,7 @@ class ModuleHighlightingTest : LightJava9ModulesCodeInsightFixtureTestCase() {
     }
   }
 
-    fun testModuleImportDeclarationUnresolvedModule() {
+  fun testModuleImportDeclarationUnresolvedModule() {
     IdeaTestUtil.withLevel(module, LanguageLevel.JDK_23_PREVIEW) {
       addFile("moodule-info.java", "module current.module.name {}")
       highlight("Test.java", """
@@ -180,7 +237,7 @@ class ModuleHighlightingTest : LightJava9ModulesCodeInsightFixtureTestCase() {
   }
 
   fun testWrongFileName() {
-    highlight("M.java", """/* ... */ <error descr="Module declaration should be in a file named 'module-info.java'">module M</error> { }""")
+    highlight("M.java", """/* ... */ <error descr="Module declarations only allowed in a 'module-info.java' file">module M</error> { }""")
   }
 
   fun testFileDuplicate() {
@@ -539,6 +596,45 @@ class ModuleHighlightingTest : LightJava9ModulesCodeInsightFixtureTestCase() {
     highlight("test.java", checkFileText, isTest = checkFileInTests)
   }
 
+  fun testLightModulePackageAccessibility() {
+    fun getModuleName(file: VirtualFile, importName: String): String? {
+      val psiFile = PsiManager.getInstance(project).findFile(file) as? PsiJavaFile
+      val importStatement = psiFile?.importList?.allImportStatements?.first { i -> i.importReference?.text == importName }
+      val resolved = importStatement?.resolve()
+      return JavaPsiModuleUtil.findDescriptorByElement(resolved)?.name
+    }
+
+    addFile("pkg/sub/C2X.java", """package pkg.sub;
+      public class C2X { }""".trimIndent(), M5)
+    addResourceFile(JarFile.MANIFEST_NAME, "Automatic-Module-Name: m5.bar\n", module = M5)
+
+    addFile("pkg/sub/C2X.java", """package pkg.sub;
+      public class C2X { }""".trimIndent(), M6)
+    addResourceFile(JarFile.MANIFEST_NAME, "Automatic-Module-Name: m6.bar\n", module = M6)
+
+    val cFile = addFile("C.java", """
+        import pkg.sub.C2X;
+        
+        class C {
+          C2X c2 = new C2X();
+        }
+        """.trimIndent())
+
+    // first check
+    addFile("module-info.java", """module M { 
+      requires m5.bar;
+    }""".trimIndent())
+    highlight(cFile)
+    assertEquals("m5.bar", getModuleName(cFile, "pkg.sub.C2X"))
+
+    // change module-info and check again
+    addFile("module-info.java", """module M { 
+      requires m6.bar;
+    """)
+    highlight(cFile)
+    assertEquals("m6.bar", getModuleName(cFile, "pkg.sub.C2X"))
+  }
+
   fun testPackageAccessibilityOverTestScope() {
     addFile("module-info.java", "module M2 { exports pkg.m2; exports pkg.m2.impl to close.friends.only; }", M2)
     addFile("pkg/m2/C2.java", "package pkg.m2;\npublic class C2 { }", M2)
@@ -697,7 +793,7 @@ class ModuleHighlightingTest : LightJava9ModulesCodeInsightFixtureTestCase() {
 
     addFile("module-info.java", "module M6 {  requires lib.named; exports pkg;}", M6)
     addFile("pkg/A.java", "package pkg; public class A {public static void foo(java.util.function.Supplier<pkg.lib1.LC1> f){}}", M6)
-    highlight("pkg/Usage.java","import pkg.lib1.LC1; class Usage { {pkg.A.foo(LC1::new);} }")
+    highlight("pkg/Usage.java", "import pkg.lib1.LC1; class Usage { {pkg.A.foo(LC1::new);} }")
   }
 
   fun testDeprecations() {
@@ -833,7 +929,7 @@ class ModuleHighlightingTest : LightJava9ModulesCodeInsightFixtureTestCase() {
   }
 
   fun testBrokenImportModuleStatement() {
-    IdeaTestUtil.withLevel(module, JavaFeature.MODULE_IMPORT_DECLARATIONS.minimumLevel){
+    IdeaTestUtil.withLevel(module, JavaFeature.MODULE_IMPORT_DECLARATIONS.minimumLevel) {
       highlight("A.java", """
         package a;
         
@@ -1030,6 +1126,19 @@ class ModuleHighlightingTest : LightJava9ModulesCodeInsightFixtureTestCase() {
     }
   }
 
+  fun testIsJdkModuleCaseInsensitiveForWindows() {
+    if (!SystemInfo.isWindows && !SystemInfo.isMac) return // fix it later
+    withCaseInsensitiveFs {
+      withInternalJdk(INTERNAL_MAIN, LanguageLevel.JDK_11, true) {
+        highlight("Main.java", """
+          public class Main {
+            private javax.smartcardio.ATR attr;
+          }
+        """.trimIndent(), INTERNAL_MAIN)
+      }
+    }
+  }
+
   fun testMultiReleaseJarWithDifferentJavaVersions() {
     val location = JavaTestUtil.getJavaTestDataPath() + "/codeInsight/jigsaw/multi-release.jar"
     val libraryFile = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(File(location))!!
@@ -1082,9 +1191,13 @@ class ModuleHighlightingTest : LightJava9ModulesCodeInsightFixtureTestCase() {
   //<editor-fold desc="Helpers.">
   private fun highlight(text: String) = highlight("module-info.java", text)
 
-  private fun highlight(path: String, text: String, module: ModuleDescriptor = MAIN, isTest: Boolean = false) {
-    myFixture.configureFromExistingVirtualFile(if (isTest) addTestFile(path, text, module) else addFile(path, text, module))
+  private fun highlight(file: VirtualFile) {
+    myFixture.configureFromExistingVirtualFile(file)
     myFixture.checkHighlighting()
+  }
+
+  private fun highlight(path: String, text: String, module: ModuleDescriptor = MAIN, isTest: Boolean = false) {
+    highlight(if (isTest) addTestFile(path, text, module) else addFile(path, text, module))
   }
 
   private fun fixes(text: String, fixes: Array<String>) = fixes("module-info.java", text, fixes)
@@ -1094,23 +1207,27 @@ class ModuleHighlightingTest : LightJava9ModulesCodeInsightFixtureTestCase() {
     val availableIntentions = myFixture.availableIntentions
     val available = availableIntentions
       .map { ReportingClassSubstitutor.getClassToReport(it) }
-      .filter { it.name.startsWith("com.intellij.codeInsight.") &&
-                !(it.name.startsWith("com.intellij.codeInsight.intention.impl.") && it.name.endsWith("Action"))
-                && !it.name.endsWith("DisableHighlightingIntentionAction")
-                && !it.name.endsWith("DeclarativeHintsTogglingIntention")}
+      .filter {
+        it.name.startsWith("com.intellij.codeInsight.") &&
+        !(it.name.startsWith("com.intellij.codeInsight.intention.impl.") && it.name.endsWith("Action"))
+        && !it.name.endsWith("DisableHighlightingIntentionAction")
+        && !it.name.endsWith("DeclarativeHintsTogglingIntention")
+      }
       .map { it.simpleName }
     assertThat(available).describedAs(availableIntentions.toString()).containsExactlyInAnyOrder(*fixes)
   }
 
-  private fun withInternalJdk(moduleDescriptor: ModuleDescriptor, level: LanguageLevel, block: () -> Unit) {
+  private fun withInternalJdk(moduleDescriptor: ModuleDescriptor, level: LanguageLevel, caseInsensitive: Boolean = false, block: () -> Unit) {
     val name = "INTERNAL_JDK_TEST"
 
     val module = ModuleManager.getInstance(project).findModuleByName(moduleDescriptor.moduleName)!!
     try {
 
       WriteAction.runAndWait<RuntimeException?>(ThrowableRunnable {
+        var path = JavaAwareProjectJdkTableImpl.getInstanceEx().getInternalJdk().getHomePath()!!
+        if (caseInsensitive) path = breakPath(path)
         val jdk = ProjectJdkTable.getInstance().findJdk(name)
-                  ?: JavaSdk.getInstance().createJdk(name, JavaAwareProjectJdkTableImpl.getInstanceEx().getInternalJdk().getHomePath()!!, false)
+                  ?: createJdk(name, path)
 
         ProjectJdkTable.getInstance().addJdk(jdk, project)
         ModuleRootModificationUtil.setModuleSdk(module, jdk)
@@ -1128,6 +1245,41 @@ class ModuleHighlightingTest : LightJava9ModulesCodeInsightFixtureTestCase() {
           ProjectJdkTable.getInstance().removeJdk(jdk)
         }
       })
+    }
+  }
+
+  fun createJdk(jdkName: String, home: String): Sdk {
+    val jdk = ProjectJdkTable.getInstance().createSdk(jdkName, JavaSdk.getInstance())
+    val sdkModificator = jdk.getSdkModificator()
+
+    sdkModificator.setHomePath(FileUtil.toSystemIndependentName(home))
+    sdkModificator.setVersionString(JavaSdk.getInstance().getVersionString(home))
+    JavaSdkImpl.addClasses(Path.of(home), sdkModificator, false)
+
+    sdkModificator.applyChangesWithoutWriteAction()
+    return jdk
+  }
+
+  private fun breakPath(path: String): String {
+    val lastLetterIndex = path.indexOfLast { char -> char.isLetter() }
+    if (lastLetterIndex == -1) return path
+
+    val targetChar = path[lastLetterIndex]
+    val modifiedChar = if (targetChar.isUpperCase()) targetChar.lowercaseChar() else targetChar.uppercaseChar()
+    return path.replaceRange(lastLetterIndex, lastLetterIndex + 1, modifiedChar.toString())
+  }
+
+  private fun withCaseInsensitiveFs(action: () -> Unit) {
+    val mockFs = object : MockLocalFileSystem() {
+      override fun isCaseSensitive() = false
+    }
+    ApplicationManager.getApplication().replaceService(LocalFileSystem::class.java, mockFs, testRootDisposable)
+
+    try {
+      action()
+    }
+    finally {
+      Disposer.dispose(testRootDisposable)
     }
   }
 

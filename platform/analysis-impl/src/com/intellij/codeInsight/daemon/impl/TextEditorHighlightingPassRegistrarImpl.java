@@ -4,8 +4,8 @@ package com.intellij.codeInsight.daemon.impl;
 import com.intellij.codeHighlighting.*;
 import com.intellij.codeInsight.daemon.ProblemHighlightFilter;
 import com.intellij.codeInsight.multiverse.CodeInsightContext;
+import com.intellij.codeInsight.multiverse.CodeInsightContextUtil;
 import com.intellij.codeInsight.multiverse.EditorContextManager;
-import com.intellij.codeInsight.multiverse.FileViewProviderUtil;
 import com.intellij.codeInspection.ex.GlobalInspectionContextBase;
 import com.intellij.codeWithMe.ClientId;
 import com.intellij.openapi.application.AccessToken;
@@ -20,12 +20,14 @@ import com.intellij.openapi.extensions.PluginDescriptor;
 import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.openapi.project.DumbService;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.psi.PsiCompiledElement;
 import com.intellij.psi.PsiDocumentManager;
 import com.intellij.psi.PsiFile;
 import com.intellij.psi.util.PsiUtilCore;
 import com.intellij.util.ArrayUtil;
 import com.intellij.util.ArrayUtilRt;
+import com.intellij.util.concurrency.annotations.RequiresBackgroundThread;
 import com.intellij.util.containers.ContainerUtil;
 import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
 import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
@@ -34,6 +36,7 @@ import it.unimi.dsi.fastutil.ints.IntList;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.VisibleForTesting;
 
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -72,7 +75,8 @@ public final class TextEditorHighlightingPassRegistrarImpl extends TextEditorHig
     }, project);
   }
 
-  void reRegisterFactories() {
+  @VisibleForTesting
+  public void reRegisterFactories() {
     synchronized (this) {
       myRegisteredPassFactories.clear();
       myFrozenPassConfigs = null;
@@ -137,8 +141,8 @@ public final class TextEditorHighlightingPassRegistrarImpl extends TextEditorHig
     assert registered == null: "Pass id "+passId +" has already been registered in: "+ registered.passFactory;
     myRegisteredPassFactories.put(passId, info);
     myFrozenPassConfigs = null; // clear cache
-    if (factory instanceof DirtyScopeTrackingHighlightingPassFactory) {
-      myDirtyScopeTrackingFactories.add((DirtyScopeTrackingHighlightingPassFactory) factory);
+    if (factory instanceof DirtyScopeTrackingHighlightingPassFactory dirty) {
+      myDirtyScopeTrackingFactories.add(dirty);
     }
     return passId;
   }
@@ -169,22 +173,23 @@ public final class TextEditorHighlightingPassRegistrarImpl extends TextEditorHig
   }
 
   @Override
+  @RequiresBackgroundThread
   public @NotNull List<@NotNull TextEditorHighlightingPass> instantiatePasses(@NotNull PsiFile psiFile,
                                                                               @NotNull Editor editor,
                                                                               int @NotNull [] passesToIgnore) {
     ApplicationManager.getApplication().assertIsNonDispatchThread();
-    GlobalInspectionContextBase.assertUnderDaemonProgress();
+    DaemonProgressIndicator indicator = GlobalInspectionContextBase.assertUnderDaemonProgress();
     PsiDocumentManager documentManager = PsiDocumentManager.getInstance(myProject);
     Document document = editor.getDocument();
     CodeInsightContext context = EditorContextManager.getEditorContext(editor, myProject);
-    PsiFile fileFromDoc = documentManager.getPsiFile(document, context);
-    if (!(fileFromDoc instanceof PsiCompiledElement)) {
-      assert fileFromDoc == psiFile : "Files are different: " + psiFile + ";" + fileFromDoc;
+    PsiFile psiFileFromDoc = documentManager.getPsiFile(document, context);
+    if (!(psiFileFromDoc instanceof PsiCompiledElement)) {
+      assert psiFileFromDoc == psiFile : "Files are different: " + psiFile + ";" + psiFileFromDoc;
       Document documentFromFile = documentManager.getDocument(psiFile);
       assert documentFromFile == document : "Documents are different. Doc: " + document + "; Doc from file: " + documentFromFile +"; File: "+psiFile +"; Virtual file: "+
                                             PsiUtilCore.getVirtualFile(psiFile);
     }
-    CodeInsightContext psiFileContext = FileViewProviderUtil.getCodeInsightContext(psiFile);
+    CodeInsightContext psiFileContext = CodeInsightContextUtil.getCodeInsightContext(psiFile);
     if (!psiFileContext.equals(context)) {
       LOG.error("PsiFile's context does not match the context of the editor. File's context= " + psiFileContext + "; Editor's context = " + context);
     }
@@ -193,6 +198,7 @@ public final class TextEditorHighlightingPassRegistrarImpl extends TextEditorHig
     List<TextEditorHighlightingPass> result = new ArrayList<>(frozenPassConfigs.length);
     IntList passesRefusedToCreate = new IntArrayList();
     boolean shouldHighlightFile = ProblemHighlightFilter.shouldHighlightFile(psiFile);
+    VirtualFile virtualFile = psiFile.getVirtualFile();
     try (AccessToken ignored = ClientId.withExplicitClientId(ClientEditorManager.Companion.getClientId(editor))) {
       for (int passId = 1; passId < frozenPassConfigs.length; passId++) {
         ProgressManager.checkCanceled();
@@ -202,9 +208,9 @@ public final class TextEditorHighlightingPassRegistrarImpl extends TextEditorHig
           continue;
         }
         TextEditorHighlightingPassFactory factory = passConfig.passFactory;
-        TextEditorHighlightingPass pass = shouldHighlightFile && DumbService.getInstance(myProject).isUsableInCurrentContext(factory) ?
+        TextEditorHighlightingPass pass = shouldHighlightFile && DumbService.getInstance(myProject).isUsableInCurrentContext(factory, virtualFile) ?
                                           factory.createHighlightingPass(psiFile, editor) : null;
-        if (pass == null || !DumbService.getInstance(myProject).isUsableInCurrentContext(pass)) {
+        if (pass == null || !DumbService.getInstance(myProject).isUsableInCurrentContext(pass, virtualFile)) {
           passesRefusedToCreate.add(passId);
         }
         else {
@@ -236,29 +242,32 @@ public final class TextEditorHighlightingPassRegistrarImpl extends TextEditorHig
     FileStatusMap statusMap = daemonCodeAnalyzer.getFileStatusMap();
     for (int i = 0; i < passesRefusedToCreate.size(); i++) {
       int id = passesRefusedToCreate.getInt(i);
-      statusMap.markFileUpToDate(document, context, id);
+      statusMap.markFileUpToDate(document, context, id, indicator);
     }
     if (!shouldHighlightFile) {
       // in case when some extension prohibited highlighting, return empty pass to distinguish from error during pass creation and endless restart
-      result.add(new ProgressableTextEditorHighlightingPass.EmptyPass(myProject, document));
+      ProgressableTextEditorHighlightingPass.EmptyPass emptyPass = new ProgressableTextEditorHighlightingPass.EmptyPass(myProject, document);
+      emptyPass.setContext(context);
+      result.add(emptyPass);
     }
     return result;
   }
 
   @Override
+  @RequiresBackgroundThread
   public @NotNull List<@NotNull TextEditorHighlightingPass> instantiateMainPasses(@NotNull PsiFile psiFile,
                                                                                   @NotNull Document document,
                                                                                   @NotNull HighlightInfoProcessor highlightInfoProcessor) {
     ApplicationManager.getApplication().assertIsNonDispatchThread();
     Set<TextEditorHighlightingPass> ids = new HashSet<>();
     PassConfig[] frozenPassConfigs = freezeRegisteredPassFactories();
-    CodeInsightContext context = FileViewProviderUtil.getCodeInsightContext(psiFile);
+    CodeInsightContext context = CodeInsightContextUtil.getCodeInsightContext(psiFile);
     for (int passId = 0; passId < frozenPassConfigs.length; passId++) {
       PassConfig passConfig = frozenPassConfigs[passId];
       if (passConfig == null) continue;
       TextEditorHighlightingPassFactory factory = passConfig.passFactory;
-      if (factory instanceof MainHighlightingPassFactory) {
-        TextEditorHighlightingPass pass = ((MainHighlightingPassFactory)factory).createMainHighlightingPass(psiFile, document, highlightInfoProcessor);
+      if (factory instanceof MainHighlightingPassFactory main) {
+        TextEditorHighlightingPass pass = main.createMainHighlightingPass(psiFile, document, highlightInfoProcessor);
         if (pass != null) {
           pass.setContext(context);
           ids.add(pass);

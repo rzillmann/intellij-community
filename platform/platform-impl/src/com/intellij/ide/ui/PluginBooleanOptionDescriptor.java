@@ -3,6 +3,7 @@ package com.intellij.ide.ui;
 
 import com.intellij.ide.IdeBundle;
 import com.intellij.ide.plugins.*;
+import com.intellij.ide.plugins.newui.DefaultUiPluginManagerController;
 import com.intellij.ide.plugins.newui.MyPluginModel;
 import com.intellij.ide.ui.search.BooleanOptionDescription;
 import com.intellij.ide.ui.search.NotABooleanOptionDescription;
@@ -16,7 +17,7 @@ import com.intellij.openapi.application.ex.ApplicationInfoEx;
 import com.intellij.openapi.extensions.PluginId;
 import com.intellij.openapi.project.DumbAwareAction;
 import com.intellij.openapi.ui.popup.Balloon;
-import com.intellij.openapi.updateSettings.impl.UpdateChecker;
+import com.intellij.openapi.updateSettings.impl.UpdateCheckerFacade;
 import com.intellij.openapi.util.Condition;
 import com.intellij.util.containers.ContainerUtil;
 import org.jetbrains.annotations.ApiStatus;
@@ -62,9 +63,10 @@ public final class PluginBooleanOptionDescriptor extends BooleanOptionDescriptio
     }
 
     Map<PluginId, IdeaPluginDescriptorImpl> pluginIdMap = PluginManagerCore.INSTANCE.buildPluginIdMap();
+    Map<@NotNull PluginModuleId, @NotNull ContentModuleDescriptor> contentModuleIdMap = PluginManagerCore.getPluginSet().buildContentModuleIdMap();
     Collection<? extends IdeaPluginDescriptor> autoSwitchedDescriptors = enable ?
-                                                                         getDependenciesToEnable(descriptors, pluginIdMap) :
-                                                                         getDependentsToDisable(descriptors, pluginIdMap);
+                                                                         getDependenciesToEnable(descriptors, pluginIdMap, contentModuleIdMap) :
+                                                                         getDependentsToDisable(descriptors, pluginIdMap, contentModuleIdMap);
 
     PluginEnabler pluginEnabler = PluginEnabler.getInstance();
     boolean appliedWithoutRestart = enable ?
@@ -88,7 +90,7 @@ public final class PluginBooleanOptionDescriptor extends BooleanOptionDescriptio
                                                  @NotNull @Nls String content,
                                                  boolean enabled) {
     String title = IdeBundle.message(enabled ? "plugins.auto.enabled.notification.title" : "plugins.auto.disabled.notification.title");
-    Notification switchNotification = UpdateChecker.getNotificationGroupForPluginUpdateResults()
+    Notification switchNotification = ApplicationManager.getApplication().getService(UpdateCheckerFacade.class).getNotificationGroupForPluginUpdateResults()
       .createNotification(content, NotificationType.INFORMATION)
       .setDisplayId("plugin.auto.switch")
       .setTitle(title)
@@ -130,7 +132,8 @@ public final class PluginBooleanOptionDescriptor extends BooleanOptionDescriptio
   }
 
   private static @NotNull Collection<? extends IdeaPluginDescriptor> getDependenciesToEnable(@NotNull Collection<? extends IdeaPluginDescriptor> descriptors,
-                                                                                             @NotNull Map<PluginId, IdeaPluginDescriptorImpl> pluginIdMap) {
+                                                                                             @NotNull Map<PluginId, IdeaPluginDescriptorImpl> pluginIdMap,
+                                                                                             @NotNull Map<PluginModuleId, ContentModuleDescriptor> contentModuleIdMap) {
     Set<IdeaPluginDescriptor> result = new LinkedHashSet<>();
 
     for (IdeaPluginDescriptor descriptor : descriptors) {
@@ -140,9 +143,10 @@ public final class PluginBooleanOptionDescriptor extends BooleanOptionDescriptio
         continue;
       }
 
-      PluginManagerCore.INSTANCE.processAllNonOptionalDependencies((IdeaPluginDescriptorImpl)descriptor, pluginIdMap, dependency ->
+      PluginManagerCore.INSTANCE.processAllNonOptionalDependencies((IdeaPluginDescriptorImpl)descriptor, pluginIdMap, contentModuleIdMap, dependency ->
         PluginManagerCore.CORE_ID.equals(dependency.getPluginId()) ||
-        (PluginManagerCore.ULTIMATE_PLUGIN_ID.equals(dependency.getPluginId()) && PluginManagerCore.isDisabled(PluginManagerCore.ULTIMATE_PLUGIN_ID)) ||
+        (PluginManagerCore.ULTIMATE_PLUGIN_ID.equals(dependency.getPluginId()) &&
+         PluginManagerCore.isDisabled(PluginManagerCore.ULTIMATE_PLUGIN_ID)) ||
         dependency.isEnabled() ||
         !result.add(dependency) ?
         FileVisitResult.SKIP_SUBTREE /* if descriptor has already been added/enabled, no need to process its dependencies */ :
@@ -153,14 +157,15 @@ public final class PluginBooleanOptionDescriptor extends BooleanOptionDescriptio
   }
 
   private static @NotNull Collection<? extends IdeaPluginDescriptor> getDependentsToDisable(@NotNull Collection<? extends IdeaPluginDescriptor> descriptors,
-                                                                                            @NotNull Map<PluginId, IdeaPluginDescriptorImpl> pluginIdMap) {
+                                                                                            @NotNull Map<PluginId, IdeaPluginDescriptorImpl> pluginIdMap,
+                                                                                            @NotNull Map<PluginModuleId, ContentModuleDescriptor> contentModuleIdMap) {
     Set<IdeaPluginDescriptor> result = new LinkedHashSet<>();
     ApplicationInfoEx applicationInfo = ApplicationInfoEx.getInstanceEx();
 
     for (IdeaPluginDescriptor descriptor : descriptors) {
       result.add(descriptor);
 
-      result.addAll(MyPluginModel.getDependents(descriptor, applicationInfo, pluginIdMap));
+      result.addAll(DefaultUiPluginManagerController.INSTANCE.getDependents(descriptor.getPluginId(), applicationInfo, pluginIdMap, contentModuleIdMap));
     }
 
     return Collections.unmodifiableSet(result);
@@ -179,7 +184,7 @@ public final class PluginBooleanOptionDescriptor extends BooleanOptionDescriptio
       }
     }
 
-    Notification newNotification = UpdateChecker.getNotificationGroupForIdeUpdateResults()
+    Notification newNotification = ApplicationManager.getApplication().getService(UpdateCheckerFacade.class).getNotificationGroupForIdeUpdateResults()
       .createNotification(
         IdeBundle.message("plugins.changed.notification.content", ApplicationNamesInfo.getInstance().getFullProductName()),
         NotificationType.INFORMATION)

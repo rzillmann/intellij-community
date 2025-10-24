@@ -6,6 +6,7 @@
   <description>Allows to design Swing UI graphically, supports code generation/instrumentation, preview, widgets library and UI-related code inspections</description>
   <resource-bundle>messages.UIDesignerBundle</resource-bundle>
   <depends>com.intellij.java-i18n</depends>
+  <depends>com.intellij.modules.spellchecker</depends>
   <depends>com.intellij.properties</depends>
 
   <extensionPoints>
@@ -75,7 +76,7 @@
                      groupKey="form.inspections.group" enabledByDefault="true" level="WARNING"
                      implementationClass="com.intellij.uiDesigner.inspections.BoundFieldAssignmentInspection"/>
 
-    <fileEditorProvider id="ui-designer" implementation="com.intellij.uiDesigner.editor.UIFormEditorProvider" fileType="GUI_DESIGNER_FORM"/>
+    <fileEditorProvider id="ui-designer" implementation="com.intellij.uiDesigner.editor.UIFormEditorProvider"/>
 
     <projectService serviceImplementation="com.intellij.uiDesigner.propertyInspector.properties.HorzAlignProperty"/>
     <projectService serviceImplementation="com.intellij.uiDesigner.propertyInspector.properties.VertAlignProperty"/>

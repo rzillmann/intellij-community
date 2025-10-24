@@ -1,13 +1,8 @@
 f:com.intellij.codeInsight.daemon.OutsidersPsiFileSupport
 - <init>():V
 - s:getOriginalFilePath(com.intellij.openapi.vfs.VirtualFile):java.lang.String
-- s:getOriginalFileUrl(com.intellij.openapi.vfs.VirtualFile):java.lang.String
 - s:isOutsiderFile(com.intellij.openapi.vfs.VirtualFile):Z
-- s:isOutsiderFile(com.intellij.psi.PsiFile):Z
-- s:markFile(com.intellij.openapi.vfs.VirtualFile):V
-- s:markFile(com.intellij.openapi.vfs.VirtualFile,com.intellij.openapi.vcs.FilePath):V
 - s:markFile(com.intellij.openapi.vfs.VirtualFile,java.lang.String):V
-- s:markFileWithUrl(com.intellij.openapi.vfs.VirtualFile,java.lang.String):V
 a:com.intellij.diff.DiffContentFactoryEx
 - com.intellij.diff.DiffContentFactory
 - <init>():V
@@ -231,29 +226,24 @@ com.intellij.diff.editor.DiffContentVirtualFile
 com.intellij.diff.editor.DiffEditorEscapeAction
 com.intellij.diff.editor.DiffEditorTabFilesManager
 - sf:Companion:com.intellij.diff.editor.DiffEditorTabFilesManager$Companion
-- sf:SHOW_DIFF_IN_EDITOR_SETTING:java.lang.String
 - s:getInstance(com.intellij.openapi.project.Project):com.intellij.diff.editor.DiffEditorTabFilesManager
-- s:isDiffInEditor():Z
-- s:isDiffInWindow():Z
 - a:isDiffOpenedInWindow(com.intellij.openapi.vfs.VirtualFile):Z
-- s:setDiffInEditor(Z):V
-- a:showDiffFile(com.intellij.openapi.vfs.VirtualFile,Z):com.intellij.openapi.fileEditor.FileEditor[]
+- showDiffFile(com.intellij.openapi.vfs.VirtualFile,Z):com.intellij.openapi.fileEditor.FileEditor[]
+- a:showDiffFile(com.intellij.openapi.vfs.VirtualFile,Z,Z):com.intellij.openapi.fileEditor.FileEditor[]
 f:com.intellij.diff.editor.DiffEditorTabFilesManager$Companion
-- sf:SHOW_DIFF_IN_EDITOR_SETTING:java.lang.String
 - f:getInstance(com.intellij.openapi.project.Project):com.intellij.diff.editor.DiffEditorTabFilesManager
-- f:isDiffInEditor():Z
-- f:isDiffInWindow():Z
-- f:setDiffInEditor(Z):V
 c:com.intellij.diff.editor.DiffEditorViewerFileEditor
 - com.intellij.diff.util.FileEditorBase
 - com.intellij.openapi.fileEditor.FileEditorWithTextEditors
 - sf:Companion:com.intellij.diff.editor.DiffEditorViewerFileEditor$Companion
+- <init>(com.intellij.openapi.project.Project,com.intellij.openapi.vfs.VirtualFile,com.intellij.diff.impl.DiffEditorViewer):V
 - <init>(com.intellij.openapi.vfs.VirtualFile,com.intellij.diff.impl.DiffEditorViewer):V
 - dispose():V
 - f:getEditorViewer():com.intellij.diff.impl.DiffEditorViewer
 - getEmbeddedEditors():java.util.List
 - getFilesToRefresh():java.util.List
 - getPreferredFocusedComponent():javax.swing.JComponent
+- f:getProject():com.intellij.openapi.project.Project
 - getState(com.intellij.openapi.fileEditor.FileEditorStateLevel):com.intellij.openapi.fileEditor.FileEditorState
 - selectNotify():V
 - setState(com.intellij.openapi.fileEditor.FileEditorState):V
@@ -338,7 +328,7 @@ a:com.intellij.diff.impl.CacheDiffRequestProcessor
 - <init>(com.intellij.openapi.project.Project,java.lang.String):V
 - p:dropCaches():V
 - pa:getCurrentRequestProvider():java.lang.Object
-- p:getFastLoadingTimeMillis():I
+- p:getFastLoadingTimeMillis():J
 - pa:getRequestName(java.lang.Object):java.lang.String
 - pa:loadRequest(java.lang.Object,com.intellij.openapi.progress.ProgressIndicator):com.intellij.diff.requests.DiffRequest
 - p:loadRequestFast(java.lang.Object):com.intellij.diff.requests.DiffRequest
@@ -549,6 +539,17 @@ com.intellij.diff.lang.DiffIgnoredRangeProvider
 - a:accepts(com.intellij.openapi.project.Project,com.intellij.diff.contents.DiffContent):Z
 - a:getDescription():java.lang.String
 - a:getIgnoredRanges(com.intellij.openapi.project.Project,java.lang.CharSequence,com.intellij.diff.contents.DiffContent):java.util.List
+com.intellij.diff.lang.DiffLangSpecificProvider
+- sf:Companion:com.intellij.diff.lang.DiffLangSpecificProvider$Companion
+- sf:EP_NAME:com.intellij.openapi.extensions.ExtensionPointName
+- s:findApplicable(com.intellij.diff.contents.DiffContent,com.intellij.diff.contents.DiffContent):com.intellij.diff.lang.DiffLangSpecificProvider
+- a:getDescription():java.lang.String
+- getLineFragments(com.intellij.openapi.project.Project,java.lang.CharSequence,java.lang.CharSequence,com.intellij.diff.tools.util.base.IgnorePolicy,com.intellij.diff.tools.util.base.HighlightPolicy,com.intellij.openapi.progress.ProgressIndicator):java.util.List
+- getPatchedLineFragments(com.intellij.openapi.project.Project,java.util.List,java.lang.CharSequence,java.lang.CharSequence,com.intellij.diff.tools.util.base.IgnorePolicy,com.intellij.diff.tools.util.base.HighlightPolicy,com.intellij.openapi.progress.ProgressIndicator):java.util.List
+- a:getShouldPrecalculateLineFragments():Z
+- a:isApplicable(com.intellij.lang.Language):Z
+f:com.intellij.diff.lang.DiffLangSpecificProvider$Companion
+- f:findApplicable(com.intellij.diff.contents.DiffContent,com.intellij.diff.contents.DiffContent):com.intellij.diff.lang.DiffLangSpecificProvider
 a:com.intellij.diff.lang.LangDiffIgnoredRangeProvider
 - com.intellij.diff.lang.DiffIgnoredRangeProvider
 - <init>():V
@@ -556,6 +557,20 @@ a:com.intellij.diff.lang.LangDiffIgnoredRangeProvider
 - pa:accepts(com.intellij.openapi.project.Project,com.intellij.lang.Language):Z
 - pa:computeIgnoredRanges(com.intellij.openapi.project.Project,java.lang.CharSequence,com.intellij.lang.Language):java.util.List
 - getIgnoredRanges(com.intellij.openapi.project.Project,java.lang.CharSequence,com.intellij.diff.contents.DiffContent):java.util.List
+com.intellij.diff.merge.LangSpecificMergeConflictResolver
+- sf:Companion:com.intellij.diff.merge.LangSpecificMergeConflictResolver$Companion
+- sf:EP_NAME:com.intellij.openapi.extensions.ExtensionPointName
+- s:findApplicable(java.util.List):com.intellij.diff.merge.LangSpecificMergeConflictResolver
+- a:isApplicable(com.intellij.lang.Language):Z
+- a:tryResolveMergeConflicts(com.intellij.diff.merge.LangSpecificMergeContext,kotlin.coroutines.Continuation):java.lang.Object
+f:com.intellij.diff.merge.LangSpecificMergeConflictResolver$Companion
+- f:findApplicable(java.util.List):com.intellij.diff.merge.LangSpecificMergeConflictResolver
+f:com.intellij.diff.merge.LangSpecificMergeContext
+- <init>(com.intellij.openapi.project.Project,java.util.List,java.util.List,java.util.List):V
+- f:file(com.intellij.diff.util.ThreeSide):com.intellij.psi.PsiFile
+- f:getLineFragmentList():java.util.List
+- f:getProject():com.intellij.openapi.project.Project
+- f:lineRanges(com.intellij.diff.util.ThreeSide):java.util.List
 c:com.intellij.diff.requests.LoadingDiffRequest
 - com.intellij.diff.requests.MessageDiffRequest
 c:com.intellij.diff.requests.OperationCanceledDiffRequest
@@ -900,6 +915,7 @@ c:com.intellij.diff.tools.simple.SimpleDiffModel
 - destroyChange(com.intellij.diff.tools.simple.SimpleDiffChange):V
 - getAllChanges():java.util.List
 - getChanges():java.util.List
+- getChanges(com.intellij.diff.util.Side):java.util.List
 - handleBeforeDocumentChange(com.intellij.diff.util.Side,com.intellij.openapi.editor.event.DocumentEvent):V
 - isContentsEqual():com.intellij.util.ThreeState
 - paintPolygons(java.awt.Graphics2D,javax.swing.JComponent):V
@@ -959,6 +975,10 @@ c:com.intellij.diff.tools.simple.SimpleDiffViewer$ModifierProvider
 - <init>(com.intellij.diff.tools.simple.SimpleDiffViewer):V
 - init():V
 - onModifiersChanged():V
+pc:com.intellij.diff.tools.simple.SimpleDiffViewer$MyToggleAutoScrollAction
+- com.intellij.openapi.project.DumbAwareToggleAction
+- <init>(com.intellij.diff.tools.simple.SimpleDiffViewer):V
+- update(com.intellij.openapi.actionSystem.AnActionEvent):V
 pa:com.intellij.diff.tools.simple.SimpleDiffViewer$SelectedChangesActionBase
 - com.intellij.openapi.project.DumbAwareAction
 - p:<init>(com.intellij.diff.tools.simple.SimpleDiffViewer):V
@@ -1053,8 +1073,6 @@ a:com.intellij.diff.tools.simple.ThreesideDiffChangeBase
 - updateGutterActions(Z):V
 a:com.intellij.diff.tools.simple.ThreesideTextDiffViewerEx
 - com.intellij.diff.tools.util.side.ThreesideTextDiffViewer
-- pf:myFoldingModel:com.intellij.diff.tools.simple.ThreesideTextDiffViewerEx$MyFoldingModel
-- pf:myInitialScrollHelper:com.intellij.diff.tools.simple.ThreesideTextDiffViewerEx$MyInitialScrollHelper
 - pf:myStatusPanel:com.intellij.diff.tools.util.StatusPanel
 - <init>(com.intellij.diff.DiffContext,com.intellij.diff.requests.ContentDiffRequest):V
 - p:applyNotification(javax.swing.JComponent):java.lang.Runnable
@@ -1091,11 +1109,6 @@ pc:com.intellij.diff.tools.simple.ThreesideTextDiffViewerEx$MyFoldingModel
 - createState(java.util.List,java.util.List,com.intellij.diff.tools.util.FoldingModelSupport$Settings):com.intellij.diff.tools.util.FoldingModelSupport$Data
 - paintOnDivider(java.awt.Graphics2D,java.awt.Component,com.intellij.diff.util.Side):V
 - p:repaintSeparators():V
-pc:com.intellij.diff.tools.simple.ThreesideTextDiffViewerEx$MyInitialScrollHelper
-- com.intellij.diff.tools.util.side.ThreesideTextDiffViewer$MyInitialScrollPositionHelper
-- p:<init>(com.intellij.diff.tools.simple.ThreesideTextDiffViewerEx):V
-- p:doScrollToChange():Z
-- p:doScrollToFirstChange():Z
 pc:com.intellij.diff.tools.simple.ThreesideTextDiffViewerEx$MyPrevNextDifferenceIterable
 - com.intellij.diff.tools.util.PrevNextDifferenceIterableBase
 - p:<init>(com.intellij.diff.tools.simple.ThreesideTextDiffViewerEx):V
@@ -1392,6 +1405,7 @@ e:com.intellij.diff.tools.util.base.IgnorePolicy
 - sf:TRIM_WHITESPACES:com.intellij.diff.tools.util.base.IgnorePolicy
 - getComparisonPolicy():com.intellij.diff.comparison.ComparisonPolicy
 - getText():java.lang.String
+- isShouldSquash():Z
 - isShouldTrimChunks():Z
 - s:valueOf(java.lang.String):com.intellij.diff.tools.util.base.IgnorePolicy
 - s:values():com.intellij.diff.tools.util.base.IgnorePolicy[]
@@ -1577,8 +1591,6 @@ pa:com.intellij.diff.tools.util.side.OnesideTextDiffViewer$MyInitialScrollPositi
 - p:<init>(com.intellij.diff.tools.util.side.OnesideTextDiffViewer):V
 - p:disableSyncScroll(Z):V
 - p:doScrollToLine(Z):Z
-- p:doScrollToPosition():Z
-- p:getCaretPositions():com.intellij.openapi.editor.LogicalPosition[]
 - p:getEditors():java.util.List
 c:com.intellij.diff.tools.util.side.ThreesideContentPanel
 - javax.swing.JPanel
@@ -1622,13 +1634,6 @@ a:com.intellij.diff.tools.util.side.ThreesideTextDiffViewer
 - p:scrollToLine(com.intellij.diff.util.ThreeSide,I):V
 - p:transferPosition(com.intellij.diff.util.ThreeSide,com.intellij.diff.util.ThreeSide,com.intellij.openapi.editor.LogicalPosition):com.intellij.openapi.editor.LogicalPosition
 - uiDataSnapshot(com.intellij.openapi.actionSystem.DataSink):V
-pa:com.intellij.diff.tools.util.side.ThreesideTextDiffViewer$MyInitialScrollPositionHelper
-- p:<init>(com.intellij.diff.tools.util.side.ThreesideTextDiffViewer):V
-- p:disableSyncScroll(Z):V
-- p:doScrollToLine():Z
-- p:doScrollToPosition():Z
-- p:getCaretPositions():com.intellij.openapi.editor.LogicalPosition[]
-- p:getEditors():java.util.List
 pc:com.intellij.diff.tools.util.side.ThreesideTextDiffViewer$MyToggleAutoScrollAction
 - com.intellij.openapi.project.DumbAwareToggleAction
 - <init>(com.intellij.diff.tools.util.side.ThreesideTextDiffViewer):V
@@ -1699,13 +1704,8 @@ pa:com.intellij.diff.tools.util.side.TwosideTextDiffViewer$MyInitialScrollPositi
 - p:<init>(com.intellij.diff.tools.util.side.TwosideTextDiffViewer):V
 - p:disableSyncScroll(Z):V
 - p:doScrollToLine(Z):Z
-- p:doScrollToPosition():Z
-- p:getCaretPositions():com.intellij.openapi.editor.LogicalPosition[]
 - p:getEditors():java.util.List
 - onRediff():V
-pc:com.intellij.diff.tools.util.side.TwosideTextDiffViewer$MyToggleAutoScrollAction
-- com.intellij.openapi.project.DumbAwareToggleAction
-- <init>(com.intellij.diff.tools.util.side.TwosideTextDiffViewer):V
 com.intellij.diff.tools.util.text.FineMergeLineFragment
 - com.intellij.diff.fragments.MergeLineFragment
 - a:getConflictType():com.intellij.diff.util.MergeConflictType
@@ -1724,6 +1724,7 @@ com.intellij.diff.tools.util.text.TwosideTextDiffProvider
 - a:compare(java.lang.CharSequence,java.lang.CharSequence,com.intellij.openapi.progress.ProgressIndicator):java.util.List
 - a:compare(java.lang.CharSequence,java.lang.CharSequence,java.util.List,com.intellij.openapi.progress.ProgressIndicator):java.util.List
 - isHighlightingDisabled():Z
+- noFitnessForParticularPurposePromised():Z
 com.intellij.diff.tools.util.text.TwosideTextDiffProvider$NoIgnore
 - com.intellij.diff.tools.util.text.TwosideTextDiffProvider
 - a:compare(java.lang.CharSequence,java.lang.CharSequence,com.intellij.openapi.progress.ProgressIndicator):java.util.List
@@ -1924,6 +1925,7 @@ f:com.intellij.diff.util.DiffUtil
 - s:addActionBlock(com.intellij.openapi.actionSystem.DefaultActionGroup,java.util.List,Z):V
 - s:addActionBlock(com.intellij.openapi.actionSystem.DefaultActionGroup,com.intellij.openapi.actionSystem.AnAction[]):V
 - s:addNotification(com.intellij.diff.util.DiffNotificationProvider,com.intellij.openapi.util.UserDataHolder):V
+- s:addNotificationIfAbsent(com.intellij.diff.util.DiffNotificationProvider,com.intellij.openapi.util.UserDataHolder):V
 - s:addTitleCustomizers(com.intellij.diff.merge.MergeRequest,java.util.List):com.intellij.diff.merge.MergeRequest
 - s:addTitleCustomizers(com.intellij.diff.requests.DiffRequest,java.util.List):com.intellij.diff.requests.DiffRequest
 - s:addTitleCustomizers(com.intellij.diff.requests.DiffRequest,com.intellij.diff.DiffEditorTitleCustomizer[]):com.intellij.diff.requests.DiffRequest
@@ -2486,13 +2488,28 @@ c:com.intellij.openapi.vcs.ex.Range
 - f:hasVcsLines():Z
 f:com.intellij.openapi.vcs.ex.Range$Companion
 f:com.intellij.openapi.vcs.ex.Range$InnerRange
+- sf:Companion:com.intellij.openapi.vcs.ex.Range$InnerRange$Companion
 - <init>(I,I,B):V
 - f:getLine1():I
 - f:getLine2():I
 - f:getType():B
+bf:com.intellij.openapi.vcs.ex.Range$InnerRange$$serializer
+- kotlinx.serialization.internal.GeneratedSerializer
+- sf:INSTANCE:com.intellij.openapi.vcs.ex.Range$InnerRange$$serializer
+- f:childSerializers():kotlinx.serialization.KSerializer[]
+- f:deserialize(kotlinx.serialization.encoding.Decoder):com.intellij.openapi.vcs.ex.Range$InnerRange
+- f:getDescriptor():kotlinx.serialization.descriptors.SerialDescriptor
+- f:serialize(kotlinx.serialization.encoding.Encoder,com.intellij.openapi.vcs.ex.Range$InnerRange):V
+f:com.intellij.openapi.vcs.ex.Range$InnerRange$Companion
+- f:serializer():kotlinx.serialization.KSerializer
 a:com.intellij.openapi.vcs.ex.RangeExclusionState
+- sf:Companion:com.intellij.openapi.vcs.ex.RangeExclusionState$Companion
+- b:<init>(I,kotlinx.serialization.internal.SerializationConstructorMarker):V
 - a:getHasExcluded():Z
 - a:getHasIncluded():Z
+- bsf:write$Self(com.intellij.openapi.vcs.ex.RangeExclusionState,kotlinx.serialization.encoding.CompositeEncoder,kotlinx.serialization.descriptors.SerialDescriptor):V
+f:com.intellij.openapi.vcs.ex.RangeExclusionState$Companion
+- f:serializer():kotlinx.serialization.KSerializer
 f:com.intellij.openapi.vcs.ex.RangeExclusionState$Excluded
 - com.intellij.openapi.vcs.ex.RangeExclusionState
 - sf:INSTANCE:com.intellij.openapi.vcs.ex.RangeExclusionState$Excluded

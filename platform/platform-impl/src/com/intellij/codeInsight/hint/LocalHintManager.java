@@ -180,7 +180,9 @@ public final class LocalHintManager implements ClientHintManager {
   public boolean hasShownHintsThatWillHideByOtherHint(boolean willShowTooltip) {
     EDT.assertIsEdt();
     for (HintManagerImpl.HintInfo hintInfo : myHintsStack) {
-      if (hintInfo.hint().isVisible() && BitUtil.isSet(hintInfo.flags(), HintManager.HIDE_BY_OTHER_HINT)) return true;
+      if (hintInfo.hint().isVisible() && BitUtil.isSet(hintInfo.flags(), HintManager.HIDE_BY_OTHER_HINT)) {
+        return true;
+      }
       if (willShowTooltip && hintInfo.hint().isAwtTooltip()) {
         // only one AWT tooltip can be visible, so this hint will hide even though it's not marked with HIDE_BY_OTHER_HINT
         return true;
@@ -448,7 +450,7 @@ public final class LocalHintManager implements ClientHintManager {
   private final class MyAnActionListener implements AnActionListener {
     @Override
     public void beforeActionPerformed(@NotNull AnAction action, @NotNull AnActionEvent event) {
-      if (action instanceof HintManagerImpl.ActionToIgnore) return;
+      if (HintManagerImpl.isActionToIgnore(action)) return;
 
       AnAction escapeAction = ActionManagerEx.getInstanceEx().getAction(IdeActions.ACTION_EDITOR_ESCAPE);
       if (action == escapeAction) return;

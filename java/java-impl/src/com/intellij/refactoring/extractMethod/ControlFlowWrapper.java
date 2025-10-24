@@ -13,10 +13,12 @@ import com.intellij.psi.util.PsiUtil;
 import com.intellij.util.containers.ContainerUtil;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
 import it.unimi.dsi.fastutil.ints.IntList;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.*;
 
+@ApiStatus.Internal
 public final class ControlFlowWrapper {
   private static final Logger LOG = Logger.getInstance(ControlFlowWrapper.class);
 
@@ -71,7 +73,7 @@ public final class ControlFlowWrapper {
     }
   }
 
-  PsiStatement getFirstExitStatementCopy() {
+  public PsiStatement getFirstExitStatementCopy() {
     return myFirstExitStatementCopy;
   }
 
@@ -151,7 +153,7 @@ public final class ControlFlowWrapper {
     return myGenerateConditionalExit;
   }
 
-  Collection<PsiStatement> getExitStatements() {
+  public Collection<PsiStatement> getExitStatements() {
     return myExitStatements;
   }
 
@@ -161,13 +163,24 @@ public final class ControlFlowWrapper {
 
   public static class ExitStatementsNotSameException extends Exception {}
 
-
-  public PsiVariable @NotNull [] getOutputVariables() {
-    return getOutputVariables(myGenerateConditionalExit);
+  /**
+   * Returns output variables up to the specified limit.
+   * Because processing is stopped after the limit is reached, this method avoids work.
+   *
+   * @param limit the maximum amount of output variables needed.
+   * @return the output variables, no more than the specified limit.
+   */
+  public PsiVariable @NotNull [] getOutputVariables(int limit) {
+    return getOutputVariables(myGenerateConditionalExit, limit);
   }
 
-  PsiVariable @NotNull [] getOutputVariables(boolean collectVariablesAtExitPoints) {
-    PsiVariable[] myOutputVariables = ControlFlowUtil.getOutputVariables(myControlFlow, myFlowStart, myFlowEnd, myExitPoints.toIntArray());
+  public PsiVariable @NotNull [] getOutputVariables() {
+    return getOutputVariables(myGenerateConditionalExit, Integer.MAX_VALUE);
+  }
+
+  public PsiVariable @NotNull [] getOutputVariables(boolean collectVariablesAtExitPoints, int limit) {
+    PsiVariable[] myOutputVariables =
+      ControlFlowUtil.getOutputVariables(myControlFlow, myFlowStart, myFlowEnd, myExitPoints.toIntArray(), limit);
     if (collectVariablesAtExitPoints) {
       //variables declared in selected block used in return statements are to be considered output variables when extracting guard methods
       final Set<PsiVariable> outputVariables = ContainerUtil.newHashSet(myOutputVariables);
@@ -176,13 +189,14 @@ public final class ControlFlowWrapper {
 
           @Override
           public void visitReferenceExpression(@NotNull PsiReferenceExpression expression) {
+            if (outputVariables.size() >= limit) return;
             super.visitReferenceExpression(expression);
             if (expression.resolve() instanceof PsiVariable variable && isWrittenInside(variable)) {
               outputVariables.add(variable);
             }
           }
 
-          private boolean isWrittenInside(final PsiVariable variable) {
+          private boolean isWrittenInside(PsiVariable variable) {
             final List<Instruction> instructions = myControlFlow.getInstructions();
             for (int i = myFlowStart; i < myFlowEnd; i++) {
               Instruction instruction = instructions.get(i);
@@ -277,8 +291,7 @@ public final class ControlFlowWrapper {
     return myInputVariables;
   }
 
-  PsiStatement getExitStatementCopy(PsiElement returnStatement,
-                                    final PsiElement[] elements) {
+  public PsiStatement getExitStatementCopy(PsiElement returnStatement, PsiElement[] elements) {
     PsiStatement exitStatementCopy = null;
     // replace all exit-statements such as break's or continue's with appropriate return
     for (PsiStatement exitStatement : myExitStatements) {
@@ -336,11 +349,11 @@ public final class ControlFlowWrapper {
     return ControlFlowUtil.getInitializedTwice(myControlFlow, start, myControlFlow.getSize());
   }
 
-  List<PsiVariable> getUsedVariables() {
+  public List<PsiVariable> getUsedVariables() {
     return getUsedVariables(myFlowEnd);
   }
 
-  List<PsiVariable> getUsedVariablesInBody(PsiElement codeFragment, PsiVariable[] outputVariables) {
+  public List<PsiVariable> getUsedVariablesInBody(PsiElement codeFragment, PsiVariable[] outputVariables) {
     final List<PsiVariable> variables = getUsedVariables(myFlowStart, myFlowEnd);
     if (skipVariablesFromExitStatements(outputVariables)) {
       removeParametersUsedInExitsOnly(codeFragment, variables);

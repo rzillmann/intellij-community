@@ -37,6 +37,7 @@ public final class BaseCommandProvider implements CommandProvider {
       Map.entry(CleanCaches.PREFIX, CleanCaches::new),
       Map.entry(FindUsagesCommand.PREFIX, FindUsagesCommand::new),
       Map.entry(FindUsagesInBackgroundCommand.PREFIX, FindUsagesInBackgroundCommand::new),
+      Map.entry(FindUsagesInToolWindowCommand.PREFIX, FindUsagesInToolWindowCommand::new),
       Map.entry(IdeEditorKeyCommand.PREFIX, IdeEditorKeyCommand::new),
       Map.entry(ShowAltEnter.PREFIX, ShowAltEnter::new),
       Map.entry(SelectCommand.PREFIX, SelectCommand::new),
@@ -123,16 +124,19 @@ public final class BaseCommandProvider implements CommandProvider {
       Map.entry(ExpandProjectViewCommand.PREFIX, ExpandProjectViewCommand::new),
       Map.entry(DebugToggleBreakpointCommand.PREFIX, DebugToggleBreakpointCommand::new),
       Map.entry(MoveFilesCommand.PREFIX, MoveFilesCommand::new),
-      Map.entry(GCCommand.PREFIX, GCCommand::new),
+      Map.entry(SystemGCCommand.PREFIX, SystemGCCommand::new),
+      Map.entry(JBRFullGCCommand.PREFIX, JBRFullGCCommand::new),
       Map.entry(SetupInlineCompletionListenerCommand.PREFIX, SetupInlineCompletionListenerCommand::new),
       Map.entry(CallInlineCompletionCommand.PREFIX, CallInlineCompletionCommand::new),
       Map.entry(HandleSpanCommand.PREFIX, HandleSpanCommand::new),
       Map.entry(MeasureVfsMassUpdateCommand.PREFIX, MeasureVfsMassUpdateCommand::new),
+      Map.entry(FindInFilesCommand.PREFIX, FindInFilesCommand::new),
       Map.entry(WaitForVfsRefreshSelectedEditorCommand.PREFIX, WaitForVfsRefreshSelectedEditorCommand::new),
       Map.entry(CloseLookupCommand.PREFIX, CloseLookupCommand::new),
       Map.entry(OpenProblemViewPanelCommand.PREFIX, OpenProblemViewPanelCommand::new),
       Map.entry(AssertProblemsViewCountCommand.PREFIX, AssertProblemsViewCountCommand::new),
-      Map.entry(DetectProjectLeaksCommand.PREFIX, DetectProjectLeaksCommand::new)
+      Map.entry(DetectProjectLeaksCommand.PREFIX, DetectProjectLeaksCommand::new),
+      Map.entry(WaitForReOpenedFileCommand.PREFIX, WaitForReOpenedFileCommand::new)
     );
   }
 }

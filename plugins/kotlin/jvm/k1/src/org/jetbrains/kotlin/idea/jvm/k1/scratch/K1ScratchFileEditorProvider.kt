@@ -24,16 +24,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.jetbrains.kotlin.idea.jvm.shared.scratch.ScratchFile
 import org.jetbrains.kotlin.idea.jvm.shared.scratch.isKotlinScratch
-import org.jetbrains.kotlin.idea.jvm.shared.scratch.isKotlinWorksheet
 import org.jetbrains.kotlin.idea.jvm.shared.scratch.output.ScratchOutputHandlerAdapter
 import org.jetbrains.kotlin.idea.jvm.shared.scratch.ui.KtScratchFileEditorProvider
 
-internal  class K1ScratchFileEditorProvider() : KtScratchFileEditorProvider() {
+internal class K1ScratchFileEditorProvider : KtScratchFileEditorProvider() {
     override fun accept(project: Project, file: VirtualFile): Boolean {
         if (!file.isValid) {
             return false
         }
-        if (!file.isKotlinScratch && !file.isKotlinWorksheet) {
+        if (!file.isKotlinScratch) {
             return false
         }
         val psiFile =
@@ -44,7 +43,7 @@ internal  class K1ScratchFileEditorProvider() : KtScratchFileEditorProvider() {
     override suspend fun createFileEditor(
       project: Project, file: VirtualFile, document: Document?, editorCoroutineScope: CoroutineScope
     ): FileEditor {
-        val textEditorProvider = TextEditorProvider.Companion.getInstance()
+        val textEditorProvider = TextEditorProvider.getInstance()
         val scratchFile = readAction { createScratchFile(project, file) } ?: return textEditorProvider.createFileEditor(
             project = project,
             file = file,
@@ -53,10 +52,10 @@ internal  class K1ScratchFileEditorProvider() : KtScratchFileEditorProvider() {
         )
 
         val mainEditor = textEditorProvider.createFileEditor(
-          project = project,
-          file = scratchFile.file,
-          document = readAction { FileDocumentManager.getInstance().getDocument(scratchFile.file) },
-          editorCoroutineScope = editorCoroutineScope,
+            project = project,
+            file = scratchFile.virtualFile,
+            document = readAction { FileDocumentManager.getInstance().getDocument(scratchFile.virtualFile) },
+            editorCoroutineScope = editorCoroutineScope,
         )
         val editorFactory = serviceAsync<EditorFactory>()
         return withContext(Dispatchers.EDT) {
@@ -70,8 +69,8 @@ internal  class K1ScratchFileEditorProvider() : KtScratchFileEditorProvider() {
     override fun createEditor(project: Project, file: VirtualFile): FileEditor {
         val scratchFile = runBlockingCancellable {
           createScratchFile(project, file)
-        } ?: return TextEditorProvider.Companion.getInstance().createEditor(project, file)
-        return K1ScratchFileEditorWithPreview.Companion.create(scratchFile)
+        } ?: return TextEditorProvider.getInstance().createEditor(project, file)
+        return K1ScratchFileEditorWithPreview.create(scratchFile)
     }
 
     private fun createScratchFile(project: Project, file: VirtualFile): K1KotlinScratchFile? {
@@ -90,7 +89,7 @@ internal  class K1ScratchFileEditorProvider() : KtScratchFileEditorProvider() {
                     if (!file.project.isDisposed) {
                         val scratch = file.getPsiFile()
                         if (scratch?.isValid == true) {
-                            DaemonCodeAnalyzer.getInstance(project).restart(scratch)
+                            DaemonCodeAnalyzer.getInstance(project).restart(scratch, this)
                         }
                     }
                 }

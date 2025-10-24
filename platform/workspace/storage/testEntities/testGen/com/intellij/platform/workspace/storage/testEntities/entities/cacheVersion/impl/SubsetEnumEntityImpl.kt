@@ -1,12 +1,11 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.platform.workspace.storage.testEntities.entities.cacheVersion.impl
 
-import com.intellij.platform.workspace.storage.*
 import com.intellij.platform.workspace.storage.ConnectionId
 import com.intellij.platform.workspace.storage.EntitySource
-import com.intellij.platform.workspace.storage.EntityType
 import com.intellij.platform.workspace.storage.GeneratedCodeApiVersion
 import com.intellij.platform.workspace.storage.GeneratedCodeImplVersion
+import com.intellij.platform.workspace.storage.WorkspaceEntityBuilder
 import com.intellij.platform.workspace.storage.MutableEntityStorage
 import com.intellij.platform.workspace.storage.WorkspaceEntity
 import com.intellij.platform.workspace.storage.WorkspaceEntityInternalApi
@@ -17,10 +16,11 @@ import com.intellij.platform.workspace.storage.instrumentation.EntityStorageInst
 import com.intellij.platform.workspace.storage.instrumentation.EntityStorageInstrumentationApi
 import com.intellij.platform.workspace.storage.metadata.model.EntityMetadata
 import com.intellij.platform.workspace.storage.testEntities.entities.cacheVersion.SubsetEnumEntity
+import com.intellij.platform.workspace.storage.testEntities.entities.cacheVersion.SubsetEnumEntityBuilder
 import com.intellij.platform.workspace.storage.testEntities.entities.cacheVersion.SubsetEnumEnum
 
 @GeneratedCodeApiVersion(3)
-@GeneratedCodeImplVersion(6)
+@GeneratedCodeImplVersion(7)
 @OptIn(WorkspaceEntityInternalApi::class)
 internal class SubsetEnumEntityImpl(private val dataSource: SubsetEnumEntityData) : SubsetEnumEntity, WorkspaceEntityBase(dataSource) {
 
@@ -50,7 +50,7 @@ internal class SubsetEnumEntityImpl(private val dataSource: SubsetEnumEntityData
 
 
   internal class Builder(result: SubsetEnumEntityData?) : ModifiableWorkspaceEntityBase<SubsetEnumEntity, SubsetEnumEntityData>(
-    result), SubsetEnumEntity.Builder {
+    result), SubsetEnumEntityBuilder {
     internal constructor() : this(SubsetEnumEntityData())
 
     override fun applyToBuilder(builder: MutableEntityStorage) {
@@ -127,7 +127,7 @@ internal class SubsetEnumEntityData : WorkspaceEntityData<SubsetEnumEntity>() {
 
   internal fun isSomeEnumInitialized(): Boolean = ::someEnum.isInitialized
 
-  override fun wrapAsModifiable(diff: MutableEntityStorage): WorkspaceEntity.Builder<SubsetEnumEntity> {
+  override fun wrapAsModifiable(diff: MutableEntityStorage): WorkspaceEntityBuilder<SubsetEnumEntity> {
     val modifiable = SubsetEnumEntityImpl.Builder(null)
     modifiable.diff = diff
     modifiable.id = createEntityId()
@@ -154,7 +154,7 @@ internal class SubsetEnumEntityData : WorkspaceEntityData<SubsetEnumEntity>() {
     return SubsetEnumEntity::class.java
   }
 
-  override fun createDetachedEntity(parents: List<WorkspaceEntity.Builder<*>>): WorkspaceEntity.Builder<*> {
+  override fun createDetachedEntity(parents: List<WorkspaceEntityBuilder<*>>): WorkspaceEntityBuilder<*> {
     return SubsetEnumEntity(someEnum, entitySource) {
     }
   }

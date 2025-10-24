@@ -11,6 +11,7 @@ import com.intellij.psi.PsiReference
 import com.intellij.psi.search.searches.FunctionalExpressionSearch
 import com.intellij.psi.search.searches.MethodReferencesSearch
 import com.intellij.psi.search.searches.ReferencesSearch
+import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.psi.util.PsiUtilCore
 import com.intellij.refactoring.changeSignature.*
 import com.intellij.refactoring.rename.ResolveSnapshotProvider
@@ -242,6 +243,10 @@ class KotlinChangeSignatureUsageProcessor : ChangeSignatureUsageProcessor {
             if (usageInfo is KotlinEnumEntryWithoutSuperCallUsage) {
                 usageInfo.preprocess(kotlinChangeInfo, usageInfo.element as KtElement)
             }
+            if (usageInfo is KotlinContextParameterUsage && (changeInfo.method as? KtCallableDeclaration)?.valueParameterList?.let { PsiTreeUtil.isAncestor(it, element, true) } == true ) {
+                //wrap default parameters which would be invalidated after updatePrimaryMethod call
+                usageInfo.processUsage(kotlinChangeInfo, element as KtElement, usages)
+            }
             if (usageInfo is KotlinOverrideUsageInfo && element is KtCallableDeclaration) {
                 val baseElement = usageInfo.baseMethod
                 val mappedChangeInfo =
@@ -311,6 +316,10 @@ class KotlinChangeSignatureUsageProcessor : ChangeSignatureUsageProcessor {
 
         changeReturnTypeIfNeeded(changeInfo, element)
 
+        // when it's required to retrieve parameter name from inherited method, it's better when parameter list is not modified yet
+        val contextParams = changeInfo.newParameters.filter { it.isContextParameter }
+        val contextParametersSignature = contextParams.joinToString { it.getDeclarationSignature(element, changeInfo.method, isInherited).text }
+
         if (changeInfo.isParameterSetOrOrderChanged) {
             processParameterListWithStructuralChanges(changeInfo, element, (element as? KtCallableDeclaration)?.valueParameterList, psiFactory, changeInfo.method, isInherited, isCaller)
         }
@@ -320,7 +329,7 @@ class KotlinChangeSignatureUsageProcessor : ChangeSignatureUsageProcessor {
                 val offset = if (element.receiverTypeReference != null) 1 else 0
                 val parameterTypes = mutableMapOf<KtParameter, KtTypeReference>()
                 for ((paramIndex, parameter) in parameterList.parameters.withIndex()) {
-                    val parameterInfo = changeInfo.newParameters[paramIndex + offset]
+                    val parameterInfo = changeInfo.newParameters.filterNot { it.isContextParameter }[paramIndex + offset]
                     if (!(element.isEffectivelyActual() && changeInfo.method is KtNamedDeclaration && (changeInfo.method as KtNamedDeclaration).isExpectDeclaration())) {
                         parameter.setValOrVar(if (element.isExpectDeclaration()) KotlinValVar.None else parameterInfo.valOrVar)
                     }
@@ -342,6 +351,10 @@ class KotlinChangeSignatureUsageProcessor : ChangeSignatureUsageProcessor {
                 //update all types together not to break inference during `createType` for dependent type changes
                 parameterTypes.forEach { (param, typeRef) -> param.typeReference = typeRef }
             }
+        }
+
+        if (!isCaller && element !is KtFunctionLiteral) {
+            updateContextParametersList(contextParams, element, contextParametersSignature, psiFactory)
         }
 
         if (changeInfo.isReceiverTypeChanged()) {
@@ -418,11 +431,6 @@ class KotlinChangeSignatureUsageProcessor : ChangeSignatureUsageProcessor {
         val isLambda = element is KtFunctionLiteral
         var canReplaceEntireList = false
 
-        if (!isCaller && !isLambda) {
-            val contextParams = changeInfo.newParameters.filter { it.isContextParameter }
-            updateContextParametersList(contextParams, element, baseFunction, isInherited, psiFactory)
-        }
-
         var newParameterList: KtParameterList? = null
         if (isLambda) {
             if (parametersCount == 0) {
@@ -494,13 +502,11 @@ class KotlinChangeSignatureUsageProcessor : ChangeSignatureUsageProcessor {
     private fun updateContextParametersList(
         contextParams: List<KotlinParameterInfo>,
         element: KtDeclaration,
-        baseFunction: PsiElement,
-        isInherited: Boolean,
+        contextParametersSignature: String,
         psiFactory: KtPsiFactory
     ) {
         if (contextParams.isNotEmpty()) {
-            val list = contextParams.joinToString { it.getDeclarationSignature(element, baseFunction, isInherited).text }
-            val newModifierList = psiFactory.createFunction("context($list) fun test() {}").modifierList!!
+            val newModifierList = psiFactory.createFunction("context($contextParametersSignature) fun test() {}").modifierList!!
             val modifierList = element.modifierList
             if (modifierList != null) {
                 val contextReceiverList = modifierList.contextReceiverList

@@ -1,5 +1,4 @@
-// Copyright 2000-2022 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
-
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.kotlin.idea.refactoring
 
 import com.google.gson.JsonObject
@@ -100,10 +99,10 @@ fun runRefactoringTest(
 ) {
     val mainFilePath = config.getNullableString("mainFile") ?: config.getAsJsonArray("filesToMove").first().asString
 
-    val conflictFile = alternativeConflicts
+    val conflictFile = (alternativeConflicts
         ?.let { File(File(path).parentFile, alternativeConflicts) }?.takeIf { it.exists() }
         ?: File(File(path).parentFile, "conflicts.k2.txt").takeIf { KotlinPluginModeProvider.isK2Mode() && it.exists() }
-        ?: File(File(path).parentFile, "conflicts.txt")
+        ?: File(File(path).parentFile, "conflicts.txt")).normalize()
 
     val mainFile = rootDir.findFileByRelativePath(mainFilePath)!!
     val mainPsiFile = PsiManager.getInstance(project).findFile(mainFile)!!
@@ -122,9 +121,9 @@ fun runRefactoringTest(
     try {
         action.runRefactoring(rootDir, mainPsiFile, elementsAtCaret, config)
 
-        assert(!conflictFile.exists())
+        assert(!conflictFile.exists()) { "Conflict file $conflictFile should not exist" }
     } catch (e: BaseRefactoringProcessor.ConflictsInTestsException) {
-        KotlinTestUtils.assertEqualsToFile(conflictFile, e.messages.distinct().sorted().joinToString("\n"))
+        KotlinTestUtils.assertEqualsToFile(conflictFile, e.messages.sorted().joinToString("\n"))
 
         BaseRefactoringProcessor.ConflictsInTestsException.withIgnoredConflicts<Throwable> {
             // Run refactoring again with ConflictsInTestsException suppressed

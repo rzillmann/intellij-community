@@ -13,12 +13,17 @@ import org.jetbrains.kotlin.analysis.api.KaImplementationDetail
 import org.jetbrains.kotlin.analysis.api.KaSession
 import org.jetbrains.kotlin.analysis.api.analyze
 import org.jetbrains.kotlin.analysis.api.analyzeCopy
+import org.jetbrains.kotlin.analysis.api.components.render
+import org.jetbrains.kotlin.analysis.api.permissions.KaAllowAnalysisFromWriteAction
 import org.jetbrains.kotlin.analysis.api.permissions.KaAllowAnalysisOnEdt
+import org.jetbrains.kotlin.analysis.api.permissions.allowAnalysisFromWriteAction
 import org.jetbrains.kotlin.analysis.api.permissions.allowAnalysisOnEdt
 import org.jetbrains.kotlin.analysis.api.projectStructure.KaDanglingFileResolutionMode
 import org.jetbrains.kotlin.analysis.api.projectStructure.analysisContextModule
 import org.jetbrains.kotlin.analysis.api.symbols.KaFunctionSymbol
+import org.jetbrains.kotlin.analysis.api.symbols.contextParameters
 import org.jetbrains.kotlin.analysis.api.symbols.receiverType
+import org.jetbrains.kotlin.analysis.api.symbols.symbol
 import org.jetbrains.kotlin.analysis.api.types.KaErrorType
 import org.jetbrains.kotlin.analysis.api.types.KaType
 import org.jetbrains.kotlin.idea.base.projectStructure.getKaModule
@@ -58,33 +63,35 @@ class KotlinSuggestedRefactoringAvailability(refactoringSupport: SuggestedRefact
         }
     }
 
-    context(KaSession)
+    context(_: KaSession)
     private fun KaType.toTypeInfo(): TypeInfo = TypeInfo(fqText(), this is KaErrorType)
 
     private data class TypeInfo(val typeFQN: String, val typeError: Boolean)
     private data class SignatureTypes(val returnType: TypeInfo, val parameterTypes: List<TypeInfo>, val receiverType: TypeInfo?)
 
 
-    context(KaSession)
+    @OptIn(KaExperimentalApi::class)
+    context(_: KaSession)
     private fun signatureTypes(declaration: KtCallableDeclaration): SignatureTypes? {
+        if ((declaration as? KtParameter)?.isFunctionTypeParameter == true) return null
         val symbol = declaration.symbol as? KaFunctionSymbol
         return if (symbol == null) {
             null
         } else SignatureTypes(
             symbol.returnType.toTypeInfo(),
-            symbol.valueParameters.map { it.returnType.toTypeInfo() },
+            (symbol.contextParameters + symbol.valueParameters).map { it.returnType.toTypeInfo() },
             symbol.receiverType?.toTypeInfo()
         )
     }
 
-    @OptIn(KaAllowAnalysisOnEdt::class, KaImplementationDetail::class)
+    @OptIn(KaAllowAnalysisOnEdt::class, KaImplementationDetail::class, KaAllowAnalysisFromWriteAction::class)
     override fun refineSignaturesWithResolve(state: SuggestedRefactoringState): SuggestedRefactoringState {
         val newDeclaration = state.declaration as? KtCallableDeclaration ?: return state
         val oldDeclaration = state.restoredDeclarationCopy() as? KtCallableDeclaration ?: return state
         oldDeclaration.containingKtFile.virtualFile?.analysisContextModule = newDeclaration.getKaModule(newDeclaration.project, useSiteModule = null)
 
-        val descriptorWithOldSignature = allowAnalysisOnEdt { analyzeCopy(oldDeclaration, KaDanglingFileResolutionMode.PREFER_SELF) { signatureTypes(oldDeclaration) } } ?: return state
-        val descriptorWithNewSignature = allowAnalysisOnEdt { analyze(newDeclaration) { signatureTypes(newDeclaration) }  } ?: return state
+        val descriptorWithOldSignature = allowAnalysisFromWriteAction { allowAnalysisOnEdt { analyzeCopy(oldDeclaration, KaDanglingFileResolutionMode.PREFER_SELF) { signatureTypes(oldDeclaration) } } } ?: return state
+        val descriptorWithNewSignature = allowAnalysisFromWriteAction { allowAnalysisOnEdt { analyze(newDeclaration) { signatureTypes(newDeclaration) } } } ?: return state
 
         val oldSignature = state.oldSignature
         val newSignature = state.newSignature
@@ -162,7 +169,7 @@ class KotlinSuggestedRefactoringAvailability(refactoringSupport: SuggestedRefact
         return oldTypeInCode to newTypeInCode
     }
 
-    context(KaSession)
+    context(_: KaSession)
     @OptIn(KaExperimentalApi::class)
     private fun KaType.fqText() = render(position = Variance.INVARIANT)
 
@@ -210,7 +217,7 @@ class KotlinSuggestedRefactoringAvailability(refactoringSupport: SuggestedRefact
         }
 
         return detectAvailableRefactoring(
-            oldSignature, newSignature, updateUsagesData, updateOverridesData, declaration, declaration.valueParameters
+            oldSignature, newSignature, updateUsagesData, updateOverridesData, declaration, declaration.modifierList?.contextReceiverList?.contextParameters().orEmpty() + declaration.valueParameters
         )
     }
 

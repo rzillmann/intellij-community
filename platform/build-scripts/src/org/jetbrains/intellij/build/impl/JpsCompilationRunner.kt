@@ -1,11 +1,11 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.intellij.build.impl
 
-import com.intellij.devkit.runtimeModuleRepository.jps.build.RuntimeModuleRepositoryBuildConstants
 import io.opentelemetry.api.common.AttributeKey
 import io.opentelemetry.api.common.Attributes
 import io.opentelemetry.api.trace.Span
 import kotlinx.coroutines.Dispatchers
+import org.jetbrains.intellij.build.BuildOptions
 import org.jetbrains.intellij.build.CompilationContext
 import org.jetbrains.intellij.build.impl.logging.jps.withJpsLogging
 import org.jetbrains.intellij.build.telemetry.TraceManager
@@ -35,7 +35,11 @@ internal class JpsCompilationRunner(private val context: CompilationContext) {
   companion object {
     init {
       setSystemPropertyIfUndefined(GlobalOptions.COMPILE_PARALLEL_OPTION, "true")
-      setSystemPropertyIfUndefined(DependencyResolvingBuilder.RESOLUTION_PARALLELISM_PROPERTY, Runtime.getRuntime().availableProcessors().toString())
+      val availableProcessors = Runtime.getRuntime().availableProcessors().toString()
+      setSystemPropertyIfUndefined(DependencyResolvingBuilder.RESOLUTION_PARALLELISM_PROPERTY, availableProcessors)
+      if (!BuildOptions().isInDevelopmentMode) {
+        setSystemPropertyIfUndefined(GlobalOptions.COMPILE_PARALLEL_MAX_THREADS_OPTION, availableProcessors)
+      }
       setSystemPropertyIfUndefined(GlobalOptions.USE_DEFAULT_FILE_LOGGING_OPTION, "false")
 
       // https://youtrack.jetbrains.com/issue/IDEA-269280
@@ -84,7 +88,6 @@ internal class JpsCompilationRunner(private val context: CompilationContext) {
       allModules = false,
       artifactNames = emptyList(),
       includeTests = false,
-      generateRuntimeModuleRepository = true,
       canceledStatus = canceledStatus,
     )
   }
@@ -95,10 +98,6 @@ internal class JpsCompilationRunner(private val context: CompilationContext) {
 
   suspend fun resolveProjectDependencies() {
     runBuild(moduleSet = emptyList(), allModules = false, artifactNames = emptyList(), resolveProjectDependencies = true)
-  }
-  
-  suspend fun generateRuntimeModuleRepository() {
-    runBuild(moduleSet = emptyList(), allModules = false, artifactNames = emptyList(), generateRuntimeModuleRepository = true)
   }
 
   suspend fun buildModuleTests(module: JpsModule, canceledStatus: CanceledStatus = CanceledStatus.NULL) {
@@ -116,7 +115,6 @@ internal class JpsCompilationRunner(private val context: CompilationContext) {
              allModules = true,
              artifactNames = emptyList(),
              includeTests = true,
-             generateRuntimeModuleRepository = true,
              canceledStatus = canceledStatus)
   }
 
@@ -125,7 +123,6 @@ internal class JpsCompilationRunner(private val context: CompilationContext) {
       moduleSet = emptyList(),
       allModules = true,
       artifactNames = emptyList(),
-      generateRuntimeModuleRepository = true,
       canceledStatus = canceledStatus,
     )
   }
@@ -197,7 +194,7 @@ internal class JpsCompilationRunner(private val context: CompilationContext) {
     }
     for (artifact in artifacts) {
       if (artifact.outputFilePath?.let(Path::of)?.let(Files::exists) == false) {
-        context.messages.error("${artifact.name} is expected to be built at ${artifact.outputFilePath}")
+        context.messages.logErrorAndThrow("${artifact.name} is expected to be built at ${artifact.outputFilePath}")
       }
     }
   }
@@ -230,7 +227,6 @@ internal class JpsCompilationRunner(private val context: CompilationContext) {
     artifactNames: Collection<String>,
     includeTests: Boolean = false,
     resolveProjectDependencies: Boolean = false,
-    generateRuntimeModuleRepository: Boolean = false,
     canceledStatus: CanceledStatus = CanceledStatus.NULL,
   ) = context.withCompilationLock {
     val compilationData = context.compilationData
@@ -272,16 +268,6 @@ internal class JpsCompilationRunner(private val context: CompilationContext) {
       )
     }
 
-    if (generateRuntimeModuleRepository && !compilationData.runtimeModuleRepositoryGenerated) {
-      scopes.add(
-        TargetTypeBuildScope.newBuilder()
-          .setTypeId(RuntimeModuleRepositoryBuildConstants.TARGET_TYPE_ID)
-          .setForceBuild(false)
-          .setAllTargets(true)
-          .build()
-      )
-    }
-
     val artifactsToBuild = artifactNames - compilationData.builtArtifacts
     if (!artifactsToBuild.isEmpty()) {
       val builder = TargetTypeBuildScope.newBuilder().setTypeId(ArtifactBuildTargetType.INSTANCE.typeId).setForceBuild(forceBuild)
@@ -294,7 +280,6 @@ internal class JpsCompilationRunner(private val context: CompilationContext) {
       .setAttribute("includeTests", includeTests)
       .setAttribute("artifactsToBuild", artifactsToBuild.size.toLong())
       .setAttribute("resolveProjectDependencies", resolveProjectDependencies)
-      .setAttribute("generateRuntimeModuleRepository", generateRuntimeModuleRepository)
       .setAttribute("modules", moduleSet.joinToString(separator = ", "))
       .setAttribute("incremental", context.options.incrementalCompilation)
       .setAttribute("cacheDir", compilationData.dataStorageRoot.toString())
@@ -342,9 +327,6 @@ internal class JpsCompilationRunner(private val context: CompilationContext) {
     }
     if (resolveProjectDependencies) {
       compilationData.projectDependenciesResolved = true
-    }
-    if (generateRuntimeModuleRepository) {
-      compilationData.runtimeModuleRepositoryGenerated = true
     }
   }
 }

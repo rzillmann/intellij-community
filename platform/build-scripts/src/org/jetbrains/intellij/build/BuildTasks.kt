@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 @file:Suppress("ReplaceJavaStaticMethodWithKotlinAnalog")
 
 package org.jetbrains.intellij.build
@@ -20,7 +20,7 @@ interface BuildTasks {
    * Compiles required modules and builds zip archives of the specified plugins in [BuildContext.nonBundledPlugins]
    * directory.
    */
-  suspend fun buildNonBundledPlugins(mainPluginModules: List<String>)
+  suspend fun buildNonBundledPlugins(mainPluginModules: List<String>, dependencyModules: List<String> = emptyList())
 
   suspend fun buildUnpackedDistribution(targetDirectory: Path, includeBinAndRuntime: Boolean)
 }

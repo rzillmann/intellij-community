@@ -5,8 +5,12 @@ import com.intellij.codeInsight.hints.declarative.*
 import com.intellij.codeInsight.hints.declarative.impl.PresentationTreeBuilderImpl
 import com.intellij.psi.createSmartPointer
 import org.jetbrains.annotations.ApiStatus
+import org.jetbrains.kotlin.analysis.api.KaExperimentalApi
 import org.jetbrains.kotlin.analysis.api.KaSession
 import org.jetbrains.kotlin.analysis.api.components.DefaultTypeClassIds
+import org.jetbrains.kotlin.analysis.api.components.approximateToDenotableSupertypeOrSelf
+import org.jetbrains.kotlin.analysis.api.components.isMarkedNullable
+import org.jetbrains.kotlin.analysis.api.components.withNullability
 import org.jetbrains.kotlin.analysis.api.symbols.KaClassKind
 import org.jetbrains.kotlin.analysis.api.symbols.KaClassSymbol
 import org.jetbrains.kotlin.analysis.api.symbols.KaNamedClassSymbol
@@ -19,7 +23,8 @@ import org.jetbrains.kotlin.name.Name
 import org.jetbrains.kotlin.name.SpecialNames
 import org.jetbrains.kotlin.name.StandardClassIds
 
-context(KaSession)
+context(_: KaSession)
+@OptIn(KaExperimentalApi::class)
 @ApiStatus.Internal
 internal fun PresentationTreeBuilder.printKtType(type: KaType) {
     // See org.jetbrains.kotlin.analysis.api.renderer.types.KaTypeRenderer.renderType
@@ -45,7 +50,7 @@ internal fun PresentationTreeBuilder.printKtType(type: KaType) {
                 text("(")
                 printClassId((lower as KaClassType).classId, "Mutable")
                 text(")")
-                printKtType(upper.withNullability(KaTypeNullability.NON_NULLABLE))
+                printKtType(upper.withNullability(false))
             } else {
                 if (isNullabilityFlexibleType(lower, upper)) {
                     printKtType(lower)
@@ -54,9 +59,16 @@ internal fun PresentationTreeBuilder.printKtType(type: KaType) {
                     printNonErrorClassType(upper as KaClassType, lower as KaClassType)
                 } else {
                     // fallback case
+
+                    // to be consistent with kdoc
+                    // see org.jetbrains.kotlin.analysis.api.renderer.types.renderers.KaFlexibleTypeRenderer.AS_SHORT
+                    // KaFlexibleTypeRenderer.kt:79
+
+                    text("(")
                     printKtType(lower)
                     text("..")
                     printKtType(upper)
+                    text(")")
                 }
             }
         }
@@ -85,10 +97,13 @@ internal fun PresentationTreeBuilder.printKtType(type: KaType) {
                 printKtType(it)
                 text(".")
             }
-            val iterator = type.parameterTypes.iterator()
+            val iterator = type.parameters.iterator()
             text("(")
             while (iterator.hasNext()) {
-                printKtType(iterator.next())
+                val valueParameter = iterator.next()
+                if (valueParameter.name != null)
+                    text("${valueParameter.name}: ")
+                printKtType(valueParameter.type)
                 if (iterator.hasNext()) {
                     text(", ")
                 }
@@ -108,18 +123,26 @@ internal fun PresentationTreeBuilder.printKtType(type: KaType) {
     if (markedNullable) text("?")
 }
 
-context(KaSession)
+@OptIn(KaExperimentalApi::class)
+context(_: KaSession)
 private fun PresentationTreeBuilder.printNonErrorClassType(type: KaClassType, anotherType: KaClassType? = null) {
-    val truncatedName = truncatedName(type)
+    val classType = when (val symbol = type.symbol) {
+        is KaClassSymbol if symbol.classKind == KaClassKind.ANONYMOUS_OBJECT ->
+            type.approximateToDenotableSupertypeOrSelf(allowLocalDenotableTypes = false) as? KaClassType ?: type
+
+        else -> type
+
+    }
+    val truncatedName = truncatedName(classType)
     if (truncatedName.isNotEmpty()) {
-        if (type.classId.isLocal) {
-            printSymbolPsi(type.symbol, truncatedName)
+        if (classType.classId.isLocal) {
+            printSymbolPsi(classType.symbol, truncatedName)
         } else {
-            printClassId(type.classId, truncatedName)
+            printClassId(classType.classId, truncatedName)
         }
     }
 
-    val ownTypeArguments = type.typeArguments
+    val ownTypeArguments = classType.typeArguments
     if (ownTypeArguments.isNotEmpty()) {
         text("<")
 
@@ -140,7 +163,7 @@ private fun PresentationTreeBuilder.printNonErrorClassType(type: KaClassType, an
 }
 
 
-context(KaSession)
+context(_: KaSession)
 private fun PresentationTreeBuilder.printProjection(projection: KaTypeProjection, optionalProjection: Boolean) {
     fun String.asOptional(optional: Boolean): String =
         if (optional) "($this)" else this
@@ -232,12 +255,10 @@ private fun truncatedName(classType: KaClassType): String {
     val names = classType.qualifiers
         .mapNotNull {
             val symbol = it.symbol
-            symbol.takeUnless {
-                (it as? KaNamedClassSymbol)?.classKind == KaClassKind.COMPANION_OBJECT &&
-                        it.name == SpecialNames.DEFAULT_NAME_FOR_COMPANION_OBJECT
-            }?.name ?: symbol.takeIf { (symbol as? KaClassSymbol)?.classKind == KaClassKind.ANONYMOUS_OBJECT }?.let {
-                SpecialNames.ANONYMOUS
-            }
+            symbol.takeUnless { classifierSymbol ->
+                (classifierSymbol as? KaNamedClassSymbol)?.classKind == KaClassKind.COMPANION_OBJECT &&
+                        classifierSymbol.name == SpecialNames.DEFAULT_NAME_FOR_COMPANION_OBJECT
+            }?.name
         }
 
     names.joinToString(".", transform = Name::asString)

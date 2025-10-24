@@ -3,7 +3,8 @@ package com.intellij.platform.debugger.impl.frontend
 
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.startup.ProjectActivity
-import com.intellij.xdebugger.impl.frame.XDebugSessionProxy.Companion.useFeProxy
+import com.intellij.util.application
+import com.intellij.xdebugger.SplitDebuggerMode
 import org.jetbrains.annotations.ApiStatus
 
 @ApiStatus.Internal
@@ -12,12 +13,12 @@ private class FrontendXDebuggerInitializationProjectActivity : ProjectActivity {
     // initialize the debugger manager to start listening for backend state
     FrontendXDebuggerManager.getInstance(project)
 
-    // Subscribe to breakpoints dialog requests from backend
-    subscribeOnBreakpointsDialogRequest(project)
-
-    // initialize debugger editor lines breakpoints manager
-    if (useFeProxy()) {
-      FrontendEditorLinesBreakpointTypesManager.getInstance(project)
+    if (SplitDebuggerMode.isSplitDebugger()) {
+      // Do not trigger breakpoint variants computation in tests unrelated to debugger
+      if (!application.isUnitTestMode) {
+        // initialize debugger editor lines breakpoints manager
+        FrontendEditorLinesBreakpointsInfoManager.getInstance(project)
+      }
     }
   }
 }

@@ -301,6 +301,11 @@ public class PythonHighlightingTest extends PyTestCase {
     doTest(LanguageLevel.getLatest(), false, false);
   }
 
+  // PY-84077
+  public void testExceptClauseMissingParentheses() {
+    doTest(LanguageLevel.getLatest(), false, false);
+  }
+
   // PY-52930
   public void testContinueBreakReturnInExceptStar() {
     doTest(LanguageLevel.getLatest(), false, false);
@@ -749,7 +754,10 @@ public class PythonHighlightingTest extends PyTestCase {
     doTest(LanguageLevel.PYTHON312, true, false);
   }
 
-
+  // PY-76810
+  public void testHistoricalPositionalOnlyParameters() {
+    doTest(LanguageLevel.PYTHON312, true, false);
+  }
 
   @NotNull
   private static EditorColorsScheme createTemporaryColorScheme() {

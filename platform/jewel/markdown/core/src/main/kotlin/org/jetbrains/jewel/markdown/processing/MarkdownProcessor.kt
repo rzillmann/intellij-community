@@ -18,6 +18,7 @@ import org.commonmark.node.SourceSpan
 import org.commonmark.node.ThematicBreak
 import org.commonmark.parser.Parser
 import org.intellij.lang.annotations.Language
+import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.annotations.TestOnly
 import org.jetbrains.annotations.VisibleForTesting
 import org.jetbrains.jewel.foundation.ExperimentalJewelApi
@@ -30,7 +31,11 @@ import org.jetbrains.jewel.markdown.MarkdownBlock.ListBlock
 import org.jetbrains.jewel.markdown.MarkdownMode
 import org.jetbrains.jewel.markdown.extensions.MarkdownBlockProcessorExtension
 import org.jetbrains.jewel.markdown.extensions.MarkdownDelimitedInlineProcessorExtension
+import org.jetbrains.jewel.markdown.extensions.MarkdownHtmlConverterExtension
 import org.jetbrains.jewel.markdown.extensions.MarkdownProcessorExtension
+import org.jetbrains.jewel.markdown.processing.html.HtmlElementConverter
+import org.jetbrains.jewel.markdown.processing.html.MarkdownHtmlConverter
+import org.jetbrains.jewel.markdown.processing.html.MarkdownHtmlNode
 import org.jetbrains.jewel.markdown.rendering.DefaultInlineMarkdownRenderer
 import org.jetbrains.jewel.markdown.scrolling.ScrollingSynchronizer
 
@@ -55,14 +60,52 @@ import org.jetbrains.jewel.markdown.scrolling.ScrollingSynchronizer
  *   provided by the [MarkdownParserFactory], but you can provide your own if you need to customize the parser — e.g.,
  *   to ignore certain tags. If [markdownMode] is `MarkdownMode.WithEditor`, make sure you set
  *   `includeSourceSpans(IncludeSourceSpans.BLOCKS)` on the parser.
+ * @param languageRecognizer A lambda that can recognize code language names (e.g., when used for fenced code blocks)
+ *   and convert them into a [MimeType]. By default, this uses [MimeType.Known.fromMarkdownLanguageName], but you can
+ *   provide your own implementation to, for example, support languages that Jewel doesn't recognize yet.
+ * @param parseEmbeddedHtml If `true`, a subset of native HTML elements will be parsed as Markdown blocks.
  */
+@ApiStatus.Experimental
 @ExperimentalJewelApi
 public class MarkdownProcessor(
     public val extensions: List<MarkdownProcessorExtension> = emptyList(),
     private val markdownMode: MarkdownMode = MarkdownMode.Standalone,
     private val commonMarkParser: Parser =
         MarkdownParserFactory.create(optimizeEdits = markdownMode is MarkdownMode.EditorPreview, extensions),
+    private val languageRecognizer: (String) -> MimeType? = { MimeType.Known.fromMarkdownLanguageName(it) },
+    private val parseEmbeddedHtml: Boolean = false,
 ) {
+    public constructor(
+        extensions: List<MarkdownProcessorExtension> = emptyList(),
+        markdownMode: MarkdownMode = MarkdownMode.Standalone,
+        commonMarkParser: Parser =
+            MarkdownParserFactory.create(optimizeEdits = markdownMode is MarkdownMode.EditorPreview, extensions),
+        parseEmbeddedHtml: Boolean = false,
+    ) : this(
+        extensions,
+        markdownMode,
+        commonMarkParser,
+        { MimeType.Known.fromMarkdownLanguageName(it) },
+        parseEmbeddedHtml,
+    )
+
+    @Deprecated("Use a version with a `parseEmbeddedHtml` parameter", level = DeprecationLevel.HIDDEN)
+    public constructor(
+        extensions: List<MarkdownProcessorExtension> = emptyList(),
+        markdownMode: MarkdownMode = MarkdownMode.Standalone,
+        commonMarkParser: Parser =
+            MarkdownParserFactory.create(optimizeEdits = markdownMode is MarkdownMode.EditorPreview, extensions),
+        languageRecognizer: (String) -> MimeType? = { MimeType.Known.fromMarkdownLanguageName(it) },
+    ) : this(extensions, markdownMode, commonMarkParser, languageRecognizer, false)
+
+    @Deprecated("Use a version with a `parseEmbeddedHtml` parameter", level = DeprecationLevel.HIDDEN)
+    public constructor(
+        extensions: List<MarkdownProcessorExtension> = emptyList(),
+        markdownMode: MarkdownMode = MarkdownMode.Standalone,
+        commonMarkParser: Parser =
+            MarkdownParserFactory.create(optimizeEdits = markdownMode is MarkdownMode.EditorPreview, extensions),
+    ) : this(extensions, markdownMode, commonMarkParser, { MimeType.Known.fromMarkdownLanguageName(it) })
+
     /** The [block-level processor extensions][MarkdownBlockProcessorExtension]s used by this processor. */
     public val blockExtensions: List<MarkdownBlockProcessorExtension> =
         extensions.mapNotNull { it.blockProcessorExtension }
@@ -76,15 +119,20 @@ public class MarkdownProcessor(
 
     private var currentState = State("", emptyList())
 
-    @TestOnly
-    internal fun getCurrentIndexesInTest() = buildList {
-        for (block in currentState.blocks) {
-            block.traverseAll { node -> add(node.sourceSpans) }
+    private val htmlConverter = if (parseEmbeddedHtml) MarkdownHtmlConverter() else null
+
+    internal val htmlConverterExtensions: List<MarkdownHtmlConverterExtension> =
+        if (parseEmbeddedHtml) {
+            extensions.mapNotNull { it.htmlConverterExtension }
+        } else {
+            emptyList()
         }
-    }
 
     private val scrollingSynchronizer: ScrollingSynchronizer? =
         (markdownMode as? MarkdownMode.EditorPreview)?.scrollingSynchronizer
+
+    internal val isScrollSyncEnabled: Boolean
+        get() = scrollingSynchronizer != null
 
     /**
      * Parses a Markdown document, translating from CommonMark 0.31.2 to a list of [MarkdownBlock]. Inline Markdown in
@@ -96,12 +144,12 @@ public class MarkdownProcessor(
      */
     public fun processMarkdownDocument(@Language("Markdown") rawMarkdown: String): List<MarkdownBlock> {
         if (scrollingSynchronizer == null) {
-            return doProcess(rawMarkdown)
+            return processRawMarkdown(rawMarkdown)
         }
-        return scrollingSynchronizer.process { doProcess(rawMarkdown) }
+        return scrollingSynchronizer.process { processRawMarkdown(rawMarkdown) }
     }
 
-    private fun doProcess(rawMarkdown: String): List<MarkdownBlock> {
+    internal fun processRawMarkdown(rawMarkdown: String): List<MarkdownBlock> {
         val blocks =
             if (markdownMode is MarkdownMode.EditorPreview) {
                 processWithQuickEdits(rawMarkdown)
@@ -109,7 +157,7 @@ public class MarkdownProcessor(
                 parseRawMarkdown(rawMarkdown)
             }
 
-        return blocks.mapNotNull { child -> child.tryProcessMarkdownBlock() }
+        return blocks.flatMap { child -> child.tryProcessMarkdownBlock() }
     }
 
     @VisibleForTesting
@@ -126,7 +174,8 @@ public class MarkdownProcessor(
         val firstBlock = blocksInfo.firstBlock
         val blockAfterLast = blocksInfo.blockAfterLast
         val updatedBlocks = parseRawMarkdown(blocksInfo.updatedText)
-        val firstBlockOffset = previousBlocks[firstBlock].sourceSpans.first()
+        val firstBlockOffset =
+            if (firstBlock == -1) SourceSpan.of(0, 0, 0, 0) else previousBlocks[firstBlock].sourceSpans.first()
         // sourceSpans in updatedBlocks start from line index 0, not from the actual line
         //      the update part starts in the document;
         for (block in updatedBlocks) {
@@ -143,8 +192,7 @@ public class MarkdownProcessor(
             }
         }
         val nCharsDelta = rawMarkdown.length - previousText.length
-        val suffixBlocks =
-            if (blockAfterLast == -1) emptyList() else previousBlocks.subList(blockAfterLast, previousBlocks.size)
+        val suffixBlocks = previousBlocks.subList(blockAfterLast, previousBlocks.size)
         // Addressing the remaining blocks which shift by lines delta between new and old text.
         for (block in suffixBlocks) {
             block.traverseAll { node ->
@@ -160,38 +208,55 @@ public class MarkdownProcessor(
             }
         }
 
-        val newBlocks = previousBlocks.subList(0, firstBlock) + updatedBlocks + suffixBlocks
+        val prefixBlocks = if (firstBlock == -1) emptyList() else previousBlocks.subList(0, firstBlock.coerceAtLeast(0))
+        val newBlocks = prefixBlocks + updatedBlocks + suffixBlocks
         currentState = State(rawMarkdown, newBlocks)
 
         return newBlocks
     }
 
+    /**
+     * Identifies the range of `Block` objects in `previousBlocks` affected by changes between `previousText` and
+     * `updatedText`.
+     *
+     * This function is designed to intelligently handle changes occurring near block boundaries. It includes a block
+     * *before* the actual textual change to accommodate potential block merging.
+     */
     @VisibleForTesting
     internal fun findChangedBlocks(
         previousText: String,
-        updatedText: String,
+        fullUpdatedText: String,
         previousBlocks: List<Block>,
     ): FindChangedBlocksResult {
-        val nCharsDelta = updatedText.length - previousText.length
-        val commonPrefix = previousText.commonPrefixWith(updatedText)
+        val previousStartIndexes = previousBlocks.map { block -> block.sourceSpans.first().inputIndex }
+        val previousEndIndexes =
+            previousBlocks.map { block -> block.sourceSpans.last().let { it.inputIndex + it.length } }
+        val nCharsDelta = fullUpdatedText.length - previousText.length
+        val commonPrefix = previousText.commonPrefixWith(fullUpdatedText)
         val prefixPos = commonPrefix.length
         // remove prefixes to avoid overlap
         val commonSuffix =
-            previousText.removePrefix(commonPrefix).commonSuffixWith(updatedText.removePrefix(commonPrefix))
+            previousText.removePrefix(commonPrefix).commonSuffixWith(fullUpdatedText.removePrefix(commonPrefix))
         val suffixPos = previousText.length - commonSuffix.length
         val nLinesDelta =
-            updatedText.subSequence(prefixPos, updatedText.length - commonSuffix.length).lineSequence().count() -
-                previousText.subSequence(prefixPos, suffixPos).lineSequence().count()
-        val previousIndexes = previousBlocks.map { block -> block.sourceSpans.first().inputIndex }
-        // if modification starts at the edge, include previous by using less instead of less equal
-        val firstBlock = previousIndexes.indexOfLast { it < prefixPos }.takeIf { it != -1 } ?: 0
-        val blockAfterLast = previousIndexes.indexOfFirst { it > suffixPos }
-        val updatedText =
-            updatedText.substring(
-                previousIndexes[firstBlock],
-                if (blockAfterLast == -1) updatedText.length else previousIndexes[blockAfterLast] - 1 + nCharsDelta,
+            fullUpdatedText
+                .subSequence(prefixPos, fullUpdatedText.length - commonSuffix.length)
+                .lineSequence()
+                .count() - previousText.subSequence(prefixPos, suffixPos).lineSequence().count()
+        // if modification starts at the edge, include the previous block by using less instead of less equal
+        val firstBlock = previousStartIndexes.indexOfLast { it < prefixPos }
+        val blockAfterLast =
+            previousEndIndexes.indexOfFirst { suffixPos <= it }.let { if (it == -1) previousBlocks.size else it + 1 }
+        val changedText =
+            fullUpdatedText.substring(
+                if (firstBlock == -1) 0 else previousStartIndexes[firstBlock],
+                if (blockAfterLast == previousBlocks.size) {
+                    fullUpdatedText.length
+                } else {
+                    previousStartIndexes[blockAfterLast] - 1 + nCharsDelta
+                },
             )
-        return FindChangedBlocksResult(firstBlock, blockAfterLast, updatedText, nLinesDelta)
+        return FindChangedBlocksResult(firstBlock, blockAfterLast, changedText, nLinesDelta)
     }
 
     internal data class FindChangedBlocksResult(
@@ -208,7 +273,14 @@ public class MarkdownProcessor(
         return buildList { document.forEachChild { child -> if (child is Block) add(child) } }
     }
 
-    private fun Node.tryProcessMarkdownBlock(): MarkdownBlock? =
+    @TestOnly
+    internal fun getCurrentIndexesInTest() = buildList {
+        for (block in currentState.blocks) {
+            block.traverseAll { node -> add(node.sourceSpans) }
+        }
+    }
+
+    private fun Node.tryProcessMarkdownBlock(): List<MarkdownBlock> =
         // Non-Block children are ignored
         when (this) {
             is Paragraph -> toMarkdownParagraph()
@@ -225,15 +297,46 @@ public class MarkdownProcessor(
             }
 
             else -> null
-        }.also { block ->
-            if (scrollingSynchronizer != null && this is Block && block != null) {
-                postProcess(scrollingSynchronizer, this, block)
+        }.let { block ->
+            if (this is Block && block != null) {
+                postProcess(this, block)
+            } else {
+                emptyList()
             }
         }
 
-    private fun postProcess(scrollingSynchronizer: ScrollingSynchronizer, block: Block, mdBlock: MarkdownBlock) {
-        val spans = block.sourceSpans.takeIf { it.isNotEmpty() } ?: return
-        scrollingSynchronizer.acceptBlockSpans(mdBlock, spans.first().lineIndex..spans.last().lineIndex)
+    internal fun convertHtmlInlines(inlines: List<InlineMarkdown>): List<InlineMarkdown> =
+        htmlConverter?.convert(this, inlines) ?: inlines
+
+    internal fun provideExtensionHtmlElementConverterFor(tagName: String): HtmlElementConverter? =
+        htmlConverterExtensions.firstOrNull { tagName in it.supportedTags }?.provideConverter(tagName)
+
+    private fun postProcess(block: Block, mdBlock: MarkdownBlock): List<MarkdownBlock> {
+        if (block is HtmlBlock && htmlConverter != null) {
+            return convertHtmlBlock(block, htmlConverter)
+        }
+        val spans = block.sourceSpans.takeIf { it.isNotEmpty() } ?: return listOf(mdBlock)
+        val newMdBlock =
+            scrollingSynchronizer?.acceptBlockSpans(mdBlock, spans.first().lineIndex..spans.last().lineIndex) ?: mdBlock
+        return listOf(newMdBlock)
+    }
+
+    private fun convertHtmlBlock(block: HtmlBlock, htmlConverter: MarkdownHtmlConverter): List<MarkdownBlock> {
+        val intermediateHtmlBlocks = MarkdownHtmlNode.convertHtmlBlock(this@MarkdownProcessor, block)
+        val convertedBlocks =
+            intermediateHtmlBlocks.mapNotNull { htmlElement ->
+                htmlConverter.convert(this@MarkdownProcessor, htmlElement) { newMdBlock, lines ->
+                    when (newMdBlock) {
+                        is MarkdownBlock.HtmlBlock -> return@convert newMdBlock
+                        is MarkdownBlock.ListItem ->
+                            return@convert newMdBlock // we convert the list item's inner block instead
+                        else -> {
+                            scrollingSynchronizer?.acceptBlockSpans(newMdBlock, lines) ?: newMdBlock
+                        }
+                    }
+                }
+            }
+        return convertedBlocks
     }
 
     private fun Paragraph.toMarkdownParagraph(): MarkdownBlock.Paragraph =
@@ -248,10 +351,7 @@ public class MarkdownProcessor(
     }
 
     private fun FencedCodeBlock.toMarkdownCodeBlockOrNull(): CodeBlock.FencedCodeBlock =
-        CodeBlock.FencedCodeBlock(
-            content = literal.removeSuffix("\n"),
-            mimeType = MimeType.Known.fromMarkdownLanguageName(info),
-        )
+        CodeBlock.FencedCodeBlock(content = literal.removeSuffix("\n"), mimeType = languageRecognizer(info))
 
     private fun IndentedCodeBlock.toMarkdownCodeBlockOrNull(): CodeBlock.IndentedCodeBlock =
         CodeBlock.IndentedCodeBlock(literal.trimEnd('\n'))
@@ -278,22 +378,31 @@ public class MarkdownProcessor(
     private fun CMListBlock.processListItems() = buildList {
         forEachChild { child ->
             if (child !is ListItem) return@forEachChild
-            add(MarkdownBlock.ListItem(processChildren(child)))
+            val listItem = MarkdownBlock.ListItem(children = processChildren(child), level = calculateLevel(child))
+            add(listItem)
         }
+    }
+
+    private fun calculateLevel(startNode: Node): Int {
+        var currentNode: Node? = startNode
+        var level = 0
+        while (currentNode != null && currentNode !is Document) {
+            if (currentNode is ListItem) {
+                level++
+            }
+            currentNode = currentNode.parent
+        }
+        return level - 1
     }
 
     /**
      * Processes the children of a CommonMark [Node]. This function is public so that it can be accessed from
      * [MarkdownProcessorExtension]s, but should not be used in other scenarios.
      */
+    @ApiStatus.Internal
     @InternalJewelApi
     public fun processChildren(node: Node): List<MarkdownBlock> = buildList {
-        node.forEachChild { child ->
-            val parsedBlock = child.tryProcessMarkdownBlock()
-            if (parsedBlock != null) {
-                add(parsedBlock)
-            }
-        }
+        node.forEachChild { child -> addAll(child.tryProcessMarkdownBlock()) }
     }
 
     private fun Node.forEachChild(action: (Node) -> Unit) {
@@ -316,6 +425,7 @@ public class MarkdownProcessor(
     }
 
     /** Creates a copy of this [MarkdownProcessor] with the same properties, plus the provided [extension]. */
+    @ApiStatus.Experimental
     @ExperimentalJewelApi
     public operator fun plus(extension: MarkdownProcessorExtension): MarkdownProcessor = withExtension(extension)
 

@@ -13,8 +13,15 @@ import com.intellij.psi.PsiModifier
 import com.intellij.psi.util.CachedValuesManager
 import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.psi.util.parentOfType
+import org.jetbrains.kotlin.analysis.api.KaExperimentalApi
 import org.jetbrains.kotlin.analysis.api.KaSession
 import org.jetbrains.kotlin.analysis.api.analyze
+import org.jetbrains.kotlin.analysis.api.components.containingDeclaration
+import org.jetbrains.kotlin.analysis.api.components.expandedSymbol
+import org.jetbrains.kotlin.analysis.api.components.functionType
+import org.jetbrains.kotlin.analysis.api.components.resolveToCall
+import org.jetbrains.kotlin.analysis.api.components.resolveToSymbol
+import org.jetbrains.kotlin.analysis.api.components.type
 import org.jetbrains.kotlin.analysis.api.projectStructure.KaModule
 import org.jetbrains.kotlin.analysis.api.resolution.KaImplicitReceiverValue
 import org.jetbrains.kotlin.analysis.api.resolution.KaSmartCastedReceiverValue
@@ -23,6 +30,7 @@ import org.jetbrains.kotlin.analysis.api.symbols.*
 import org.jetbrains.kotlin.analysis.api.symbols.pointers.KaSymbolPointer
 import org.jetbrains.kotlin.analysis.api.types.KaClassType
 import org.jetbrains.kotlin.analysis.api.types.KaFunctionType
+import org.jetbrains.kotlin.analysis.api.useSiteModule
 import org.jetbrains.kotlin.idea.k2.codeinsight.inspections.dfa.KtClassDef.Companion.classDef
 import org.jetbrains.kotlin.idea.references.mainReference
 import org.jetbrains.kotlin.idea.references.readWriteAccess
@@ -42,14 +50,19 @@ class KtVariableDescriptor(
      */
     private val sourceAnchorPsi: PsiElement?,
 ) : JvmVariableDescriptor(), KtBaseDescriptor {
+    @OptIn(KaExperimentalApi::class)
     val stable: Boolean by lazy {
         when (val result = analyze(module) {
             when (val symbol = pointer.restoreSymbol()) {
-                is KaValueParameterSymbol, is KaEnumEntrySymbol -> return@analyze true
+                is KaValueParameterSymbol, is KaContextParameterSymbol, is KaEnumEntrySymbol -> return@analyze true
                 is KaPropertySymbol, is KaJavaFieldSymbol -> return@analyze symbol.isVal
                 is KaLocalVariableSymbol -> {
                     if (symbol.isVal) return@analyze true
-                    val psiElement = symbol.psi?.parent as? KtElement
+                    val psiElement = when (val declaration = symbol.psi) {
+                        is KtProperty -> declaration.parent
+                        is KtDestructuringDeclarationEntry -> (declaration.parent as? KtDestructuringDeclaration)?.parent
+                        else -> null
+                    } as? KtElement
                     if (psiElement == null) return@analyze true
                     return@analyze psiElement
                 }
@@ -103,21 +116,21 @@ class KtVariableDescriptor(
     }
 
     companion object {
-        context(KaSession)
+        context(_: KaSession)
         fun getSingleLambdaParameter(factory: DfaValueFactory, lambda: KtLambdaExpression): DfaVariableValue? {
             val parameterSymbol = lambda.functionLiteral.symbol.valueParameters.singleOrNull() ?: return null
             if ((parameterSymbol.psi as? KtParameter)?.destructuringDeclaration != null) return null
             return factory.varFactory.createVariableValue(parameterSymbol.variableDescriptor())
         }
 
-        context(KaSession)
+        context(_: KaSession)
         fun getLambdaReceiver(factory: DfaValueFactory, lambda: KtLambdaExpression): DfaVariableValue? {
             val receiverType = (lambda.functionLiteral.functionType as? KaFunctionType)?.receiverType ?: return null
             val descriptor = KtLambdaThisVariableDescriptor(lambda.functionLiteral, receiverType.toDfType())
             return factory.varFactory.createVariableValue(descriptor)
         }
 
-        context(KaSession)
+        context(_: KaSession)
         fun createFromQualified(factory: DfaValueFactory, expr: KtExpression?): DfaVariableValue? {
             var selector = expr
             while (selector is KtQualifiedExpression) {
@@ -126,7 +139,7 @@ class KtVariableDescriptor(
             return createFromSimpleName(factory, selector)
         }
 
-        context(KaSession)
+        context(_: KaSession)
         internal fun KaVariableSymbol.variableDescriptor(): KtVariableDescriptor {
             val type = this.returnType
             return KtVariableDescriptor(
@@ -146,7 +159,7 @@ class KtVariableDescriptor(
                     PsiTreeUtil.processElements(scope) { e ->
                         if (e !is KtSimpleNameExpression || !e.readWriteAccess(false).isWrite) return@processElements true
                         val target = e.mainReference.resolve()
-                        if (target !is KtProperty || !target.isLocal ||
+                        if (!(target is KtProperty && target.isLocal || target is KtDestructuringDeclarationEntry) ||
                             !PsiTreeUtil.isAncestor(scope, target, true)
                         ) return@processElements true
                         var parentScope: KtFunction?
@@ -162,7 +175,7 @@ class KtVariableDescriptor(
                             break
                         }
                         if (parentScope != null && PsiTreeUtil.isAncestor(scope, parentScope, true)) {
-                            result.add(target.symbol.variableDescriptor())
+                            result.add((target.symbol as KaVariableSymbol).variableDescriptor())
                         }
                         return@processElements true
                     }
@@ -170,7 +183,8 @@ class KtVariableDescriptor(
                 return@getProjectPsiDependentCache result
             }
 
-        context(KaSession)
+        @OptIn(KaExperimentalApi::class)
+        context(_: KaSession)
         fun createFromSimpleName(factory: DfaValueFactory, expr: KtExpression?): DfaVariableValue? {
             val varFactory = factory.varFactory
             if (expr is KtThisExpression) {
@@ -178,7 +192,7 @@ class KtVariableDescriptor(
             }
             if (expr !is KtSimpleNameExpression) return null
             val symbol: KaVariableSymbol = expr.mainReference.resolveToSymbol() as? KaVariableSymbol ?: return null
-            if (symbol is KaValueParameterSymbol || symbol is KaLocalVariableSymbol) {
+            if (symbol is KaValueParameterSymbol || symbol is KaLocalVariableSymbol || symbol is KaContextParameterSymbol) {
                 return varFactory.createVariableValue(symbol.variableDescriptor())
             }
             val qualifier = findQualifier(factory, expr, symbol)
@@ -205,7 +219,7 @@ class KtVariableDescriptor(
             return null
         }
 
-        context(KaSession)
+        context(_: KaSession)
         private fun findQualifier(factory: DfaValueFactory, expr: KtSimpleNameExpression, symbol: KaVariableSymbol): DfaVariableValue? {
             val parent = expr.parent
             val varFactory = factory.varFactory

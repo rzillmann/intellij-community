@@ -1,4 +1,4 @@
-// Copyright 2000-2022 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.internal.statistic.eventLog.events
 
 import com.intellij.internal.statistic.beans.MetricEvent
@@ -6,19 +6,52 @@ import com.intellij.internal.statistic.eventLog.EventLogGroup
 import com.intellij.internal.statistic.eventLog.FeatureUsageData
 import com.intellij.internal.statistic.eventLog.StatisticsEventLogProviderUtil
 import com.intellij.internal.statistic.eventLog.StatisticsEventLogger
+import com.intellij.internal.statistic.eventLog.events.scheme.RegisteredLogDescriptionsProcessor
 import com.intellij.openapi.project.Project
-import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.annotations.NonNls
 import java.util.function.Consumer
-import kotlin.collections.plus
-import kotlin.collections.toList
 
-abstract class BaseEventId(val eventId: String, val recorder: String, val description: String?) {
-  @ApiStatus.ScheduledForRemoval
-  @Deprecated("Recorder ID should be explicitly provided", replaceWith = ReplaceWith("BaseEventId(eventId, recorder)"))
-  constructor(eventId: String) : this(eventId, "FUS", null)
+/**
+ * Represents a base class for defining event IDs that are part of logging or analytics systems.
+ *
+ * @constructor Initializes the BaseEventId instance with the provided group ID, event ID, recorder, and optional description.
+ * Throws an [IllegalArgumentException] if the provided description is an empty string.
+ *
+ * @param groupId The ID of the event group to which this event belongs.
+ * @param eventId The unique identifier for the event.
+ * @param recorder The identifier for the recorder used to log the event.
+ * @param description The unique identifier for the event.
+ * The description is not an empty string.
+ * The description is not null for new events.
+ * The description is registered at event initialization using the [RegisteredLogDescriptionsProcessor].
+ * There is no description in the memory if [RegisteredLogDescriptionsProcessor.isRegistered] is false.
+ * [RegisteredLogDescriptionsProcessor.isRegistered] is true just for [com.intellij.internal.statistic.eventLog.events.scheme.EventsSchemeBuilderAppStarter] and tests
+ */
+abstract class BaseEventId(groupId: String, val eventId: String, val recorder: String, description: String?) {
+  init {
+    if (description != null && description.isEmpty()) {
+      throw IllegalArgumentException("Recorder $recorder, event ID $eventId: the event description can't be empty string.")
+    }
+    RegisteredLogDescriptionsProcessor.registerEventDescription(groupId, eventId, description)
+  }
 
-  internal fun getLogger(): StatisticsEventLogger = StatisticsEventLogProviderUtil.getEventLogProvider(recorder).logger
+  internal fun processLoggers(log: (StatisticsEventLogger) -> Unit) {
+    val errors = mutableListOf<Throwable>()
+    for (p in StatisticsEventLogProviderUtil.getEventLogProvidersExt(recorder)) {
+      try {
+        log(p.logger)
+      }
+      catch (e: Throwable) {
+        errors.add(e)
+      }
+    }
+    if (errors.size == 1) throw errors.first()
+    else if (errors.isNotEmpty()) {
+      val throwable = Throwable("Multiple errors occurred:")
+      errors.forEach(throwable::addSuppressed)
+      throw throwable
+    }
+  }
 
   abstract fun getFields(): List<EventField<*>>
 
@@ -38,22 +71,22 @@ class EventId(
   private val group: EventLogGroup,
   @NonNls @EventIdName eventId: String,
   @NonNls description: String?
-) : BaseEventId(eventId, group.recorder, description) {
+) : BaseEventId(group.id, eventId, group.recorder, description) {
 
   fun log() {
     if (group.groupData.isEmpty()) {
-      getLogger().logAsync(group, eventId, false)
+      processLoggers { it.logAsync(group, eventId, false) }
     } else {
       val data = FeatureUsageData(group.recorder)
       group.extendFeatureUsageData(data)
-      getLogger().logAsync(group, eventId, data.build(), false)
+      processLoggers { it.logAsync(group, eventId, data.build(), false) }
     }
   }
 
   fun log(project: Project?) {
     val data = FeatureUsageData(group.recorder)
     group.extendFeatureUsageData(data)
-    getLogger().logAsync(group, eventId, FeatureUsageData(group.recorder).addProject(project).build(), false)
+    processLoggers { it.logAsync(group, eventId, FeatureUsageData(group.recorder).addProject(project).build(), false) }
   }
 
   fun metric(): MetricEvent {
@@ -78,14 +111,14 @@ class EventId1<in T>(
   @NonNls @EventIdName eventId: String,
   @NonNls description: String?,
   private val field1: EventField<T>,
-) : BaseEventId(eventId, group.recorder, description) {
+) : BaseEventId(group.id, eventId, group.recorder, description) {
 
   fun log(value1: T) {
-    getLogger().logAsync(group, eventId, buildUsageData(value1).build(), false)
+    processLoggers { it.logAsync(group, eventId, buildUsageData(value1).build(), false) }
   }
 
   fun log(project: Project?, value1: T) {
-    getLogger().logAsync(group, eventId, buildUsageData(value1).addProject(project).build(), false)
+    processLoggers { it.logAsync(group, eventId, buildUsageData(value1).addProject(project).build(), false) }
   }
 
   fun metric(value1: T): MetricEvent {
@@ -112,14 +145,14 @@ class EventId2<in T1, in T2>(
   @NonNls description: String?,
   private val field1: EventField<T1>,
   private val field2: EventField<T2>,
-) : BaseEventId(eventId, group.recorder, description) {
+) : BaseEventId(group.id, eventId, group.recorder, description) {
 
   fun log(value1: T1, value2: T2) {
-    getLogger().logAsync(group, eventId, buildUsageData(value1, value2).build(), false)
+    processLoggers { it.logAsync(group, eventId, buildUsageData(value1, value2).build(), false) }
   }
 
   fun log(project: Project?, value1: T1, value2: T2) {
-    getLogger().logAsync(group, eventId, buildUsageData(value1, value2).addProject(project).build(), false)
+    processLoggers { it.logAsync(group, eventId, buildUsageData(value1, value2).addProject(project).build(), false) }
   }
 
   fun metric(value1: T1, value2: T2): MetricEvent {
@@ -148,14 +181,14 @@ class EventId3<in T1, in T2, in T3>(
   private val field1: EventField<T1>,
   private val field2: EventField<T2>,
   private val field3: EventField<T3>,
-) : BaseEventId(eventId, group.recorder, description) {
+) : BaseEventId(group.id, eventId, group.recorder, description) {
 
   fun log(value1: T1, value2: T2, value3: T3) {
-    getLogger().logAsync(group, eventId, buildUsageData(value1, value2, value3).build(), false)
+    processLoggers { it.logAsync(group, eventId, buildUsageData(value1, value2, value3).build(), false) }
   }
 
   fun log(project: Project?, value1: T1, value2: T2, value3: T3) {
-    getLogger().logAsync(group, eventId, buildUsageData(value1, value2, value3).addProject(project).build(), false)
+    processLoggers { it.logAsync(group, eventId, buildUsageData(value1, value2, value3).addProject(project).build(), false) }
   }
 
   fun metric(value1: T1, value2: T2, value3: T3): MetricEvent {
@@ -191,7 +224,7 @@ class VarargEventId internal constructor(
   @NonNls @EventIdName eventId: String,
   @NonNls description: String?,
   vararg fields: EventField<*>,
-) : BaseEventId(eventId, group.recorder, description) {
+) : BaseEventId(group.id, eventId, group.recorder, description) {
 
   private val fields = fields.toMutableList()
 
@@ -200,7 +233,7 @@ class VarargEventId internal constructor(
   }
 
   fun log(pairs: List<EventPair<*>>) {
-    getLogger().logAsync(group, eventId, buildUsageData(pairs).build(), false)
+    processLoggers { it.logAsync(group, eventId, buildUsageData(pairs).build(), false) }
   }
 
   fun log(project: Project?, vararg pairs: EventPair<*>) {
@@ -208,7 +241,7 @@ class VarargEventId internal constructor(
   }
 
   fun log(project: Project?, pairs: List<EventPair<*>>) {
-    getLogger().logAsync(group, eventId, buildUsageData(pairs).addProject(project).build(), false)
+    processLoggers { it.logAsync(group, eventId, buildUsageData(pairs).addProject(project).build(), false) }
   }
 
   /**
@@ -219,20 +252,22 @@ class VarargEventId internal constructor(
   }
 
   fun log(project: Project?, dataBuilder: EventDataCollector.() -> Unit) {
-    getLogger().logAsync(group, eventId, {
-      val list = EventDataCollector()
-      list.dataBuilder()
-      if (!list.skipped) {
-        buildUsageData(list).addProject(project).build()
-      }
-      else {
-        null
-      }
-    }, false)
+    processLoggers {
+      it.logAsync(group, eventId, {
+        val list = EventDataCollector()
+        list.dataBuilder()
+        if (!list.skipped) {
+          buildUsageData(list).addProject(project).build()
+        }
+        else {
+          null
+        }
+      }, false)
+    }
   }
 
   fun logState(project: Project?, pairs: List<EventPair<*>>) {
-    getLogger().logAsync(group, eventId, buildUsageData(pairs).addProject(project).build(), true)
+    processLoggers { it.logAsync(group, eventId, buildUsageData(pairs).addProject(project).build(), true) }
   }
 
   fun metric(vararg pairs: EventPair<*>): MetricEvent {

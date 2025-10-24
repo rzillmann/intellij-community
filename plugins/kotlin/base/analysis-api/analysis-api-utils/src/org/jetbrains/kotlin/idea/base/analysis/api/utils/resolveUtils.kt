@@ -7,6 +7,19 @@ import org.jetbrains.kotlin.analysis.api.annotations.KaAnnotationValue
 import org.jetbrains.kotlin.analysis.api.base.KaConstantValue
 import org.jetbrains.kotlin.analysis.api.components.KaSubtypingErrorTypePolicy
 import org.jetbrains.kotlin.analysis.api.components.KaUseSiteVisibilityChecker
+import org.jetbrains.kotlin.analysis.api.components.buildClassType
+import org.jetbrains.kotlin.analysis.api.components.buildStarTypeProjection
+import org.jetbrains.kotlin.analysis.api.components.createUseSiteVisibilityChecker
+import org.jetbrains.kotlin.analysis.api.components.defaultType
+import org.jetbrains.kotlin.analysis.api.components.expandedSymbol
+import org.jetbrains.kotlin.analysis.api.components.expressionType
+import org.jetbrains.kotlin.analysis.api.components.isSubtypeOf
+import org.jetbrains.kotlin.analysis.api.components.resolveToCall
+import org.jetbrains.kotlin.analysis.api.components.resolveToCallCandidates
+import org.jetbrains.kotlin.analysis.api.components.resolveToSymbol
+import org.jetbrains.kotlin.analysis.api.components.scopeContext
+import org.jetbrains.kotlin.analysis.api.components.type
+import org.jetbrains.kotlin.analysis.api.components.withNullability
 import org.jetbrains.kotlin.analysis.api.resolution.*
 import org.jetbrains.kotlin.analysis.api.signatures.KaFunctionSignature
 import org.jetbrains.kotlin.analysis.api.symbols.*
@@ -22,9 +35,11 @@ import org.jetbrains.kotlin.psi.*
 import org.jetbrains.kotlin.psi.psiUtil.getQualifiedExpressionForSelector
 import org.jetbrains.kotlin.psi.psiUtil.referenceExpression
 import org.jetbrains.kotlin.resolve.ArrayFqNames
+import org.jetbrains.kotlin.utils.exceptions.errorWithAttachment
+import org.jetbrains.kotlin.utils.exceptions.withPsiEntry
 
 // Analogous to Call.resolveCandidates() in plugins/kotlin/core/src/org/jetbrains/kotlin/idea/core/Utils.kt
-context(KaSession)
+context(_: KaSession)
 @OptIn(KaExperimentalApi::class)
 fun collectCallCandidates(callElement: KtElement): List<KaCallCandidateInfo> {
     val (candidates, explicitReceiver) = when (callElement) {
@@ -43,7 +58,7 @@ fun collectCallCandidates(callElement: KtElement): List<KaCallCandidateInfo> {
     return candidates.filter { filterCandidate(it, callElement, explicitReceiver, visibilityChecker) }
 }
 
-context(KaSession)
+context(_: KaSession)
 @OptIn(KaExperimentalApi::class)
 private fun filterCandidate(
     candidateInfo: KaCallCandidateInfo,
@@ -57,7 +72,7 @@ private fun filterCandidate(
     return filterCandidateByReceiverTypeAndVisibility(signature, callElement, explicitReceiver, visibilityChecker)
 }
 
-context(KaSession)
+context(_: KaSession)
 @OptIn(KaExperimentalApi::class)
 fun filterCandidateByReceiverTypeAndVisibility(
     signature: KaFunctionSignature<KaFunctionSymbol>,
@@ -93,7 +108,7 @@ fun filterCandidateByReceiverTypeAndVisibility(
     val candidateReceiverType = signature.receiverType
     if (candidateReceiverType != null && receiverTypes.none {
             it.isSubtypeOf(candidateReceiverType, subtypingErrorTypePolicy) ||
-                    it.nullability != KaTypeNullability.NON_NULLABLE && it.withNullability(KaTypeNullability.NON_NULLABLE)
+                    it.nullability != KaTypeNullability.NON_NULLABLE && it.withNullability(false)
                         .isSubtypeOf(candidateReceiverType, subtypingErrorTypePolicy)
         }
     ) return false
@@ -108,7 +123,7 @@ fun filterCandidateByReceiverTypeAndVisibility(
  * If there is no explicit receiver, obtains scope context for [callElement] and returns implicit types from the context.
  * If explicit receiver is present and can be resolved, returns its type. Otherwise, returns empty list.
  */
-context(KaSession)
+context(_: KaSession)
 fun collectReceiverTypesForElement(callElement: KtElement, explicitReceiver: KtExpression?): List<KaType> {
     return if (explicitReceiver != null) {
         collectReceiverTypesForExplicitReceiverExpression(explicitReceiver)
@@ -118,9 +133,14 @@ fun collectReceiverTypesForElement(callElement: KtElement, explicitReceiver: KtE
     }
 }
 
-context(KaSession)
+context(_: KaSession)
 fun collectReceiverTypesForExplicitReceiverExpression(explicitReceiver: KtExpression): List<KaType> {
-    explicitReceiver.referenceExpression()?.mainReference?.let { receiverReference ->
+    val referenceExpression = when (explicitReceiver) {
+        is KtDotQualifiedExpression -> explicitReceiver.selectorExpression ?: explicitReceiver
+        else -> explicitReceiver
+    }
+
+    referenceExpression.referenceExpression()?.mainReference?.let { receiverReference ->
         val receiverSymbol = receiverReference.resolveToExpandedSymbol()
         if (receiverSymbol == null || receiverSymbol is KaPackageSymbol) return emptyList()
 
@@ -132,16 +152,21 @@ fun collectReceiverTypesForExplicitReceiverExpression(explicitReceiver: KtExpres
 
     val isSafeCall = explicitReceiver.parent is KtSafeQualifiedExpression
 
-    val explicitReceiverType = explicitReceiver.expressionType ?: error("Receiver should have a KaType")
+    val explicitReceiverType = explicitReceiver.expressionType ?:
+        errorWithAttachment("Receiver should have a KaType") {
+            withPsiEntry("explicitReceiver", explicitReceiver)
+            withPsiEntry("file", explicitReceiver.containingKtFile)
+        }
+    
     val adjustedType = if (isSafeCall) {
-        explicitReceiverType.withNullability(KaTypeNullability.NON_NULLABLE)
+        explicitReceiverType.withNullability(false)
     } else {
         explicitReceiverType
     }
     return listOf(adjustedType)
 }
 
-context(KaSession)
+context(_: KaSession)
 @OptIn(KaExperimentalApi::class)
 private fun KaNamedClassSymbol.buildClassTypeBySymbolWithTypeArgumentsFromExpression(expression: KtExpression): KaType =
     buildClassType(this) {
@@ -161,7 +186,7 @@ private val ARRAY_OF_FUNCTION_NAMES: Set<Name> = setOf(ArrayFqNames.ARRAY_OF_FUN
         ArrayFqNames.PRIMITIVE_TYPE_TO_ARRAY.values +
         ArrayFqNames.EMPTY_ARRAY
 
-context(KaSession)
+context(_: KaSession)
 fun isArrayOfCall(callElement: KtCallElement): Boolean {
     val resolvedCall = callElement.resolveToCall()?.singleFunctionCallOrNull() ?: return false
     val callableId = resolvedCall.partiallyAppliedSymbol.signature.callableId ?: return false
@@ -171,7 +196,7 @@ fun isArrayOfCall(callElement: KtCallElement): Boolean {
 /**
  * @return value of the [JvmName] annotation on [symbol] declaration if present, and `null` otherwise
  */
-context(KaSession)
+context(_: KaSession)
 fun getJvmName(symbol: KaAnnotatedSymbol): String? {
     val jvmNameAnnotation = symbol.annotations[JvmStandardClassIds.Annotations.JvmName].firstOrNull() ?: return null
     val annotationValue = jvmNameAnnotation.arguments.singleOrNull()?.expression as? KaAnnotationValue.ConstantValue ?: return null
@@ -179,7 +204,7 @@ fun getJvmName(symbol: KaAnnotatedSymbol): String? {
     return stringValue.value
 }
 
-context(KaSession)
+context(_: KaSession)
 fun KtReference.resolveToExpandedSymbol(): KaSymbol? = when (val symbol = resolveToSymbol()) {
     is KaTypeAliasSymbol -> symbol.expandedType.expandedSymbol
     else -> symbol

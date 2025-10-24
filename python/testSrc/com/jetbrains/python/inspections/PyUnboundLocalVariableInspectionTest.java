@@ -251,7 +251,12 @@ public class PyUnboundLocalVariableInspectionTest extends PyInspectionTestCase {
     doTest();
   }
 
-  public void testForwardReferenceInAnnotations() {
+  public void testForwardReferenceInAnnotationsWithFromFutureImportAnnotationsBefore314() {
+    runWithLanguageLevel(LanguageLevel.PYTHON313, this::doTest);
+  }
+
+  // PY-80002
+  public void testForwardReferenceInAnnotationsInPython314() {
     doTest();
   }
 
@@ -444,6 +449,29 @@ public class PyUnboundLocalVariableInspectionTest extends PyInspectionTestCase {
                        pass
                    """);
     });
+  }
+
+  // PY-80733
+  public void testTryExceptDoesNotRedirectBreak() {
+    doTestByText("""
+      while True:
+          try:
+              foo = could_raise()
+          except IndexError:
+              break
+      
+          print(foo)""");
+  }
+
+  // PY-80828
+  public void testNoUnboundTryWith() {
+    doTestByText("""
+      def check_access(test: str):
+          try:
+              with open(test, 'w+'):
+                  pass
+          except PermissionError:
+              print(f"{test}")""");
   }
 
   @NotNull

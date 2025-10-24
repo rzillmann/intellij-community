@@ -21,7 +21,8 @@ class BundledPluginsStateTest {
     }
 
     writePluginIdsToFile(pluginIds = pluginIds, configDir = dir)
-    assertThat(readPluginIdsFromFile(configDir = dir)).hasSameElementsAs(pluginIds.map { it.pluginId to it.category })
+    assertThat(readPluginIdsFromFile(configDir = dir))
+      .hasSameElementsAs(pluginIds.map { BundledPlugin(it.pluginId, it.category) })
   }
 
   @Test
@@ -33,8 +34,8 @@ class BundledPluginsStateTest {
   }
 
   companion object {
-    private fun getIdeaDescriptor(id: String, category: Category): IdeaPluginDescriptorImpl {
-      val descriptor = IdeaPluginDescriptorImpl(
+    private fun getIdeaDescriptor(id: String, category: String?): IdeaPluginDescriptorImpl {
+      val descriptor = PluginMainDescriptor(
         raw = PluginDescriptorBuilder.builder().apply {
           this.category = category
           this.id = id

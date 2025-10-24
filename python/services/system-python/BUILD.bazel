@@ -1,23 +1,24 @@
 ### auto-generated section `build intellij.python.community.services.systemPython` start
-load("@rules_jvm//:jvm.bzl", "jvm_library", "jvm_resources", "jvm_test")
+load("@rules_jvm//:jvm.bzl", "jvm_library", "resourcegroup")
 
-jvm_resources(
-  name = "python-community-services-systemPython_resources",
-  files = glob(["resources/**/*"]),
+resourcegroup(
+  name = "system-python_resources",
+  srcs = glob(["resources/**/*"]),
   strip_prefix = "resources"
 )
 
-jvm_resources(
-  name = "python-community-services-systemPython_test_resources",
-  files = glob(["testResources/**/*"]),
+resourcegroup(
+  name = "system-python_test_resources",
+  srcs = glob(["testResources/**/*"]),
   strip_prefix = "testResources"
 )
 
 jvm_library(
-  name = "python-community-services-systemPython",
+  name = "system-python",
   module_name = "intellij.python.community.services.systemPython",
   visibility = ["//visibility:public"],
-  srcs = glob(["src/**/*.kt", "src/**/*.java"], allow_empty = True),
+  srcs = glob(["gen/**/*.kt", "gen/**/*.java", "src/**/*.kt", "src/**/*.java", "src/**/*.form"], allow_empty = True),
+  resources = [":system-python_resources"],
   deps = [
     "@lib//:kotlin-stdlib",
     "//python/python-sdk:sdk",
@@ -28,20 +29,22 @@ jvm_library(
     "//platform/extensions",
     "//platform/core-api:core",
     "//platform/projectModel-api:projectModel",
-    "//python/services/shared:python-community-services-shared",
+    "//python/services/shared",
     "//python/services/internal-impl:python-community-services-internal-impl",
     "//platform/util",
-    "//python/installer:community-impl-installer",
+    "//python/installer",
+    "//python/python-venv:community-impl-venv",
+    "//python/python-psi-impl:psi-impl",
   ],
-  exports = ["//python/services/shared:python-community-services-shared"],
-  runtime_deps = [":python-community-services-systemPython_resources"]
+  exports = ["//python/services/shared"]
 )
 
 jvm_library(
-  name = "python-community-services-systemPython_test_lib",
+  name = "system-python_test_lib",
   visibility = ["//visibility:public"],
-  srcs = glob(["tests/**/*.kt", "tests/**/*.java"], allow_empty = True),
-  associates = [":python-community-services-systemPython"],
+  srcs = glob(["tests/**/*.kt", "tests/**/*.java", "tests/**/*.form"], allow_empty = True),
+  resources = [":system-python_test_resources"],
+  associates = [":system-python"],
   deps = [
     "@lib//:kotlin-stdlib",
     "//python/python-sdk:sdk",
@@ -57,30 +60,34 @@ jvm_library(
     "//platform/testFramework/junit5:junit5_test_lib",
     "@lib//:junit5",
     "//platform/projectModel-api:projectModel",
-    "//python/testFramework:community-testFramework",
+    "//python/testFramework",
     "@lib//:hamcrest",
-    "//python/services/shared:python-community-services-shared",
+    "//python/services/shared",
+    "//python/services/shared:shared_test_lib",
     "//python/services/internal-impl:python-community-services-internal-impl",
     "//python/services/internal-impl:python-community-services-internal-impl_test_lib",
     "//platform/util",
     "//python/junit5Tests-framework:community-junit5Tests-framework_test_lib",
-    "//python/installer:community-impl-installer",
+    "//python/installer",
     "//python/python-venv:community-impl-venv",
     "//python/python-venv:community-impl-venv_test_lib",
     "//python/setup-test-environment:community-testFramework-testEnv",
-    "@lib//:io-mockk",
-    "@lib//:io-mockk-jvm",
     "//platform/testFramework",
     "//platform/testFramework:testFramework_test_lib",
+    "//python/python-psi-impl:psi-impl",
   ],
-  runtime_deps = [
-    ":python-community-services-systemPython_resources",
-    ":python-community-services-systemPython_test_resources",
+  exports = [
+    "//python/services/shared",
+    "//python/services/shared:shared_test_lib",
   ]
 )
-
-jvm_test(
-  name = "python-community-services-systemPython_test",
-  runtime_deps = [":python-community-services-systemPython_test_lib"]
-)
 ### auto-generated section `build intellij.python.community.services.systemPython` end
+
+### auto-generated section `test intellij.python.community.services.systemPython` start
+load("@community//build:tests-options.bzl", "jps_test")
+
+jps_test(
+  name = "system-python_test",
+  runtime_deps = [":system-python_test_lib"]
+)
+### auto-generated section `test intellij.python.community.services.systemPython` end

@@ -10,6 +10,7 @@ import org.jetbrains.annotations.Nullable;
 import java.io.*;
 import java.sql.Blob;
 import java.sql.Clob;
+import java.sql.SQLException;
 import java.util.Arrays;
 import java.util.Locale;
 import java.util.Objects;
@@ -22,12 +23,7 @@ public abstract class LobInfo<T extends LobInfo<?>> implements Comparable<T>, Se
 
   private boolean isFullyReloaded;
 
-  private static final ThreadLocal<byte[]> BUFFER = new ThreadLocal<byte[]>() {
-    @Override
-    protected byte[] initialValue() {
-      return new byte[8192];
-    }
-  };
+  private static final ThreadLocal<byte[]> BUFFER = ThreadLocal.withInitial(() -> new byte[8192]);
 
   public LobInfo(long length) {
     this.length = length;
@@ -93,12 +89,28 @@ public abstract class LobInfo<T extends LobInfo<?>> implements Comparable<T>, Se
     try {
       long length = lob.length();
       int subLength = maxLobLength < length ? maxLobLength : (int)length;
-      return new BlobInfo(length, length != subLength && subLength <= 0 ? null :
-                                  subLength > 0 ? lob.getBytes(1, subLength) : ArrayUtilRt.EMPTY_BYTE_ARRAY);
+      return new BlobInfo(length, getLob(lob, length, subLength));
     }
     finally {
       freeLob(lob);
     }
+  }
+
+  private static byte @Nullable [] getLob(Blob lob, long length, int subLength) throws SQLException, IOException {
+    if (length != subLength && subLength <= 0) {
+      return null;
+    }
+    if (subLength <= 0) {
+      return ArrayUtilRt.EMPTY_BYTE_ARRAY;
+    }
+    if (length >= Integer.MAX_VALUE) {
+      // for oracle driver we can't get data from lob.getBytes because of overflow of some integer variable,
+      // so we try to read it as stream to array
+      try (InputStream input = lob.getBinaryStream()) {
+        return loadBytes(input, subLength);
+      }
+    }
+    return lob.getBytes(1, subLength);
   }
 
   private static byte[] loadBytes(@NotNull InputStream o, int maxLength) throws IOException {
@@ -121,11 +133,11 @@ public abstract class LobInfo<T extends LobInfo<?>> implements Comparable<T>, Se
     return maxLength < 0 ? Integer.MAX_VALUE : maxLength;
   }
 
-  public static @Nullable Object fromInputStream(InputStream o, int maxLength) throws IOException {
+  public static @NotNull Object fromInputStream(InputStream o, int maxLength) throws IOException {
     return fromByteArray(loadBytes(o, realMaxLength(maxLength)), maxLength);
   }
 
-  public static @Nullable Object fromReader(Reader o, int maxLength) throws IOException {
+  public static @NotNull Object fromReader(Reader o, int maxLength) throws IOException {
     return fromString(String.valueOf(FileUtilRt.loadText(o, realMaxLength(maxLength))), maxLength);
   }
 
@@ -147,7 +159,7 @@ public abstract class LobInfo<T extends LobInfo<?>> implements Comparable<T>, Se
 
   @Override
   public int hashCode() {
-    return (int)(length ^ (length >>> 32));
+    return Long.hashCode(length);
   }
 
   public static class ClobInfo extends LobInfo<ClobInfo> {
@@ -217,7 +229,7 @@ public abstract class LobInfo<T extends LobInfo<?>> implements Comparable<T>, Se
       return Comparing.compare(data, o.data);
     }
 
-    public int compareTo(@NotNull byte[] bytes) {
+    public int compareTo(byte @NotNull [] bytes) {
       final int lenVal = Long.compare(length, bytes.length);
       if (lenVal != 0 || length == 0) return lenVal;
       return Comparing.compare(data, bytes);

@@ -12,7 +12,6 @@
 
     <projectService serviceInterface="com.intellij.openapi.vcs.AbstractVcsHelper"
                     serviceImplementation="com.intellij.openapi.vcs.impl.AbstractVcsHelperImpl"/>
-    <projectService serviceImplementation="com.intellij.openapi.vcs.IssueNavigationConfiguration"/>
     <projectService serviceImplementation="com.intellij.openapi.vcs.contentAnnotation.VcsContentAnnotationSettings"/>
     <projectService serviceInterface="com.intellij.openapi.vcs.roots.VcsRootDetector"
                     serviceImplementation="com.intellij.openapi.vcs.roots.VcsRootDetectorImpl"/>
@@ -135,6 +134,11 @@
     <openapi.vcs.history.actions.ShowDiffBeforeWithLocalAction.ExtensionProvider
       implementation="com.intellij.openapi.vcs.changes.savedPatches.CompareBeforeWithLocalForSavedPatchesAction"/>
 
+    <vcs.commitMessageInspection implementation="com.intellij.vcs.commit.message.SubjectBodySeparationInspection"/>
+    <vcs.commitMessageInspection implementation="com.intellij.vcs.commit.message.SubjectLimitInspection"/>
+    <vcs.commitMessageInspection implementation="com.intellij.vcs.commit.message.BodyLimitInspection"/>
+    <vcs.commitMessageInspection implementation="com.intellij.vcs.commit.message.CommitMessageSpellCheckingInspection"/>
+
     <referenceProviderType key="commentsReferenceProvider"
                            implementationClass="com.intellij.psi.impl.source.resolve.reference.ArbitraryPlaceUrlReferenceProvider"/>
     <psi.symbolReferenceProvider hostLanguage=""
@@ -168,6 +172,11 @@
 
     <toolWindow id="Commit" anchor="left" icon="AllIcons.Toolwindows.ToolWindowCommit"
                 factoryClass="com.intellij.openapi.vcs.changes.ui.CommitToolWindowFactory"/>
+    <registryKey defaultValue="true"
+                 description="Close Commit dialog (Commit TW opened in either floating or windowed mode) by pressing ESC"
+                 key="vcs.commit.dialog.esc.close"/>
+    <registryKey defaultValue="true" description="Always open diff in window in either floating or windowed commit TW"
+                 key="vcs.commit.dialog.force.diff.in.window"/>
 
     <toolWindow id="Version Control" anchor="bottom" canCloseContents="true" icon="AllIcons.Toolwindows.ToolWindowChanges"
                 factoryClass="com.intellij.openapi.vcs.changes.ui.ChangeViewToolWindowFactory"/>
@@ -185,7 +194,6 @@
                         className="com.intellij.openapi.vcs.changes.ChangesViewManager$ContentProvider"
                         preloaderClassName="com.intellij.openapi.vcs.changes.ChangesViewManager$ContentPreloader"
                         predicateClassName="com.intellij.openapi.vcs.changes.ChangesViewManager$ContentPredicate"
-                        displayNameSupplierClassName="com.intellij.openapi.vcs.changes.ChangesViewManager$DisplayNameSupplier"
                         isInCommitToolWindow="true"/>
     <changesViewContent tabName="Shelf"
                         className="com.intellij.openapi.vcs.changes.shelf.ShelvedChangesViewManager$ContentProvider"
@@ -199,9 +207,6 @@
     <editorTabTitleProvider implementation="com.intellij.openapi.vcs.vfs.VcsFileEditorTabTitleProvider"/>
 
     <customizableActionGroupProvider implementation="com.intellij.openapi.vcs.ui.VcsCustomizableActionGroupProvider"/>
-
-    <changesGroupingPolicy key="directory" id="directory" weight="10"
-                           implementationClass="com.intellij.openapi.vcs.changes.ui.DirectoryChangesGroupingPolicy$Factory"/>
 
     <vcs.changes.changesViewModifier implementation="com.intellij.vcs.commit.EditedCommitChangesViewModifier"/>
 
@@ -305,8 +310,6 @@
     <notificationGroup id="Vcs Notifications" displayType="BALLOON" bundle="messages.VcsBundle" key="notification.group.vcs.notifications"/>
     <notificationGroup id="Vcs Silent Notifications" displayType="NONE" bundle="messages.VcsBundle" key="notification.group.vcs.silent.notifications"/>
 
-    <projectService serviceInterface="com.intellij.openapi.vcs.impl.VcsPathPresenter"
-                    serviceImplementation="com.intellij.openapi.vcs.impl.PlatformVcsPathPresenter"/>
     <projectService serviceInterface="com.intellij.openapi.vcs.impl.DefaultVcsRootPolicy"
                     serviceImplementation="com.intellij.openapi.vcs.impl.ModuleDefaultVcsRootPolicy"/>
 
@@ -339,6 +342,7 @@
     <advancedSetting id="vcs.process.ignored" default="true" bundle="messages.VcsBundle" groupKey="advanced.settings.vcs"/>
     <advancedSetting id="vcs.commit.tool.window" default="true" bundle="messages.VcsBundle" groupKey="advanced.settings.vcs"/>
     <advancedSetting id="vcs.non.modal.commit.toggle.ui" default="false" bundle="messages.VcsBundle" groupKey="advanced.settings.vcs"/>
+    <advancedSetting id="vcs.non.modal.commit.close.in.windowed.mode" bundle="messages.VcsBundle" groupKey="advanced.settings.vcs" default="true"/>
     <advancedSetting id="vcs.push.all.with.commits" default="false" bundle="messages.VcsBundle" groupKey="advanced.settings.vcs"/>
 
     <notificationGroup id="External Executable Critical Failures" displayType="STICKY_BALLOON" bundle="messages.VcsBundle" key="notification.group.external.executable"/>
@@ -357,6 +361,26 @@
     <editorNotificationProvider implementation="com.intellij.openapi.vcs.actions.AnnotateWarningsProvider"/>
 
     <vcsAwareCheckoutListener implementation="com.intellij.openapi.vcs.checkout.RegisterMappingCheckoutListener"/>
+
+    <platform.rpc.backend.remoteApiProvider implementation="com.intellij.vcs.VcsRemoteApiProvider"/>
+    <vcs.impl.backend.treeNodeConverter implementation="com.intellij.vcs.shelf.ShelvedChangeListToEntityConverter"/>
+    <vcs.impl.backend.treeNodeConverter implementation="com.intellij.vcs.shelf.TagNodeToEntityConverter"/>
+    <vcs.impl.backend.treeNodeConverter implementation="com.intellij.vcs.shelf.ShelvedChangeNodeConverter"/>
+    <vcs.impl.backend.treeNodeConverter implementation="com.intellij.vcs.shelf.ModuleNodeToEntityConverter"/>
+    <vcs.impl.backend.treeNodeConverter implementation="com.intellij.vcs.shelf.FilePathNodeToEntityConverter"/>
+
+    <applicationService serviceImplementation="com.intellij.openapi.vcs.changes.ui.BackendChangesTreeCompatibilityProvider"
+                        serviceInterface="com.intellij.openapi.vcs.changes.ChangesTreeCompatibilityProvider"/>
+
+    <projectService
+      serviceInterface="com.intellij.platform.vcs.impl.shared.changes.TreeModelBuilderEx"
+      serviceImplementation="com.intellij.openapi.vcs.changes.ui.BackendChangesViewModelBuilderService"/>
+
+    <projectService
+      serviceInterface="com.intellij.openapi.vcs.changes.ChangesListManagerStateProvider"
+      serviceImplementation="com.intellij.openapi.vcs.changes.ChangesListManagerStateProviderImpl"/>
+
+    <vcs.commitChangesViewInitializer implementation="com.intellij.openapi.vcs.changes.ui.BackendCommitChangesViewWithToolbarInitializer"/>
   </extensions>
 
   <extensions defaultExtensionNs="org.jetbrains">

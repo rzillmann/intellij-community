@@ -4,12 +4,15 @@ f:com.intellij.application.options.PathMacroExpandableProtocolBean
 - <init>():V
 f:com.intellij.application.options.PathMacrosCollector
 - com.intellij.openapi.components.PathMacroMap
+- sf:Companion:com.intellij.application.options.PathMacrosCollector$Companion
 - sf:MACRO_FILTER_EXTENSION_POINT_NAME:com.intellij.openapi.extensions.ExtensionPointName
 - sf:MACRO_PATTERN:java.util.regex.Pattern
-- s:getMacroNames(org.jdom.Element):java.util.Set
+- equals(java.lang.Object):Z
 - hashCode():I
 - substitute(java.lang.String,Z):java.lang.String
 - substituteRecursively(java.lang.String,Z):java.lang.CharSequence
+f:com.intellij.application.options.PathMacrosCollector$Companion
+- f:getMacroNames(org.jdom.Element):java.util.Set
 f:com.intellij.application.options.ReplacePathToMacroMap
 - com.intellij.openapi.components.PathMacroMap
 - <init>():V
@@ -40,8 +43,6 @@ c:com.intellij.configurationStore.JbXmlOutputter
 - <init>(java.lang.String,com.intellij.openapi.util.JDOMUtil$ElementOutputFilter,com.intellij.application.options.ReplacePathToMacroMap,com.intellij.openapi.application.PathMacroFilter,Z,java.lang.String):V
 - b:<init>(java.lang.String,com.intellij.openapi.util.JDOMUtil$ElementOutputFilter,com.intellij.application.options.ReplacePathToMacroMap,com.intellij.openapi.application.PathMacroFilter,Z,java.lang.String,I,kotlin.jvm.internal.DefaultConstructorMarker):V
 - sf:collapseMacrosAndWrite(org.jdom.Element,com.intellij.openapi.components.ComponentManager):java.lang.String
-- f:output(org.jdom.DocType,java.io.Writer):V
-- f:output(org.jdom.Document,java.io.Writer):V
 - f:output(org.jdom.Element,java.io.Writer):V
 - f:printElement(java.io.Writer,org.jdom.Element,I):V
 - p:writeContent(java.io.Writer,org.jdom.Element,I,Z):Z
@@ -118,6 +119,7 @@ c:com.intellij.openapi.components.PathMacroManager
 - expandPaths(org.jdom.Element):V
 - getExpandMacroMap():com.intellij.openapi.components.ExpandMacroToPathMap
 - s:getInstance(com.intellij.openapi.components.ComponentManager):com.intellij.openapi.components.PathMacroManager
+- s:getInstance(com.intellij.openapi.module.Module):com.intellij.openapi.components.PathMacroManager
 - getMacroFilter():com.intellij.openapi.application.PathMacroFilter
 - f:getReplacePathMap():com.intellij.application.options.ReplacePathToMacroMap
 - ps:pathsEqual(java.lang.String,java.lang.String):Z
@@ -130,9 +132,9 @@ com.intellij.openapi.components.PathMacroSubstitutor
 - collapsePathsRecursively(org.jdom.Element):V
 - a:expandPath(java.lang.String):java.lang.String
 - a:expandPaths(org.jdom.Element):V
-c:com.intellij.openapi.components.impl.ModulePathMacroManager
+f:com.intellij.openapi.components.impl.ModulePathMacroManager
 - com.intellij.openapi.components.PathMacroManager
-- <init>(com.intellij.openapi.module.Module):V
+- <init>(com.intellij.openapi.module.Module,com.intellij.openapi.application.PathMacros):V
 - computeReplacePathMap():com.intellij.application.options.ReplacePathToMacroMap
 - s:createInstance(java.util.function.Supplier,java.util.function.Supplier):com.intellij.openapi.components.impl.ModulePathMacroManager
 - getExpandMacroMap():com.intellij.openapi.components.ExpandMacroToPathMap
@@ -145,10 +147,8 @@ c:com.intellij.openapi.components.impl.ProjectPathMacroManager
 com.intellij.openapi.components.impl.stores.IProjectStore
 - sf:COMPONENT_STORE_LOADING_ENABLED:com.intellij.openapi.util.Key
 - a:getDirectoryStorePath():java.nio.file.Path
-- a:getPresentableUrl():java.lang.String
 - a:getProjectBasePath():java.nio.file.Path
 - a:getProjectFilePath():java.nio.file.Path
-- a:getProjectName():java.lang.String
 - a:getProjectWorkspaceId():java.lang.String
 - a:getStorageScheme():com.intellij.openapi.components.StorageScheme
 - a:getWorkspacePath():java.nio.file.Path
@@ -169,8 +169,6 @@ a:com.intellij.openapi.module.ConfigurationErrorType
 - getFeatureType():java.lang.String
 f:com.intellij.openapi.module.impl.ModuleGroupersKt
 - sf:splitStringByDotsJoiningIncorrectIdentifiers(java.lang.String):kotlin.Pair
-f:com.intellij.openapi.module.impl.ModulePathKt
-- sf:getModuleNameByFilePath(java.lang.String):java.lang.String
 a:com.intellij.openapi.options.BaseSchemeProcessor
 - com.intellij.openapi.options.NonLazySchemeProcessor
 - <init>():V
@@ -186,7 +184,7 @@ a:com.intellij.openapi.options.NonLazySchemeProcessor
 - com.intellij.openapi.options.SchemeProcessor
 - <init>():V
 - a:readScheme(org.jdom.Element,Z):com.intellij.openapi.options.Scheme
-a:com.intellij.openapi.options.SchemeManager
+Fa:com.intellij.openapi.options.SchemeManager
 - <init>():V
 - f:addScheme(java.lang.Object):V
 - a:addScheme(java.lang.Object,Z):V
@@ -200,8 +198,8 @@ a:com.intellij.openapi.options.SchemeManager
 - isEmpty():Z
 - a:isMetadataEditable(java.lang.Object):Z
 - a:loadSchemes():java.util.Collection
-- f:reload():V
-- a:reload(kotlin.jvm.functions.Function1):V
+- a:reload():V
+- reload(kotlin.jvm.functions.Function1):V
 - a:removeScheme(java.lang.Object):Z
 - a:removeScheme(java.lang.String):java.lang.Object
 - a:save():V
@@ -281,7 +279,6 @@ c:com.intellij.openapi.projectRoots.impl.ProjectJdkImpl
 - removeRoot(com.intellij.openapi.vfs.VirtualFile,com.intellij.openapi.roots.OrderRootType):V
 - removeRoot(java.lang.String,com.intellij.openapi.roots.OrderRootType):V
 - removeRoots(com.intellij.openapi.roots.OrderRootType):V
-- f:resetVersionString():V
 - setHomePath(java.lang.String):V
 - setName(java.lang.String):V
 - setSdkAdditionalData(com.intellij.openapi.projectRoots.SdkAdditionalData):V
@@ -310,9 +307,12 @@ c:com.intellij.openapi.roots.JavadocOrderRootType
 - com.intellij.openapi.roots.PersistentOrderRootType
 - s:getInstance():com.intellij.openapi.roots.OrderRootType
 - s:getUrls(com.intellij.openapi.roots.OrderEntry):java.lang.String[]
+f:com.intellij.openapi.roots.ModuleExtensionEp
+- com.intellij.openapi.extensions.PluginAware
+- implementationClass:java.lang.String
+- setPluginDescriptor(com.intellij.openapi.extensions.PluginDescriptor):V
 a:com.intellij.openapi.roots.ModuleRootManagerEx
 - com.intellij.openapi.roots.ModuleRootManager
-- sf:MODULE_EXTENSION_NAME:com.intellij.openapi.extensions.ExtensionPointName
 - <init>():V
 - s:getInstanceEx(com.intellij.openapi.module.Module):com.intellij.openapi.roots.ModuleRootManagerEx
 - a:getModificationCountForTests():J

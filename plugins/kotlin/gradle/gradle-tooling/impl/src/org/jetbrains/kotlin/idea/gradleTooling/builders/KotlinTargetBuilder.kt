@@ -54,7 +54,7 @@ object KotlinTargetBuilder : KotlinMultiplatformComponentBuilder<KotlinTargetRef
                     ?.toKotlinToolingVersion()
                     ?.let { it >= KotlinGradlePluginVersionKeyVersion.KGP_WITH_ISOLATED_PROJECTS_SUPPORT.version } == true
 
-            if (kgpSupportsIsolatedProjects && importingContext.getProperty(GradleImportProperties.GRADLE_ISOLATED_PROJECTS)) {
+            if (kgpSupportsIsolatedProjects) {
                 return@let KotlinTargetJarImpl(jarReflection.archiveFile, emptySet())
             }
             val compileKotlinTaskNames = origin.compilations?.map { it.compileKotlinTaskName }?.toSet().orEmpty()
@@ -148,11 +148,12 @@ object KotlinTargetBuilder : KotlinMultiplatformComponentBuilder<KotlinTargetRef
         val getJvmTargetName = jvmTestTaskClass.getDeclaredMethodOrNull("getTargetName") ?: return emptyList()
 
         /**
-         * Only run this branch for the 'KotlinAndroidTarget'  maintained in KGP:
-         * This target can be identified checking the 'presetName' here.
+         * Only run this branch for the 'KotlinAndroidTarget' maintained in KGP:
+         * This target can be identified by checking the 'presetName' here.
          * The External Android target will not have any presetName as it is using the external target API instead of presets.
+         * 'KotlinTargetReflection.presetName' is always 'null' starting Kotlin 2.2.0 release.
          */
-        if (target.presetName == "android") {
+        if (target.presetName == "android" || target.platformType == "androidJvm") {
             val androidUnitTestClass = gradleTarget.testTaskClass("com.android.build.gradle.tasks.factory.AndroidUnitTest")
                 ?: return emptyList()
 

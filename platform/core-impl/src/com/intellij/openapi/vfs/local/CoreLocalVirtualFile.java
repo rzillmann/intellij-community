@@ -24,12 +24,6 @@ public class CoreLocalVirtualFile extends VirtualFile {
   private BasicFileAttributes myAttributes;
   private VirtualFile[] myChildren;
 
-  /** @deprecated please use {@link #CoreLocalVirtualFile(CoreLocalFileSystem, Path)} instead */
-  @Deprecated
-  public CoreLocalVirtualFile(@NotNull CoreLocalFileSystem fileSystem, @NotNull File ioFile) {
-    this(fileSystem, ioFile.toPath());
-  }
-
   public CoreLocalVirtualFile(@NotNull CoreLocalFileSystem fileSystem, @NotNull Path file) {
     myFileSystem = fileSystem;
     myFile = file;

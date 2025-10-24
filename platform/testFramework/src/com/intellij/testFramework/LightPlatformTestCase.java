@@ -130,7 +130,7 @@ public abstract class LightPlatformTestCase extends UsefulTestCase implements Da
     System.out.println("----- TEST STATISTICS -----");
     UsefulTestCase.logSetupTeardownCosts();
     System.out.printf("##teamcity[buildStatisticValue key='ideaTests.appInstancesCreated' value='%d']%n",
-                      MockApplication.INSTANCES_CREATED);
+                      MockApplication.Companion.getINSTANCES_CREATED());
     System.out.printf("##teamcity[buildStatisticValue key='ideaTests.projectInstancesCreated' value='%d']%n",
                       TestProjectManagerKt.getTotalCreatedProjectsCount());
     long totalGcTime = 0;
@@ -239,7 +239,11 @@ public abstract class LightPlatformTestCase extends UsefulTestCase implements Da
   }
 
   protected @NotNull LightProjectDescriptor getProjectDescriptor() {
-    return new SimpleLightProjectDescriptor(getModuleTypeId(), getProjectJDK());
+    return createSimpleLightProjectDescriptor(getModuleTypeId(), getProjectJDK());
+  }
+
+  public static @NotNull LightProjectDescriptor createSimpleLightProjectDescriptor(String moduleTypeId, Sdk jdk) {
+    return new SimpleLightProjectDescriptor(moduleTypeId, jdk);
   }
 
   public static @NotNull Pair.NonNull<Project, Module> doSetup(@NotNull LightProjectDescriptor descriptor,
@@ -337,8 +341,8 @@ public abstract class LightPlatformTestCase extends UsefulTestCase implements Da
 
         assertEmpty("There are unsaved documents", Arrays.asList(unsavedDocuments));
       }
-      ActionUtil.performActionDumbAwareWithCallbacks(
-        new EmptyAction(true), AnActionEvent.createFromDataContext("", null, DataContext.EMPTY_CONTEXT));
+      AnActionEvent event = AnActionEvent.createFromDataContext("", null, DataContext.EMPTY_CONTEXT);
+      ActionUtil.performAction(new EmptyAction(true), event);
 
       // startup activities
       PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue();

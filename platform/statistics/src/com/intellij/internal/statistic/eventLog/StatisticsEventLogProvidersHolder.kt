@@ -1,6 +1,9 @@
-// Copyright 2000-2022 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.internal.statistic.eventLog
 
+import com.intellij.ide.plugins.PluginManagerCore
+import com.intellij.ide.plugins.PluginUtils
+import com.intellij.idea.AppMode
 import com.intellij.internal.statistic.eventLog.StatisticsEventLoggerProvider.Companion.EP_NAME
 import com.intellij.internal.statistic.utils.PluginType
 import com.intellij.internal.statistic.utils.StatisticsRecorderUtil
@@ -9,30 +12,48 @@ import com.intellij.openapi.application.ApplicationInfo
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.Service
 import com.intellij.util.PlatformUtils
+import kotlinx.coroutines.CoroutineScope
 import java.util.concurrent.atomic.AtomicReference
 
 @Service(Service.Level.APP)
-internal class StatisticsEventLogProvidersHolder {
+internal class StatisticsEventLogProvidersHolder(coroutineScope: CoroutineScope) {
+  // Small temporary inconsistency between `eventLoggerProviders` and `eventLoggerProvidersExt` doesn't really matter,
+  // and it will be smaller than other white noise in data.
   private val eventLoggerProviders: AtomicReference<Map<String, StatisticsEventLoggerProvider>> =
     AtomicReference(calculateEventLogProvider())
+  private val eventLoggerProvidersExt: AtomicReference<Map<String, Collection<StatisticsEventLoggerProvider>>> =
+    AtomicReference(calculateEventLogProviderExt())
 
   init {
     if (ApplicationManager.getApplication().extensionArea.hasExtensionPoint(EP_NAME)) {
-      EP_NAME.addChangeListener(Runnable { eventLoggerProviders.set(calculateEventLogProvider()) }, null)
+      EP_NAME.addChangeListener(coroutineScope) { eventLoggerProviders.set(calculateEventLogProvider()) }
+      EP_NAME.addChangeListener(coroutineScope) { eventLoggerProvidersExt.set(calculateEventLogProviderExt()) }
     }
   }
 
-  fun getEventLogProvider(recorderId: String): StatisticsEventLoggerProvider {
-    return eventLoggerProviders.get()[recorderId] ?: EmptyStatisticsEventLoggerProvider(recorderId)
-  }
+  fun getEventLogProvider(recorderId: String): StatisticsEventLoggerProvider =
+    eventLoggerProviders.get()[recorderId] ?: EmptyStatisticsEventLoggerProvider(recorderId)
 
-  fun getEventLogProviders(): Collection<StatisticsEventLoggerProvider> {
-    return eventLoggerProviders.get().values
-  }
+  fun getEventLogProviders(): Collection<StatisticsEventLoggerProvider> =
+    eventLoggerProviders.get().values
+
+  fun getEventLogProvidersExt(recorderId: String): Collection<StatisticsEventLoggerProvider> =
+    eventLoggerProvidersExt.get()[recorderId] ?: listOf(EmptyStatisticsEventLoggerProvider(recorderId))
 
   private fun calculateEventLogProvider(): Map<String, StatisticsEventLoggerProvider> {
-    return getAllEventLogProviders().associateBy { it.recorderId }
+    return calculateEventLogProviderExt().mapValues {
+      it.value.find { provider ->
+        if (PluginManagerCore.isRunningFromSources() || AppMode.isRunningFromDevBuild()) true
+        else PluginUtils.getPluginDescriptorOrPlatformByClassName(provider::class.java.name)
+          ?.let { plugin -> PluginManagerCore.isDevelopedExclusivelyByJetBrains(plugin) }
+          ?: false
+      } ?: EmptyStatisticsEventLoggerProvider(it.key)
+    }
   }
+
+  private fun calculateEventLogProviderExt(): Map<String, Collection<StatisticsEventLoggerProvider>> =
+    getAllEventLogProviders().groupBy { it.recorderId }
+
 
   private fun getAllEventLogProviders(): Sequence<StatisticsEventLoggerProvider> {
     val providers = EP_NAME.extensionsIfPointIsRegistered
@@ -42,13 +63,10 @@ internal class StatisticsEventLogProvidersHolder {
     val isJetBrainsProduct = isJetBrainsProduct()
     return providers.asSequence()
       .filter { isProviderApplicable(isJetBrainsProduct, it.recorderId, it) }
-      .distinctBy { it.recorderId }
   }
 
-  private fun isJetBrainsProduct(): Boolean {
-    val appInfo = ApplicationInfo.getInstance()
-    return if (appInfo == null || appInfo.shortCompanyName.isNullOrEmpty()) true else PlatformUtils.isJetBrainsProduct()
-  }
+  private fun isJetBrainsProduct(): Boolean =
+    ApplicationInfo.getInstance()?.shortCompanyName.isNullOrEmpty() || PlatformUtils.isJetBrainsProduct()
 
   private fun isProviderApplicable(isJetBrainsProduct: Boolean, recorderId: String, extension: StatisticsEventLoggerProvider): Boolean {
     if (recorderId == extension.recorderId) {
@@ -56,7 +74,6 @@ internal class StatisticsEventLogProvidersHolder {
         return true
       }
       val pluginInfo = getPluginInfo(extension::class.java)
-
       return if (recorderId == "MLSE" || recorderId == "ML") {
         pluginInfo.isDevelopedByJetBrains()
       }

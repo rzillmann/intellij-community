@@ -1,28 +1,26 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.platform.workspace.storage.testEntities.entities.impl
 
-import com.intellij.platform.workspace.storage.*
 import com.intellij.platform.workspace.storage.ConnectionId
 import com.intellij.platform.workspace.storage.EntitySource
-import com.intellij.platform.workspace.storage.EntityType
 import com.intellij.platform.workspace.storage.GeneratedCodeApiVersion
 import com.intellij.platform.workspace.storage.GeneratedCodeImplVersion
+import com.intellij.platform.workspace.storage.WorkspaceEntityBuilder
 import com.intellij.platform.workspace.storage.MutableEntityStorage
 import com.intellij.platform.workspace.storage.WorkspaceEntity
 import com.intellij.platform.workspace.storage.WorkspaceEntityInternalApi
 import com.intellij.platform.workspace.storage.impl.ModifiableWorkspaceEntityBase
 import com.intellij.platform.workspace.storage.impl.WorkspaceEntityBase
 import com.intellij.platform.workspace.storage.impl.WorkspaceEntityData
-import com.intellij.platform.workspace.storage.impl.containers.toMutableWorkspaceList
-import com.intellij.platform.workspace.storage.impl.containers.toMutableWorkspaceSet
 import com.intellij.platform.workspace.storage.instrumentation.EntityStorageInstrumentation
 import com.intellij.platform.workspace.storage.instrumentation.EntityStorageInstrumentationApi
 import com.intellij.platform.workspace.storage.metadata.model.EntityMetadata
 import com.intellij.platform.workspace.storage.testEntities.entities.NullableVFUEntity
+import com.intellij.platform.workspace.storage.testEntities.entities.NullableVFUEntityBuilder
 import com.intellij.platform.workspace.storage.url.VirtualFileUrl
 
 @GeneratedCodeApiVersion(3)
-@GeneratedCodeImplVersion(6)
+@GeneratedCodeImplVersion(7)
 @OptIn(WorkspaceEntityInternalApi::class)
 internal class NullableVFUEntityImpl(private val dataSource: NullableVFUEntityData) : NullableVFUEntity, WorkspaceEntityBase(dataSource) {
 
@@ -58,7 +56,7 @@ internal class NullableVFUEntityImpl(private val dataSource: NullableVFUEntityDa
 
 
   internal class Builder(result: NullableVFUEntityData?) : ModifiableWorkspaceEntityBase<NullableVFUEntity, NullableVFUEntityData>(
-    result), NullableVFUEntity.Builder {
+    result), NullableVFUEntityBuilder {
     internal constructor() : this(NullableVFUEntityData())
 
     override fun applyToBuilder(builder: MutableEntityStorage) {
@@ -147,7 +145,7 @@ internal class NullableVFUEntityData : WorkspaceEntityData<NullableVFUEntity>() 
 
   internal fun isDataInitialized(): Boolean = ::data.isInitialized
 
-  override fun wrapAsModifiable(diff: MutableEntityStorage): WorkspaceEntity.Builder<NullableVFUEntity> {
+  override fun wrapAsModifiable(diff: MutableEntityStorage): WorkspaceEntityBuilder<NullableVFUEntity> {
     val modifiable = NullableVFUEntityImpl.Builder(null)
     modifiable.diff = diff
     modifiable.id = createEntityId()
@@ -174,7 +172,7 @@ internal class NullableVFUEntityData : WorkspaceEntityData<NullableVFUEntity>() 
     return NullableVFUEntity::class.java
   }
 
-  override fun createDetachedEntity(parents: List<WorkspaceEntity.Builder<*>>): WorkspaceEntity.Builder<*> {
+  override fun createDetachedEntity(parents: List<WorkspaceEntityBuilder<*>>): WorkspaceEntityBuilder<*> {
     return NullableVFUEntity(data, entitySource) {
       this.fileProperty = this@NullableVFUEntityData.fileProperty
     }

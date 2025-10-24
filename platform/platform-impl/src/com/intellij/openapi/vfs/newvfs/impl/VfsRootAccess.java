@@ -7,7 +7,6 @@ import com.intellij.openapi.application.PathManager;
 import com.intellij.openapi.application.ReadAction;
 import com.intellij.openapi.application.ex.ApplicationEx;
 import com.intellij.openapi.application.ex.ApplicationManagerEx;
-import com.intellij.openapi.diagnostic.ControlFlowException;
 import com.intellij.openapi.module.Module;
 import com.intellij.openapi.module.ModuleManager;
 import com.intellij.openapi.project.Project;
@@ -31,9 +30,11 @@ import com.intellij.util.PathUtil;
 import com.intellij.util.SystemProperties;
 import com.intellij.util.containers.CollectionFactory;
 import com.intellij.util.containers.ContainerUtil;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
+import org.jetbrains.jps.model.serialization.JpsMavenSettings;
 
 import java.io.File;
 import java.io.IOException;
@@ -133,6 +134,8 @@ public final class VfsRootAccess {
     Set<String> allowed = CollectionFactory.createFilePathSet();
     allowed.add(FileUtil.toSystemIndependentName(PathManager.getHomePath()));
     allowed.add(FileUtil.toSystemIndependentName(PathManager.getConfigPath()));
+    File globalMavenSettings = JpsMavenSettings.getGlobalMavenSettingsXml();
+    if (globalMavenSettings != null) allowed.add(globalMavenSettings.getAbsolutePath());
 
     // In plugin development environment PathManager.getHomePath() returns path like "~/.IntelliJIdea/system/plugins-sandbox/test" when running tests
     // The following is to avoid errors in tests like "File accessed outside allowed roots: file://C:/Program Files/idea/lib/idea.jar"
@@ -148,7 +151,8 @@ public final class VfsRootAccess {
         allowed.add(FileUtil.toSystemIndependentName(output));
       }
     }
-    catch (URISyntaxException | IllegalArgumentException ignored) { }
+    catch (URISyntaxException | IllegalArgumentException ignored) {
+    }
 
     try {
       allowed.add(FileUtil.toSystemIndependentName(getJavaHome()));
@@ -184,6 +188,7 @@ public final class VfsRootAccess {
         String wslName = System.getProperty("wsl.distribution.name");
         if (wslName != null) {
           allowed.add(FileUtil.toSystemIndependentName("\\\\wsl$\\" + wslName));
+          allowed.add(FileUtil.toSystemIndependentName("\\\\wsl.localhost\\" + wslName));
         }
       }
       else {
@@ -191,6 +196,18 @@ public final class VfsRootAccess {
         allowed.add("/etc");
         allowed.add("/private/etc");
         allowed.add("/usr/lib/jvm");
+      }
+
+      // The official directory accessible by tests under Bazel containing test dependencies
+      // > TEST_SRCDIR: absolute path to the base of the runfiles tree
+      // > Tests must access inputs through the runfiles mechanism, or other parts of the
+      // > execution environment which are specifically intended to make input files available.
+      // see https://bazel.build/reference/test-encyclopedia#initial-conditions
+      // and general overview at https://bazel.build/reference/test-encyclopedia#test-interaction-filesystem
+      String testSrcDir = System.getenv("TEST_SRCDIR");
+      if (testSrcDir != null && !testSrcDir.isBlank()) {
+        Path testSrcDirPath = Path.of(testSrcDir).toAbsolutePath();
+        allowed.add(FileUtil.toSystemIndependentName(testSrcDirPath.toString()));
       }
 
       for (final Project project : openProjects) {
@@ -228,8 +245,8 @@ public final class VfsRootAccess {
       allowed.addAll(ourAdditionalRoots);
     }
 
-    assert !allowed.contains("/"): "Allowed roots should not contain '/'. " +
-                                   "You can disable roots access check explicitly if you don't need it.";
+    assert !allowed.contains("/") : "Allowed roots should not contain '/'. " +
+                                    "You can disable roots access check explicitly if you don't need it.";
     return allowed;
   }
 
@@ -294,7 +311,8 @@ public final class VfsRootAccess {
     }
   }
 
-  public static class VfsRootAccessNotAllowedError extends AssertionError implements ControlFlowException {
+  @ApiStatus.Internal
+  public static class VfsRootAccessNotAllowedError extends AssertionError {
     public VfsRootAccessNotAllowedError(@NotNull VirtualFile child, @NotNull ArrayList<String> allowed) {
       super("File accessed outside allowed roots: " + child + ";\nAllowed roots: " + new ArrayList<>(allowed));
     }

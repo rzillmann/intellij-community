@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.intellij.build.impl
 
 import com.intellij.openapi.util.JDOMUtil
@@ -54,7 +54,7 @@ internal suspend fun patchPluginXml(
   val includeInBuiltinCustomRepository = context.productProperties.productLayout.prepareCustomPluginRepositoryForPublishedPlugins &&
                                          context.proprietaryBuildTools.artifactsServer != null
   val isBundled = !pluginsToPublish.contains(plugin)
-  val compatibleBuildRange = when {
+  val compatibleBuildRange = context.productProperties.customCompatibleBuildRange ?: when {
     isBundled || plugin.pluginCompatibilityExactVersion || includeInBuiltinCustomRepository -> CompatibleBuildRange.EXACT
     context.applicationInfo.isEAP || plugin.pluginCompatibilitySameRelease -> CompatibleBuildRange.RESTRICTED_TO_SAME_RELEASE
     else -> CompatibleBuildRange.NEWER_WITH_SAME_BASELINE
@@ -78,7 +78,10 @@ internal suspend fun patchPluginXml(
     embedContentModules(
       xml = element,
       file = findFileInModuleSources(module = pluginModule, relativePath = "META-INF/plugin.xml")!!,
-      xIncludePathResolver = createXIncludePathResolver(plugin.includedModules.map { it.moduleName } + platformLayout.includedModules.map { it.moduleName }, context),
+      xIncludePathResolver = createXIncludePathResolver(
+        includedPlatformModulesPartialList = plugin.includedModules.asSequence().map { it.moduleName } + platformLayout.includedModules.asSequence().map { it.moduleName },
+        context = context,
+      ),
       layout = plugin,
       context = context,
     )

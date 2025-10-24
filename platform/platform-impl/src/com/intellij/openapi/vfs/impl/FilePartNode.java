@@ -10,7 +10,6 @@ import com.intellij.openapi.util.text.StringUtilRt;
 import com.intellij.openapi.vfs.*;
 import com.intellij.openapi.vfs.newvfs.ArchiveFileSystem;
 import com.intellij.openapi.vfs.newvfs.NewVirtualFileSystem;
-import com.intellij.openapi.vfs.newvfs.VfsImplUtil;
 import com.intellij.openapi.vfs.newvfs.impl.VirtualFileSystemEntry;
 import com.intellij.openapi.vfs.newvfs.persistent.FSRecords;
 import com.intellij.openapi.vfs.pointers.VirtualFilePointerListener;
@@ -49,8 +48,8 @@ public class FilePartNode {
   volatile @NotNull Object fileOrUrl;
 
   /** The file system of this particular component. E.g. for path "/x.jar!/foo.txt" the node "x.jar" fs is LocalFileSystem, the node "foo.txt" fs is JarFileSystem */
-  @VisibleForTesting
-  public final NewVirtualFileSystem fs;
+  @NotNull
+  final NewVirtualFileSystem fs;
 
   FilePartNode(int nameId,
                @NotNull Object fileOrUrl,
@@ -290,7 +289,8 @@ public class FilePartNode {
   }
 
   // update myFileOrUrl to a VirtualFile and replace UrlPartNode with FilePartNode if the file exists, including all sub-nodes
-  void update(@NotNull FilePartNode parent,
+  @VisibleForTesting
+  public void update(@NotNull FilePartNode parent,
               @NotNull FilePartNodeRoot root,
               @NotNull String debugSource,
               @Nullable Object debugInvalidationReason) {
@@ -493,7 +493,7 @@ public class FilePartNode {
   }
 
   void addAllPointersTo(@NotNull Collection<? super VirtualFilePointerImpl> outList) {
-    processPointers(p->{ if (p.getNode() != null) outList.add(p); });
+    processPointers(p->{ if (p.myNode != null) outList.add(p); });
   }
 
   void processPointers(@NotNull Consumer<? super VirtualFilePointerImpl> processor) {
@@ -549,7 +549,7 @@ public class FilePartNode {
   }
 
   void removeEmptyNodesByPath(@NotNull String path) {
-    VfsImplUtil.PathFromRoot pair = VfsImplUtil.extractRootFromPath(fs, path);
+    NewVirtualFileSystem.PathFromRoot pair = NewVirtualFileSystem.extractRootFromPath(fs, path);
     if (pair != null) {
       int rootIndex = binarySearchChildByName(pair.root().getNameSequence());
       if (rootIndex >= 0) {

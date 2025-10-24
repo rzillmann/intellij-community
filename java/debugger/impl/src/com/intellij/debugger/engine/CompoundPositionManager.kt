@@ -22,13 +22,13 @@ import com.intellij.openapi.fileTypes.FileType
 import com.intellij.openapi.fileTypes.FileTypeManager
 import com.intellij.openapi.fileTypes.UnknownFileType
 import com.intellij.openapi.progress.ProgressManager
-import com.intellij.openapi.progress.blockingContext
 import com.intellij.openapi.progress.checkCanceled
 import com.intellij.util.ThreeState
 import com.intellij.xdebugger.frame.XStackFrame
 import com.sun.jdi.Location
 import com.sun.jdi.ReferenceType
 import com.sun.jdi.request.ClassPrepareRequest
+import org.jetbrains.annotations.ApiStatus
 import java.util.*
 import java.util.concurrent.CompletableFuture
 
@@ -160,22 +160,39 @@ class CompoundPositionManager() : PositionManagerWithConditionEvaluation, MultiR
       }
     }!!
 
-  fun createStackFrames(descriptor: StackFrameDescriptorImpl): MutableList<XStackFrame>? =
-    iterate(null, null, ProgressManager::checkCanceled) {
-      if (it is PositionManagerWithMultipleStackFrames) {
-        val stackFrames = it.createStackFrames(descriptor)
-        if (stackFrames != null) {
-          return@iterate stackFrames
-        }
-      }
-      else if (it is PositionManagerEx) {
-        val xStackFrame = it.createStackFrame(descriptor)
-        if (xStackFrame != null) {
-          return@iterate mutableListOf(xStackFrame)
-        }
-      }
-      throw NoDataException.INSTANCE
+  @ApiStatus.Internal
+  fun createStackFrames(descriptor: StackFrameDescriptorImpl): List<XStackFrame>? =
+    iterate(null, null, ProgressManager::checkCanceled) { positionManager ->
+      createStackFramesInternal(positionManager, descriptor) { createStackFrames(it) }
     }
+
+  @ApiStatus.Internal
+  fun createStackFramesAsync(descriptor: StackFrameDescriptorImpl): CompletableFuture<List<XStackFrame>?> =
+    invokeCommandAsCompletableFuture {
+      iterate(null, null, { checkCanceled() }) { positionManager ->
+        createStackFramesInternal(positionManager, descriptor) { createStackFramesAsync(it) }
+      }
+    }
+
+  private inline fun createStackFramesInternal(
+    manager: PositionManager,
+    descriptor: StackFrameDescriptorImpl,
+    extractMultipleFrames: PositionManagerWithMultipleStackFrames.(StackFrameDescriptorImpl) -> List<XStackFrame>?,
+  ): List<XStackFrame> {
+    if (manager is PositionManagerWithMultipleStackFrames) {
+      val stackFrames = manager.extractMultipleFrames(descriptor)
+      if (stackFrames != null) {
+        return stackFrames
+      }
+    }
+    else if (manager is PositionManagerEx) {
+      val xStackFrame = manager.createStackFrame(descriptor)
+      if (xStackFrame != null) {
+        return mutableListOf(xStackFrame)
+      }
+    }
+    throw NoDataException.INSTANCE
+  }
 
   override fun evaluateCondition(
     context: EvaluationContext,
@@ -215,9 +232,7 @@ private suspend fun getSourcePositionAsync(positionManager: PositionManager, loc
     return positionManager.getSourcePositionAsync(location)
   }
   try {
-    return blockingContext {
-      ReadAction.nonBlocking<SourcePosition?> { positionManager.getSourcePosition(location) }.executeSynchronously()
-    }
+    return ReadAction.nonBlocking<SourcePosition?> { positionManager.getSourcePosition(location) }.executeSynchronously()
   }
   catch (e: Exception) {
     throw DebuggerUtilsAsync.unwrap(e)

@@ -465,6 +465,11 @@ public class QuickDocProviderTestGenerated extends AbstractQuickDocProviderTest 
         runTest("testData/editor/quickDoc/SuperConstructorWithArgs.kt");
     }
 
+    @TestMetadata("SuspendFunctionInOverride.kt")
+    public void testSuspendFunctionInOverride() throws Exception {
+        runTest("testData/editor/quickDoc/SuspendFunctionInOverride.kt");
+    }
+
     @TestMetadata("Tailrec.kt")
     public void testTailrec() throws Exception {
         runTest("testData/editor/quickDoc/Tailrec.kt");
@@ -498,5 +503,10 @@ public class QuickDocProviderTestGenerated extends AbstractQuickDocProviderTest 
     @TestMetadata("UnresolvedAnnotation.kt")
     public void testUnresolvedAnnotation() throws Exception {
         runTest("testData/editor/quickDoc/UnresolvedAnnotation.kt");
+    }
+
+    @TestMetadata("UnusedVariable.kt")
+    public void testUnusedVariable() throws Exception {
+        runTest("testData/editor/quickDoc/UnusedVariable.kt");
     }
 }

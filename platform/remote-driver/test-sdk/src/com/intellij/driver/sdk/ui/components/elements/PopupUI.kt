@@ -40,21 +40,20 @@ class PopupMenuUiComponent(data: ComponentData) : UiComponent(data) {
     }
   }
 
+  fun selectContains(vararg items: String) {
+    items.forEach { item ->
+      waitForOne(message = "Find item: $item", timeout = 5.seconds,
+                 getter = { menuItems.list() },
+                 checker = { it.getText().contains(item) })
+        .click()
+    }
+  }
+
   fun itemsList() = menuItems.list().map { it.getText() }
 }
 
-open class PopupUiComponent(data: ComponentData) : UiComponent(data) {
-  private val popupComponent by lazy {
-    driver.cast(component, Window::class)
-  }
-
-  fun isFocused() = popupComponent.isFocused()
-
-  fun close() = driver.withContext(OnDispatcher.EDT) {
-    popupComponent.dispose()
-  }
-
-  fun setBounds(bounds: Rectangle) = popupComponent.setBounds(bounds.x, bounds.y, bounds.width, bounds.height)
+open class PopupUiComponent(data: ComponentData) : WindowUiComponent(data) {
+  fun close() = dispose()
 }
 
 @Remote("com.intellij.openapi.actionSystem.impl.ActionMenuItem")

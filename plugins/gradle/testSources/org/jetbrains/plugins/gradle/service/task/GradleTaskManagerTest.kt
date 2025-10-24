@@ -1,6 +1,7 @@
 // Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.plugins.gradle.service.task
 
+import com.intellij.execution.process.ProcessOutputType
 import com.intellij.openapi.application.runWriteAction
 import com.intellij.openapi.externalSystem.model.task.ExternalSystemTaskId
 import com.intellij.openapi.externalSystem.model.task.ExternalSystemTaskNotificationListener
@@ -14,10 +15,10 @@ import com.intellij.testFramework.common.runAll
 import com.intellij.testFramework.fixtures.IdeaProjectTestFixture
 import com.intellij.testFramework.fixtures.IdeaTestFixtureFactory
 import org.gradle.tooling.LongRunningOperation
-import org.gradle.tooling.model.build.BuildEnvironment
 import org.gradle.util.GradleVersion
 import org.jetbrains.plugins.gradle.frameworkSupport.buildscript.GradleBuildScriptBuilder
-import org.jetbrains.plugins.gradle.importing.GradleImportingTestCase.requireJdkHome
+import org.jetbrains.plugins.gradle.importing.GradleImportingTestCase.Companion.requireJdkHome
+import org.jetbrains.plugins.gradle.service.execution.GradleExecutionContext
 import org.jetbrains.plugins.gradle.service.project.GradleExecutionHelperExtension
 import org.jetbrains.plugins.gradle.settings.DistributionType
 import org.jetbrains.plugins.gradle.settings.GradleExecutionSettings
@@ -65,20 +66,20 @@ class GradleTaskManagerTest: UsefulTestCase() {
 
   @Test
   fun `test task manager calls Operation Helper Extension`() {
-    val executed: AtomicReference<Boolean> = AtomicReference(false)
+    val executedSettingsConfiguration = AtomicReference(false)
+    val executedOperationConfiguration = AtomicReference(false)
     val extension = object : GradleExecutionHelperExtension {
-      override fun prepareForExecution(
-        id: ExternalSystemTaskId,
-        operation: LongRunningOperation,
-        settings: GradleExecutionSettings,
-        buildEnvironment: BuildEnvironment?,
-      ) {
-        executed.set(true)
+      override fun configureSettings(settings: GradleExecutionSettings, context: GradleExecutionContext) {
+        executedSettingsConfiguration.set(true)
+      }
+      override fun configureOperation(operation: LongRunningOperation, context: GradleExecutionContext) {
+        executedOperationConfiguration.set(true)
       }
     }
     ExtensionTestUtil.maskExtensions(GradleExecutionHelperExtension.EP_NAME, listOf(extension), testRootDisposable, false)
     runHelpTask(GradleVersion.version("4.8.1"))
-    assertTrue(executed.get())
+    assertTrue("Gradle execution settings configurator should be executed", executedSettingsConfiguration.get())
+    assertTrue("Gradle execution operation configurator should be executed", executedOperationConfiguration.get())
   }
 
   @Test
@@ -162,7 +163,7 @@ class GradleTaskManagerTest: UsefulTestCase() {
 
 class TaskExecutionOutput : ExternalSystemTaskNotificationListener {
   private val storage = mutableListOf<String>()
-  override fun onTaskOutput(id: ExternalSystemTaskId, text: String, stdOut: Boolean) {
+  override fun onTaskOutput(id: ExternalSystemTaskId, text: String, processOutputType: ProcessOutputType) {
     storage.add(text)
   }
 

@@ -380,6 +380,70 @@ public abstract class K2IntroduceFunctionTestGenerated extends AbstractK2Introdu
     }
 
     @RunWith(JUnit3RunnerWithInners.class)
+    @TestMetadata("../../idea/tests/testData/refactoring/extractFunction/contextParameters")
+    public static class ContextParameters extends AbstractK2IntroduceFunctionTest {
+        @java.lang.Override
+        @org.jetbrains.annotations.NotNull
+        public final KotlinPluginMode getPluginMode() {
+            return KotlinPluginMode.K2;
+        }
+
+        private void runTest(String testDataFilePath) throws Exception {
+            KotlinTestUtils.runTest(this::doExtractFunctionTest, this, testDataFilePath);
+        }
+
+        @TestMetadata("base.kt")
+        public void testBase() throws Exception {
+            runTest("../../idea/tests/testData/refactoring/extractFunction/contextParameters/base.kt");
+        }
+
+        @TestMetadata("explicitParameterUsage.kt")
+        public void testExplicitParameterUsage() throws Exception {
+            runTest("../../idea/tests/testData/refactoring/extractFunction/contextParameters/explicitParameterUsage.kt");
+        }
+
+        @TestMetadata("multipleParameters.kt")
+        public void testMultipleParameters() throws Exception {
+            runTest("../../idea/tests/testData/refactoring/extractFunction/contextParameters/multipleParameters.kt");
+        }
+
+        @TestMetadata("multipleParametersOneCall.kt")
+        public void testMultipleParametersOneCall() throws Exception {
+            runTest("../../idea/tests/testData/refactoring/extractFunction/contextParameters/multipleParametersOneCall.kt");
+        }
+
+        @TestMetadata("multipleParametersOnePropertyAccess.kt")
+        public void testMultipleParametersOnePropertyAccess() throws Exception {
+            runTest("../../idea/tests/testData/refactoring/extractFunction/contextParameters/multipleParametersOnePropertyAccess.kt");
+        }
+
+        @TestMetadata("parameterizedContextParameters.kt")
+        public void testParameterizedContextParameters() throws Exception {
+            runTest("../../idea/tests/testData/refactoring/extractFunction/contextParameters/parameterizedContextParameters.kt");
+        }
+
+        @TestMetadata("parameterizedContextParametersOnProperty.kt")
+        public void testParameterizedContextParametersOnProperty() throws Exception {
+            runTest("../../idea/tests/testData/refactoring/extractFunction/contextParameters/parameterizedContextParametersOnProperty.kt");
+        }
+
+        @TestMetadata("typeRelations.kt")
+        public void testTypeRelations() throws Exception {
+            runTest("../../idea/tests/testData/refactoring/extractFunction/contextParameters/typeRelations.kt");
+        }
+
+        @TestMetadata("unnamed.kt")
+        public void testUnnamed() throws Exception {
+            runTest("../../idea/tests/testData/refactoring/extractFunction/contextParameters/unnamed.kt");
+        }
+
+        @TestMetadata("withProvidedContext.kt")
+        public void testWithProvidedContext() throws Exception {
+            runTest("../../idea/tests/testData/refactoring/extractFunction/contextParameters/withProvidedContext.kt");
+        }
+    }
+
+    @RunWith(JUnit3RunnerWithInners.class)
     @TestMetadata("../../idea/tests/testData/refactoring/extractFunction/controlFlow")
     public abstract static class ControlFlow extends AbstractK2IntroduceFunctionTest {
         @RunWith(JUnit3RunnerWithInners.class)
@@ -1904,6 +1968,11 @@ public abstract class K2IntroduceFunctionTestGenerated extends AbstractK2Introdu
                 runTest("../../idea/tests/testData/refactoring/extractFunction/parameters/misc/classObject.kt");
             }
 
+            @TestMetadata("dataClassCopy.kt")
+            public void testDataClassCopy() throws Exception {
+                runTest("../../idea/tests/testData/refactoring/extractFunction/parameters/misc/dataClassCopy.kt");
+            }
+
             @TestMetadata("differentReceivers.kt")
             public void testDifferentReceivers() throws Exception {
                 runTest("../../idea/tests/testData/refactoring/extractFunction/parameters/misc/differentReceivers.kt");
@@ -2057,6 +2126,11 @@ public abstract class K2IntroduceFunctionTestGenerated extends AbstractK2Introdu
             @TestMetadata("smartCastInsideUnqualified.kt")
             public void testSmartCastInsideUnqualified() throws Exception {
                 runTest("../../idea/tests/testData/refactoring/extractFunction/parameters/misc/smartCastInsideUnqualified.kt");
+            }
+
+            @TestMetadata("suspendReceiverType.kt")
+            public void testSuspendReceiverType() throws Exception {
+                runTest("../../idea/tests/testData/refactoring/extractFunction/parameters/misc/suspendReceiverType.kt");
             }
 
             @TestMetadata("thisInObject.kt")

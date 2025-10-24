@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.internal.statistic.utils;
 
 import com.intellij.ide.ConsentOptionsProvider;
@@ -6,10 +6,7 @@ import com.intellij.internal.statistic.eventLog.EventLogInternalApplicationInfo;
 import com.intellij.internal.statistic.eventLog.EventLogInternalSendConfig;
 import com.intellij.internal.statistic.eventLog.ExternalEventLogSettings;
 import com.intellij.internal.statistic.eventLog.StatisticsEventLogProviderUtil;
-import com.intellij.internal.statistic.eventLog.connection.EventLogSendListener;
-import com.intellij.internal.statistic.eventLog.connection.EventLogStatisticsService;
-import com.intellij.internal.statistic.eventLog.connection.EventLogUploadSettingsService;
-import com.intellij.internal.statistic.eventLog.connection.StatisticsService;
+import com.intellij.internal.statistic.eventLog.connection.*;
 import com.intellij.internal.statistic.persistence.UsageStatisticsPersistenceComponent;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.util.NlsContexts;
@@ -18,6 +15,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.List;
+import java.util.function.BooleanSupplier;
 
 import static com.intellij.internal.statistic.eventLog.StatisticsEventLogProviderUtil.getEventLogProvider;
 
@@ -32,6 +30,10 @@ public final class StatisticsUploadAssistant {
   private StatisticsUploadAssistant() {}
 
   public static boolean isSendAllowed() {
+    return isSendAllowed(StatisticsUploadAssistant::isAllowedByUserConsent);
+  }
+
+  public static boolean isSendAllowed(@NotNull BooleanSupplier isAllowedByUserConsent) {
     if (isSuppressStatisticsReport() || isLocalStatisticsWithoutReport()) {
       return false;
     }
@@ -40,16 +42,20 @@ public final class StatisticsUploadAssistant {
       return isHeadlessStatisticsEnabled();
     }
 
-    return isAllowedByUserConsent();
+    return isAllowedByUserConsent.getAsBoolean();
   }
 
   public static boolean isCollectAllowed() {
+    return isCollectAllowed(StatisticsUploadAssistant::isAllowedByUserConsent);
+  }
+
+  public static boolean isCollectAllowed(@NotNull BooleanSupplier isAllowedByUserConsent) {
     if (ApplicationManager.getApplication().isHeadlessEnvironment()) {
       return isHeadlessStatisticsEnabled();
     }
 
     if (!isDisableCollectStatistics() && !isCollectionForceDisabled()) {
-      if (isAllowedByUserConsent() || isLocalStatisticsWithoutReport()) {
+      if (isAllowedByUserConsent.getAsBoolean() || isLocalStatisticsWithoutReport()) {
         return true;
       }
     }
@@ -119,8 +125,8 @@ public final class StatisticsUploadAssistant {
     );
   }
 
-  public static EventLogUploadSettingsService createExternalSettings(@NotNull String recorderId, boolean isTestConfig, boolean isTestSendEndpoint, long cacheTimeoutMs) {
-    return new EventLogUploadSettingsService(recorderId, new EventLogInternalApplicationInfo(isTestConfig, isTestSendEndpoint), cacheTimeoutMs);
+  public static EventLogSettingsClient createExternalSettings(@NotNull String recorderId, boolean isTestConfig, boolean isTestSendEndpoint, long cacheTimeoutMs) {
+    return new EventLogUploadSettingsClient(recorderId, new EventLogInternalApplicationInfo(isTestConfig, isTestSendEndpoint), cacheTimeoutMs);
   }
 
   public static boolean isTeamcityDetected() {

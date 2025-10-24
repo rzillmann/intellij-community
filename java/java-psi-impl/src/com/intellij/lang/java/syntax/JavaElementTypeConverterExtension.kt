@@ -13,9 +13,7 @@ import com.intellij.psi.JavaDocTokenType
 import com.intellij.psi.JavaTokenType
 import com.intellij.psi.impl.source.tree.JavaDocElementType
 import com.intellij.psi.impl.source.tree.JavaElementType
-import org.jetbrains.annotations.VisibleForTesting
 
-@VisibleForTesting
 class JavaElementTypeConverterExtension : ElementTypeConverterFactory {
   override fun getElementTypeConverter(): ElementTypeConverter = javaConverter
 
@@ -276,6 +274,8 @@ class JavaElementTypeConverterExtension : ElementTypeConverterFactory {
     JavaDocSyntaxElementType.DOC_TAG to JavaDocElementType.DOC_TAG,
     JavaDocSyntaxElementType.DOC_INLINE_TAG to JavaDocElementType.DOC_INLINE_TAG,
     JavaDocSyntaxElementType.DOC_METHOD_OR_FIELD_REF to JavaDocElementType.DOC_METHOD_OR_FIELD_REF,
+    JavaDocSyntaxElementType.DOC_FRAGMENT_REF to JavaDocElementType.DOC_FRAGMENT_REF,
+    JavaDocSyntaxElementType.DOC_FRAGMENT_NAME to JavaDocElementType.DOC_FRAGMENT_NAME,
     JavaDocSyntaxElementType.DOC_PARAMETER_REF to JavaDocElementType.DOC_PARAMETER_REF,
     JavaDocSyntaxElementType.DOC_TAG_VALUE_ELEMENT to JavaDocElementType.DOC_TAG_VALUE_ELEMENT,
     JavaDocSyntaxElementType.DOC_SNIPPET_TAG to JavaDocElementType.DOC_SNIPPET_TAG,
@@ -289,6 +289,7 @@ class JavaElementTypeConverterExtension : ElementTypeConverterFactory {
     JavaDocSyntaxElementType.DOC_COMMENT to JavaDocElementType.DOC_COMMENT,
     JavaDocSyntaxElementType.DOC_MARKDOWN_CODE_BLOCK to JavaDocElementType.DOC_MARKDOWN_CODE_BLOCK,
     JavaDocSyntaxElementType.DOC_MARKDOWN_REFERENCE_LINK to JavaDocElementType.DOC_MARKDOWN_REFERENCE_LINK,
+    JavaDocSyntaxElementType.DOC_MARKDOWN_REFERENCE_LABEL to JavaDocElementType.DOC_MARKDOWN_REFERENCE_LABEL,
 
     JavaDocSyntaxTokenType.DOC_COMMENT_START to JavaDocTokenType.DOC_COMMENT_START,
     JavaDocSyntaxTokenType.DOC_COMMENT_END to JavaDocTokenType.DOC_COMMENT_END,
@@ -309,14 +310,16 @@ class JavaElementTypeConverterExtension : ElementTypeConverterFactory {
     JavaDocSyntaxTokenType.DOC_TAG_ATTRIBUTE_VALUE to JavaDocTokenType.DOC_TAG_ATTRIBUTE_VALUE,
     JavaDocSyntaxTokenType.DOC_TAG_VALUE_LT to JavaDocTokenType.DOC_TAG_VALUE_LT,
     JavaDocSyntaxTokenType.DOC_TAG_VALUE_GT to JavaDocTokenType.DOC_TAG_VALUE_GT,
-    JavaDocSyntaxTokenType.DOC_TAG_VALUE_DIV_TOKEN to JavaDocTokenType.DOC_TAG_VALUE_DIV_TOKEN,
+    JavaDocSyntaxTokenType.DOC_TAG_VALUE_SLASH to JavaDocTokenType.DOC_TAG_VALUE_SLASH,
     JavaDocSyntaxTokenType.DOC_TAG_VALUE_SHARP_TOKEN to JavaDocTokenType.DOC_TAG_VALUE_SHARP_TOKEN,
+    JavaDocSyntaxTokenType.DOC_TAG_VALUE_DOUBLE_SHARP_TOKEN to JavaDocTokenType.DOC_TAG_VALUE_DOUBLE_SHARP_TOKEN,
     JavaDocSyntaxTokenType.DOC_CODE_FENCE to JavaDocTokenType.DOC_CODE_FENCE,
     JavaDocSyntaxTokenType.DOC_RBRACKET to JavaDocTokenType.DOC_RBRACKET,
     JavaDocSyntaxTokenType.DOC_LBRACKET to JavaDocTokenType.DOC_LBRACKET,
     JavaDocSyntaxTokenType.DOC_LPAREN to JavaDocTokenType.DOC_LPAREN,
     JavaDocSyntaxTokenType.DOC_RPAREN to JavaDocTokenType.DOC_RPAREN,
     JavaDocSyntaxTokenType.DOC_SHARP to JavaDocTokenType.DOC_SHARP,
+    JavaDocSyntaxTokenType.DOC_DOUBLE_SHARP to JavaDocTokenType.DOC_DOUBLE_SHARP,
     JavaDocSyntaxTokenType.DOC_INLINE_CODE_FENCE to JavaDocTokenType.DOC_INLINE_CODE_FENCE,
     JavaDocSyntaxTokenType.DOC_COMMA to JavaDocTokenType.DOC_COMMA,
     JavaDocSyntaxTokenType.DOC_COMMENT_BAD_CHARACTER to JavaDocTokenType.DOC_COMMENT_BAD_CHARACTER,

@@ -1,4 +1,4 @@
-// Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.openapi.actionSystem.impl
 
 import com.intellij.featureStatistics.FeatureUsageTracker
@@ -18,14 +18,13 @@ import com.intellij.openapi.keymap.KeymapUtil
 import com.intellij.openapi.util.IconLoader.getDarkIcon
 import com.intellij.openapi.util.IconLoader.getDisabledIcon
 import com.intellij.openapi.util.NlsSafe
-import com.intellij.openapi.util.SystemInfo
 import com.intellij.openapi.wm.IdeFocusManager
 import com.intellij.ui.components.JBCheckBoxMenuItem
 import com.intellij.ui.icons.getMenuBarIcon
+import com.intellij.ui.mac.MacMenuSettings
 import com.intellij.ui.mac.screenmenu.Menu
 import com.intellij.ui.mac.screenmenu.MenuItem
 import com.intellij.ui.plaf.beg.BegMenuItemUI
-import com.intellij.ui.popup.KeepingPopupOpenAction
 import com.intellij.util.ui.EmptyIcon
 import com.intellij.util.ui.LafIconLookup.getDisabledIcon
 import com.intellij.util.ui.LafIconLookup.getIcon
@@ -66,7 +65,7 @@ class ActionMenuItem internal constructor(action: AnAction,
   var keepPopupOnPerform: KeepPopupOnPerform = KeepPopupOnPerform.Never
     private set
   val secondaryIcon: Icon?
-    get() = if (UISettings.getInstance().showIconsInMenus) presentation.getClientProperty(ActionMenu.SECONDARY_ICON) else null
+    get() = if (UISettings.getInstance().showIconsInMenus) presentation.getClientProperty(ActionUtil.SECONDARY_ICON) else null
 
   init {
     addActionListener(ActionListener { e -> performAction(e.modifiers) })
@@ -126,14 +125,12 @@ class ActionMenuItem internal constructor(action: AnAction,
     displayedMnemonicIndex = presentation.getDisplayedMnemonicIndex()
     updateIcon(presentation)
     description = presentation.description
-    keepPopupOnPerform =
-      if (actionRef.getAction() is KeepingPopupOpenAction) KeepPopupOnPerform.Always
-      else presentation.keepPopupOnPerform
+    keepPopupOnPerform = presentation.keepPopupOnPerform
     if (screenMenuItemPeer != null) {
       screenMenuItemPeer.setLabel(text, accelerator)
       screenMenuItemPeer.setEnabled(isEnabled)
     }
-    val shortcutSuffix = presentation.getClientProperty(ActionMenu.KEYBOARD_SHORTCUT_SUFFIX)
+    val shortcutSuffix = presentation.getClientProperty(ActionUtil.KEYBOARD_SHORTCUT_SUFFIX)
     val shortcut = defaultFirstShortcutText
     firstShortcutTextFromPresentation = if (shortcut.isNotEmpty() && !shortcutSuffix.isNullOrEmpty()) {
       shortcut + shortcutSuffix
@@ -194,11 +191,11 @@ class ActionMenuItem internal constructor(action: AnAction,
   private fun updateIcon(presentation: Presentation) {
     isToggled = isToggleable && Toggleable.isSelected(presentation)
     if (isToggleable && (presentation.icon == null || insideCheckedGroup || !UISettings.getInstance().showIconsInMenus)) {
-      if (ActionPlaces.MAIN_MENU == place && SystemInfo.isMacSystemMenu) {
+      if (ActionPlaces.MAIN_MENU == place && MacMenuSettings.isSystemMenu) {
         state = isToggled
         screenMenuItemPeer?.setState(isToggled)
       }
-      val adjustedIcon = adjustIcon(presentation.icon)
+      val adjustedIcon = adjustIcon(presentation.icon, presentation)
       if (adjustedIcon != null) {
         setIcon(adjustedIcon)
       }
@@ -224,18 +221,18 @@ class ActionMenuItem internal constructor(action: AnAction,
       if (selected == null) {
         selected = icon
       }
-      setIcon(adjustIcon(if (presentation.isEnabled) icon else disabled))
-      setSelectedIcon(adjustIcon(selected))
-      setDisabledIcon(adjustIcon(disabled))
+      setIcon(adjustIcon(if (presentation.isEnabled) icon else disabled, presentation))
+      setSelectedIcon(adjustIcon(selected, presentation))
+      setDisabledIcon(adjustIcon(disabled, presentation))
     }
   }
 
-  private fun adjustIcon(icon: Icon?): Icon? {
+  private fun adjustIcon(icon: Icon?, presentation: Presentation): Icon? {
     val isMainMenu = ActionPlaces.MAIN_MENU == place
     return when {
-      isMainMenu && isShowNoIcons(actionRef.getAction()) -> null
+      isMainMenu && isShowNoIcons(actionRef.getAction(), presentation) -> null
       !isAligned || !isAlignedInGroup -> return icon
-      isMainMenu && icon == null && SystemInfo.isMacSystemMenu -> EMPTY_MENU_ACTION_ICON
+      isMainMenu && icon == null && MacMenuSettings.isSystemMenu -> EMPTY_MENU_ACTION_ICON
       else -> icon
     }
   }
@@ -243,7 +240,7 @@ class ActionMenuItem internal constructor(action: AnAction,
   override fun setIcon(icon: Icon?) {
     var effectiveIcon: Icon? = icon
     if (effectiveIcon != null) {
-      if (SystemInfo.isMacSystemMenu && ActionPlaces.MAIN_MENU == place) {
+      if (MacMenuSettings.isSystemMenu && ActionPlaces.MAIN_MENU == place) {
         // JDK can't correctly paint our HiDPI icons at the system menu bar
         effectiveIcon = getMenuBarIcon(effectiveIcon, useDarkIcons)
       }

@@ -13,6 +13,7 @@ import com.intellij.debugger.engine.evaluation.EvaluationContext
 import com.intellij.debugger.impl.DebuggerUtilsAsync
 import com.intellij.debugger.impl.DebuggerUtilsEx
 import com.intellij.debugger.impl.DexDebugFacility
+import com.intellij.debugger.impl.wrapIncompatibleThreadStateException
 import com.intellij.debugger.jdi.StackFrameProxyImpl
 import com.intellij.debugger.jdi.VirtualMachineProxyImpl
 import com.intellij.debugger.requests.ClassPrepareRequestor
@@ -73,6 +74,7 @@ import org.jetbrains.kotlin.idea.debugger.core.*
 import org.jetbrains.kotlin.idea.debugger.core.DebuggerUtils
 import org.jetbrains.kotlin.idea.debugger.core.DebuggerUtils.getBorders
 import org.jetbrains.kotlin.idea.debugger.core.DebuggerUtils.isGeneratedIrBackendLambdaMethodName
+import org.jetbrains.kotlin.idea.debugger.core.DebuggerUtils.isGeneratedNewIrBackendLambdaMethodName
 import org.jetbrains.kotlin.idea.debugger.core.breakpoints.*
 import org.jetbrains.kotlin.idea.debugger.core.stackFrame.InlineStackTraceCalculator
 import org.jetbrains.kotlin.idea.debugger.core.stackFrame.KotlinStackFrame
@@ -104,7 +106,7 @@ class KotlinPositionManager(private val debugProcess: DebugProcess) : MultiReque
         return ThreeState.UNSURE
     }
 
-    override fun createStackFrames(descriptor: StackFrameDescriptorImpl): List<XStackFrame>? {
+    override suspend fun createStackFramesAsync(descriptor: StackFrameDescriptorImpl): List<XStackFrame>? {
         DebuggerManagerThreadImpl.assertIsManagerThread()
         if (descriptor.location?.isInKotlinSources() != true) {
             return null
@@ -225,10 +227,10 @@ class KotlinPositionManager(private val debugProcess: DebugProcess) : MultiReque
 
         // Prefer elements that are inside body range
         val bodyRange = lambda.bodyExpression!!.textRange
-        elementsOnLine.firstOrNull {it.startOffset in bodyRange } ?.let { return it }
+        elementsOnLine.firstOrNull { it.startOffset in bodyRange }?.let { return it }
 
         // Prefer KtElements
-        elementsOnLine.firstOrNull { it is KtElement } ?.let { return it }
+        elementsOnLine.firstOrNull { it is KtElement }?.let { return it }
 
         return elementsOnLine.firstOrNull()
     }
@@ -239,7 +241,7 @@ class KotlinPositionManager(private val debugProcess: DebugProcess) : MultiReque
             .safeAllLineLocations()
             .filter {
                 it.safeSourceName() == sourceFileName &&
-                it.lineNumber() == lineNumber()
+                        it.lineNumber() == lineNumber()
             }
 
         //  The `finally {}` block code is placed in the class file twice.
@@ -293,11 +295,13 @@ class KotlinPositionManager(private val debugProcess: DebugProcess) : MultiReque
 
     // Returns a property or a constructor if debugger stops at class declaration
     private suspend fun getElementForDeclarationLine(location: Location, file: KtFile, lineNumber: Int): KtElement? {
-        val contextElement = readAction {
+        val (locationElement, contextElement) = readAction {
             val lineStartOffset = file.getLineStartOffset(lineNumber) ?: return@readAction null
             val elementAt = file.findElementAt(lineStartOffset)
-            CodeFragmentContextTuner.getInstance().tuneContextElement(elementAt)
+            elementAt to CodeFragmentContextTuner.getInstance().tuneContextElement(elementAt)
         } ?: return null
+
+        if (locationElement == null || contextElement == null) return null
 
         if (contextElement !is KtClass) return null
         val methodName = location.method().name()
@@ -309,7 +313,17 @@ class KotlinPositionManager(private val debugProcess: DebugProcess) : MultiReque
                     valueParameters.find { it.hasValOrVar() && it.name != null && JvmAbi.getterName(it.name!!) == methodName }
                 }
 
-                methodName == "<init>" -> contextElement.primaryConstructor
+                methodName == "<init>" -> {
+                    val locationParent = locationElement.parent
+                    if (locationParent is KtParameter && locationElement == locationParent.valOrVarKeyword) {
+                        // if location points to the val parameter from the primary constructor,
+                        // use this val parameter as a declaration in debugger
+                        locationParent
+                    } else {
+                        contextElement.primaryConstructor
+                    }
+                }
+
                 else -> null
             }
         }
@@ -438,9 +452,9 @@ class KotlinPositionManager(private val debugProcess: DebugProcess) : MultiReque
 
         val lambdas = location.declaringType().methods()
             .filter {
-              it.name().isGeneratedIrBackendLambdaMethodName() &&
-              !it.isGeneratedErasedLambdaMethod() &&
-              DebuggerUtilsEx.locationsOfLine(it, lineNumber + 1).isNotEmpty()
+                it.name().isGeneratedIrBackendLambdaMethodName() &&
+                        !it.isGeneratedErasedLambdaMethod() &&
+                        DebuggerUtilsEx.locationsOfLine(it, lineNumber + 1).isNotEmpty()
             }
             // Kotlin indy lambdas can come in wrong order, sort by order and hierarchy
             .sortedBy { IrLambdaDescriptor(it.name()) }
@@ -475,6 +489,7 @@ class KotlinPositionManager(private val debugProcess: DebugProcess) : MultiReque
                         ApplicabilityResult.UNKNOWN
                     }
                 }
+
                 else -> ApplicabilityResult.UNKNOWN
             }
         } || hasImplicitReturnOnLine(this, lineNumber)
@@ -604,18 +619,13 @@ class KotlinPositionManager(private val debugProcess: DebugProcess) : MultiReque
     }
 
     @RequiresReadLockAbsence
-    private fun findTargetClasses(candidates: List<ReferenceType>, sourcePosition: SourcePosition): List<ReferenceType> {
-        try {
+    private fun findTargetClasses(candidates: List<ReferenceType>, sourcePosition: SourcePosition): List<ReferenceType> =
+        wrapIncompatibleThreadStateException {
             val matchingCandidates = candidates
                 .flatMap { referenceType -> debugProcess.findTargetClasses(referenceType, sourcePosition.line) }
 
-            return matchingCandidates.ifEmpty { candidates }
-        } catch (e: IncompatibleThreadStateException) {
-            return emptyList()
-        } catch (e: VMDisconnectedException) {
-            return emptyList()
-        }
-    }
+            matchingCandidates.ifEmpty { candidates }
+        } ?: emptyList()
 
     override fun locationsOfLine(type: ReferenceType, position: SourcePosition): List<Location> {
         if (position.file !is KtFile) {
@@ -698,8 +708,8 @@ class KotlinPositionManager(private val debugProcess: DebugProcess) : MultiReque
     ): List<PrepareRequest> {
         val kotlinRequests = getKotlinClassPrepareRequests(requestor, position)
         return if (isInsideProjectWithCompose) {
-            val singletonRequestPattern = getClassPrepareRequestPatternForComposableSingletons(file)
-            kotlinRequests + PrepareRequest(requestor, singletonRequestPattern)
+            val composableSingletonPatterns = getClassPrepareRequestPatternsForComposableSingletons(file)
+            kotlinRequests + composableSingletonPatterns.map { PrepareRequest(requestor, it) }
         } else {
             kotlinRequests
         }
@@ -928,8 +938,19 @@ private class IrLambdaDescriptor(name: String) : Comparable<IrLambdaDescriptor> 
 
     init {
         require(name.isGeneratedIrBackendLambdaMethodName())
-        val parts = name.split("\\\$lambda[$-]".toRegex())
-        lambdaId = if (parts.isEmpty()) emptyList() else parts.drop(1).mapNotNull { it.toIntOrNull() }
+        /**
+         * Before Kotlin 2.2.20 generated lambda names have a repeating 'lambda' prefix, e.g.:
+         * foo$lambda$0$lambda$1$lambda$2
+         *
+         * From Kotlin 2.2.20+ the repetition of 'lambda' prefix is removed, e.g.:
+         * foo$lambda$0$1$2
+         */
+        val parts = if (name.isGeneratedNewIrBackendLambdaMethodName()) {
+            name.substringAfter("\$lambda").split("[$-]".toRegex())
+        } else {
+            name.split("\\\$lambda[$-]".toRegex())
+        }
+        lambdaId = parts.drop(1).mapNotNull { it.toIntOrNull() }
     }
 
     override fun compareTo(other: IrLambdaDescriptor): Int {

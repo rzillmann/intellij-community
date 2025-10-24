@@ -19,6 +19,8 @@ import com.intellij.testFramework.PsiTestUtil
 import com.intellij.util.io.ZipUtil
 import org.jetbrains.jps.model.java.JavaResourceRootType
 import org.jetbrains.kotlin.idea.base.test.InTextDirectivesUtils
+import org.jetbrains.kotlin.idea.core.script.k1.ScriptTemplatesFromDependenciesProvider
+import org.jetbrains.kotlin.idea.core.script.shared.definition.ScriptDefinitionMarkerFileType
 import org.jetbrains.kotlin.idea.test.*
 import org.jetbrains.kotlin.test.util.jarRoot
 import org.jetbrains.kotlin.test.util.projectLibrary

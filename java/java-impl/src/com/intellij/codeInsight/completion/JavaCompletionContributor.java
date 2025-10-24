@@ -839,10 +839,12 @@ public final class JavaCompletionContributor extends CompletionContributor imple
     PsiFile originalFile = parameters.getOriginalFile();
 
     boolean first = parameters.getInvocationCount() <= 1;
+    boolean instantiableOnly = JavaSmartCompletionContributor.AFTER_NEW.accepts(position);
     JavaCompletionProcessor.Options options =
       JavaCompletionProcessor.Options.DEFAULT_OPTIONS
         .withCheckAccess(first)
         .withFilterStaticAfterInstance(first)
+        .withInstantiableOnly(instantiableOnly)
         .withShowInstanceInStaticContext(!first && !smart);
 
     for (LookupElement element : JavaCompletionUtil.processJavaReference(position,
@@ -1017,7 +1019,7 @@ public final class JavaCompletionContributor extends CompletionContributor imple
 
   static boolean shouldInsertSemicolon(PsiElement position) {
     return position.getParent() instanceof PsiMethodReferenceExpression &&
-           JavaCompletionUtil.insertSemicolon(position.getParent().getParent());
+           JavaFrontendCompletionUtil.insertSemicolon(position.getParent().getParent());
   }
 
   private static @Unmodifiable List<LookupElement> processLabelReference(PsiLabelReference reference) {
@@ -1212,7 +1214,7 @@ public final class JavaCompletionContributor extends CompletionContributor imple
   }
 
   @Override
-  public @NlsContexts.HintText String handleEmptyLookup(@NotNull CompletionParameters parameters, Editor editor) {
+  public @NlsContexts.HintText String handleEmptyLookup(@NotNull CompletionParameters parameters, @NotNull Editor editor) {
     if (!(parameters.getOriginalFile() instanceof PsiJavaFile)) return null;
 
     String ad = advertise(parameters);

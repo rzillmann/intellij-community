@@ -20,13 +20,19 @@ import com.intellij.openapi.editor.ex.EditorEx
 import com.intellij.openapi.extensions.ExtensionPointName
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.rd.util.userData
+import com.intellij.openapi.util.Key
+import com.intellij.openapi.util.UserDataHolderEx
+import com.intellij.openapi.util.getOrMaybeCreateUserData
+import com.intellij.openapi.vfs.FileIdAdapter
 import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.openapi.vfs.VirtualFileWithId
 import kotlinx.coroutines.*
 import org.jetbrains.annotations.TestOnly
 import java.nio.file.Path
 import java.util.concurrent.CancellationException
 import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 
 private val LOG: Logger = logger<Necropolis>()
 
@@ -35,6 +41,39 @@ private val NECROMANCER_EP = ExtensionPointName<NecromancerAwaker<Zombie>>("com.
 internal fun necropolisPath(): Path {
   return PathManager.getSystemDir().resolve("editor")
 }
+
+// https://liquipedia.net/warcraft/Blight
+class BlightMark(val blightHolder: EditorEx) {
+
+  private val blightLock = ReentrantLock()
+  private val blightAwaiters = mutableListOf<(EditorEx) -> Unit>()
+
+  private var isBlighted: Boolean = false
+
+  fun blight() {
+    blightLock.withLock {
+      if (!isBlighted) {
+        isBlighted = true
+        blightAwaiters.forEach { it(blightHolder) }
+        blightAwaiters.clear()
+      }
+    }
+  }
+
+  fun onceBlightedOrNow(action: (EditorEx) -> Unit) {
+    blightLock.withLock {
+      if (isBlighted) {
+        action(blightHolder)
+      }
+      else {
+        blightAwaiters.add(action)
+      }
+    }
+  }
+}
+
+val BLIGHT_MARK_KEY: Key<BlightMark?> = Key.create<BlightMark>("necropolis.blight.mark")
+var EditorEx.blightMark: BlightMark? by userData(BLIGHT_MARK_KEY)
 
 /**
  * Service managing all necromancers.
@@ -69,8 +108,8 @@ class Necropolis(private val project: Project, private val coroutineScope: Corou
     highlighterReady: suspend () -> Unit,
   ) {
     require(project == this.project)
-    if (!project.isDisposed && !project.isDefault && file is VirtualFileWithId) {
-      val fileId = file.id
+    if (!project.isDisposed && !project.isDefault) {
+      val fileId = FileIdAdapter.getInstance().getId(file) ?: return
       val (modStamp, documentContent) = readActionBlocking {
         // get consistent modStamp with docContent under RA
         document.modificationStamp to document.immutableCharSequence
@@ -100,15 +139,22 @@ class Necropolis(private val project: Project, private val coroutineScope: Corou
   }
 
   private fun subscribeEditorClosed(necromancers: List<Necromancer<Zombie>>) {
+    val fileIdAdapter = FileIdAdapter.getInstance()
     EditorFactory.getInstance().addEditorFactoryListener(
       object : EditorFactoryListener {
         override fun editorReleased(event: EditorFactoryEvent) {
-          val recipe = createTurningRecipe(event)
+          val recipe = createTurningRecipe(event, fileIdAdapter)
           if (recipe != null) {
             //maybe readaction
             WriteIntentReadAction.run {
               turnIntoZombiesAndBury(necromancers, recipe)
             }
+
+            val editorEx = event.editor as? EditorEx ?: return
+            val editorAsUserDataHolderEx = editorEx as? UserDataHolderEx ?: return
+            val blightMark = editorAsUserDataHolderEx.getOrMaybeCreateUserData(BLIGHT_MARK_KEY) { BlightMark(editorEx) } ?: return
+
+            blightMark.blight()
           }
         }
       },
@@ -116,14 +162,13 @@ class Necropolis(private val project: Project, private val coroutineScope: Corou
     )
   }
 
-  private fun createTurningRecipe(event: EditorFactoryEvent): TurningRecipe? {
+  private fun createTurningRecipe(event: EditorFactoryEvent, fileIdAdapter: FileIdAdapter): TurningRecipe? {
     val editor = event.editor
     if (editor.editorKind == EditorKind.MAIN_EDITOR && editor.project == project) {
       val document = editor.document
-      val file = FileDocumentManager.getInstance().getFile(document)
-      if (file is VirtualFileWithId) {
-        return TurningRecipe(project, file.id, file, document, document.modificationStamp, editor)
-      }
+      val file = FileDocumentManager.getInstance().getFile(document) ?: return null
+      val fileId = fileIdAdapter.getId(file) ?: return null
+      return TurningRecipe(project, fileId, file, document, document.modificationStamp, editor)
     }
     return null
   }

@@ -30,7 +30,10 @@ import com.intellij.usageView.UsageViewBundle;
 import com.intellij.usages.impl.UsageViewStatisticsCollector;
 import com.intellij.usages.impl.rules.UsageType;
 import com.intellij.usages.rules.*;
-import com.intellij.util.*;
+import com.intellij.util.ArrayUtil;
+import com.intellij.util.IncorrectOperationException;
+import com.intellij.util.NotNullFunction;
+import com.intellij.util.ObjectUtils;
 import com.intellij.util.concurrency.ThreadingAssertions;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
@@ -46,7 +49,7 @@ import java.util.concurrent.CompletableFuture;
 public class UsageInfo2UsageAdapter implements UsageInModule, UsageInfoAdapter,
                                                UsageInLibrary, UsageInFile, PsiElementUsage,
                                                MergeableUsage,
-                                               RenameableUsage, UiCompatibleDataProvider, UsagePresentation {
+                                               RenameableUsage, UiCompatibleDataProvider, UsagePresentation, UsageDocumentProcessor {
   public static final NotNullFunction<UsageInfo, Usage> CONVERTER = UsageInfo2UsageAdapter::new;
   private static final Comparator<UsageInfo> BY_NAVIGATION_OFFSET = Comparator.comparingInt(UsageInfo::getNavigationOffset);
   @SuppressWarnings("StaticNonFinalField")
@@ -62,20 +65,8 @@ public class UsageInfo2UsageAdapter implements UsageInModule, UsageInfoAdapter,
   private final @Nullable SmartPsiFileRange myNavigationRange;
   private volatile UsageType myUsageType;
 
-  private static class ComputedData {
-    public final int offset;
-    public final int lineNumber;
-    public final VirtualFile virtualFile;
-    public final @Nullable SmartPsiFileRange navigationRange;
-    public final long modificationStamp;
-
-    private ComputedData(int offset, int lineNumber, VirtualFile virtualFile, @Nullable SmartPsiFileRange navigationRange, long stamp) {
-      this.offset = offset;
-      this.lineNumber = lineNumber;
-      this.virtualFile = virtualFile;
-      this.navigationRange = navigationRange;
-      this.modificationStamp = stamp;
-    }
+  private record ComputedData(int offset, int lineNumber, VirtualFile virtualFile, @Nullable SmartPsiFileRange navigationRange,
+                              long modificationStamp) {
   }
 
   private static @Nullable SmartPsiFileRange possiblySmart(@Nullable PsiFile psiFile, @Nullable Segment segment) {
@@ -253,17 +244,7 @@ public class UsageInfo2UsageAdapter implements UsageInModule, UsageInfoAdapter,
     return getUsageInfo().getSegment();
   }
 
-  // must iterate in start offset order
-  public boolean processRangeMarkers(@NotNull Processor<? super Segment> processor) {
-    for (UsageInfo usageInfo : getMergedInfos()) {
-      Segment segment = usageInfo.getSegment();
-      if (segment != null && !processor.process(segment)) {
-        return false;
-      }
-    }
-    return true;
-  }
-
+  @Override
   public Document getDocument() {
     PsiFile file = getUsageInfo().getFile();
     if (file == null) return null;

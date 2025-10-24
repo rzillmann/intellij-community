@@ -4,7 +4,6 @@ package com.intellij.projectImport
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.extensions.ExtensionPointName
 import com.intellij.openapi.module.Module
-import com.intellij.openapi.progress.blockingContext
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.NlsContexts
 import kotlinx.coroutines.Dispatchers
@@ -18,11 +17,12 @@ open class ProjectAttachProcessor {
     val EP_NAME: ExtensionPointName<ProjectAttachProcessor> = ExtensionPointName("com.intellij.projectAttachProcessor")
 
     @JvmStatic
-    fun canAttachToProject(): Boolean = getProcessor(null, null, null) != null
+    fun canAttachToProject(): Boolean = getProcessor(project = null, path = null, newProject = null) != null
 
     @JvmStatic
-    fun getProcessor(project: Project?, path: Path?, newProject: Project?) =
-      EP_NAME.extensionList.firstOrNull { it.isEnabled(project, path, newProject) }
+    fun getProcessor(project: Project?, path: Path?, newProject: Project?): ProjectAttachProcessor? {
+      return EP_NAME.extensionList.firstOrNull { it.isEnabled(project, path, newProject) }
+    }
   }
 
   /**
@@ -38,11 +38,14 @@ open class ProjectAttachProcessor {
   }
 
   @Experimental
-  open suspend fun attachToProjectAsync(project: Project, projectDir: Path, callback: ProjectOpenedCallback?): Boolean {
+  open suspend fun attachToProjectAsync(
+    project: Project,
+    projectDir: Path,
+    callback: ProjectOpenedCallback?,
+    beforeOpen: (suspend (Project) -> Boolean)? = null,
+  ): Boolean {
     return withContext(Dispatchers.EDT) {
-      blockingContext {
-        attachToProject(project = project, projectDir = projectDir, callback = callback)
-      }
+      attachToProject(project = project, projectDir = projectDir, callback = callback)
     }
   }
 

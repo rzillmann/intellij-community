@@ -62,6 +62,9 @@ internal fun Module.getComposeResourcesDir(): VirtualFile? {
 internal fun Project.getAllComposeResourcesDirs(): List<ComposeResourcesDir> =
   service<ComposeResourcesManager>().composeResourcesByModulePath.flatMap { it.value.directoriesBySourceSetName.values }
 
+/** Return ComposeResourceDir associated with a given resource @param [path] or null if none is found */
+internal fun Project.findComposeResourcesDirFor(path: Path): ComposeResourcesDir? = service<ComposeResourcesManager>().findComposeResourcesDirFor(path)
+
 
 /** Return a map of all the Compose resources directories present in the given [Module] */
 internal val Module.composeResourcesDirsByName: Map<String, ComposeResourcesDir>
@@ -71,6 +74,11 @@ internal val Module.composeResourcesDirsByName: Map<String, ComposeResourcesDir>
 
 internal data class ComposeResourcesDir(val moduleName: String, val sourceSetName: String, val directoryPath: Path, val isCustom: Boolean = false)
 
-internal data class ComposeResources(val moduleName: String, val directoriesBySourceSetName: Map<String, ComposeResourcesDir>)
+internal data class ComposeResources(
+  val moduleName: String,
+  val directoriesBySourceSetName: Map<String, ComposeResourcesDir>,
+  val isPublicResClass: Boolean,
+  val nameOfResClass: String,
+)
 
 private val log by lazy { fileLogger() }

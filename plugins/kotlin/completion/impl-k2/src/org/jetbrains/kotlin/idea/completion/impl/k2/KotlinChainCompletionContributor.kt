@@ -6,7 +6,9 @@ import com.intellij.openapi.extensions.ExtensionNotApplicableException
 import com.intellij.openapi.util.registry.RegistryManager
 import com.intellij.patterns.PlatformPatterns.psiElement
 import com.intellij.util.ProcessingContext
+import org.jetbrains.kotlin.analysis.api.analyze
 import org.jetbrains.kotlin.idea.completion.KotlinFirCompletionParameters
+import org.jetbrains.kotlin.idea.references.mainReference
 import org.jetbrains.kotlin.idea.util.positionContext.KotlinExpressionNameReferencePositionContext
 import org.jetbrains.kotlin.lexer.KtTokens
 import org.jetbrains.kotlin.psi.KtDotQualifiedExpression
@@ -43,18 +45,27 @@ internal class KotlinChainCompletionContributor : CompletionContributor() {
                     val nameExpression = qualifiedExpression?.receiverExpression as? KtNameReferenceExpression
                         ?: return
 
-                    if (nameExpression.reference?.resolve() != null) return
+                    analyze(parameters.completionFile) {
+                        if (nameExpression.mainReference.resolveToSymbols().isNotEmpty()) {
+                            // The receiver is resolved, therefore we do not run chain completion
+                            return
+                        }
+                    }
 
                     Completions.complete(
                         parameters = parameters,
                         positionContext = KotlinExpressionNameReferencePositionContext(nameExpression),
-                        sink = LookupElementSink(
-                            resultSet = result.withPrefixMatcher(nameExpression.text),
-                            parameters = parameters,
-                        ),
+                        resultSet = result.withPrefixMatcher(ExactPrefixMatcher(nameExpression.text)),
                     )
                 }
             }
         )
+    }
+
+    private class ExactPrefixMatcher(prefix: String) : PrefixMatcher(prefix) {
+
+        override fun prefixMatches(name: String): Boolean = name == prefix
+
+        override fun cloneWithPrefix(prefix: String): PrefixMatcher = this
     }
 }

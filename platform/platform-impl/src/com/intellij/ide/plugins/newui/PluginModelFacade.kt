@@ -1,71 +1,100 @@
 // Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.ide.plugins.newui
 
-import com.intellij.ide.plugins.IdeaPluginDescriptor
 import com.intellij.ide.plugins.PluginEnableDisableAction
 import com.intellij.ide.plugins.PluginEnabledState
+import com.intellij.ide.plugins.PluginManagerCoroutineScopeHolder
+import com.intellij.ide.plugins.marketplace.InstallPluginResult
 import javax.swing.JComponent
 import com.intellij.openapi.application.ModalityState
+import com.intellij.openapi.components.service
+import com.intellij.openapi.extensions.PluginId
+import com.intellij.openapi.util.IntellijInternalApi
+import com.intellij.openapi.util.text.HtmlChunk
+import com.intellij.openapi.wm.ex.ProgressIndicatorEx
+import com.intellij.platform.util.coroutines.childScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.jetbrains.annotations.ApiStatus
 
-/*
- * A service that executes operations on plugins, depending on the source of the plugin.
- * If it is local, the operation will be executed locally; otherwise, it will be executed on the server using an RPC call.
- */
 @ApiStatus.Internal
-class PluginModelFacade(private val pluginModel: MyPluginModel) {
-  private val localController = LocalPluginManagerController(pluginModel)
+@IntellijInternalApi
+open class PluginModelFacade(private val pluginModel: MyPluginModel) {
 
   fun isPluginInstallingOrUpdating(model: PluginUiModel): Boolean {
-    return getController(model).isPluginInstallingOrUpdating(model)
+    return MyPluginModel.isInstallingOrUpdate(model.pluginId)
   }
 
-  fun getState(model: PluginUiModel): PluginEnabledState {
-    return getController(model).getState(model)
+  fun closeSession() {
+    UiPluginManager.getInstance().closeSession(getModel().sessionId)
+  }
+
+  open fun getState(model: PluginUiModel): PluginEnabledState {
+    return pluginModel.getState(model.pluginId)
   }
 
   fun enable(model: PluginUiModel) {
-    getController(model).enable(model)
+    pluginModel.enable(listOf(model.getDescriptor()))
+  }
+
+  fun enable(models: Collection<PluginUiModel>) {
+    pluginModel.enable(models.map { it.getDescriptor() })
   }
 
   fun disable(model: PluginUiModel) {
-    getController(model).disable(model)
+    pluginModel.disable(listOf(model.getDescriptor()))
   }
 
-  fun installOrUpdatePlugin(component: JComponent, model: PluginUiModel, updateDescriptor: PluginUiModel?, modalityState: ModalityState) {
-    getController(model).installOrUpdatePlugin(component, model, updateDescriptor?.getDescriptor(), modalityState)
+  fun disable(models: Collection<PluginUiModel>) {
+    pluginModel.disable(models.map { it.getDescriptor() })
   }
 
-  fun addUninstalled(model: PluginUiModel) {
-    getController(model).addUninstalled(model)
+  @JvmOverloads
+  suspend fun installOrUpdatePlugin(component: JComponent?, model: PluginUiModel, updateDescriptor: PluginUiModel?, modalityState: ModalityState, controller: UiPluginManagerController = UiPluginManager.getInstance().getController()): InstallPluginResult? {
+    val scope = service<PluginManagerCoroutineScopeHolder>().coroutineScope.childScope("Install plugin ${model.pluginId}")
+    return withContext(NonCancellable + scope.coroutineContext) {
+      pluginModel.installOrUpdatePlugin(component, model, updateDescriptor, scope, modalityState, controller)
+    }
+  }
+
+  fun addUninstalled(pluginId: PluginId) {
+    pluginModel.addUninstalled(pluginId)
   }
 
   fun getIcon(model: PluginUiModel, big: Boolean, error: Boolean, disabled: Boolean): javax.swing.Icon {
-    return getController(model).getIcon(model, big, error, disabled)
+    return pluginModel.getIcon(model.getDescriptor(), big, error, disabled)
   }
 
-  fun getErrors(model: PluginUiModel): List<com.intellij.openapi.util.text.HtmlChunk> {
-    return pluginModel.getErrors(model.getDescriptor())
+  fun getErrors(model: PluginUiModel): List<HtmlChunk> {
+    return pluginModel.getErrorsSync(model.getDescriptor())
   }
 
-  fun enableRequiredPlugins(model: PluginUiModel) {
-    getController(model).enableRequiredPlugins(model)
+  suspend fun enableRequiredPlugins(model: PluginUiModel) {
+    pluginModel.enableRequiredPlugins(model.getDescriptor())
   }
 
-  fun isUninstalled(model: PluginUiModel): Boolean {
-    return pluginModel.isUninstalled(model.getDescriptor())
+  fun enableRequiredPluginsAsync(model: PluginUiModel) {
+    pluginModel.coroutineScope.launch(Dispatchers.IO) {
+      enableRequiredPlugins(model)
+    }
+  }
+
+  fun isUninstalled(pluginId: PluginId): Boolean {
+    return pluginModel.isUninstalled(pluginId)
   }
 
   fun isEnabled(model: PluginUiModel): Boolean {
-    return getController(model).isEnabled(model)
+    return pluginModel.isEnabled(model.getDescriptor())
   }
 
-  fun finishInstall(model: PluginUiModel, installedDescriptor: com.intellij.ide.plugins.IdeaPluginDescriptorImpl?, success: Boolean, showErrors: Boolean, restartRequired: Boolean) {
-    pluginModel.finishInstall(model.getDescriptor(), installedDescriptor, success, showErrors, restartRequired)
+  suspend fun finishInstall(model: PluginUiModel, installedModel: PluginUiModel?, success: Boolean, showErrors: Boolean, restartRequired: Boolean, errors: Map<PluginId, List<HtmlChunk>>) {
+    pluginModel.finishInstall(model, installedModel, errors, success, showErrors, restartRequired)
   }
 
   fun isPluginRequiredForProject(model: PluginUiModel): Boolean {
-    return getController(model).isPluginRequiredForProject(model)
+    return pluginModel.isRequiredPluginForProject(model.pluginId)
   }
 
   fun addComponent(component: ListPluginComponent) {
@@ -76,67 +105,34 @@ class PluginModelFacade(private val pluginModel: MyPluginModel) {
     pluginModel.removeComponent(component)
   }
 
-  fun hasPluginRequiresUltimateButItsDisabled(models: Collection<PluginUiModel>): Boolean {
-    return models.groupBy { it.source }.any { getController(it.key).hasPluginRequiresUltimateButItsDisabled(it.value) }
-  }
-
   fun setEnabledState(models: Collection<PluginUiModel>, action: PluginEnableDisableAction) {
-    models.groupBy { it.source }.forEach {  getController(it.key).setEnabledState(it.value, action)}
+    pluginModel.setEnabledStateAsync(models.map { it.getDescriptor() }, action)
   }
 
-  fun getDependents(models: Collection<PluginUiModel>): Map<PluginUiModel, List<PluginUiModel>> {
-    return models.groupBy { it.source}.map { getController(it.key).getDependents(it.value) }.reduce { acc, map -> acc + map }
+  @JvmOverloads
+  suspend fun uninstallAndUpdateUi(descriptor: PluginUiModel, controller: UiPluginManagerController = UiPluginManager.getInstance().getController(), callback: () -> Unit = {}) {
+    pluginModel.uninstallAndUpdateUi(descriptor, controller, callback)
   }
 
-  fun isBundledUpdate(model: PluginUiModel?): Boolean {
-    if(model == null) return false
-    return getController(model).isBundledUpdate(model)
+  suspend fun isDisabledInDiff(model: PluginUiModel): Boolean {
+    return UiPluginManager.getInstance().isDisabledInDiff(pluginModel.sessionId.toString(), model.pluginId)
   }
 
-  fun uninstallAndUpdateUi(descriptor: PluginUiModel) {
-    return getController(descriptor).uninstallAndUpdateUi(descriptor)
+  fun isLoaded(model: PluginUiModel): Boolean {
+    return pluginModel.isLoaded(model.pluginId)
   }
 
-  private fun getController(model: PluginUiModel): PluginManagerController {
-    return getController(model.source)
-  }
-  private fun getController(source: PluginSource): PluginManagerController{
-    return when (source) {
-      PluginSource.LOCAL -> localController
-      PluginSource.REMOTE -> TODO()
-    }
-  }
-  //Temporary field that will allow as to change code in small parts
   fun getModel(): MyPluginModel = pluginModel
 
   companion object {
-
     @JvmStatic
-    fun addProgress(model: PluginUiModel, indicator: com.intellij.openapi.wm.ex.ProgressIndicatorEx) {
+    fun addProgress(model: PluginUiModel, indicator: ProgressIndicatorEx) {
       MyPluginModel.addProgress(model.getDescriptor(), indicator)
     }
+
     @JvmStatic
-    fun removeProgress(model: PluginUiModel, indicator: com.intellij.openapi.wm.ex.ProgressIndicatorEx) {
+    fun removeProgress(model: PluginUiModel, indicator: ProgressIndicatorEx) {
       MyPluginModel.removeProgress(model.getDescriptor(), indicator)
     }
   }
-}
-
-@ApiStatus.Internal
-interface PluginManagerController {
-  fun isPluginInstallingOrUpdating(model: PluginUiModel): Boolean
-  fun getState(model: PluginUiModel): PluginEnabledState
-  fun disable(model: PluginUiModel)
-  fun installOrUpdatePlugin(component: JComponent, model: PluginUiModel, updateDescriptor: IdeaPluginDescriptor?, modalityState: ModalityState)
-  fun addUninstalled(model: PluginUiModel)
-  fun enable(model: PluginUiModel)
-  fun getIcon(model: PluginUiModel, big: Boolean, error: Boolean, disabled: Boolean): javax.swing.Icon
-  fun enableRequiredPlugins(model: PluginUiModel)
-  fun isEnabled(model: PluginUiModel): Boolean
-  fun isPluginRequiredForProject(model: PluginUiModel): Boolean
-  fun hasPluginRequiresUltimateButItsDisabled(models: List<PluginUiModel>): Boolean
-  fun setEnabledState(models: List<PluginUiModel>, action: PluginEnableDisableAction)
-  fun getDependents(models: List<PluginUiModel>): Map<PluginUiModel, List<PluginUiModel>>
-  fun isBundledUpdate(model: PluginUiModel): Boolean
-  fun uninstallAndUpdateUi(model: PluginUiModel)
 }

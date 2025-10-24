@@ -2,8 +2,8 @@
 package com.intellij.notebooks.visualization.ui.cell.runCell
 
 import com.intellij.icons.AllIcons
+import com.intellij.notebooks.jupyter.core.jupyter.CellType
 import com.intellij.notebooks.ui.afterDistinctChange
-import com.intellij.notebooks.visualization.NotebookCellLines.CellType
 import com.intellij.notebooks.visualization.controllers.selfUpdate.SelfManagedCellController
 import com.intellij.notebooks.visualization.ui.EditorCell
 import com.intellij.notebooks.visualization.ui.ProgressStatus
@@ -49,7 +49,7 @@ class EditorCellRunGutterController(
     cell.gutterAction.set(null)
   }
 
-  override fun selfUpdate() {}
+  override fun checkAndRebuildInlays() {}
 
   private fun updateGutterAction() {
     //For markdown, it will set up in markdown component

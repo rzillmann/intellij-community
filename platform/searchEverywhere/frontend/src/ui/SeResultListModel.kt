@@ -1,33 +1,40 @@
 // Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.platform.searchEverywhere.frontend.ui
 
-import com.intellij.openapi.application.ApplicationManager
-import com.intellij.platform.searchEverywhere.*
+import com.intellij.ide.rpc.ThrottledAccumulatedItems
+import com.intellij.ide.rpc.ThrottledItems
+import com.intellij.ide.rpc.ThrottledOneItem
+import com.intellij.platform.searchEverywhere.SeResultEvent
+import com.intellij.platform.searchEverywhere.frontend.SeSearchStatePublisher
 import com.intellij.platform.searchEverywhere.providers.SeLog
-import com.intellij.platform.searchEverywhere.providers.SeLog.FROZEN_COUNT
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import org.jetbrains.annotations.ApiStatus
 import javax.swing.DefaultListModel
+import javax.swing.ListSelectionModel
 
 @ApiStatus.Internal
-class SeResultListModel: DefaultListModel<SeResultListRow>() {
-  private var frozenCount: Int = 0
-  var ignoreFreezing: Boolean = false
+class SeResultListModel(private val searchStatePublisher: SeSearchStatePublisher,
+                        private val selectionModelProvider: () -> ListSelectionModel): DefaultListModel<SeResultListRow>() {
+  val freezer: Freezer = Freezer { size }
 
-  fun freeze(count: Int) {
-    if (count > frozenCount) {
-      frozenCount = count
-      SeLog.log(FROZEN_COUNT) { "frozenCount = $frozenCount; size = $size; ignoreFreezing = $ignoreFreezing" }
-    }
-  }
+  val isValid: Boolean get() = isValidState.value
+  val isValidState: StateFlow<Boolean> get() = _isValidState.asStateFlow()
+  private val _isValidState = MutableStateFlow(true)
 
-  fun freezeAll() {
-    freeze(size)
-  }
+  val pendingReplacementElementUuids: MutableSet<String> = mutableSetOf()
 
   fun reset() {
-    frozenCount = 0
-    ignoreFreezing = true
-    super.removeAllElements()
+    SeLog.log(SeLog.THROTTLING) { "Will reset result list model" }
+    freezer.reset()
+    _isValidState.value = true
+    pendingReplacementElementUuids.clear()
+    removeAllElements()
+  }
+
+  fun invalidate() {
+    _isValidState.value = false
   }
 
   fun removeLoadingItem() {
@@ -36,58 +43,69 @@ class SeResultListModel: DefaultListModel<SeResultListRow>() {
     }
   }
 
-  fun addFromEvent(event: SeResultEvent) {
-    when (event) {
-      is SeResultAddedEvent -> {
-        val index = firstIndexOrNull(false) { event.itemData.weight > it.weight } ?: lastIndexToInsertItem
-        add(index, SeResultListItemRow(event.itemData))
+  fun addFromThrottledEvent(searchId: String, throttledEvent: ThrottledItems<SeResultEvent>) {
+    if (!isValid) reset()
 
-        /* Animated icon in the text field disappears when the first result appears.
-         * So let the loading row will be in the list from the moment the first
-         * item appears until the last item appears.
-         */
-        if (size == 1) {
-          addElement(SeResultListMoreRow)
+    val resultListAdapter = SeResultListModelAdapter(this, selectionModelProvider())
+    when (throttledEvent) {
+      is ThrottledAccumulatedItems<SeResultEvent> -> {
+        val accumulatedList = SeResultListCollection(pendingReplacementElementUuids)
+        throttledEvent.items.forEach {
+          accumulatedList.handleEvent(it)
+        }
+
+        // Remove SeResultListMoreRow from the accumulatedList if we already have one in the real listModel
+        if (size > 0 && getElementAt(size - 1) is SeResultListMoreRow
+            && accumulatedList.list.isNotEmpty() && accumulatedList.list.last() is SeResultListMoreRow) {
+          accumulatedList.list.removeLast()
+        }
+
+        addAll(resultListAdapter.lastIndexToInsertItem, accumulatedList.list)
+        SeLog.log(SeLog.THROTTLING) {
+          "Added batch of throttled events: ${accumulatedList.list.size}; Providers:" +
+          accumulatedList.list.mapNotNull { (it as? SeResultListItemRow)?.item?.providerId?.value }.groupingBy { it }.eachCount().map {
+            "${it.key} - ${it.value}"
+          }.joinToString(", ")
+        }
+
+        accumulatedList.list.filterIsInstance<SeResultListItemRow>().takeIf { it.isNotEmpty() }?.map {
+          it.item
+        }?.let { items ->
+          searchStatePublisher.elementsAdded(searchId, items.associateBy { it.uuid })
         }
       }
-      is SeResultReplacedEvent -> {
-        val index = firstIndexOrNull(true) { event.oldItemData == it }
-                    ?: if (ApplicationManager.getApplication().isInternal) {
-                      error("Item ${event.oldItemData} is not found in the list")
-                    }
-                    else null
-
-        index?.takeIf { ignoreFreezing || it >= frozenCount }?.let { indexToRemove ->
-          removeElementAt(indexToRemove)
-          // Replace item and keep the same index for now
-          val index = indexToRemove
-          add(index, SeResultListItemRow(event.newItemData))
-        }
-      }
-      is SeResultSkippedEvent -> null
-    }
-  }
-
-  private fun firstIndexOrNull(fullSearch: Boolean, predicate: (SeItemData) -> Boolean): Int? {
-    val startIndex = if (fullSearch || ignoreFreezing) 0 else frozenCount
-
-    return (startIndex until size).firstOrNull { index ->
-      when (val row = getElementAt(index)) {
-        is SeResultListItemRow -> {
-          predicate(row.item)
-        }
-        SeResultListMoreRow -> false
+      is ThrottledOneItem<SeResultEvent> -> {
+        resultListAdapter.handleEvent(throttledEvent.item, onAdd = {
+          searchStatePublisher.elementsAdded(searchId, mapOf(it.uuid to it))
+        }, onRemove = {
+          searchStatePublisher.elementsRemoved(searchId, 1)
+        })
       }
     }
   }
 
-  private val lastIndexToInsertItem: Int get() =
-    if (size == 0) 0
-    else if (lastElement() is SeResultListMoreRow) size - 1
-    else size
+  class Freezer(private val listSize: () -> Int) {
+    private var frozenCountToApply: Int = 0
+    var isEnabled: Boolean = false
+      private set
 
-  companion object {
-    const val DEFAULT_FROZEN_COUNT: Int = 10
-    const val DEFAULT_FREEZING_DELAY_MS: Long = 800
+    val frozenCount: Int get() = if (isEnabled) frozenCountToApply else 0
+
+    fun enable() {
+      isEnabled = true
+      SeLog.log(SeLog.FROZEN_COUNT) { "frozenCount = $frozenCountToApply; size = ${listSize()}; isApplied = $isEnabled" }
+    }
+
+    fun freezeIfEnabled(count: Int) {
+      if (count > frozenCountToApply) {
+        frozenCountToApply = count
+        SeLog.log(SeLog.FROZEN_COUNT) { "frozenCount = $frozenCountToApply; size = ${listSize()}; isApplied = $isEnabled" }
+      }
+    }
+
+    fun reset() {
+      isEnabled = false
+      frozenCountToApply = 0
+    }
   }
 }

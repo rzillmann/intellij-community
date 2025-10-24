@@ -28,12 +28,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.focusProperties
-import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
-import org.jetbrains.annotations.ApiStatus.ScheduledForRemoval
+import org.jetbrains.annotations.ApiStatus
+import org.jetbrains.jewel.foundation.ExperimentalJewelApi
 import org.jetbrains.jewel.foundation.Stroke
 import org.jetbrains.jewel.foundation.modifier.border
 import org.jetbrains.jewel.foundation.modifier.thenIf
@@ -48,14 +48,30 @@ import org.jetbrains.jewel.foundation.theme.LocalContentColor
 import org.jetbrains.jewel.foundation.theme.LocalTextStyle
 import org.jetbrains.jewel.ui.Outline
 import org.jetbrains.jewel.ui.component.styling.DropdownStyle
-import org.jetbrains.jewel.ui.disabled
+import org.jetbrains.jewel.ui.disabledAppearance
 import org.jetbrains.jewel.ui.focusOutline
 import org.jetbrains.jewel.ui.outline
 import org.jetbrains.jewel.ui.painter.hints.Stateful
 import org.jetbrains.jewel.ui.theme.dropdownStyle
 
-@ScheduledForRemoval(inVersion = "2025.2")
-@Deprecated(message = "Use ListComboBox instead. This component will be removed in a future release.")
+/**
+ * A composable that implements a combo box with a dropdown menu, allowing users to select an option from a (small,
+ * finite) list of actions or choices.
+ *
+ * Dropdown APIs are temporary and will be reimplemented in a future release to address usability and accessibility
+ * concerns (see JEWEL-1029).
+ *
+ * For a dropdown with a large list of items, consider using [ListComboBox] or [EditableListComboBox]. For an editable
+ * combobox, use [EditableComboBox] or [EditableListComboBox].
+ *
+ * @see ComboBox
+ * @see ListComboBox
+ * @see EditableComboBox
+ * @see EditableListComboBox
+ */
+@Suppress("ComposableParamOrder")
+@ExperimentalJewelApi
+@ApiStatus.Experimental
 @Composable
 public fun Dropdown(
     modifier: Modifier = Modifier,
@@ -70,7 +86,8 @@ public fun Dropdown(
     var expanded by remember { mutableStateOf(false) }
     var skipNextClick by remember { mutableStateOf(false) }
 
-    var dropdownState by remember(interactionSource) { mutableStateOf(DropdownState.of(enabled = enabled)) }
+    var dropdownState by
+        remember(interactionSource) { @Suppress("DEPRECATION") mutableStateOf(DropdownState.of(enabled = enabled)) }
 
     remember(enabled) { dropdownState = dropdownState.copy(enabled = enabled) }
 
@@ -80,6 +97,7 @@ public fun Dropdown(
                 is PressInteraction.Press -> dropdownState = dropdownState.copy(pressed = true)
                 is PressInteraction.Cancel,
                 is PressInteraction.Release -> dropdownState = dropdownState.copy(pressed = false)
+
                 is HoverInteraction.Enter -> dropdownState = dropdownState.copy(hovered = true)
                 is HoverInteraction.Exit -> dropdownState = dropdownState.copy(hovered = false)
                 is FocusInteraction.Focus -> dropdownState = dropdownState.copy(focused = true)
@@ -106,6 +124,7 @@ public fun Dropdown(
                         if (!skipNextClick) {
                             expanded = !expanded
                         }
+                        @Suppress("AssignedValueIsNeverRead")
                         skipNextClick = false
                     },
                     enabled = enabled,
@@ -138,12 +157,10 @@ public fun Dropdown(
                 contentAlignment = Alignment.Center,
             ) {
                 val alpha = if (dropdownState.isEnabled) 1f else 0.5f
-                val colorFilter = if (dropdownState.isEnabled) null else ColorFilter.disabled()
                 Icon(
-                    modifier = Modifier.alpha(alpha),
+                    modifier = Modifier.alpha(alpha).thenIf(!dropdownState.isEnabled) { disabledAppearance() },
                     key = style.icons.chevronDown,
                     contentDescription = "Dropdown Chevron",
-                    colorFilter = colorFilter,
                     hint = Stateful(dropdownState),
                 )
             }
@@ -171,8 +188,14 @@ public fun Dropdown(
     }
 }
 
-@ScheduledForRemoval(inVersion = "2025.2")
-@Deprecated(message = "Use ListComboBox instead. Dropdown will be removed in a future release.")
+/**
+ * Represents the state of a [Dropdown] component.
+ *
+ * Dropdown APIs are temporary and will be reimplemented in a future release to address usability and accessibility
+ * concerns (see JEWEL-1029).
+ */
+@ExperimentalJewelApi
+@ApiStatus.Experimental
 @Immutable
 @JvmInline
 public value class DropdownState(public val state: ULong) : FocusableComponentState {

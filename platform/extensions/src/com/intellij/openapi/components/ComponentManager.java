@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.openapi.components;
 
 import com.intellij.diagnostic.ActivityCategory;
@@ -59,8 +59,11 @@ public interface ComponentManager extends UserDataHolder, Disposable, AreaInstan
   boolean isInjectionForExtensionSupported();
 
   /**
-   * @see com.intellij.application.Topics#subscribe
+   * @deprecated not all implementations support this functionality; 
+   * call {@link com.intellij.openapi.application.Application#getMessageBus()} or {@link com.intellij.openapi.project.Project#getMessageBus()} 
+   * instead.
    */
+  @Deprecated
   @NotNull MessageBus getMessageBus();
 
   /**
@@ -79,7 +82,29 @@ public interface ComponentManager extends UserDataHolder, Disposable, AreaInstan
   @NotNull
   Condition<?> getDisposed();
 
+  /**
+   * Gets the service by its interface class.
+   * <p>
+   * <p>This method is thread-safe and does not require wrapping in a read or write action.
+   * <p>
+   * If container is disposed, a {@link java.util.concurrent.CancellationException} will be thrown.
+   * Note that accessing {@link #isDisposed()} is not recommended - it's better to rely on cancellation.
+   * Container disposal is treated as a cancellation.
+   * <p>
+   * While internally {@link com.intellij.serviceContainer.AlreadyDisposedException} may be thrown
+   * (which extends {@link java.util.concurrent.CancellationException}),
+   * callers should only rely on {@link java.util.concurrent.CancellationException} being thrown.
+   *
+   * @param serviceClass service interface class
+   * @return service instance, or null if no service found
+   * @throws java.util.concurrent.CancellationException if the container is disposed
+   */
   <T> T getService(@NotNull Class<T> serviceClass);
+
+  @ApiStatus.Internal
+  default <T> T getServiceForClient(@NotNull Class<T> serviceClass) {
+    return getService(serviceClass);
+  }
 
   /**
    * Collects all services registered with matching client="..." attribute in xml.

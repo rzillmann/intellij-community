@@ -1,11 +1,10 @@
 // Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.ide.plugins.marketplace.statistics.features
 
-import com.intellij.ide.plugins.PluginNode
+import com.intellij.ide.plugins.newui.PluginUiModel
 import com.intellij.internal.statistic.eventLog.events.EventField
 import com.intellij.internal.statistic.eventLog.events.EventFields
 import com.intellij.internal.statistic.eventLog.events.EventPair
-
 
 internal object PluginManagerSearchResultMarketplaceFeatureProvider {
   private val MARKETPLACE_RATING_DATA_KEY = EventFields.Float("marketplaceRating")
@@ -32,7 +31,7 @@ internal object PluginManagerSearchResultMarketplaceFeatureProvider {
     )
   }
 
-  fun getSearchStateFeatures(pluginNode: PluginNode): List<EventPair<*>> = buildList {
+  fun getSearchStateFeatures(pluginNode: PluginUiModel): List<EventPair<*>> = buildList {
     add(MARKETPLACE_PAID_DATA_KEY.with(pluginNode.isPaid))
     pluginNode.rating?.toFloatOrNull()?.let {
       add(MARKETPLACE_RATING_DATA_KEY.with(it))

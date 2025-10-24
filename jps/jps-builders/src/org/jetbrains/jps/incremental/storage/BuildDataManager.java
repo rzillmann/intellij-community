@@ -18,14 +18,14 @@ import org.jetbrains.jps.builders.storage.BuildDataPaths;
 import org.jetbrains.jps.builders.storage.SourceToOutputMapping;
 import org.jetbrains.jps.builders.storage.StorageProvider;
 import org.jetbrains.jps.dependency.*;
-import org.jetbrains.jps.dependency.impl.Containers;
 import org.jetbrains.jps.dependency.impl.DependencyGraphImpl;
 import org.jetbrains.jps.dependency.impl.LoggingDependencyGraph;
 import org.jetbrains.jps.dependency.impl.PathSourceMapper;
 import org.jetbrains.jps.incremental.ProjectBuildException;
 import org.jetbrains.jps.incremental.relativizer.PathRelativizerService;
 import org.jetbrains.jps.incremental.storage.dataTypes.LibraryRoots;
-import org.jetbrains.jps.javac.Iterators;
+import org.jetbrains.jps.incremental.storage.graph.PersistentMapletFactory;
+import org.jetbrains.jps.util.Iterators;
 
 import java.io.IOException;
 import java.nio.file.Path;
@@ -186,7 +186,8 @@ public final class BuildDataManager {
   /**
    * @deprecated Use {@link #getTargetStateManager()} or, preferably, avoid using internal APIs.
    */
-  @Deprecated
+  @ApiStatus.Internal
+  @Deprecated(forRemoval = true)
   public @NotNull BuildTargetsState getTargetsState() {
     return targetStateManager;
   }
@@ -262,6 +263,7 @@ public final class BuildDataManager {
    * @deprecated Use {@link BuildDataManager#getFileStampStorage(BuildTarget)}.
    */
   @SuppressWarnings("DeprecatedIsStillUsed")
+  @ApiStatus.Internal
   @Deprecated(forRemoval = true)
   public @Nullable ProjectStamps getFileStampService() {
     return myFileStampService;
@@ -410,7 +412,7 @@ public final class BuildDataManager {
           if (deleteExisting) {
             FileUtil.delete(mappingsRoot);
           }
-          myDepGraph = asSynchronizedGraph(new DependencyGraphImpl(Containers.createPersistentContainerFactory(mappingsRoot.toString())));
+          myDepGraph = asSynchronizedGraph(new DependencyGraphImpl(new PersistentMapletFactory(mappingsRoot.toString())));
         }
         else {
           try {
@@ -420,7 +422,7 @@ public final class BuildDataManager {
             if (deleteExisting) {
               FileUtil.delete(mappingsRoot);
             }
-            myDepGraph = asSynchronizedGraph(new DependencyGraphImpl(Containers.createPersistentContainerFactory(mappingsRoot.toString())));
+            myDepGraph = asSynchronizedGraph(new DependencyGraphImpl(new PersistentMapletFactory(mappingsRoot.toString())));
           }
         }
       }

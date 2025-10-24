@@ -1,4 +1,4 @@
-<idea-plugin xmlns:xi="http://www.w3.org/2001/XInclude" package="org.jetbrains.plugins.groovy">
+<idea-plugin xmlns:xi="http://www.w3.org/2001/XInclude" package="org.jetbrains.plugins.groovy" allow-bundled-update="true">
   <id>org.intellij.groovy</id>
   <name>Groovy</name>
   <category>Languages</category>
@@ -13,7 +13,9 @@
   ]]></description>
   <vendor>JetBrains</vendor>
 
-  <content>
+  <content namespace="jetbrains">
+    <module name="intellij.groovy.duplicates"/>
+    <module name="intellij.groovy.duplicatesDetection"/>
     <module name="intellij.groovy.git"/>
     <module name="intellij.groovy/ant"/>
     <module name="intellij.groovy/byte-code-viewer"/>
@@ -21,17 +23,15 @@
   <dependencies>
     <plugin id="com.intellij.properties"/>
     <plugin id="com.intellij.java"/>
+    <module name="intellij.spellchecker"/>
     <module name="intellij.java.unscramble"/>
     <module name="intellij.properties.backend"/>
     <module name="intellij.properties.backend.psi"/>
+    <module name="intellij.regexp"/>
   </dependencies>
 
   <depends optional="true" config-file="groovy-copyright.xml">com.intellij.copyright</depends>
   <depends optional="true" config-file="intellilang-groovy-support.xml">org.intellij.intelliLang</depends>
-  <!--suppress PluginXmlValidity -->
-  <depends optional="true" config-file="duplicates-groovy.xml">com.intellij.modules.ultimate</depends>
-  <!--suppress PluginXmlValidity -->
-  <depends optional="true" config-file="duplicates-detection-groovy.xml">com.intellij.modules.duplicatesDetector</depends>
   <!--suppress PluginXmlValidity -->
   <depends optional="true" config-file="groovy-structural-search.xml">com.intellij.modules.structuralsearch</depends>
   <depends optional="true" config-file="spock-support.xml">JUnit</depends>
@@ -349,6 +349,8 @@
                                  order="last"/>
     <delegatesToProvider implementation="org.jetbrains.plugins.groovy.lang.resolve.delegatesTo.DefaultDelegatesToProvider" id="default" order="last"/>
     <delegatesToProvider implementation="org.jetbrains.plugins.groovy.lang.resolve.delegatesTo.InferredDelegatesToProvider" order="last"/>
+
+    <methodMayBeStaticInspectionFilter implementation="org.jetbrains.plugins.groovy.testIntegration.MainMethodMayBeStaticFilter"/>
   </extensions>
 
   <extensions defaultExtensionNs="com.intellij.properties">
@@ -400,7 +402,7 @@
     <testFramework implementation="org.jetbrains.plugins.groovy.testIntegration.GroovyTestFramework" order="first"/>
 
     <testCreator language="Groovy" implementationClass="com.intellij.testIntegration.JavaTestCreator"/>
-    <testGenerator language="Groovy" implementationClass="org.jetbrains.plugins.groovy.testIntegration.GroovyTestGenerator"/>
+    <testGenerator id="groovyTestGenerator" language="Groovy" implementationClass="org.jetbrains.plugins.groovy.testIntegration.GroovyTestGenerator"/>
     <runLineMarkerContributor language="Groovy" implementationClass="org.jetbrains.plugins.groovy.testIntegration.GroovyTestLineMarkerContributor"/>
     <runLineMarkerContributor language="Groovy" implementationClass="org.jetbrains.plugins.groovy.testIntegration.GroovyAppLineMarkerContributor"/>
     <constructorBodyGenerator language="Groovy"
@@ -807,6 +809,7 @@
                         implementationClass="org.jetbrains.plugins.groovy.regexp.GroovyRegExpHost"/>
 
     <lang.jvm.actions.jvmElementActionsFactory implementation="org.jetbrains.plugins.groovy.annotator.intentions.elements.GroovyElementActionsFactory"/>
+    <javaMainMethodProvider implementation="org.jetbrains.plugins.groovy.testIntegration.GroovyMainMethodProvider"/>
     <localInspection language="Groovy" key="inspection.display.name.unused.declaration"
                      groupPath="Groovy"
                      groupKey="inspection.redundancy" enabledByDefault="true"
@@ -1034,6 +1037,18 @@
                      key="inspection.display.name.nested.synchronized.statement"
                      groupKey="inspection.threading"
                      implementationClass="org.jetbrains.plugins.groovy.codeInspection.threading.GroovyNestedSynchronizedStatementInspection"/>
+    <localInspection language="Groovy" groupPath="Groovy"
+                     key="inspection.display.name.multiple.main.methods.inspection"
+                     groupKey="inspection.control.flow"
+                     implementationClass="org.jetbrains.plugins.groovy.codeInspection.control.GroovyMultipleMainMethodsInspection"
+                     enabledByDefault="true"
+                     />
+    <localInspection language="Groovy" groupPath="Groovy"
+                     key="inspection.display.name.nested.class.with.instance.main.method"
+                     groupKey="inspection.control.flow"
+                     implementationClass="org.jetbrains.plugins.groovy.codeInspection.control.GroovyNestedClassWithInstanceMainMethodInspection"
+                     enabledByDefault="true"
+    />
     <!--suppress PluginXmlCapitalization -->
     <localInspection language="Groovy" groupPath="Groovy"
                      key="inspection.display.name.thread.stop.suspend.resume"

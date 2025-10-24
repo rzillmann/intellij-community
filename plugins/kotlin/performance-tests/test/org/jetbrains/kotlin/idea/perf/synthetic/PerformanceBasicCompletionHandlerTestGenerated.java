@@ -104,6 +104,65 @@ public abstract class PerformanceBasicCompletionHandlerTestGenerated extends Abs
     }
 
     @RunWith(JUnit3RunnerWithInners.class)
+    @TestMetadata("../completion/testData/handlers/basic/bracketOperators")
+    public static class BracketOperators extends AbstractPerformanceBasicCompletionHandlerTest {
+        @java.lang.Override
+        @org.jetbrains.annotations.NotNull
+        public final KotlinPluginMode getPluginMode() {
+            return KotlinPluginMode.K1;
+        }
+
+        private void runTest(String testDataFilePath) throws Exception {
+            KotlinTestUtils.runTest(this::doPerfTest, this, testDataFilePath);
+        }
+
+        @TestMetadata("DotAfterOperator.kt")
+        public void testDotAfterOperator() throws Exception {
+            runTest("../completion/testData/handlers/basic/bracketOperators/DotAfterOperator.kt");
+        }
+
+        @TestMetadata("GetOperator.kt")
+        public void testGetOperator() throws Exception {
+            runTest("../completion/testData/handlers/basic/bracketOperators/GetOperator.kt");
+        }
+
+        @TestMetadata("InvokeOperator.kt")
+        public void testInvokeOperator() throws Exception {
+            runTest("../completion/testData/handlers/basic/bracketOperators/InvokeOperator.kt");
+        }
+
+        @TestMetadata("Newline.kt")
+        public void testNewline() throws Exception {
+            runTest("../completion/testData/handlers/basic/bracketOperators/Newline.kt");
+        }
+
+        @TestMetadata("SetOperator.kt")
+        public void testSetOperator() throws Exception {
+            runTest("../completion/testData/handlers/basic/bracketOperators/SetOperator.kt");
+        }
+
+        @TestMetadata("SpacesAfter.kt")
+        public void testSpacesAfter() throws Exception {
+            runTest("../completion/testData/handlers/basic/bracketOperators/SpacesAfter.kt");
+        }
+
+        @TestMetadata("SpacesBefore.kt")
+        public void testSpacesBefore() throws Exception {
+            runTest("../completion/testData/handlers/basic/bracketOperators/SpacesBefore.kt");
+        }
+
+        @TestMetadata("SpacesMixed.kt")
+        public void testSpacesMixed() throws Exception {
+            runTest("../completion/testData/handlers/basic/bracketOperators/SpacesMixed.kt");
+        }
+
+        @TestMetadata("WithComment.kt")
+        public void testWithComment() throws Exception {
+            runTest("../completion/testData/handlers/basic/bracketOperators/WithComment.kt");
+        }
+    }
+
+    @RunWith(JUnit3RunnerWithInners.class)
     @TestMetadata("../completion/testData/handlers/basic/callableReference")
     public static class CallableReference extends AbstractPerformanceBasicCompletionHandlerTest {
         @java.lang.Override
@@ -601,6 +660,11 @@ public abstract class PerformanceBasicCompletionHandlerTestGenerated extends Abs
         @TestMetadata("CompanionObject.kt")
         public void testCompanionObject() throws Exception {
             runTest("../completion/testData/handlers/basic/importAliases/CompanionObject.kt");
+        }
+
+        @TestMetadata("Constructor.kt")
+        public void testConstructor() throws Exception {
+            runTest("../completion/testData/handlers/basic/importAliases/Constructor.kt");
         }
 
         @TestMetadata("ExtensionFun.kt")
@@ -1337,6 +1401,11 @@ public abstract class PerformanceBasicCompletionHandlerTestGenerated extends Abs
             runTest("../completion/testData/handlers/basic/typeArgsForCall/HasExpectedType.kt");
         }
 
+        @TestMetadata("NoTypeArgumentsForOverloadWithError.kt")
+        public void testNoTypeArgumentsForOverloadWithError() throws Exception {
+            runTest("../completion/testData/handlers/basic/typeArgsForCall/NoTypeArgumentsForOverloadWithError.kt");
+        }
+
         @TestMetadata("NotAllTypeArgumentsFromParameters.kt")
         public void testNotAllTypeArgumentsFromParameters() throws Exception {
             runTest("../completion/testData/handlers/basic/typeArgsForCall/NotAllTypeArgumentsFromParameters.kt");
@@ -1355,6 +1424,16 @@ public abstract class PerformanceBasicCompletionHandlerTestGenerated extends Abs
         @TestMetadata("Simple.kt")
         public void testSimple() throws Exception {
             runTest("../completion/testData/handlers/basic/typeArgsForCall/Simple.kt");
+        }
+
+        @TestMetadata("TypeArgumentsForComparator.kt")
+        public void testTypeArgumentsForComparator() throws Exception {
+            runTest("../completion/testData/handlers/basic/typeArgsForCall/TypeArgumentsForComparator.kt");
+        }
+
+        @TestMetadata("TypeArgumentsForReversed.kt")
+        public void testTypeArgumentsForReversed() throws Exception {
+            runTest("../completion/testData/handlers/basic/typeArgsForCall/TypeArgumentsForReversed.kt");
         }
 
         @TestMetadata("TypeArgumentsFromParameters.kt")
@@ -1380,6 +1459,11 @@ public abstract class PerformanceBasicCompletionHandlerTestGenerated extends Abs
         @TestMetadata("TypeArgumentsFromReturnType4.kt")
         public void testTypeArgumentsFromReturnType4() throws Exception {
             runTest("../completion/testData/handlers/basic/typeArgsForCall/TypeArgumentsFromReturnType4.kt");
+        }
+
+        @TestMetadata("TypeForUnrelatedOverloadWIthoutError.kt")
+        public void testTypeForUnrelatedOverloadWIthoutError() throws Exception {
+            runTest("../completion/testData/handlers/basic/typeArgsForCall/TypeForUnrelatedOverloadWIthoutError.kt");
         }
     }
 
@@ -1630,6 +1714,21 @@ public abstract class PerformanceBasicCompletionHandlerTestGenerated extends Abs
             runTest("../completion/testData/handlers/basic/ClassWithClassObject.kt");
         }
 
+        @TestMetadata("ConstructorCompletion.kt")
+        public void testConstructorCompletion() throws Exception {
+            runTest("../completion/testData/handlers/basic/ConstructorCompletion.kt");
+        }
+
+        @TestMetadata("ConstructorCompletionWithMultipleConstructors.kt")
+        public void testConstructorCompletionWithMultipleConstructors() throws Exception {
+            runTest("../completion/testData/handlers/basic/ConstructorCompletionWithMultipleConstructors.kt");
+        }
+
+        @TestMetadata("ConstructorCompletionWithSingleConstructor.kt")
+        public void testConstructorCompletionWithSingleConstructor() throws Exception {
+            runTest("../completion/testData/handlers/basic/ConstructorCompletionWithSingleConstructor.kt");
+        }
+
         @TestMetadata("DoNotInsertReceiverCast.kt")
         public void testDoNotInsertReceiverCast() throws Exception {
             runTest("../completion/testData/handlers/basic/DoNotInsertReceiverCast.kt");
@@ -1678,11 +1777,6 @@ public abstract class PerformanceBasicCompletionHandlerTestGenerated extends Abs
         @TestMetadata("GenericFunctionWithTab2.kt")
         public void testGenericFunctionWithTab2() throws Exception {
             runTest("../completion/testData/handlers/basic/GenericFunctionWithTab2.kt");
-        }
-
-        @TestMetadata("GetOperator.kt")
-        public void testGetOperator() throws Exception {
-            runTest("../completion/testData/handlers/basic/GetOperator.kt");
         }
 
         @TestMetadata("InsertImportedWithObjectName.kt")
@@ -1763,6 +1857,11 @@ public abstract class PerformanceBasicCompletionHandlerTestGenerated extends Abs
         @TestMetadata("KT36306.kt")
         public void testKT36306() throws Exception {
             runTest("../completion/testData/handlers/basic/KT36306.kt");
+        }
+
+        @TestMetadata("LoadFromIndexAfterTyping.kt")
+        public void testLoadFromIndexAfterTyping() throws Exception {
+            runTest("../completion/testData/handlers/basic/LoadFromIndexAfterTyping.kt");
         }
 
         @TestMetadata("LocalClassNameWithPackageLevelConflict.kt")
@@ -1981,6 +2080,11 @@ public abstract class PerformanceBasicCompletionHandlerTestGenerated extends Abs
         @TestMetadata("NoTypeInsertion.kt")
         public void testNoTypeInsertion() throws Exception {
             runTest("../completion/testData/handlers/basic/variableNameAndType/NoTypeInsertion.kt");
+        }
+
+        @TestMetadata("TypeInsertionOnContextParameter.kt")
+        public void testTypeInsertionOnContextParameter() throws Exception {
+            runTest("../completion/testData/handlers/basic/variableNameAndType/TypeInsertionOnContextParameter.kt");
         }
 
         @TestMetadata("TypeInsertionOnLateinit.kt")

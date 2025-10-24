@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.kotlin.idea.k2.refactoring.move.processor.conflict
 
 import com.intellij.openapi.diagnostic.ControlFlowException
@@ -11,16 +11,25 @@ import com.intellij.refactoring.util.MoveRenameUsageInfo
 import com.intellij.refactoring.util.RefactoringUIUtil
 import com.intellij.util.containers.MultiMap
 import com.intellij.util.containers.toMultiMap
+import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.kotlin.analysis.api.KaExperimentalApi
 import org.jetbrains.kotlin.analysis.api.KaSession
 import org.jetbrains.kotlin.analysis.api.analyze
+import org.jetbrains.kotlin.analysis.api.components.containingSymbol
+import org.jetbrains.kotlin.analysis.api.components.createUseSiteVisibilityChecker
+import org.jetbrains.kotlin.analysis.api.components.isSubClassOf
+import org.jetbrains.kotlin.analysis.api.components.resolveToSymbol
+import org.jetbrains.kotlin.analysis.api.permissions.KaAllowAnalysisOnEdt
 import org.jetbrains.kotlin.analysis.api.projectStructure.KaModule
+import org.jetbrains.kotlin.analysis.api.projectStructure.KaSourceModule
 import org.jetbrains.kotlin.analysis.api.resolution.KaCallableMemberCall
 import org.jetbrains.kotlin.analysis.api.resolution.successfulCallOrNull
 import org.jetbrains.kotlin.analysis.api.resolution.symbol
 import org.jetbrains.kotlin.analysis.api.symbols.*
 import org.jetbrains.kotlin.asJava.toLightElements
-import org.jetbrains.kotlin.idea.base.projectStructure.toKaSourceModuleForProductionOrTest
+import org.jetbrains.kotlin.idea.base.analysis.api.utils.allowAnalysisFromWriteActionInEdt
+import org.jetbrains.kotlin.idea.base.projectStructure.getKaModuleOfTypeSafe
+import org.jetbrains.kotlin.idea.base.projectStructure.toKaSourceModuleContainingElement
 import org.jetbrains.kotlin.idea.base.resources.KotlinBundle
 import org.jetbrains.kotlin.idea.base.util.module
 import org.jetbrains.kotlin.idea.core.getFqNameByDirectory
@@ -28,9 +37,9 @@ import org.jetbrains.kotlin.idea.k2.refactoring.move.descriptor.K2MoveTargetDesc
 import org.jetbrains.kotlin.idea.k2.refactoring.move.processor.tryFindConflict
 import org.jetbrains.kotlin.idea.k2.refactoring.move.processor.usages.K2MoveRenameUsageInfo.Companion.internalUsageElements
 import org.jetbrains.kotlin.idea.k2.refactoring.move.processor.usages.K2MoveRenameUsageInfo.Companion.internalUsageInfo
-import org.jetbrains.kotlin.idea.k2.refactoring.move.processor.willBeMoved
 import org.jetbrains.kotlin.idea.k2.refactoring.move.processor.willNotBeMoved
 import org.jetbrains.kotlin.idea.refactoring.getContainer
+import org.jetbrains.kotlin.idea.refactoring.pullUp.willBeMoved
 import org.jetbrains.kotlin.idea.references.mainReference
 import org.jetbrains.kotlin.name.FqName
 import org.jetbrains.kotlin.psi.*
@@ -60,15 +69,16 @@ private fun MoveRenameUsageInfo.isVisibleBeforeMove(): Boolean {
     }
 }
 
-private fun PsiNamedElement.isVisibleTo(usage: PsiElement): Boolean {
+@ApiStatus.Internal
+fun PsiNamedElement.isVisibleTo(usage: PsiElement): Boolean {
     return if (usage is KtElement) {
-        analyze(usage) { isVisibleTo(usage) }
+        allowAnalysisFromWriteActionInEdt(usage) { isVisibleTo(usage) }
     } else {
         lightIsVisibleTo(usage)
     }
 }
 
-context(KaSession)
+context(_: KaSession)
 @OptIn(KaExperimentalApi::class)
 private fun PsiNamedElement.isVisibleTo(usage: KtElement): Boolean {
     val file = (usage.containingFile as? KtFile)?.symbol ?: return false
@@ -98,7 +108,6 @@ private fun KaModule.isFriendDependencyFor(other: KaModule): Boolean {
     }
 }
 
-context(KaSession)
 private fun isPrivateVisibleAt(referencingElement: PsiElement, target: K2MoveTargetDescriptor.Declaration<*>): Boolean {
     return when (target) {
         is K2MoveTargetDescriptor.File -> {
@@ -134,9 +143,9 @@ internal fun checkVisibilityConflictForNonMovedUsages(
             tryFindConflict {
                 val usageElement = usageInfo.element ?: return@tryFindConflict null
                 val referencedDeclaration = usageInfo.upToDateReferencedElement as? KtNamedDeclaration ?: return@tryFindConflict null
-                analyze(referencedDeclaration) {
-                    val usageKaModule = usageElement.module?.toKaSourceModuleForProductionOrTest()
-                    val referencedDeclarationKaModule = targetDir.module?.toKaSourceModuleForProductionOrTest()
+                allowAnalysisFromWriteActionInEdt(referencedDeclaration) {
+                    val usageKaModule = usageElement.module?.toKaSourceModuleContainingElement(usageElement)
+                    val referencedDeclarationKaModule = targetDir.module?.toKaSourceModuleContainingElement(targetDir)
                     val isVisible = when (referencedDeclaration.symbol.visibility) {
                         KaSymbolVisibility.PRIVATE -> {
                             target != null && isPrivateVisibleAt(referencedDeclaration, target)
@@ -159,7 +168,7 @@ internal fun checkVisibilityConflictForNonMovedUsages(
  * Returns the first parent class/object symbol containing this [KaSymbol].
  * Note: This function is strict and also returns a strict parent if the given symbol is a class.
  */
-context(KaSession)
+context(_: KaSession)
 private fun KaSymbol.containingClassSymbol(): KaClassSymbol? {
     // TODO: Needs to be adapted when moving into classes is supported
     val containingSymbol = containingSymbol
@@ -170,7 +179,7 @@ private fun KaSymbol.containingClassSymbol(): KaClassSymbol? {
 /**
  * Returns true if the [refererSymbol] is contained within a class that inherits from the given class symbol.
  */
-context(KaSession)
+context(_: KaSession)
 private fun KaClassSymbol.isSuperClassForParentOf(
     refererSymbol: KaSymbol,
 ): Boolean {
@@ -179,7 +188,7 @@ private fun KaClassSymbol.isSuperClassForParentOf(
     return refererSymbol.containingSymbol?.let { isSuperClassForParentOf(it) } == true
 }
 
-context(KaSession)
+context(_: KaSession)
 private fun KaSymbol.isProtectedVisibleFrom(refererSymbol: KaSymbol): Boolean {
     // For protected visibility to work, we need to be within a class that inherits from
     // the parent class of the referred symbol.
@@ -189,6 +198,7 @@ private fun KaSymbol.isProtectedVisibleFrom(refererSymbol: KaSymbol): Boolean {
 /**
  * Check whether the moved internal usages are still visible towards their physical declaration.
  */
+@OptIn(KaAllowAnalysisOnEdt::class)
 fun checkVisibilityConflictsForInternalUsages(
     topLevelDeclarationsToMove: Collection<KtNamedDeclaration>,
     allDeclarationsToMove: Collection<KtNamedDeclaration>,
@@ -196,7 +206,7 @@ fun checkVisibilityConflictsForInternalUsages(
     targetDir: PsiDirectory,
     target: K2MoveTargetDescriptor.Declaration<*>? = null
 ): MultiMap<PsiElement, String> {
-    val usageKaModule = targetDir.module?.toKaSourceModuleForProductionOrTest()
+    val usageKaModule = targetDir.module?.toKaSourceModuleContainingElement(targetDir)
 
     return topLevelDeclarationsToMove
         .flatMap { it.internalUsageElements() }
@@ -207,8 +217,11 @@ fun checkVisibilityConflictsForInternalUsages(
                 val usageElement = usageInfo.element as? KtElement ?: return@tryFindConflict null
                 val referencedDeclaration = usageInfo.upToDateReferencedElement as? PsiNamedElement ?: return@tryFindConflict null
                 val isVisible = if (referencedDeclaration is KtNamedDeclaration) {
-                    analyze(referencedDeclaration) {
-                        val referencedDeclarationKaModule = referencedDeclaration.module?.toKaSourceModuleForProductionOrTest()
+                    allowAnalysisFromWriteActionInEdt(usageElement) {
+                        val referencedDeclarationKaModule = referencedDeclaration.getKaModuleOfTypeSafe<KaSourceModule>(
+                            referencedDeclaration.project,
+                            useSiteModule = null,
+                        )
                         val symbol = referencedDeclaration.symbol
                         val visibility = if (symbol is KaConstructorSymbol) {
                             (symbol.containingSymbol as? KaClassSymbol)?.let { classSymbol ->

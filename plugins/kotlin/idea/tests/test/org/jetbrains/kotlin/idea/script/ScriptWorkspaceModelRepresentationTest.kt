@@ -2,29 +2,31 @@
 package org.jetbrains.kotlin.idea.script
 
 import com.intellij.openapi.vfs.VfsUtil
-import com.intellij.psi.PsiManager
-import com.intellij.testFramework.HeavyPlatformTestCase
 import com.intellij.platform.backend.workspace.WorkspaceModel
 import com.intellij.platform.workspace.storage.EntityStorage
 import com.intellij.platform.workspace.storage.SymbolicEntityId
 import com.intellij.platform.workspace.storage.WorkspaceEntityWithSymbolicId
 import com.intellij.platform.workspace.storage.url.VirtualFileUrl
+import com.intellij.psi.PsiManager
+import com.intellij.testFramework.HeavyPlatformTestCase
 import com.intellij.util.io.createParentDirectories
 import org.hamcrest.MatcherAssert.assertThat
-import org.hamcrest.Matchers.*
-import org.jetbrains.kotlin.idea.base.plugin.artifacts.TestKotlinArtifacts.jetbrainsAnnotations
-import org.jetbrains.kotlin.idea.base.plugin.artifacts.TestKotlinArtifacts.kotlinScriptingCommon
-import org.jetbrains.kotlin.idea.base.plugin.artifacts.TestKotlinArtifacts.kotlinScriptingJvm
-import org.jetbrains.kotlin.idea.base.plugin.artifacts.TestKotlinArtifacts.kotlinTestJs
+import org.hamcrest.Matchers.contains
+import org.hamcrest.Matchers.`is`
+import org.jetbrains.kotlin.idea.artifacts.TestKotlinArtifacts.jetbrainsAnnotations
+import org.jetbrains.kotlin.idea.artifacts.TestKotlinArtifacts.kotlinScriptingCommon
+import org.jetbrains.kotlin.idea.artifacts.TestKotlinArtifacts.kotlinScriptingJvm
+import org.jetbrains.kotlin.idea.artifacts.TestKotlinArtifacts.kotlinTestJs
 import org.jetbrains.kotlin.idea.base.test.TestRoot
-import org.jetbrains.kotlin.idea.core.script.ScriptConfigurationManager
-import org.jetbrains.kotlin.idea.core.script.ucache.KotlinScriptEntity
-import org.jetbrains.kotlin.idea.core.script.ucache.KotlinScriptLibraryEntity
+import org.jetbrains.kotlin.idea.core.script.k1.ScriptConfigurationManager
+import org.jetbrains.kotlin.idea.core.script.k1.ucache.KotlinScriptEntity
+import org.jetbrains.kotlin.idea.core.script.k1.ucache.KotlinScriptLibraryEntity
 import org.jetbrains.kotlin.idea.test.TestMetadataUtil.getTestRoot
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.io.path.createFile
+import kotlin.io.path.pathString
 
 @TestRoot("idea/tests")
 class ScriptWorkspaceModelRepresentationTest : HeavyPlatformTestCase() {
@@ -60,14 +62,14 @@ class ScriptWorkspaceModelRepresentationTest : HeavyPlatformTestCase() {
             mapOf(
                 "path" to scriptAPath,
                 "dependencies" to listOf(
-                    mapOf("name" to kotlinTestJs.path),
-                    mapOf("name" to jetbrainsAnnotations.path)
+                    mapOf("name" to kotlinTestJs.pathString),
+                    mapOf("name" to jetbrainsAnnotations.pathString)
                 )
             ),
             mapOf(
                 "path" to scriptBPath,
                 "dependencies" to listOf(
-                    mapOf("name" to kotlinTestJs.path)
+                    mapOf("name" to kotlinTestJs.pathString)
                 )
             )
         )
@@ -86,7 +88,7 @@ class ScriptWorkspaceModelRepresentationTest : HeavyPlatformTestCase() {
                     mapOf("path" to scriptBEntity.path),
                 ),
                 "roots" to listOf(
-                    mapOf("url" to (VirtualFileUrl::getPresentableUrl to kotlinTestJs.path))
+                    mapOf("url" to (VirtualFileUrl::getPresentableUrl to kotlinTestJs.pathString))
                 )
             ),
             mapOf(
@@ -94,7 +96,7 @@ class ScriptWorkspaceModelRepresentationTest : HeavyPlatformTestCase() {
                     mapOf("path" to scriptAEntity.path),
                 ),
                 "roots" to listOf(
-                    mapOf("url" to (VirtualFileUrl::getPresentableUrl to jetbrainsAnnotations.path))
+                    mapOf("url" to (VirtualFileUrl::getPresentableUrl to jetbrainsAnnotations.pathString))
                 )
             )
         )
@@ -172,10 +174,10 @@ class ScriptWorkspaceModelRepresentationTest : HeavyPlatformTestCase() {
 
         storage.entities(KotlinScriptLibraryEntity::class.java).toList().assertContainsOnly(
             "Model contains not expected set of libraries",
-            mapOf("name" to jetbrainsAnnotations.path),
-            mapOf("name" to kotlinScriptingJvm.path),
-            mapOf("name" to kotlinScriptingCommon.path),
-            mapOf("name" to kotlinTestJs.path)
+            mapOf("name" to jetbrainsAnnotations.pathString),
+            mapOf("name" to kotlinScriptingJvm.pathString),
+            mapOf("name" to kotlinScriptingCommon.pathString),
+            mapOf("name" to kotlinTestJs.pathString)
         )
 
         val scriptAAfter = scriptEntities.single { it.path == scriptABefore.path }
@@ -183,34 +185,34 @@ class ScriptWorkspaceModelRepresentationTest : HeavyPlatformTestCase() {
 
         scriptAAfter.dependencies.assertContainsOnly(
             "Dependencies update is not detected",
-            mapOf("name" to jetbrainsAnnotations.path),
-            mapOf("name" to kotlinScriptingJvm.path),
-            mapOf("name" to kotlinScriptingCommon.path)
+            mapOf("name" to jetbrainsAnnotations.pathString),
+            mapOf("name" to kotlinScriptingJvm.pathString),
+            mapOf("name" to kotlinScriptingCommon.pathString)
         )
 
         scriptBAfter.dependencies.assertContainsOnly(
             "Dependencies update is not detected",
-            mapOf("name" to kotlinTestJs.path),
-            mapOf("name" to jetbrainsAnnotations.path)
+            mapOf("name" to kotlinTestJs.pathString),
+            mapOf("name" to jetbrainsAnnotations.pathString)
         )
 
         scriptAAfter.dependencies.resolve().assertContainsOnly(
             "Resolved script dependencies are broken",
             mapOf(
-                "name" to jetbrainsAnnotations.path,
+                "name" to jetbrainsAnnotations.pathString,
                 "usedInScripts" to listOf(
                     mapOf("path" to scriptAAfter.path),
                     mapOf("path" to scriptBAfter.path)
                 )
             ),
             mapOf(
-                "name" to kotlinScriptingJvm.path,
+                "name" to kotlinScriptingJvm.pathString,
                 "usedInScripts" to listOf(
                     mapOf("path" to scriptAAfter.path)
                 )
             ),
             mapOf(
-                "name" to kotlinScriptingCommon.path,
+                "name" to kotlinScriptingCommon.pathString,
                 "usedInScripts" to listOf(
                     mapOf("path" to scriptAAfter.path)
                 )
@@ -220,13 +222,13 @@ class ScriptWorkspaceModelRepresentationTest : HeavyPlatformTestCase() {
         scriptBAfter.dependencies.resolve().assertContainsOnly(
             "Resolved script dependencies are broken",
             mapOf(
-                "name" to kotlinTestJs.path,
+                "name" to kotlinTestJs.pathString,
                 "usedInScripts" to listOf(
                     mapOf("path" to scriptBAfter.path)
                 )
             ),
             mapOf(
-                "name" to jetbrainsAnnotations.path,
+                "name" to jetbrainsAnnotations.pathString,
                 "usedInScripts" to listOf(
                     mapOf("path" to scriptAAfter.path),
                     mapOf("path" to scriptBAfter.path)
@@ -264,13 +266,13 @@ class ScriptWorkspaceModelRepresentationTest : HeavyPlatformTestCase() {
             mapOf(
                 "path" to scriptABefore.path,
                 "dependencies" to listOf(
-                    mapOf("name" to kotlinScriptingJvm.path),
+                    mapOf("name" to kotlinScriptingJvm.pathString),
                 )
             ),
             mapOf(
                 "path" to scriptBBefore.path,
                 "dependencies" to listOf(
-                    mapOf("name" to kotlinTestJs.path)
+                    mapOf("name" to kotlinTestJs.pathString)
                 )
             )
         )
@@ -279,13 +281,13 @@ class ScriptWorkspaceModelRepresentationTest : HeavyPlatformTestCase() {
         libraryEntities.assertContainsOnly(
             "Libraries update (removal) breaks library entities",
             mapOf(
-                "name" to kotlinScriptingJvm.path,
+                "name" to kotlinScriptingJvm.pathString,
                 "usedInScripts" to listOf(
                     mapOf("path" to scriptABefore.path)
                 )
             ),
             mapOf(
-                "name" to kotlinTestJs.path,
+                "name" to kotlinTestJs.pathString,
                 "usedInScripts" to listOf(
                     mapOf("path" to scriptBBefore.path)
                 )
@@ -314,7 +316,7 @@ class ScriptWorkspaceModelRepresentationTest : HeavyPlatformTestCase() {
             mapOf(
                 "path" to scriptBBefore.path,
                 "dependencies" to listOf(
-                    mapOf("name" to kotlinTestJs.path)
+                    mapOf("name" to kotlinTestJs.pathString)
                 )
             )
         )
@@ -323,7 +325,7 @@ class ScriptWorkspaceModelRepresentationTest : HeavyPlatformTestCase() {
         libraryEntities.assertContainsOnly(
             "Script removal breaks library entities",
             mapOf(
-                "name" to kotlinTestJs.path,
+                "name" to kotlinTestJs.pathString,
                 "usedInScripts" to listOf(
                     mapOf("path" to scriptBBefore.path)
                 )
@@ -331,7 +333,7 @@ class ScriptWorkspaceModelRepresentationTest : HeavyPlatformTestCase() {
         )
     }
 
-    private fun setUpEnvironment(aKtsLibs: List<File>, bKtsLibs: List<File>): TestEnvironment {
+    private fun setUpEnvironment(aKtsLibs: List<Path>, bKtsLibs: List<Path>): TestEnvironment {
         return prepareScriptDefinitions(
             project, getTestName(false), scriptDefinitionSourcePath, testRootDisposable,
             aKtsLibs, bKtsLibs

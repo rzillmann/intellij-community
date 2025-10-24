@@ -74,7 +74,7 @@ class FileBasedIndexTumbler(private val reason: @NonNls String) {
         LOG.assertTrue(fileTypeTracker == null)
         fileTypeTracker = FileTypeTracker()
         fileBasedIndex.waitUntilIndicesAreInitialized()
-        fileBasedIndex.performShutdown(true, reason)
+        fileBasedIndex.performShutdown(/*keepConnection: */ true, reason)
         fileBasedIndex.dropRegisteredIndexes()
         val indexesAreOk = RebuildStatus.isOk()
         RebuildStatus.reset()
@@ -130,6 +130,7 @@ class FileBasedIndexTumbler(private val reason: @NonNls String) {
             val indexesCleanupJob = scanAndIndexProjectAfterOpen(
               project = project,
               orphanQueue = registeredIndexes.orphanDirtyFilesQueue,
+              orphanQueueDiscardReason = registeredIndexes.orphanDirtyFilesQueueDiscardReason,
               additionalOrphanDirtyFiles = emptySet(),
               projectDirtyFilesQueue = projectDirtyFilesQueue,
 

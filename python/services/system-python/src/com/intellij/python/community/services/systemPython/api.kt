@@ -5,18 +5,25 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.service
 import com.intellij.platform.eel.EelApi
 import com.intellij.platform.eel.provider.localEel
-import com.intellij.python.community.services.shared.PythonWithLanguageLevel
+import com.intellij.python.community.impl.venv.createVenv
+import com.intellij.python.community.services.shared.PythonInfoWithUiComparator
+import com.intellij.python.community.services.shared.PythonWithUi
+import com.intellij.python.community.services.shared.VanillaPythonWithPythonInfo
+import com.jetbrains.python.PyToolUIInfo
 import com.jetbrains.python.PythonBinary
 import com.jetbrains.python.Result
+import com.jetbrains.python.errorProcessing.PyResult
+import com.jetbrains.python.venvReader.Directory
+import com.jetbrains.python.venvReader.VirtualEnvReader
 import org.jetbrains.annotations.ApiStatus
-import org.jetbrains.annotations.Nls
-import javax.swing.Icon
+import org.jetbrains.annotations.ApiStatus.Internal
+import org.jetbrains.annotations.CheckReturnValue
 
 /**
  * Service to register and obtain [SystemPython]s
  */
 @ApiStatus.NonExtendable
-sealed interface SystemPythonService {
+interface SystemPythonService {
   /**
    * The result of this function might be cached. Use [forceRefresh] to reload it forcibly.
    * @return system pythons installed on OS sorted by type, then by lang.level: in order from highest (hence, the first one is usually the best one)
@@ -27,7 +34,7 @@ sealed interface SystemPythonService {
    * When user provides a path to the python binary, use this method to the [SystemPython].
    * @return either [SystemPython] or an error if python is broken.
    */
-  suspend fun registerSystemPython(pythonPath: PythonBinary): Result<SystemPython, @Nls String>
+  suspend fun registerSystemPython(pythonPath: PythonBinary): PyResult<SystemPython>
 
   /**
    * @return tool to install python on OS If [eelApi] supports python installation
@@ -49,7 +56,11 @@ fun SystemPythonService(): SystemPythonService = ApplicationManager.getApplicati
  *
  * Instances could be obtained with [SystemPythonService]
  */
-class SystemPython internal constructor(private val impl: PythonWithLanguageLevel, val ui: UICustomization?) : PythonWithLanguageLevel by impl {
+class SystemPython internal constructor(private val delegate: VanillaPythonWithPythonInfo, override val ui: PyToolUIInfo?) : VanillaPythonWithPythonInfo by delegate, PythonWithUi, Comparable<SystemPython> {
+
+  private companion object {
+    val comparator = PythonInfoWithUiComparator<SystemPython>()
+  }
 
   override fun equals(other: Any?): Boolean {
     if (this === other) return true
@@ -57,28 +68,30 @@ class SystemPython internal constructor(private val impl: PythonWithLanguageLeve
 
     other as SystemPython
 
-    if (impl != other.impl) return false
+    if (delegate != other.delegate) return false
     if (ui != other.ui) return false
 
     return true
   }
 
   override fun hashCode(): Int {
-    var result = impl.hashCode()
+    var result = delegate.hashCode()
     result = 31 * result + (ui?.hashCode() ?: 0)
     return result
   }
 
   override fun toString(): String {
-    return "SystemPython(impl=$impl, ui=$ui)"
+    return "SystemPython(delegate=$delegate, ui=$ui)"
   }
+
+  override fun compareTo(other: SystemPython): Int = comparator.compare(this, other)
 }
 
 /**
  * Tool to install python on OS.
  */
 @ApiStatus.NonExtendable
-sealed interface PythonInstallerService {
+interface PythonInstallerService {
 
   /**
    * Installs latest stable python on OS.
@@ -88,10 +101,14 @@ sealed interface PythonInstallerService {
   suspend fun installLatestPython(): Result<Unit, String>
 }
 
-data class UICustomization(
-  /**
-   * i.e: "UV" for pythons found by UV
-   */
-  val title: @Nls String,
-  val icon: Icon? = null,
-)
+/**
+ * See [createVenv]
+ */
+@Internal
+@CheckReturnValue
+suspend fun createVenvFromSystemPython(
+  python: SystemPython,
+  venvDir: Directory,
+  inheritSitePackages: Boolean = false,
+  envReader: VirtualEnvReader = VirtualEnvReader.Instance,
+): PyResult<PythonBinary> = createVenv(python.pythonBinary, venvDir, inheritSitePackages, envReader)

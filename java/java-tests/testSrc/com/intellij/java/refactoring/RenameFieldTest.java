@@ -15,12 +15,13 @@ import com.intellij.refactoring.rename.*;
 import com.intellij.refactoring.rename.inplace.MemberInplaceRenameHandler;
 import com.intellij.refactoring.rename.naming.AutomaticRenamerFactory;
 import com.intellij.testFramework.IdeaTestUtil;
+import com.intellij.testFramework.LightJavaCodeInsightTestCase;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.List;
 
-public class RenameFieldTest extends LightRefactoringTestCase {
+public class RenameFieldTest extends LightJavaCodeInsightTestCase {
   @NotNull
   @Override
   protected String getTestDataPath() {
@@ -135,7 +136,7 @@ public class RenameFieldTest extends LightRefactoringTestCase {
   }
 
   public void testFieldOnlyInImplicitClass() {
-    IdeaTestUtil.withLevel(getModule(), JavaFeature.IMPLICIT_CLASSES.getMinimumLevel(), () -> {
+    IdeaTestUtil.withLevel(getModule(), JavaFeature.IMPLICIT_CLASSES.getStandardLevel(), () -> {
       String suffix = getTestName(false);
       configureByFile("/refactoring/renameField/before" + suffix + ".java");
       DataContext context = ((EditorEx)getEditor()).getDataContext();

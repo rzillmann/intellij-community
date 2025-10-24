@@ -4,7 +4,6 @@ package com.intellij.spellchecker.settings;
 import com.intellij.openapi.components.*;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.NlsSafe;
-import com.intellij.openapi.util.io.FileUtilRt;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.spellchecker.ProjectDictionaryLayer;
 import com.intellij.spellchecker.util.SPFileUtil;
@@ -13,6 +12,8 @@ import org.jdom.Element;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.*;
+
+import static com.intellij.spellchecker.SpellCheckerManagerKt.isDic;
 
 @State(name = "SpellCheckerSettings", storages = @Storage(StoragePathMacros.WORKSPACE_FILE))
 @Service(Service.Level.PROJECT)
@@ -32,7 +33,7 @@ public final class SpellCheckerSettings implements PersistentStateComponent<Elem
   private static final String DICTIONARY_TO_SAVE_ATTR_NAME = "DefaultDictionary";
   private static final String DEFAULT_DICTIONARY_TO_SAVE = ProjectDictionaryLayer.Companion.getName().get();
   private static final String USE_SINGLE_DICT_ATTR_NAME = "UseSingleDictionary";
-  private static final boolean DEFAULT_USE_SINGLE_DICT = true;
+  private static final boolean DEFAULT_USE_SINGLE_DICT = false;
   private static final String SETTINGS_TRANSFERRED = "transferred";
 
   // Paths
@@ -146,7 +147,7 @@ public final class SpellCheckerSettings implements PersistentStateComponent<Elem
           myOldDictionaryFoldersPaths.add(element.getAttributeValue(FOLDER_ATTR_NAME + i));
         }
         myOldDictionaryFoldersPaths.forEach(folder -> SPFileUtil.processFilesRecursively(folder, file -> {
-          if (FileUtilRt.extensionEquals(file, "dic")) {
+          if (isDic(file)) {
             myCustomDictionariesPaths.add(file);
           }
         }));

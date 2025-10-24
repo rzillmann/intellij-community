@@ -1,17 +1,7 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.platform.workspace.storage.testEntities.entities.impl
 
 import com.intellij.platform.workspace.storage.*
-import com.intellij.platform.workspace.storage.ConnectionId
-import com.intellij.platform.workspace.storage.EntitySource
-import com.intellij.platform.workspace.storage.EntityType
-import com.intellij.platform.workspace.storage.GeneratedCodeApiVersion
-import com.intellij.platform.workspace.storage.GeneratedCodeImplVersion
-import com.intellij.platform.workspace.storage.MutableEntityStorage
-import com.intellij.platform.workspace.storage.WorkspaceEntity
-import com.intellij.platform.workspace.storage.WorkspaceEntityInternalApi
-import com.intellij.platform.workspace.storage.annotations.Abstract
-import com.intellij.platform.workspace.storage.annotations.Child
 import com.intellij.platform.workspace.storage.impl.EntityLink
 import com.intellij.platform.workspace.storage.impl.ModifiableWorkspaceEntityBase
 import com.intellij.platform.workspace.storage.impl.WorkspaceEntityBase
@@ -28,12 +18,16 @@ import com.intellij.platform.workspace.storage.instrumentation.EntityStorageInst
 import com.intellij.platform.workspace.storage.instrumentation.MutableEntityStorageInstrumentation
 import com.intellij.platform.workspace.storage.metadata.model.EntityMetadata
 import com.intellij.platform.workspace.storage.testEntities.entities.BaseEntity
+import com.intellij.platform.workspace.storage.testEntities.entities.BaseEntityBuilder
 import com.intellij.platform.workspace.storage.testEntities.entities.CompositeBaseEntity
+import com.intellij.platform.workspace.storage.testEntities.entities.CompositeBaseEntityBuilder
 import com.intellij.platform.workspace.storage.testEntities.entities.HeadAbstractionEntity
+import com.intellij.platform.workspace.storage.testEntities.entities.HeadAbstractionEntityBuilder
 import com.intellij.platform.workspace.storage.testEntities.entities.RightEntity
+import com.intellij.platform.workspace.storage.testEntities.entities.RightEntityBuilder
 
 @GeneratedCodeApiVersion(3)
-@GeneratedCodeImplVersion(6)
+@GeneratedCodeImplVersion(7)
 @OptIn(WorkspaceEntityInternalApi::class)
 internal class RightEntityImpl(private val dataSource: RightEntityData) : RightEntity, WorkspaceEntityBase(dataSource) {
 
@@ -75,7 +69,7 @@ internal class RightEntityImpl(private val dataSource: RightEntityData) : RightE
 
 
   internal class Builder(result: RightEntityData?) : ModifiableWorkspaceEntityBase<RightEntity, RightEntityData>(
-    result), RightEntity.Builder {
+    result), RightEntityBuilder {
     internal constructor() : this(RightEntityData())
 
     override fun applyToBuilder(builder: MutableEntityStorage) {
@@ -140,17 +134,17 @@ internal class RightEntityImpl(private val dataSource: RightEntityData) : RightE
 
       }
 
-    override var parentEntity: CompositeBaseEntity.Builder<out CompositeBaseEntity>?
+    override var parentEntity: CompositeBaseEntityBuilder<out CompositeBaseEntity>?
       get() {
         val _diff = diff
         return if (_diff != null) {
           @OptIn(EntityStorageInstrumentationApi::class)
           ((_diff as MutableEntityStorageInstrumentation).getParentBuilder(PARENTENTITY_CONNECTION_ID,
-                                                                           this) as? CompositeBaseEntity.Builder<out CompositeBaseEntity>)
-          ?: (this.entityLinks[EntityLink(false, PARENTENTITY_CONNECTION_ID)] as? CompositeBaseEntity.Builder<out CompositeBaseEntity>)
+                                                                           this) as? CompositeBaseEntityBuilder<out CompositeBaseEntity>)
+          ?: (this.entityLinks[EntityLink(false, PARENTENTITY_CONNECTION_ID)] as? CompositeBaseEntityBuilder<out CompositeBaseEntity>)
         }
         else {
-          this.entityLinks[EntityLink(false, PARENTENTITY_CONNECTION_ID)] as? CompositeBaseEntity.Builder<out CompositeBaseEntity>
+          this.entityLinks[EntityLink(false, PARENTENTITY_CONNECTION_ID)] as? CompositeBaseEntityBuilder<out CompositeBaseEntity>
         }
       }
       set(value) {
@@ -181,17 +175,17 @@ internal class RightEntityImpl(private val dataSource: RightEntityData) : RightE
         changedProperty.add("parentEntity")
       }
 
-    override var children: List<BaseEntity.Builder<out BaseEntity>>
+    override var children: List<BaseEntityBuilder<out BaseEntity>>
       get() {
         val _diff = diff
         return if (_diff != null) {
           @OptIn(EntityStorageInstrumentationApi::class)
           ((_diff as MutableEntityStorageInstrumentation).getManyChildrenBuilders(CHILDREN_CONNECTION_ID,
-                                                                                  this)!!.toList() as List<BaseEntity.Builder<out BaseEntity>>) +
-          (this.entityLinks[EntityLink(true, CHILDREN_CONNECTION_ID)] as? List<BaseEntity.Builder<out BaseEntity>> ?: emptyList())
+                                                                                  this)!!.toList() as List<BaseEntityBuilder<out BaseEntity>>) +
+          (this.entityLinks[EntityLink(true, CHILDREN_CONNECTION_ID)] as? List<BaseEntityBuilder<out BaseEntity>> ?: emptyList())
         }
         else {
-          this.entityLinks[EntityLink(true, CHILDREN_CONNECTION_ID)] as List<BaseEntity.Builder<out BaseEntity>> ?: emptyList()
+          this.entityLinks[EntityLink(true, CHILDREN_CONNECTION_ID)] as List<BaseEntityBuilder<out BaseEntity>> ?: emptyList()
         }
       }
       set(value) {
@@ -224,16 +218,16 @@ internal class RightEntityImpl(private val dataSource: RightEntityData) : RightE
         changedProperty.add("children")
       }
 
-    override var parent: HeadAbstractionEntity.Builder?
+    override var parent: HeadAbstractionEntityBuilder?
       get() {
         val _diff = diff
         return if (_diff != null) {
           @OptIn(EntityStorageInstrumentationApi::class)
-          ((_diff as MutableEntityStorageInstrumentation).getParentBuilder(PARENT_CONNECTION_ID, this) as? HeadAbstractionEntity.Builder)
-          ?: (this.entityLinks[EntityLink(false, PARENT_CONNECTION_ID)] as? HeadAbstractionEntity.Builder)
+          ((_diff as MutableEntityStorageInstrumentation).getParentBuilder(PARENT_CONNECTION_ID, this) as? HeadAbstractionEntityBuilder)
+          ?: (this.entityLinks[EntityLink(false, PARENT_CONNECTION_ID)] as? HeadAbstractionEntityBuilder)
         }
         else {
-          this.entityLinks[EntityLink(false, PARENT_CONNECTION_ID)] as? HeadAbstractionEntity.Builder
+          this.entityLinks[EntityLink(false, PARENT_CONNECTION_ID)] as? HeadAbstractionEntityBuilder
         }
       }
       set(value) {
@@ -268,7 +262,7 @@ internal class RightEntityImpl(private val dataSource: RightEntityData) : RightE
 internal class RightEntityData : WorkspaceEntityData<RightEntity>() {
 
 
-  override fun wrapAsModifiable(diff: MutableEntityStorage): WorkspaceEntity.Builder<RightEntity> {
+  override fun wrapAsModifiable(diff: MutableEntityStorage): WorkspaceEntityBuilder<RightEntity> {
     val modifiable = RightEntityImpl.Builder(null)
     modifiable.diff = diff
     modifiable.id = createEntityId()
@@ -295,10 +289,10 @@ internal class RightEntityData : WorkspaceEntityData<RightEntity>() {
     return RightEntity::class.java
   }
 
-  override fun createDetachedEntity(parents: List<WorkspaceEntity.Builder<*>>): WorkspaceEntity.Builder<*> {
+  override fun createDetachedEntity(parents: List<WorkspaceEntityBuilder<*>>): WorkspaceEntityBuilder<*> {
     return RightEntity(entitySource) {
-      this.parentEntity = parents.filterIsInstance<CompositeBaseEntity.Builder<out CompositeBaseEntity>>().singleOrNull()
-      this.parent = parents.filterIsInstance<HeadAbstractionEntity.Builder>().singleOrNull()
+      this.parentEntity = parents.filterIsInstance<CompositeBaseEntityBuilder<out CompositeBaseEntity>>().singleOrNull()
+      this.parent = parents.filterIsInstance<HeadAbstractionEntityBuilder>().singleOrNull()
     }
   }
 

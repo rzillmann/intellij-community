@@ -5,9 +5,12 @@ import com.intellij.util.ArrayUtilRt;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Serializable;
 import java.util.*;
+import java.util.function.Predicate;
+import java.util.function.UnaryOperator;
 
 /**
  * Stripped-down version of {@link com.intellij.util.containers.ContainerUtil}.
@@ -19,24 +22,13 @@ import java.util.*;
 public final class ContainerUtilRt {
 
   /**
-   * @deprecated Use {@link ArrayList#ArrayList()} instead
-   */
-  @NotNull
-  @ApiStatus.ScheduledForRemoval
-  @Deprecated
-  @Contract(value = " -> new", pure = true)
-  public static <T> ArrayList<T> newArrayList() {
-    return new ArrayList<>();
-  }
-
-  /**
    * @deprecated Use {@link com.intellij.util.containers.ContainerUtil#newArrayList(Object[])} instead
    */
   @Deprecated
   @ApiStatus.ScheduledForRemoval
   @NotNull
   @Contract(value = "_ -> new", pure = true)
-  public static <T> ArrayList<T> newArrayList(@NotNull T... elements) {
+  public static <T> ArrayList<T> newArrayList(T... elements) {
     ArrayList<T> list = new ArrayList<>(elements.length);
     Collections.addAll(list, elements);
     return list;
@@ -49,7 +41,7 @@ public final class ContainerUtilRt {
   @ApiStatus.ScheduledForRemoval
   @NotNull
   @Contract(value = "_ -> new", pure = true)
-  public static <T> LinkedHashSet<T> newLinkedHashSet(@NotNull T... elements) {
+  public static <T> LinkedHashSet<T> newLinkedHashSet(T... elements) {
     return new LinkedHashSet<>(Arrays.asList(elements));
   }
 
@@ -77,15 +69,13 @@ public final class ContainerUtilRt {
       throw new IndexOutOfBoundsException("Index: " + index);
     }
 
-    @NotNull
     @Override
-    public Object[] toArray() {
+    public Object @NotNull [] toArray() {
       return ArrayUtilRt.EMPTY_OBJECT_ARRAY;
     }
 
-    @NotNull
     @Override
-    public <E> E[] toArray(@NotNull E[] a) {
+    public <E> E @NotNull [] toArray(E @NotNull [] a) {
       if (a.length != 0) {
         a[0] = null;
       }
@@ -124,6 +114,51 @@ public final class ContainerUtilRt {
     @Override
     public int hashCode() {
       return 1;
+    }
+
+    @Override
+    public void clear() {
+      throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public boolean remove(Object o) {
+      throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public boolean removeAll(@NotNull Collection<?> c) {
+      throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public boolean removeIf(@NotNull Predicate<? super T> filter) {
+      throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public boolean retainAll(@NotNull Collection<?> c) {
+      throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public boolean addAll(int index, Collection<? extends T> c) {
+      throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public boolean addAll(@NotNull Collection<? extends T> c) {
+      throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void sort(@Nullable Comparator<? super T> c) {
+      throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void replaceAll(@NotNull UnaryOperator<T> operator) {
+      throw new UnsupportedOperationException();
     }
   }
 

@@ -8,20 +8,17 @@ import com.intellij.openapi.components.impl.stores.stateStore
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.roots.OrderRootType
 import com.intellij.openapi.util.JDOMUtil
-import com.intellij.platform.backend.workspace.GlobalWorkspaceModelCache
 import com.intellij.platform.diagnostic.telemetry.helpers.MillisecondsMeasurer
-import com.intellij.platform.eel.provider.EelNioBridgeService
-import com.intellij.platform.eel.provider.LocalEelDescriptor
+import com.intellij.platform.eel.provider.EelProvider
+import com.intellij.platform.eel.provider.LocalEelMachine
 import com.intellij.platform.workspace.jps.JpsGlobalFileEntitySource
 import com.intellij.platform.workspace.jps.entities.LibraryEntity
 import com.intellij.platform.workspace.jps.entities.SdkEntity
 import com.intellij.platform.workspace.jps.serialization.impl.*
-import com.intellij.platform.workspace.storage.EntityStorage
-import com.intellij.platform.workspace.storage.MutableEntityStorage
-import com.intellij.platform.workspace.storage.VersionedEntityStorage
-import com.intellij.platform.workspace.storage.WorkspaceEntity
+import com.intellij.platform.workspace.storage.*
 import com.intellij.platform.workspace.storage.url.VirtualFileUrl
 import com.intellij.platform.workspace.storage.url.VirtualFileUrlManager
+import com.intellij.util.containers.ContainerUtil
 import com.intellij.workspaceModel.ide.JpsGlobalModelLoadedListener
 import com.intellij.workspaceModel.ide.JpsGlobalModelSynchronizer
 import com.intellij.workspaceModel.ide.impl.GlobalWorkspaceModel
@@ -30,12 +27,14 @@ import com.intellij.workspaceModel.ide.impl.legacyBridge.sdk.SdkBridgeImpl.Compa
 import com.intellij.workspaceModel.ide.legacyBridge.GlobalEntityBridgeAndEventHandler
 import io.opentelemetry.api.metrics.Meter
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.jdom.Element
 import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.annotations.TestOnly
-import kotlin.io.path.Path
+import org.jetbrains.annotations.VisibleForTesting
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -62,43 +61,71 @@ import kotlin.time.Duration.Companion.seconds
  * 3) Reading .xml on delayed sync
  */
 @ApiStatus.Internal
-class JpsGlobalModelSynchronizerImpl(private val coroutineScope: CoroutineScope) : JpsGlobalModelSynchronizer {
-  private var loadedFromDisk: Boolean = false
+@ApiStatus.NonExtendable
+open class JpsGlobalModelSynchronizerImpl(private val coroutineScope: CoroutineScope) : JpsGlobalModelSynchronizer {
+  private var loadedFromDisk: MutableMap<InternalEnvironmentName, Boolean> = mutableMapOf()
   private val isSerializationProhibited: Boolean
     get() = !forceEnableLoading && ApplicationManager.getApplication().isUnitTestMode
   private lateinit var virtualFileUrlManager: VirtualFileUrlManager
+  private val projectSynchronizationJobs: MutableList<Job> = ContainerUtil.createConcurrentList()
+
+  // Allow tests to override the delay duration
+  @get:VisibleForTesting
+  protected open val delayDuration: Duration
+    get() = 5.seconds
 
   override fun loadInitialState(
-    environmentName: GlobalWorkspaceModelCache.InternalEnvironmentName, mutableStorage: MutableEntityStorage, initialEntityStorage: VersionedEntityStorage,
+    environmentName: InternalEnvironmentName,
+    mutableStorage: MutableEntityStorage,
+    initialEntityStorage: VersionedEntityStorage,
     loadedFromCache: Boolean,
   ): () -> Unit = jpsLoadInitialStateMs.addMeasuredTime {
-    val callback = if (loadedFromCache) {
-      val callback = bridgesInitializationCallback(environmentName, mutableStorage, initialEntityStorage, false)
-      coroutineScope.launch {
-        delay(5.seconds)
-        delayLoadGlobalWorkspaceModel(environmentName)
+    if (loadedFromCache) {
+      val callback = bridgesInitializationCallback(
+        environmentName = environmentName,
+        mutableStorage = mutableStorage,
+        initialEntityStorage = initialEntityStorage,
+        notifyListeners = false,
+      )
+
+      return@addMeasuredTime {
+        callback()
+        coroutineScope.launch {
+          waitForActiveProjectJobs()
+          delayLoadGlobalWorkspaceModel(environmentName)
+        }
       }
-      callback
     }
     else {
-      loadGlobalEntitiesToEmptyStorage(environmentName, mutableStorage, initialEntityStorage, initializeBridges = true)
+      loadGlobalEntitiesToEmptyStorage(
+        environmentName = environmentName,
+        mutableStorage = mutableStorage,
+        initialEntityStorage = initialEntityStorage,
+        initializeBridges = true,
+      )
     }
-
-    return@addMeasuredTime callback
   }
 
   override fun setVirtualFileUrlManager(vfuManager: VirtualFileUrlManager) {
     virtualFileUrlManager = vfuManager
   }
 
-  suspend fun saveGlobalEntities() = jpsSaveGlobalEntitiesMs.addMeasuredTime {
+  override fun setProjectSynchronizationJob(job: Job) {
+    projectSynchronizationJobs.add(job)
+    // Clean up completed jobs to prevent memory leaks
+    job.invokeOnCompletion {
+      projectSynchronizationJobs.remove(job)
+    }
+  }
+
+  override suspend fun saveGlobalEntities(): Unit = jpsSaveGlobalEntitiesMs.addMeasuredTime {
     val globalWorkspaceModels = GlobalWorkspaceModel.getInstances()
-    globalWorkspaceModels.forEach { globalWorkspaceModel ->
+    for (globalWorkspaceModel in globalWorkspaceModels) {
       setVirtualFileUrlManager(globalWorkspaceModel.getVirtualFileUrlManager())
-      val entityStorage = globalWorkspaceModel.entityStorage.current
-      val serializers = createSerializers()
+      val entityStorage = globalWorkspaceModel.currentSnapshot
+      val serializers = createSerializers(globalWorkspaceModel.internalEnvironmentName)
       val contentWriter = (ApplicationManager.getApplication().stateStore as ApplicationStoreJpsContentReader).createContentWriter()
-      serializers.forEach { serializer ->
+      for (serializer in serializers) {
         serializeEntities(entityStorage, serializer, contentWriter)
       }
       contentWriter.saveSession()
@@ -108,24 +135,34 @@ class JpsGlobalModelSynchronizerImpl(private val coroutineScope: CoroutineScope)
   @TestOnly
   suspend fun saveSdkEntities() {
     val sortedRootTypes = OrderRootType.getSortedRootTypes().mapNotNull { it.sdkRootName }
-    val sdkSerializer = JpsGlobalEntitiesSerializers.createSdkSerializer(virtualFileUrlManager, sortedRootTypes, Path(PathManager.getOptionsPath())) as JpsFileEntityTypeSerializer<WorkspaceEntity>
-    val contentWriter = (ApplicationManager.getApplication().stateStore as ApplicationStoreJpsContentReader).createContentWriter()
-    GlobalWorkspaceModel.getInstances().forEach {
-      val entityStorage = it.entityStorage.current
+
+    for (globalWorkspaceModel in GlobalWorkspaceModel.getInstances()) {
+      @Suppress("UNCHECKED_CAST")
+      val sdkSerializer = JpsGlobalEntitiesSerializers.createSdkSerializer(
+        virtualFileUrlManager = virtualFileUrlManager,
+        sortedRootTypes = sortedRootTypes,
+        optionsDir = PathManager.getOptionsDir(),
+        environmentName = globalWorkspaceModel.internalEnvironmentName,
+      ) as JpsFileEntityTypeSerializer<WorkspaceEntity>
+      val contentWriter = (ApplicationManager.getApplication().stateStore as ApplicationStoreJpsContentReader).createContentWriter()
+      val entityStorage = globalWorkspaceModel.currentSnapshot
       serializeEntities(entityStorage, sdkSerializer, contentWriter)
       contentWriter.saveSession()
     }
   }
 
-  private fun serializeEntities(entityStorage: EntityStorage, serializer: JpsFileEntityTypeSerializer<WorkspaceEntity>,
-                                contentWriter: JpsAppFileContentWriter) {
+  private fun serializeEntities(
+    entityStorage: EntityStorage, serializer: JpsFileEntityTypeSerializer<WorkspaceEntity>,
+    contentWriter: JpsAppFileContentWriter,
+  ) {
     val entities = entityStorage.entities(serializer.mainEntityClass).toList()
     LOG.info("Saving global entities ${serializer.mainEntityClass.name} to files")
 
     val filteredEntities = if (serializer.mainEntityClass == LibraryEntity::class.java) {
       // We need to filter custom libraries, they will be serialized by the client code and not by the platform
       entities.filter { it.entitySource is JpsGlobalFileEntitySource }
-    } else entities
+    }
+    else entities
 
     if (serializer.mainEntityClass == SdkEntity::class.java) {
       assertUnexpectedAdditionalDataModification(entityStorage)
@@ -134,18 +171,19 @@ class JpsGlobalModelSynchronizerImpl(private val coroutineScope: CoroutineScope)
     if (filteredEntities.isEmpty()) {
       // Remove empty files
       serializer.deleteObsoleteFile(serializer.fileUrl.url, contentWriter)
-    } else {
+    }
+    else {
       serializer.saveEntities(filteredEntities, emptyMap(), entityStorage, contentWriter)
     }
   }
 
 
   private fun assertUnexpectedAdditionalDataModification(entityStorage: EntityStorage) {
-    entityStorage.entities(SdkEntity::class.java).forEach { sdkEntity ->
+    for (sdkEntity in entityStorage.entities(SdkEntity::class.java)) {
       val projectJdkImpl = entityStorage.sdkMap.getDataByEntity(sdkEntity) ?: error(
         "SdkBridge has to be available for the SdkEntity: ${sdkEntity.name}; type: ${sdkEntity.type}; path: ${sdkEntity.homePath}")
       val additionalData = projectJdkImpl.sdkAdditionalData
-      if (additionalData == null) return@forEach
+      if (additionalData == null) continue
       val additionalDataElement = Element(ELEMENT_ADDITIONAL)
       projectJdkImpl.sdkType.saveAdditionalData(additionalData, additionalDataElement)
       val additionalDataAsString = JDOMUtil.write(additionalDataElement)
@@ -161,31 +199,59 @@ class JpsGlobalModelSynchronizerImpl(private val coroutineScope: CoroutineScope)
     }
   }
 
-  private suspend fun delayLoadGlobalWorkspaceModel(environmentName: GlobalWorkspaceModelCache.InternalEnvironmentName) {
-    val globalWorkspaceModel = GlobalWorkspaceModel.getInstanceByInternalName(environmentName)
-    if (globalWorkspaceModel.loadedFromCache && !loadedFromDisk) {
-      val mutableStorage = MutableEntityStorage.create()
+  private suspend fun waitForActiveProjectJobs() {
+    // first, wait for the intended delay for delayed loading
+    delay(delayDuration)
 
-      // We don't need to initialize bridges one more time at delay loading. Otherwise, we will get the new instance of bridge in the mappings
-      loadGlobalEntitiesToEmptyStorage(environmentName, mutableStorage, globalWorkspaceModel.entityStorage, initializeBridges = false)
-      backgroundWriteAction {
-        globalWorkspaceModel.updateModel("Sync global entities with state") { builder ->
-          builder.replaceBySource({ it is JpsGlobalFileEntitySource }, mutableStorage)
+    // Then wait for all project synchronization jobs to complete if any are set.
+    // This prevents race conditions where the global sync (background write action)
+    // might execute before the project sync (also background write action),
+    // which could delay the project sync that is part of InitProjectActivity lifecycle.
+    while (projectSynchronizationJobs.isNotEmpty()) {
+      for (job in projectSynchronizationJobs) {
+        try {
+          job.join()
+        }
+        catch (e: Exception) {
+          LOG.debug("Project synchronization job completed with exception, continuing with delayed loading", e)
         }
       }
-      // Notify the listeners that synchronization process completed
-      ApplicationManager.getApplication().messageBus.syncPublisher(JpsGlobalModelLoadedListener.LOADED).loaded()
     }
   }
 
+  @VisibleForTesting
+  protected open suspend fun delayLoadGlobalWorkspaceModel(environmentName: InternalEnvironmentName) {
+    val globalWorkspaceModel = GlobalWorkspaceModel.getInstanceByEnvironmentName(environmentName)
+    if (loadedFromDisk[environmentName] == true || !globalWorkspaceModel.loadedFromCache) {
+      return
+    }
+
+    val mutableStorage = MutableEntityStorage.create()
+
+    // We don't need to initialize bridges one more time at delay loading. Otherwise, we will get the new instance of bridge in the mappings
+    loadGlobalEntitiesToEmptyStorage(
+      environmentName = environmentName,
+      mutableStorage = mutableStorage,
+      initialEntityStorage = globalWorkspaceModel.entityStorage,
+      initializeBridges = false,
+    )
+    backgroundWriteAction {
+      globalWorkspaceModel.updateModel("Sync global entities with state") { builder ->
+        builder.replaceBySource({ it is JpsGlobalFileEntitySource }, mutableStorage)
+      }
+    }
+    // Notify the listeners that synchronization process completed
+    ApplicationManager.getApplication().messageBus.syncPublisher(JpsGlobalModelLoadedListener.LOADED).loaded(environmentName)
+  }
+
   private fun loadGlobalEntitiesToEmptyStorage(
-    environmentName: GlobalWorkspaceModelCache.InternalEnvironmentName,
+    environmentName: InternalEnvironmentName,
     mutableStorage: MutableEntityStorage,
     initialEntityStorage: VersionedEntityStorage,
     initializeBridges: Boolean,
   ): () -> Unit {
     val contentReader = (ApplicationManager.getApplication().stateStore as ApplicationStoreJpsContentReader).createContentReader()
-    val serializers = createSerializers()
+    val serializers = createSerializers(environmentName)
     val errorReporter = object : ErrorReporter {
       override fun reportError(message: String, file: VirtualFileUrl) {
         LOG.warn(message)
@@ -202,30 +268,34 @@ class JpsGlobalModelSynchronizerImpl(private val coroutineScope: CoroutineScope)
     } else {
       { }
     }
-    loadedFromDisk = true
+    loadedFromDisk[environmentName] = true
     return callback
   }
 
-  private fun createSerializers(): List<JpsFileEntityTypeSerializer<WorkspaceEntity>> {
+  private fun createSerializers(environmentName: InternalEnvironmentName): List<JpsFileEntityTypeSerializer<WorkspaceEntity>> {
     if (isSerializationProhibited) return emptyList()
     val sortedRootTypes = OrderRootType.getSortedRootTypes().mapNotNull { it.sdkRootName }
-    return JpsGlobalEntitiesSerializers.createApplicationSerializers(virtualFileUrlManager, sortedRootTypes, Path(PathManager.getOptionsPath()))
+    return JpsGlobalEntitiesSerializers.createApplicationSerializers(virtualFileUrlManager, sortedRootTypes, PathManager.getOptionsDir(), environmentName)
   }
 
   private fun bridgesInitializationCallback(
-    environmentName: GlobalWorkspaceModelCache.InternalEnvironmentName,
+    environmentName: InternalEnvironmentName,
     mutableStorage: MutableEntityStorage,
     initialEntityStorage: VersionedEntityStorage,
     notifyListeners: Boolean,
   ): () -> Unit {
-    val descriptor = EelNioBridgeService.getInstanceSync().tryGetDescriptorByName(environmentName.name) ?: LocalEelDescriptor
-    val callbacks = GlobalEntityBridgeAndEventHandler.getAllGlobalEntityHandlers(descriptor)
+    val eelMachine =
+      EelProvider.EP_NAME.extensionList.firstNotNullOfOrNull { eelProvider ->
+        eelProvider.getEelMachineByInternalName(environmentName.name)
+      }
+      ?: LocalEelMachine
+    val callbacks = GlobalEntityBridgeAndEventHandler.getAllGlobalEntityHandlers(eelMachine)
       .map { it.initializeBridgesAfterLoading(mutableStorage, initialEntityStorage) }
     return {
       callbacks.forEach { it.invoke() }
       if (notifyListeners) {
         // Notify the listeners that synchronization process completed
-        ApplicationManager.getApplication().messageBus.syncPublisher(JpsGlobalModelLoadedListener.LOADED).loaded()
+        ApplicationManager.getApplication().messageBus.syncPublisher(JpsGlobalModelLoadedListener.LOADED).loaded(environmentName)
       }
     }
   }
@@ -248,7 +318,7 @@ class JpsGlobalModelSynchronizerImpl(private val coroutineScope: CoroutineScope)
     private val jpsLoadInitialStateMs = MillisecondsMeasurer()
     private val jpsSaveGlobalEntitiesMs = MillisecondsMeasurer()
 
-    private fun setupOpenTelemetryReporting(meter: Meter): Unit {
+    private fun setupOpenTelemetryReporting(meter: Meter) {
       val jpsLoadInitialStateCounter = meter.counterBuilder("jps.load.initial.state.ms").buildObserver()
       val jpsSaveGlobalEntitiesCounter = meter.counterBuilder("jps.save.global.entities.ms").buildObserver()
 

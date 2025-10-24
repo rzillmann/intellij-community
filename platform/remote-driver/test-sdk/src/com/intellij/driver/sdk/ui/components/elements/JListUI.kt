@@ -1,6 +1,7 @@
 package com.intellij.driver.sdk.ui.components.elements
 
 import com.intellij.driver.client.Remote
+import com.intellij.driver.client.impl.RefWrapper
 import com.intellij.driver.model.OnDispatcher
 import com.intellij.driver.sdk.invokeAction
 import com.intellij.driver.sdk.ui.*
@@ -21,7 +22,7 @@ fun Finder.list(locator: QueryBuilder.() -> String) = x(JListUiComponent::class.
 
 fun Finder.accessibleList(locator: QueryBuilder.() -> String = { byType(JList::class.java) }) =
   x(JListUiComponent::class.java) { locator() }.apply {
-    replaceCellRendererReader(driver.new(AccessibleNameCellRendererReader::class))
+    replaceCellRendererReader { driver.new(AccessibleNameCellRendererReader::class, rdTarget = (it as RefWrapper).getRef().rdTarget) }
   }
 
 /** Locates JBList element */
@@ -29,30 +30,30 @@ fun Finder.jBlist(@Language("xpath") xpath: String? = null) = x(xpath ?: "//div[
                                                                 JListUiComponent::class.java)
 
 open class JListUiComponent(data: ComponentData) : UiComponent(data) {
-  private var cellRendererReader: CellRendererReader? = null
+  private var cellRendererReaderSupplier: ((JListFixtureRef) -> CellRendererReader)? = null
   private val fixture by lazy {
     driver.new(JListFixtureRef::class, robot, component).apply {
-      cellRendererReader?.let { replaceCellRendererReader(it) }
+      cellRendererReaderSupplier?.let { replaceCellRendererReader(it(this)) }
     }
   }
 
   val listComponent: JListComponent get() = driver.cast(component, JListComponent::class)
 
-  val items: List<String>
+  open val items: List<String>
     get() = fixture.collectItems()
 
   val rawItems: List<String>
     get() = fixture.collectRawItems()
 
-  val selectedItems: List<String>
+  open val selectedItems: List<String>
     get() = fixture.collectSelectedItems()
 
-  fun replaceCellRendererReader(reader: CellRendererReader) {
-    cellRendererReader = reader
+  fun replaceCellRendererReader(readerSupplier: (JListFixtureRef) -> CellRendererReader) {
+    cellRendererReaderSupplier = readerSupplier
   }
 
-  fun clickItem(itemText: String, fullMatch: Boolean = true, offset: Point? = null) {
-    findItemIndex(itemText, fullMatch)?.let { index ->
+  fun clickItem(itemText: String, fullMatch: Boolean = true, trimmed: Boolean = false, offset: Point? = null) {
+    findItemIndex(itemText, fullMatch, trimmed)?.let { index ->
       clickItemAtIndex(index, offset)
     } ?: throw IllegalArgumentException("item with text $itemText not found, all items: ${items.joinToString(", ")}")
   }
@@ -64,8 +65,8 @@ open class JListUiComponent(data: ComponentData) : UiComponent(data) {
     }
   }
 
-  fun hoverItem(itemText: String, fullMatch: Boolean = true, offset: Point? = null) {
-    findItemIndex(itemText, fullMatch)?.let { index ->
+  fun hoverItem(itemText: String, fullMatch: Boolean = true, trimmed: Boolean = false, offset: Point? = null) {
+    findItemIndex(itemText, fullMatch, trimmed)?.let { index ->
       if (offset == null) {
         hoverItemAtIndex(index)
       } else {
@@ -93,7 +94,7 @@ open class JListUiComponent(data: ComponentData) : UiComponent(data) {
 
   fun hoverItemAtIndex(index: Int) {
     val cellBounds = driver.withContext(OnDispatcher.EDT) { listComponent.getCellBounds(index, index) }
-    moveMouse(Point(cellBounds.getX().toInt(), cellBounds.getY().toInt()))
+    moveMouse(cellBounds.center)
   }
 
   fun invokeSelectNextRowAction() {
@@ -111,14 +112,12 @@ open class JListUiComponent(data: ComponentData) : UiComponent(data) {
 
   fun getComponentAt(index: Int): Component = fixture.getComponentAtIndex(index)
 
-  protected fun findItemIndex(itemText: String, fullMatch: Boolean): Int? =
+  protected fun findItemIndex(itemText: String, fullMatch: Boolean, trimmed: Boolean = false): Int? =
     fixture.collectItems().indexOfFirst {
-      if (fullMatch) it == itemText
-      else it.contains(itemText, true)
-    }.let {
-      if (it == -1) null
-      else it
-    }
+      val text = if (trimmed) it.trim() else it
+      if (fullMatch) text == itemText
+      else text.contains(itemText, true)
+    }.takeIf { it != -1 }
 }
 
 @Remote("com.jetbrains.performancePlugin.remotedriver.fixtures.JListTextFixture", plugin = REMOTE_ROBOT_MODULE_ID)

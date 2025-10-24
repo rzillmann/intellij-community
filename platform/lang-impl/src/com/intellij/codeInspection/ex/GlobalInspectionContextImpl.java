@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.codeInspection.ex;
 
 import com.intellij.analysis.AnalysisScope;
@@ -11,7 +11,7 @@ import com.intellij.codeInsight.daemon.ProblemHighlightFilter;
 import com.intellij.codeInsight.daemon.impl.DaemonProgressIndicator;
 import com.intellij.codeInsight.daemon.impl.HighlightingSessionImpl;
 import com.intellij.codeInsight.daemon.impl.ProblemDescriptorWithReporterName;
-import com.intellij.codeInsight.multiverse.FileViewProviderUtil;
+import com.intellij.codeInsight.multiverse.CodeInsightContextUtil;
 import com.intellij.codeInsight.util.GlobalInspectionScopeKt;
 import com.intellij.codeInspection.*;
 import com.intellij.codeInspection.actions.CleanupInspectionUtil;
@@ -539,7 +539,7 @@ public class GlobalInspectionContextImpl extends GlobalInspectionContextEx {
     Document document = PsiDocumentManager.getInstance(getProject()).getDocument(psiFile);
     if (document == null) return;
     DaemonProgressIndicator progressIndicator = assertUnderDaemonProgress();
-    HighlightingSessionImpl.runInsideHighlightingSession(psiFile, FileViewProviderUtil.getCodeInsightContext(psiFile), null, new ProperTextRange(psiFile.getTextRange()), false, session -> {
+    HighlightingSessionImpl.runInsideHighlightingSession(psiFile, CodeInsightContextUtil.getCodeInsightContext(psiFile), null, new ProperTextRange(psiFile.getTextRange()), false, session -> {
       InspectionProfileWrapper.runWithCustomInspectionWrapper(psiFile, __ -> new InspectionProfileWrapper(getCurrentProfile()), () -> {
         try {
           Map<LocalInspectionToolWrapper, List<ProblemDescriptor>> map =
@@ -1141,18 +1141,18 @@ public class GlobalInspectionContextImpl extends GlobalInspectionContextEx {
         private int myCount;
 
         @Override
-        public void visitFile(@NotNull PsiFile file) {
+        public void visitFile(@NotNull PsiFile psiFile) {
           if (LOG.isDebugEnabled()) {
-            LOG.debug("Code cleanup: searching for problems in file " + file);
+            LOG.debug("Code cleanup: searching for problems in file " + psiFile);
           }
 
-          progressIndicator.setText(AbstractLayoutCodeProcessor.getPresentablePath(getProject(), file));
+          progressIndicator.setText(AbstractLayoutCodeProcessor.getPresentablePath(getProject(), psiFile));
           progressIndicator.setFraction((double)++myCount / fileCount);
 
-          if (isBinary(file)) return;
+          if (isBinary(psiFile)) return;
           List<LocalInspectionToolWrapper> lTools = new ArrayList<>();
           for (Tools tools : inspectionTools) {
-            InspectionToolWrapper<?, ?> tool = tools.getEnabledTool(file, includeDoNotShow);
+            InspectionToolWrapper<?, ?> tool = tools.getEnabledTool(psiFile, includeDoNotShow);
             if (tool != null && profile instanceof InspectionProfileImpl profileImpl) {
               @NotNull Set<InspectionToolWrapper<?, ?>> other = new HashSet<>();
               profileImpl.collectDependentInspections(tool, other, getProject());
@@ -1173,9 +1173,9 @@ public class GlobalInspectionContextImpl extends GlobalInspectionContextEx {
           }
 
           if (!lTools.isEmpty()) {
-            InspectionProfileWrapper.runWithCustomInspectionWrapper(file,
+            InspectionProfileWrapper.runWithCustomInspectionWrapper(psiFile,
                 p -> new InspectionProfileWrapper(profile, ((InspectionProfileImpl)p).getProfileManager()),
-                () -> findProblemsInFile(file, lTools, range, searchScope, descriptors, files, shouldApplyFix));
+                                                                    () -> findProblemsInFile(psiFile, lTools, range, searchScope, descriptors, files, shouldApplyFix));
           }
         }
       }));

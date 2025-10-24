@@ -29,6 +29,15 @@ private const val VERTICAL_MARGINS = 10
 private const val HEIGHT_BETWEEN_TEXT_AND_BUTTONS = 6
 private const val HORIZONTAL_MARGINS = 16
 
+/**
+ * Notification panel displayed at the bottom of the editor when execution fails.
+ *
+ * To provide custom fixes, implement the
+ * [com.intellij.database.connection.throwable.info.RuntimeErrorActionProvider]
+ * extension point and register it in your `plugin.xml` under the
+ * `database.runtimeErrorFixProvider` key.
+ */
+
 class ErrorNotificationPanel private constructor(
   htmlErrorMessage: String?,
   items: List<PanelItem>,
@@ -37,18 +46,22 @@ class ErrorNotificationPanel private constructor(
 ) : JPanel(BorderLayout()), UiDataProvider {
   private var copyProvider: CopyProvider? = null
   private val textPane: JTextArea?
+  private val content: JPanel
 
   init {
     background = messageType.popupBackground
-    isFocusable = true
-    isFocusCycleRoot = true
-    border = JBUI.Borders.empty(VERTICAL_MARGINS, 0)
-    isRequestFocusEnabled = true
-
     val horizontalLayout = items.size <= HORIZONTAL_LAYOUT_THRESHOLD
+    content = JPanel(BorderLayout())
     textPane = htmlErrorMessage?.let { createTextPanel(htmlErrorMessage, horizontalLayout) }
     initComponent(items, horizontalLayout)
   }
+
+  @Deprecated("This method is deprecated and will be deleted soon." +
+              " To provide custom fixes to notification panel, implement the" +
+              " [com.intellij.database.connection.throwable.info.RuntimeErrorActionProvider]" +
+              " extension point and declare it in your plugin.xml using the" +
+              " 'database.runtimeErrorFixProvider' key")
+  fun getContent(): JComponent? = content
 
   private fun initComponent(items: List<PanelItem>, horizontalLayout: Boolean) {
     val buttonsGravity = if (horizontalLayout) { BorderLayout.EAST } else { BorderLayout.NORTH }
@@ -58,11 +71,19 @@ class ErrorNotificationPanel private constructor(
       border = JBUI.Borders.empty()
     }
 
-    add(buttonPanel, buttonsGravity)
-    textPane?.let { add(it, BorderLayout.CENTER) }
+    content.add(buttonPanel, buttonsGravity)
+    textPane?.let { content.add(it, BorderLayout.CENTER) }
     addSubscribers(textPane)
 
-    addMouseListener(RequestFocusMouseListener(this))
+    content.isFocusable = true
+    content.isFocusCycleRoot = true
+    content.isOpaque = false
+    content.isRequestFocusEnabled = true
+    content.border = JBUI.Borders.empty(VERTICAL_MARGINS, 0)
+
+    content.addMouseListener(RequestFocusMouseListener(this))
+    add(content, BorderLayout.CENTER)
+
     textPane?.addMouseListener(RequestFocusMouseListener(this))
   }
 
@@ -86,7 +107,7 @@ class ErrorNotificationPanel private constructor(
   }
 
   override fun addMouseListener(listener: MouseListener) {
-    super.addMouseListener(listener)
+    content.addMouseListener(listener)
     textPane?.addMouseListener(listener)
   }
 
@@ -160,22 +181,14 @@ class ErrorNotificationPanel private constructor(
       }
 
       return addLink(DataGridBundle.message("action.details.text")) {
-        Messages.showIdeaMessageDialog(
-          null, message, DataGridBundle.message("dialog.title.query.error"),
-          arrayOf<String>(CommonBundle.getOkButtonText()), 0, Messages.getErrorIcon(), null)
+        ErrorNotificationPopup(DataGridBundle.message("dialog.title.query.error"), null, message).show()
       }
     }
 
     fun addFullMessageButtonIfNeeded(): Builder {
       if (!isChoppedMessage) return this
       return addLink(DataGridBundle.message("action.full.message.text"), KeyEvent.VK_F, Runnable {
-        val result = Messages.showIdeaMessageDialog(
-          null, message, DataGridBundle.message("dialog.title.query.error"),
-          arrayOf<String>(CommonBundle.getCancelButtonText(),  DataGridBundle.message("dialog.button.copy.and.close")), 0, Messages.getErrorIcon(), null
-        )
-        if (result == 1) {
-          message?.let { CopyPasteManager.copyTextToClipboard(message) }
-        }
+        ErrorNotificationPopup(DataGridBundle.message("action.full.message.text"), error, message).show()
       })
     }
 

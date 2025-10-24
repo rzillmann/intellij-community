@@ -5,11 +5,11 @@ import com.intellij.codeInsight.breadcrumbs.FileBreadcrumbsCollector;
 import com.intellij.diff.tools.util.base.TextDiffViewerUtil;
 import com.intellij.diff.util.*;
 import com.intellij.openapi.Disposable;
-import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.ModalityState;
 import com.intellij.openapi.application.ReadAction;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.editor.Document;
+import com.intellij.openapi.editor.EditorThreading;
 import com.intellij.openapi.editor.FoldRegion;
 import com.intellij.openapi.editor.event.*;
 import com.intellij.openapi.editor.ex.DocumentEx;
@@ -174,7 +174,7 @@ public class FoldingModelSupport {
   }
 
   protected static int[] countLines(EditorEx @NotNull [] editors) {
-    return ReadAction.compute(() -> {
+    return EditorThreading.compute(() -> {
       int[] lineCount = new int[editors.length];
       for (int i = 0; i < editors.length; i++) {
         lineCount[i] = getLineCount(editors[i].getDocument());
@@ -494,7 +494,7 @@ public class FoldingModelSupport {
       if (!myShouldUpdateLineNumbers[i] && !force) continue;
       myShouldUpdateLineNumbers[i] = false;
 
-      ApplicationManager.getApplication().assertReadAccessAllowed();
+      EditorThreading.assertInteractionAllowed();
 
       Int2ObjectMap<List<FoldedBlock>> mapping = myLineMappings[i];
       mapping.clear();
@@ -766,7 +766,7 @@ public class FoldingModelSupport {
   private @NotNull FoldingCache getFoldingCache(@NotNull Settings settings) {
     //noinspection unchecked
     List<FoldedGroupState>[] result = new List[myCount];
-    ReadAction.run(() -> {
+    EditorThreading.run(() -> {
       for (int i = 0; i < myCount; i++) {
         result[i] = collectFoldedGroupsStates(i);
       }
@@ -775,7 +775,7 @@ public class FoldingModelSupport {
   }
 
   private @NotNull List<FoldedGroupState> collectFoldedGroupsStates(int index) {
-    ApplicationManager.getApplication().assertReadAccessAllowed();
+    EditorThreading.assertInteractionAllowed();
     List<FoldedGroupState> ranges = new ArrayList<>();
     DocumentEx document = myEditors[index].getDocument();
 

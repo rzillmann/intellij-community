@@ -1,4 +1,4 @@
-// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.lang;
 
 import com.intellij.diagnostic.ImplementationConflictException;
@@ -14,7 +14,7 @@ import com.intellij.openapi.util.text.Strings;
 import com.intellij.psi.impl.source.resolve.reference.ReferenceProvidersRegistry;
 import com.intellij.psi.tree.IElementType;
 import com.intellij.util.ArrayUtilRt;
-import com.intellij.util.Java11Shim;
+import com.intellij.util.containers.Java11Shim;
 import kotlinx.collections.immutable.PersistentList;
 import kotlinx.collections.immutable.PersistentSet;
 import org.jetbrains.annotations.*;
@@ -47,9 +47,9 @@ public abstract class Language extends UserDataHolderBase {
   public static final Language[] EMPTY_ARRAY = new Language[0];
 
   private static final Object staticLock = new Object();
-  private static volatile Map<Class<? extends Language>, @NotNull Language> registeredLanguages = Java11Shim.Companion.getINSTANCE().mapOf();
-  private static volatile Map<String, PersistentList<Language>> registeredMimeTypes = Java11Shim.Companion.getINSTANCE().mapOf();
-  private static volatile Map<String, Language> registeredIds = Java11Shim.Companion.getINSTANCE().mapOf();
+  private static volatile Map<Class<? extends Language>, @NotNull Language> registeredLanguages = Java11Shim.INSTANCE.mapOf();
+  private static volatile Map<String, PersistentList<Language>> registeredMimeTypes = Java11Shim.INSTANCE.mapOf();
+  private static volatile Map<String, Language> registeredIds = Java11Shim.INSTANCE.mapOf();
 
   private final Language myBaseLanguage;
   private final String myID;
@@ -102,7 +102,11 @@ public abstract class Language extends UserDataHolderBase {
 
       existing = registeredIds.get(ID);
       if (existing != null) {
-        throw new ImplementationConflictException("Language with ID '" + ID + "' is already registered: " + existing.getClass(), null, existing, this);
+        throw new ImplementationConflictException(
+          "Language with ID '" + ID + "' is already registered: "
+          + existing.getClass() + "; " + existing.getClass().getClassLoader()
+          + " current is " + getClass() + "; " + getClass().getClassLoader(),
+          null, existing, this);
       }
 
       registeredLanguages = with(registeredLanguages, langClass, this);

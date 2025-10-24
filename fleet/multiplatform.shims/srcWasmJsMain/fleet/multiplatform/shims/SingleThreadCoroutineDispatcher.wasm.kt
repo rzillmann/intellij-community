@@ -2,16 +2,18 @@
 package fleet.multiplatform.shims
 
 import fleet.util.multiplatform.Actual
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.coroutineScope
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
 
-@Actual("newSingleThreadCoroutineDispatcher")
+@Actual
 fun newSingleThreadCoroutineDispatcherWasmJs(
   name: String,
   priority: DispatcherPriority
 ): HighPriorityCoroutineDispatcherResource =
   object : HighPriorityCoroutineDispatcherResource {
-    override suspend fun <U> use(body: suspend (CoroutineContext) -> U): U {
-      return body(EmptyCoroutineContext)
+    override suspend fun <U> use(body: suspend CoroutineScope.(CoroutineContext) -> U): U {
+      return coroutineScope { body(EmptyCoroutineContext) }
     }
   }

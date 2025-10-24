@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.util.indexing
 
 import com.intellij.ide.IdeBundle
@@ -11,6 +11,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.NlsContexts
 import com.intellij.openapi.util.NlsContexts.ProgressText
 import com.intellij.openapi.util.NlsContexts.ProgressTitle
+import com.intellij.platform.ide.progress.TaskCancellation
 import com.intellij.platform.ide.progress.withBackgroundProgress
 import com.intellij.platform.util.coroutines.flow.mapStateIn
 import com.intellij.platform.util.progress.reportRawProgress
@@ -56,7 +57,10 @@ internal class IndexingProgressReporter {
         while (true) {
           shouldShowProgress.first { it }
 
-          withBackgroundProgress(project, progressTitle, cancellable = false) {
+          withBackgroundProgress(project, progressTitle,
+                                 cancellation = TaskCancellation.nonCancellable(),
+                                 suspender = null,
+                                 visibleInStatusBar = false) {
             reportRawProgress { reporter ->
               async {
                 pauseReason
@@ -118,7 +122,8 @@ internal class IndexingProgressReporter {
 
   @Internal
   interface CheckPauseOnlyProgressIndicator {
-    fun freezeIfPaused()
+    fun isPaused(): Boolean
+    suspend fun suspendIfPaused()
     fun onPausedStateChanged(action: Consumer<Boolean>)
   }
 
@@ -129,10 +134,6 @@ internal class IndexingProgressReporter {
     private var paused = getPauseReason().mapStateIn(taskScope) { it != null }
     internal fun getPauseReason(): StateFlow<@ProgressText String?> = pauseReason.mapStateIn(taskScope) { it.firstOrNull() }
 
-    internal fun launchListeners() {
-
-    }
-
     override fun onPausedStateChanged(action: Consumer<Boolean>) {
       taskScope.launch {
         paused.collect {
@@ -141,35 +142,12 @@ internal class IndexingProgressReporter {
       }
     }
 
-    override fun freezeIfPaused() {
-      ProgressManager.checkCanceled()
-      if (!paused.value) return
-      if (application.isUnitTestMode) return // do not pause in unit tests, because some tests do not expect pausing
-      if (application.isDispatchThread) {
-        thisLogger().error("Ignore pause, because freezeIfPaused invoked on EDT")
-      }
-      else {
-        runBlockingCancellable {
-          coroutineScope {
-            async(taskScope.coroutineContext) {
-              // we don't expect that taskScope may cancel, because it will be canceled after the task has finished, but
-              // the task will not be finished, because it is paused. This line here is just in case, if the logic changes in the future.
-              while (true) {
-                checkCanceled()
-                delay(100) // will throw if taskScope has canceled
-              }
-            }
-            async {
-              while (true) {
-                checkCanceled()
-                delay(100) // will throw if progress indicator has canceled
-              }
-            }
-            paused.first { !it } // wait until paused==false, or taskScope is canceled, or progress indicator is canceled
-            coroutineContext.cancelChildren()
-          }
-        }
-      }
+    override fun isPaused(): Boolean {
+      return pauseReason.value.isNotEmpty()
+    }
+
+    override suspend fun suspendIfPaused() {
+      pauseReason.first { it.isEmpty() }
     }
   }
 }

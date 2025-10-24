@@ -1,27 +1,39 @@
-### auto-generated section `build kotlin.base.plugin` start
-load("@rules_jvm//:jvm.bzl", "jvm_library", "jvm_resources", "jvm_test")
+### auto-generated section `build intellij.kotlin.base.plugin` start
+load("@rules_jvm//:jvm.bzl", "jvm_library", "resourcegroup")
 
-jvm_resources(
-  name = "kotlin-base-plugin_resources",
-  files = glob(["resources/**/*"]),
+resourcegroup(
+  name = "plugin_resources",
+  srcs = glob(["resources/**/*"]),
   strip_prefix = "resources"
 )
 
+resourcegroup(
+  name = "plugin_test_resources",
+  srcs = glob(["testResources/**/*"]),
+  strip_prefix = "testResources"
+)
+
 jvm_library(
-  name = "kotlin-base-plugin",
-  module_name = "kotlin.base.plugin",
+  name = "plugin",
+  module_name = "intellij.kotlin.base.plugin",
   visibility = ["//visibility:public"],
-  srcs = glob(["src/**/*.kt", "src/**/*.java"], allow_empty = True),
+  srcs = glob(["src/**/*.kt", "src/**/*.java", "src/**/*.form"], allow_empty = True),
+  resources = [":plugin_resources"],
   deps = [
     "@lib//:jetbrains-annotations",
+    "//platform/analysis-api:analysis",
+    "//platform/core-api:core",
+    "//platform/editor-ui-api:editor-ui",
     "//platform/platform-impl:ide-impl",
     "@lib//:kotlin-stdlib",
     "@lib//:kotlinc-kotlin-compiler-common",
     "@lib//:kotlinc-kotlin-jps-common",
-    "@lib//:guava",
-    "//plugins/kotlin/base/frontend-agnostic:kotlin-base-frontend-agnostic",
-    "//plugins/kotlin/base/util:kotlin-base-util",
-    "//plugins/kotlin/base/compiler-configuration:kotlin-base-compiler-configuration",
+    "//libraries/guava",
+    "//jps/model-api:model",
+    "//platform/projectModel-api:projectModel",
+    "//plugins/kotlin/base/frontend-agnostic",
+    "//plugins/kotlin/base/util",
+    "//plugins/kotlin/base/compiler-configuration",
     "//platform/util/jdom",
     "//platform/core-impl",
     "//platform/projectModel-impl",
@@ -31,36 +43,39 @@ jvm_library(
     "//java/openapi:java",
     "//java/java-impl:impl",
     "//java/idea-ui:ui",
-    "//aether-dependency-resolver:java-aetherDependencyResolver",
+    "//aether-dependency-resolver",
     "//platform/ide-core",
     "//platform/core-ui",
     "//platform/util",
+    "//platform/lang-core",
   ],
-  runtime_deps = [
-    ":kotlin-base-plugin_resources",
-    "//platform/util/trove",
-  ]
+  runtime_deps = ["//platform/util/trove"]
 )
 
 jvm_library(
-  name = "kotlin-base-plugin_test_lib",
+  name = "plugin_test_lib",
   visibility = ["//visibility:public"],
-  srcs = glob(["test/**/*.kt", "test/**/*.java"], allow_empty = True),
-  associates = [":kotlin-base-plugin"],
+  srcs = glob(["test/**/*.kt", "test/**/*.java", "test/**/*.form"], allow_empty = True),
+  resources = [":plugin_test_resources"],
+  associates = [":plugin"],
   deps = [
     "@lib//:jetbrains-annotations",
-    "@lib//:commons-compress",
+    "//libraries/commons/compress",
+    "//platform/analysis-api:analysis",
+    "//platform/core-api:core",
+    "//platform/editor-ui-api:editor-ui",
     "//platform/platform-impl:ide-impl",
-    "//platform/platform-impl:ide-impl_test_lib",
     "@lib//:kotlin-stdlib",
     "@lib//:kotlinc-kotlin-compiler-common",
     "@lib//:kotlinc-kotlin-jps-common",
-    "@lib//:guava",
+    "//libraries/guava",
     "@lib//:junit4",
-    "//plugins/kotlin/base/frontend-agnostic:kotlin-base-frontend-agnostic",
-    "//plugins/kotlin/base/util:kotlin-base-util",
-    "//plugins/kotlin/base/util:kotlin-base-util_test_lib",
-    "//plugins/kotlin/base/compiler-configuration:kotlin-base-compiler-configuration",
+    "//jps/model-api:model",
+    "//platform/projectModel-api:projectModel",
+    "//plugins/kotlin/base/frontend-agnostic",
+    "//plugins/kotlin/base/util",
+    "//plugins/kotlin/base/util:util_test_lib",
+    "//plugins/kotlin/base/compiler-configuration",
     "//platform/util/jdom",
     "//platform/core-impl",
     "//platform/projectModel-impl",
@@ -71,20 +86,26 @@ jvm_library(
     "//java/openapi:java",
     "//java/java-impl:impl",
     "//java/idea-ui:ui",
-    "//aether-dependency-resolver:java-aetherDependencyResolver",
-    "//aether-dependency-resolver:java-aetherDependencyResolver_test_lib",
+    "//aether-dependency-resolver",
+    "//aether-dependency-resolver:aether-dependency-resolver_test_lib",
     "//platform/testFramework",
     "//platform/testFramework:testFramework_test_lib",
     "//platform/ide-core",
     "//platform/core-ui",
     "@lib//:maven-resolver-provider",
     "//platform/util",
-  ],
-  runtime_deps = [":kotlin-base-plugin_resources"]
+    "//platform/build-scripts/downloader",
+    "//platform/lang-core",
+    "//plugins/kotlin/util/project-model-updater",
+  ]
 )
+### auto-generated section `build intellij.kotlin.base.plugin` end
 
-jvm_test(
-  name = "kotlin-base-plugin_test",
-  runtime_deps = [":kotlin-base-plugin_test_lib"]
+### auto-generated section `test intellij.kotlin.base.plugin` start
+load("@community//build:tests-options.bzl", "jps_test")
+
+jps_test(
+  name = "plugin_test",
+  runtime_deps = [":plugin_test_lib"]
 )
-### auto-generated section `build kotlin.base.plugin` end
+### auto-generated section `test intellij.kotlin.base.plugin` end

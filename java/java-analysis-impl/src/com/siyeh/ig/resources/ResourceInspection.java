@@ -21,6 +21,7 @@ import com.siyeh.ig.psiutils.ExpressionUtils;
 import com.siyeh.ig.psiutils.MethodCallUtils;
 import com.siyeh.ig.psiutils.ParenthesesUtils;
 import org.jdom.Element;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -64,7 +65,7 @@ public abstract class ResourceInspection extends BaseInspection {
   }
 
   @Override
-  public BaseInspectionVisitor buildVisitor() {
+  public @NotNull BaseInspectionVisitor buildVisitor() {
     return new ResourceVisitor();
   }
 
@@ -129,16 +130,29 @@ public abstract class ResourceInspection extends BaseInspection {
         return null;
       }
       final PsiElement referent = referenceExpression.resolve();
-      if (!(referent instanceof PsiVariable)) {
+      if (!(referent instanceof PsiVariable variable)) {
         return null;
       }
-      return (PsiVariable)referent;
+      return variable;
     }
-    if (parent instanceof PsiVariable) {
-      return (PsiVariable)parent;
+    if (parent instanceof PsiVariable variable) {
+      return variable;
     }
-    if (parent instanceof PsiConditionalExpression) {
-      return getVariable((PsiExpression)parent);
+    if (parent instanceof PsiConditionalExpression conditionalExpression) {
+      return getVariable(conditionalExpression);
+    }
+    if (parent instanceof PsiExpressionStatement expressionStatement &&
+        expressionStatement.getParent() instanceof PsiSwitchLabeledRuleStatement switchLabeledRuleStatement &&
+        PsiTreeUtil.isAncestor(switchLabeledRuleStatement.getBody(), expressionStatement, false) &&
+        switchLabeledRuleStatement.getParent() instanceof PsiCodeBlock codeBlock &&
+        codeBlock.getParent() instanceof PsiSwitchExpression switchExpression) {
+      return getVariable(switchExpression);
+    }
+    if (parent instanceof PsiYieldStatement yieldStatement) {
+      PsiSwitchExpression switchExpression = yieldStatement.findEnclosingExpression();
+      if (switchExpression != null) {
+        return getVariable(switchExpression);
+      }
     }
     return null;
   }
@@ -298,7 +312,8 @@ public abstract class ResourceInspection extends BaseInspection {
     return MethodCallUtils.isMethodCallOnVariable(call, resource, HardcodedMethodConstants.CLOSE);
   }
 
-  boolean isResourceEscaping(@Nullable PsiVariable boundVariable, @NotNull PsiExpression resourceCreationExpression) {
+  @ApiStatus.Internal
+  public boolean isResourceEscaping(@Nullable PsiVariable boundVariable, @NotNull PsiExpression resourceCreationExpression) {
     if (boundVariable instanceof PsiField) return true;
     if (isSystemErrOrOutUse(resourceCreationExpression)) {
       return true;

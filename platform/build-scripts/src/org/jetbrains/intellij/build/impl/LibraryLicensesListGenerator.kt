@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 @file:Suppress("ReplaceGetOrSet", "ReplacePutWithAssignment")
 
 package org.jetbrains.intellij.build.impl
@@ -6,6 +6,7 @@ package org.jetbrains.intellij.build.impl
 import com.fasterxml.jackson.core.JsonFactory
 import io.opentelemetry.api.common.AttributeKey
 import io.opentelemetry.api.trace.Span
+import org.jetbrains.intellij.build.BuildContext
 import org.jetbrains.intellij.build.LibraryLicense
 import org.jetbrains.jps.model.JpsProject
 import org.jetbrains.jps.model.java.JpsJavaClasspathKind
@@ -13,9 +14,21 @@ import org.jetbrains.jps.model.java.JpsJavaExtensionService
 import org.jetbrains.jps.model.library.JpsLibrary
 import org.jetbrains.jps.model.library.JpsOrderRootType
 import org.jetbrains.jps.model.library.JpsRepositoryLibraryType
+import org.jetbrains.jps.model.module.JpsModule
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.io.path.name
+
+internal suspend fun createLibraryLicensesListGenerator(
+  context: BuildContext,
+  licenseList: List<LibraryLicense>,
+  usedModulesNames: Set<String>,
+  allowEmpty: Boolean = false,
+): LibraryLicensesListGenerator {
+  val generator = createLibraryLicensesListGenerator(context.project, licenseList, usedModulesNames, allowEmpty)
+  checkLibraryUrls(context, generator.libraryLicenses)
+  return generator
+}
 
 fun createLibraryLicensesListGenerator(
   project: JpsProject,
@@ -33,13 +46,17 @@ fun createLibraryLicensesListGenerator(
 fun getLibraryFilename(lib: JpsLibrary): String {
   val name = lib.name
   if (name.startsWith('#')) {
-    // unnamed module libraries in IntelliJ project may have only one root
-    return lib.getPaths(JpsOrderRootType.COMPILED).first().name
+    // unnamed module libraries in the IntelliJ project may have only one root
+    val paths = lib.getPaths(JpsOrderRootType.COMPILED)
+    require(paths.size == 1) {
+      "Unnamed module library has more than one element: ${paths}"
+    }
+    return paths[0].name
   }
   return name
 }
 
-class LibraryLicensesListGenerator internal constructor(private val libraryLicenses: List<LibraryLicense>) {
+class LibraryLicensesListGenerator internal constructor(internal val libraryLicenses: List<LibraryLicense>) {
   fun generateHtml(file: Path) {
     val out = StringBuilder()
     out.append("""
@@ -145,10 +162,26 @@ private fun generateHtmlLine(name: String, libVersion: String, license: String):
 private fun generateLicenses(project: JpsProject, licensesList: List<LibraryLicense>, usedModulesNames: Set<String>): List<LibraryLicense> {
   Span.current().setAttribute(AttributeKey.stringArrayKey("modules"), usedModulesNames.toList())
   val usedModules = project.modules.filterTo(HashSet()) { usedModulesNames.contains(it.name) }
-  val usedLibraries = HashMap<String, String>()
+  val usedLibraries = HashMap<String, Pair<JpsLibrary, JpsModule>>()
   for (module in usedModules) {
     for (item in JpsJavaExtensionService.dependencies(module).includedIn(JpsJavaClasspathKind.PRODUCTION_RUNTIME).libraries) {
-      usedLibraries.put(getLibraryFilename(item), module.name)
+      usedLibraries.put(getLibraryFilename(item), item to module)
+    }
+  }
+
+  val librariesWithKnownLicences = licensesList.flatMapTo(HashSet()) { it.getLibraryNames() }
+  val missing = usedLibraries.entries.asSequence().filterNot { (libraryName, _) ->
+    librariesWithKnownLicences.contains(libraryName)
+  }.filter {
+    val mavenDescriptor = it.value.first.asTyped(JpsRepositoryLibraryType.INSTANCE)?.properties?.data
+    mavenDescriptor != null && !LibraryLicense.isJetBrainsOwnLibrary(mavenDescriptor)
+  }.toList()
+  check(missing.none()) {
+    "Missing licenses for libraries:\n" +
+    missing.joinToString(separator = "\n") {
+      "${it.key}: " +
+      (it.value.first.asTyped(JpsRepositoryLibraryType.INSTANCE)?.properties?.data ?: it.value.first.name) +
+      " used in the module ${it.value.second.name}"
     }
   }
 

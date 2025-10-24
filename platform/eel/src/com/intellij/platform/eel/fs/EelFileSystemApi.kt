@@ -2,11 +2,15 @@
 package com.intellij.platform.eel.fs
 
 import com.intellij.platform.eel.*
+import com.intellij.platform.eel.channels.EelDelicateApi
 import com.intellij.platform.eel.fs.EelFileSystemApi.StatError
 import com.intellij.platform.eel.path.EelPath
+import kotlinx.coroutines.flow.Flow
+import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.annotations.CheckReturnValue
 import java.nio.ByteBuffer
 
+@get:ApiStatus.Internal
 val EelFileSystemApi.pathSeparator: String
   get() = when (this) {
     is EelFileSystemPosixApi -> ":"
@@ -14,14 +18,22 @@ val EelFileSystemApi.pathSeparator: String
     else -> throw UnsupportedOperationException("Unsupported OS: ${this::class.java}")
   }
 
+@ApiStatus.Internal
+fun EelDescriptor.getPath(string: String): EelPath {
+  return EelPath.parse(string, this)
+}
+
+@ApiStatus.Internal
 fun EelFileSystemApi.getPath(string: String): EelPath {
   return EelPath.parse(string, descriptor)
 }
 
+@ApiStatus.Internal
 interface LocalEelFileSystemApi : EelFileSystemApi
 
 // TODO Integrate case-(in)sensitiveness into the interface.
 
+@ApiStatus.Internal
 interface EelFileSystemApi {
 
   /**
@@ -167,12 +179,51 @@ interface EelFileSystemApi {
   }
 
   /**
-   * Opens the file only for reading
+   * Opens the file only for reading.
+   *
+   * In many cases [readFile] suits better than [openForReading].
    */
   @CheckReturnValue
-  suspend fun openForReading(path: EelPath): EelResult<
+  suspend fun openForReading(@GeneratedBuilder args: OpenForReadingArgs): EelResult<
     EelOpenedFile.Reader,
     FileReaderError>
+
+  interface OpenForReadingArgs {
+    val path: EelPath
+
+    /**
+     * When specified, data from the file MAY be written into this buffer.
+     * [ByteBuffer.position] and [ByteBuffer.limit] are always changed.
+     * The buffer is prepared for reading after the call,
+     * so the caller SHOULD NOT call [ByteBuffer.flip] after calling [openForReading].
+     *
+     * If some data is written into this buffer,
+     * the first call of [EelOpenedFile.Reader.read] reads the data following this buffer.
+     */
+    @EelDelicateApi
+    val readFirstChunkInto: ByteBuffer? get() = null
+
+    /**
+     * When specified, the implementation closes its internal file descriptor
+     * as soon as it internally reaches the end of the file.
+     *
+     * There are two ways to figure out if the file is closed after calling [openForReading] or [EelOpenedFile.Reader.read]
+     * * By calling [EelOpenedFile.Reader.read], which implies an additional system call or an RPC call.
+     * * By checking inexpensive but unreliable [EelOpenedFile.isClosed].
+     */
+    @EelDelicateApi
+    val autoCloseAfterLastChunk: Boolean get() = false
+
+    /**
+     * An optimization suitable for reading into memory.
+     * It allows aborting the reading fast if the whole file content
+     * won't fit into some buffer.
+     *
+     * If it happens, [readFile] returns [FileReaderError.FileBiggerThanRequested].
+     */
+    @EelDelicateApi
+    val closeImmediatelyIfFileBiggerThan: Long? get() = null
+  }
 
   sealed interface FileReaderError : EelFsError {
     interface AlreadyExists : FileReaderError, EelFsError.AlreadyExists
@@ -180,33 +231,212 @@ interface EelFileSystemApi {
     interface PermissionDenied : FileReaderError, EelFsError.PermissionDenied
     interface NotDirectory : FileReaderError, EelFsError.NotDirectory
     interface NotFile : FileReaderError, EelFsError.NotFile
+
+    /** See [com.intellij.platform.eel.fs.EelFileSystemApi.OpenForReadingArgs.closeImmediatelyIfFileBiggerThan] */
+    interface FileBiggerThanRequested : FileReaderError
+
     interface Other : FileReaderError, EelFsError.Other
   }
 
-  enum class OverflowPolicy {
-    DROP,
-    RETAIN,
+  /**
+   * Fully or partially reads the file.
+   *
+   * Although it's possible to implement file reading with [openForReading],
+   * this function is optimized and covered with tests.
+   *
+   * The returned [ReadFileResult.bytes] is prepared for reading.
+   */
+  suspend fun readFile(@GeneratedBuilder args: ReadFileArgs): EelResult<ReadFileResult, FileReaderError>
+
+  interface ReadFileArgs {
+    val path: EelPath
+
+    /**
+     * Maximal number of bytes to read.
+     */
+    val limit: Int? get() = null
+
+    /**
+     * If this flag is set, the implementation checks the file size before trying to read data,
+     * and if the file is certainly bigger than [limit], no data is read.
+     */
+    @EelDelicateApi
+    val failFastIfBeyondLimit: Boolean get() = false
+
+    /**
+     * Use some specific buffer for reading files instead of creating a temporary buffer.
+     *
+     * The implementation MAY use only a fraction of this buffer for invoking a single system or RPC call.
+     *
+     * The buffer is ready for reading, no need to call `flip`.
+     */
+    @EelDelicateApi
+    val buffer: ByteBuffer? get() = null
+
+    /**
+     * If this flag is set and [buffer] is specified, the implementation reads the whole
+     * file into [buffer] and [ReadFileResult.bytes] contains a reference to [buffer]. However, if the file size is greater than the capacity of the buffer, the implementation returns a different buffer.
+     *
+     * If [buffer] is not specified, the value of the flag is ignored.
+     */
+    @EelDelicateApi
+    val mayReturnSameBuffer: Boolean get() = true
   }
 
-  sealed interface FullReadResult {
-    interface Overflow : FullReadResult
-    interface BytesOverflown : FullReadResult {
-      val bytes: ByteArray
+  interface ReadFileResult {
+    /**
+     * It's ready for reading, the position and the limit are already set.
+     */
+    val bytes: ByteBuffer
+
+
+    /**
+     * `true` if [bytes] contains the whole file, `false` only if the part of the file.
+     */
+    val fullyRead: Boolean
+  }
+
+  interface WalkDirectoryOptions {
+    /**
+     * Path to the directory that is to be traversed. If the path is not a directory, WalkDirectory will still yield just the file itself.
+     */
+    val path: EelPath
+
+    /**
+     * maxDepth parameter specifies how many levels deep to traverse within the given directory. A negative depth (the default is -1) means
+     * the entire directory will be traversed without any depth limit. Depth of 0 will just return the directory itself.
+     *
+     * Example for depth = 1:
+     * ```
+     * a/
+     * |- b/
+     * |  |- c
+     * |  |- d
+     * |- e
+     * ```
+     * Returned:
+     * ```
+     * a
+     * a/b
+     * a/e
+     * ```
+     */
+    val maxDepth: Int get() = -1
+
+    /**
+     * The default is DFS.
+     */
+    val traversalOrder: WalkDirectoryTraversalOrder get() = WalkDirectoryTraversalOrder.DFS
+
+    /**
+     * The default is RANDOM.
+     */
+    val entryOrder: WalkDirectoryEntryOrder get() = WalkDirectoryEntryOrder.RANDOM
+
+    /**
+     * Yield permissions and timestamps. Default is false.
+     */
+    val readMetadata: Boolean get() = false
+
+    /**
+     * Default is true.
+     */
+    val yieldRegularFiles: Boolean get() = true
+
+    /**
+     * Default is true.
+     */
+    val yieldSymlinks: Boolean get() = true
+
+    /**
+     * Default is true.
+     */
+    val yieldDirectories: Boolean get() = true
+
+    /**
+     * Default is true.
+     */
+    val yieldOtherFileTypes: Boolean get() = true
+
+    /**
+     * Yield hash of the regular file's contents. Contents are hashed using xxHash. Default is false.
+     */
+    val fileContentsHash: Boolean get() = false
+
+    enum class WalkDirectoryTraversalOrder {
+      /**
+       * Breadth-first traversal.
+       * ```
+       * a/
+       * |- b/
+       * |  |- c
+       * |  |- d
+       * |- e
+       * ```
+       * Returned:
+       * ```
+       * a
+       * a/b
+       * a/e
+       * a/b/c
+       * a/b/d
+       * ```
+       */
+      BFS,
+
+      /**
+       * Depth-first traversal, where directory entries are yielded in order they are encountered.
+       * If you do not care for the manner of traversal, this is the preferable option.
+       * ```
+       * a/
+       * |- b/
+       * |  |- c
+       * |  |- d
+       * |- e
+       * ```
+       * Returned:
+       * ```
+       * a
+       * a/b
+       * a/b/c
+       * a/b/d
+       * a/e
+       * ```
+       */
+      DFS
     }
 
-    interface Bytes : FullReadResult {
-      val bytes: ByteArray
+    enum class WalkDirectoryEntryOrder {
+      /**
+       * Yield directory entries in order in which they appear on the file system.
+       * If you do not care for the order of the files, this is the preferable option.
+       */
+      RANDOM,
+
+      /**
+       * Yield directory entries in alphabetical order.
+       */
+      ALPHABETICAL
+    }
+
+    interface Builder {
+      fun build(): WalkDirectoryOptions
     }
   }
 
+  /**
+   * Traverses given directory, yielding directory entries, including the target directory.
+   *
+   * Default walkDirectory options are to traverse in a DFS manner, yield entries in a random order, yielding all file types, and to not
+   * yield metadata and file hash.
+   */
   @CheckReturnValue
-  suspend fun readFully(path: EelPath, limit: ULong, overflowPolicy: OverflowPolicy): EelResult<FullReadResult, FullReadError>
+  suspend fun walkDirectory(@GeneratedBuilder options: WalkDirectoryOptions): Flow<WalkDirectoryEntryResult>
 
-  sealed interface FullReadError : EelFsError {
-    interface DoesNotExist : FullReadError, EelFsError.DoesNotExist
-    interface PermissionDenied : FullReadError, EelFsError.PermissionDenied
-    interface NotFile : FullReadError, EelFsError.NotFile
-    interface Other : FullReadError, EelFsError.Other
+  sealed interface WalkDirectoryError : EelFsError {
+    interface Other : WalkDirectoryError, EelFsError.Other
+    interface DoesNotExist : WalkDirectoryError, EelFsError.DoesNotExist
+    interface PermissionDenied : WalkDirectoryError, EelFsError.PermissionDenied
   }
 
   /**
@@ -478,13 +708,139 @@ interface EelFileSystemApi {
     interface NameTooLong : DiskInfoError, EelFsError.NameTooLong
     interface Other : DiskInfoError, EelFsError.Other
   }
+
+  /**
+   * Subscribes to a file watcher to receive file change events.
+   *
+   * @return A flow emitting [PathChange] instances that indicate the path and type of change.
+   *         Each path is an absolute path on the target system (container), for example, `/home/myproject/myfile.txt`
+   */
+  @Throws(UnsupportedOperationException::class)
+  suspend fun watchChanges(): Flow<PathChange> {
+    throw UnsupportedOperationException()
+  }
+
+  /**
+   * Adds the watched paths from the specified set of file paths. A path is watched till [unwatch] method is explicitly called for it.
+   *
+   * Use [WatchOptionsBuilder] to construct the watch configuration. Example:
+   * ```
+   * val flow = eel.fs.addWatchRoots(
+   *     WatchOptionsBuilder()
+   *         .changeTypes(setOf(EelFileSystemApi.FileChangeType.CHANGED))
+   *         .paths(setOf(eelPath))
+   *         .build())
+   * ```
+   *
+   * @param watchOptions The options to use for file watching. See [WatchOptions]
+   * @return True if the operation was successful.
+   */
+  @Throws(UnsupportedOperationException::class)
+  suspend fun addWatchRoots(@GeneratedBuilder watchOptions: WatchOptions): Boolean {
+    throw UnsupportedOperationException()
+  }
+
+  /**
+   * Unregisters a previously watched path.
+   *
+   * @param unwatchOptions The options specifying the path to be unwatched. See [UnwatchOptions].
+   * @return True if the operation was successful. False if the path hadn't been previously watched or unwatch failed.
+   *
+   * @throws UnsupportedOperationException if the method isn't implemented for the file system.
+   */
+  @Throws(UnsupportedOperationException::class)
+  suspend fun unwatch(@GeneratedBuilder unwatchOptions: UnwatchOptions): Boolean {
+    throw UnsupportedOperationException()
+  }
+
+  /**
+   * Represents a change detected in a specific path within the file system. It can be a change in the child directory if a recursive
+   * watch is enabled.
+   *
+   * @property path The absolute path in the file system associated with the change.
+   *                For example, "/home/user/documents/file.txt".
+   * @property type The type of change that occurred. See [FileChangeType],
+   */
+  interface PathChange {
+    val path: String
+    val type: FileChangeType
+  }
+
+  /**
+   * Provides configurations for specifying which file paths should be monitored and what types of file system changes should be watched.
+   *
+   * @property paths The set of file paths to monitor for changes with additional watch properties. See [WatchedPath]
+   * @property changeTypes The types of file system changes to monitor. This is a set of [FileChangeType] values.
+   */
+  interface WatchOptions {
+    val paths: Set<WatchedPath> get() = emptySet()
+    val changeTypes: Set<FileChangeType> get() = emptySet()
+  }
+
+
+  /**
+   * Represents a file system path being monitored for changes.
+   *
+   * @property path The file system path being watched.
+   * @property recursive Whether the file system changes should be monitored recursively within the specified path.
+   * @see [watchChanges]
+   */
+  class WatchedPath internal constructor(val path: EelPath, val recursive: Boolean) {
+    companion object {
+      /**
+       * Creates a WatchedPath from EelPath with recursive monitoring disabled.
+       *
+       * @param path the EelPath instance to be converted
+       * @return a new *non-recursive* WatchedPath instance created from the provided EelPath.
+       */
+      fun from(path: EelPath): WatchedPath = WatchedPath(path, false)
+    }
+
+    /**
+     * @return a `WatchedPath` instance with the same `path` as the current object, but with recursive monitoring enabled.
+     */
+    fun recursive(): WatchedPath = WatchedPath(path, true)
+  }
+
+  /**
+   * Represents the options required to unregister a previously watched path in the file system.
+   *
+   * @property path The file system path to unwatch. Must be specified as an instance of [EelPath].
+   * @see [unwatch]
+   */
+  interface UnwatchOptions {
+    val path: EelPath
+  }
+
+  /**
+   * Represents the type of change that can occur to a file in the file system.
+   *
+   * - `CREATED`: A file has been created.
+   * - `DELETED`: A file has been deleted.
+   * - `CHANGED`: A file has been modified (either its content or attributes have changed).
+   */
+  enum class FileChangeType { CREATED, DELETED, CHANGED }
 }
 
+
+@ApiStatus.Internal
 sealed interface EelOpenedFile {
   val path: EelPath
 
   @CheckReturnValue
   suspend fun close(): EelResult<Unit, CloseError>
+
+  /**
+   * This method is to be used for avoiding potentially excessive calls.
+   * However, rely on this function with suspicion: the implementation may return `null` whatever happens.
+   *
+   * Returns:
+   * * `true` if the file is closed.
+   * * `false` if it's not closed.
+   * * `null` if it's not possible to determine if the file is closed without calling any suspending method.
+   */
+  @EelDelicateApi
+  val isClosed: Boolean?
 
   sealed interface CloseError : EelFsError {
     interface Other : CloseError, EelFsError.Other
@@ -613,8 +969,10 @@ sealed interface EelOpenedFile {
   interface ReaderWriter : Reader, Writer
 }
 
+@ApiStatus.Internal
 interface LocalEelFileSystemPosixApi : EelFileSystemPosixApi, LocalEelFileSystemApi
 
+@ApiStatus.Internal
 interface EelFileSystemPosixApi : EelFileSystemApi {
   override val user: EelUserPosixInfo
 
@@ -642,10 +1000,11 @@ interface EelFileSystemPosixApi : EelFileSystemApi {
     Collection<Pair<String, EelPosixFileInfo>>,
     EelFileSystemApi.ListDirectoryError>
 
+  @CheckReturnValue
   override suspend fun listDirectoryWithAttrs(@GeneratedBuilder args: EelFileSystemApi.ListDirectoryWithAttrsArgs): EelResult<
     Collection<Pair<String, EelPosixFileInfo>>,
     EelFileSystemApi.ListDirectoryError> =
-    listDirectoryWithAttrs(args)
+    listDirectoryWithAttrs(path = args.path, symlinkPolicy = args.symlinkPolicy)
 
   @Deprecated("Use the method with the builder")
   @CheckReturnValue
@@ -653,6 +1012,7 @@ interface EelFileSystemPosixApi : EelFileSystemApi {
     EelPosixFileInfo,
     StatError>
 
+  @CheckReturnValue
   override suspend fun stat(@GeneratedBuilder args: EelFileSystemApi.StatArgs): EelResult<EelPosixFileInfo, StatError> =
     stat(path = args.path, symlinkPolicy = args.symlinkPolicy)
 
@@ -748,8 +1108,10 @@ interface EelFileSystemPosixApi : EelFileSystemApi {
   }
 }
 
+@ApiStatus.Internal
 interface LocalEelFileSystemWindowsApi : EelFileSystemWindowsApi, LocalEelFileSystemApi
 
+@ApiStatus.Internal
 interface EelFileSystemWindowsApi : EelFileSystemApi {
   override val user: EelUserWindowsInfo
 
@@ -764,6 +1126,7 @@ interface EelFileSystemWindowsApi : EelFileSystemApi {
     Collection<Pair<String, EelWindowsFileInfo>>,
     EelFileSystemApi.ListDirectoryError>
 
+  @CheckReturnValue
   override suspend fun listDirectoryWithAttrs(@GeneratedBuilder args: EelFileSystemApi.ListDirectoryWithAttrsArgs): EelResult<
     Collection<Pair<String, EelWindowsFileInfo>>,
     EelFileSystemApi.ListDirectoryError> =
@@ -775,12 +1138,14 @@ interface EelFileSystemWindowsApi : EelFileSystemApi {
     EelWindowsFileInfo,
     StatError>
 
+  @CheckReturnValue
   override suspend fun stat(@GeneratedBuilder args: EelFileSystemApi.StatArgs): EelResult<EelWindowsFileInfo, StatError> =
     stat(path = args.path, symlinkPolicy = args.symlinkPolicy)
 }
 
 @CheckReturnValue
 @Deprecated("Use the method with the builder")
+@ApiStatus.Internal
 suspend fun EelFileSystemApi.changeAttributes(
   path: EelPath,
   setup: (EelFileSystemApi.ChangeAttributesOptions.Builder).() -> Unit,
@@ -791,6 +1156,7 @@ suspend fun EelFileSystemApi.changeAttributes(
 
 @CheckReturnValue
 @Deprecated("Use the method with the builder")
+@ApiStatus.Internal
 suspend fun EelFileSystemApi.openForWriting(path: EelPath, setup: (EelFileSystemApi.WriteOptions.Builder).() -> Unit): EelResult<EelOpenedFile.Writer, EelFileSystemApi.FileWriterError> {
   val options = EelFileSystemApi.WriteOptions.Builder(path).apply(setup).build()
   return openForWriting(options)
@@ -798,6 +1164,7 @@ suspend fun EelFileSystemApi.openForWriting(path: EelPath, setup: (EelFileSystem
 
 @CheckReturnValue
 @Deprecated("Use the method with the builder")
+@ApiStatus.Internal
 suspend fun EelFileSystemApi.copy(
   source: EelPath,
   target: EelPath,
@@ -809,6 +1176,7 @@ suspend fun EelFileSystemApi.copy(
 
 @CheckReturnValue
 @Deprecated("Use the method with the builder")
+@ApiStatus.Internal
 suspend fun EelFileSystemApi.createTemporaryDirectory(setup: (EelFileSystemApi.CreateTemporaryEntryOptions.Builder).() -> Unit): EelResult<EelPath, EelFileSystemApi.CreateTemporaryEntryError> {
   val options = EelFileSystemApi.CreateTemporaryEntryOptions.Builder().apply(setup).build()
   return createTemporaryDirectory(options)

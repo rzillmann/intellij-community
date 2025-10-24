@@ -3,12 +3,9 @@ package com.intellij.psi.impl.java.stubs;
 
 import com.intellij.java.syntax.parser.JavaKeywords;
 import com.intellij.lang.ASTNode;
-import com.intellij.lang.java.JavaParserDefinition;
 import com.intellij.psi.JavaTokenType;
 import com.intellij.psi.impl.source.BasicJavaElementType;
 import com.intellij.psi.impl.source.tree.java.*;
-import com.intellij.psi.tree.IFileElementType;
-import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 
 public interface JavaStubElementTypes {
@@ -31,6 +28,7 @@ public interface JavaStubElementTypes {
   JavaProvidesStatementElementType PROVIDES_STATEMENT = new JavaProvidesStatementElementType();
   JavaRecordComponentElementType RECORD_COMPONENT = new JavaRecordComponentElementType();
   JavaRecordHeaderElementType RECORD_HEADER = new JavaRecordHeaderElementType();
+  JavaPackageStatementElementType PACKAGE_STATEMENT = new JavaPackageStatementElementType();
 
   JavaPackageAccessibilityStatementElementType EXPORTS_STATEMENT =
     new JavaPackageAccessibilityStatementElementType("EXPORTS_STATEMENT", BasicJavaElementType.BASIC_EXPORTS_STATEMENT);
@@ -156,10 +154,4 @@ public interface JavaStubElementTypes {
         return new ImportModuleStatementElement();
       }
     };
-
-  /**
-   * @deprecated use {@link JavaParserDefinition#JAVA_FILE}
-   */
-  @Deprecated @ApiStatus.ScheduledForRemoval
-  IFileElementType JAVA_FILE = JavaParserDefinition.JAVA_FILE;
 }

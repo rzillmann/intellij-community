@@ -14,12 +14,15 @@ import com.intellij.ui.SideBorder
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.NamedColorUtil
 import com.intellij.util.ui.UIUtil
+import com.jetbrains.python.packaging.PyPackageName
 import com.jetbrains.python.packaging.common.PythonPackageDetails
+import com.jetbrains.python.packaging.management.toInstallRequest
+import com.jetbrains.python.packaging.pyRequirement
+import com.jetbrains.python.packaging.pyRequirementVersionSpec
 import com.jetbrains.python.packaging.toolwindow.PyPackagingToolWindowService
 import com.jetbrains.python.packaging.toolwindow.model.DisplayablePackage
 import com.jetbrains.python.packaging.utils.PyPackageCoroutine
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import java.awt.BorderLayout
 import java.awt.Dimension
 import java.awt.event.MouseAdapter
@@ -27,8 +30,8 @@ import java.awt.event.MouseEvent
 import javax.swing.*
 
 object PyPackagesUiComponents {
-  val SELECTED_PACKAGE_DATA_CONTEXT = DataKey.create<DisplayablePackage>("SELECTED_PACKAGE_DATA_CONTEXT")
-  val SELECTED_PACKAGES_DATA_CONTEXT = DataKey.create<List<DisplayablePackage>>("SELECTED_PACKAGES_DATA_CONTEXT")
+  val SELECTED_PACKAGE_DATA_CONTEXT: DataKey<DisplayablePackage> = DataKey.create<DisplayablePackage>("SELECTED_PACKAGE_DATA_CONTEXT")
+  val SELECTED_PACKAGES_DATA_CONTEXT: DataKey<List<DisplayablePackage>> = DataKey.create<List<DisplayablePackage>>("SELECTED_PACKAGES_DATA_CONTEXT")
 
   internal val AnActionEvent.selectedPackage: DisplayablePackage?
     get() = getData(SELECTED_PACKAGE_DATA_CONTEXT)
@@ -40,16 +43,19 @@ object PyPackagesUiComponents {
     return JBPopupFactory.getInstance().createListPopup(object : BaseListPopupStep<String>(null, details.availableVersions) {
       override fun onChosen(selectedValue: String?, finalChoice: Boolean): PopupStep<*>? {
         return doFinalStep {
-          val specification = selectedPackage.repository.createPackageSpecification(selectedPackage.name, selectedValue)
-          PyPackageCoroutine.getIoScope(project).launch(Dispatchers.IO) {
-            project.service<PyPackagingToolWindowService>().installPackage(specification)
+          val repository = checkNotNull(selectedPackage.repository)
+          val packageName = PyPackageName.from(selectedPackage.name).name
+          val version = selectedValue?.let { pyRequirementVersionSpec(it) }
+          val specification = repository.findPackageSpecification(pyRequirement(packageName, version))
+          PyPackageCoroutine.launch(project, Dispatchers.IO) {
+            project.service<PyPackagingToolWindowService>().installPackage(specification!!.toInstallRequest())
           }
         }
       }
     }, 8)
   }
 
-  fun boxPanel(init: JPanel.() -> Unit) = object : JPanel() {
+  fun boxPanel(init: JPanel.() -> Unit): JPanel = object : JPanel() {
     init {
       layout = BoxLayout(this, BoxLayout.X_AXIS)
       alignmentX = LEFT_ALIGNMENT
@@ -57,14 +63,14 @@ object PyPackagesUiComponents {
     }
   }
 
-  fun borderPanel(init: JPanel.() -> Unit) = object : JPanel() {
+  fun borderPanel(init: JPanel.() -> Unit): JPanel = object : JPanel() {
     init {
       layout = BorderLayout(0, 0)
       init()
     }
   }
 
-  fun headerPanel(label: JLabel, component: JComponent?) = object : JPanel() {
+  fun headerPanel(label: JLabel, component: JComponent?): JPanel = object : JPanel() {
     init {
       background = UIUtil.getLabelBackground()
       layout = BorderLayout()
@@ -79,6 +85,9 @@ object PyPackagesUiComponents {
           override fun mouseClicked(e: MouseEvent?) {
             component.isVisible = !component.isVisible
             label.icon = if (component.isVisible) AllIcons.General.ArrowDown else AllIcons.General.ArrowRight
+            val parent = component.parent
+            parent.revalidate()
+            parent.repaint()
           }
         })
       }

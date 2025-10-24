@@ -40,6 +40,7 @@ import com.intellij.testFramework.LightVirtualFile
 import com.intellij.util.Restarter
 import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.idea.devkit.DevKitBundle
+import org.jetbrains.jps.cmdline.ClasspathBootstrap
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.*
@@ -306,7 +307,7 @@ private fun readPluginsDir(pluginsDirPath: Path): List<PluginNode> {
   return try {
     pluginsXml.inputStream().use {
       MarketplaceRequests.parsePluginList(it)
-    }
+    }.map { it.getDescriptor() as PluginNode }
   }
   catch (e: Exception) {
     LOG.error("Failed to parse $pluginsXml", e)
@@ -363,6 +364,7 @@ private fun createScriptJavaParameters(
     .recursively().withoutSdk().runtimeOnly().productionOnly().classes().pathsList.pathList
 
   params.classPath.addAll(classpath)
+  ClasspathBootstrap.configureReflectionOpenPackages(params.vmParametersList::add)
 
   params.vmParametersList.add("-Dintellij.build.bundled.jre.prefix=jbrsdk_jcef-")
 

@@ -190,7 +190,7 @@ public class GitImpl extends GitImplBase {
     return runCommand(() -> {
       // do not use per-project executable for 'clone' command
       Project defaultProject = ProjectManager.getInstance().getDefaultProject();
-      GitExecutable executable = GitExecutableManager.getInstance().getExecutable(defaultProject, parentDirectory);
+      GitExecutable executable = GitExecutableManager.getInstance().getExecutable(defaultProject, parentDirectory.toPath());
 
       List<String> configParameters = SystemInfo.isWindows ? List.of("core.longpaths=true") : emptyList();
       GitLineHandler handler = new GitLineHandler(defaultProject, parentDirectory, executable, GitCommand.CLONE, configParameters);
@@ -419,6 +419,16 @@ public class GitImpl extends GitImplBase {
     else {
       h.addParameters("--set-upstream", branchName, upstreamBranchName);
     }
+    return runCommand(h);
+  }
+
+  @Override
+  public @NotNull GitCommandResult unsetUpstream(@NotNull GitRepository repository,
+                                                 @NotNull String branchName) {
+    GitLineHandler h = new GitLineHandler(repository.getProject(), repository.getRoot(), GitCommand.BRANCH);
+    h.setSilent(false);
+    h.setStdoutSuppressed(false);
+    h.addParameters("--unset-upstream", branchName);
     return runCommand(h);
   }
 
@@ -781,6 +791,18 @@ public class GitImpl extends GitImplBase {
       LOG.debug("Reference [" + ref + "] is unknown to Git in " + root);
       return null;
     }
+  }
+
+  @Override
+  public @NotNull GitCommandResult updateReference(@NotNull GitRepository repository, @NotNull String reference,
+                                                   @NotNull Hash newObjectId,
+                                                   @Nullable String reflogMessage) {
+    GitLineHandler h = new GitLineHandler(repository.getProject(), repository.getRoot(), GitCommand.UPDATE_REF);
+    h.addParameters(reference, newObjectId.asString());
+    if (reflogMessage != null) {
+      h.addParameters("-m", reflogMessage);
+    }
+    return runCommand(h);
   }
 
   private @NotNull GitCommandResult doLsRemote(final @NotNull Project project,

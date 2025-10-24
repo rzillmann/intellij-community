@@ -1,3 +1,4 @@
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.notebooks.visualization.ui
 
 import com.intellij.notebooks.ui.bind
@@ -6,7 +7,7 @@ import com.intellij.notebooks.visualization.SwingClientProperty
 import com.intellij.notebooks.visualization.context.EditorCellDataContext
 import com.intellij.notebooks.visualization.context.NotebookDataContext.NOTEBOOK_CELL_OUTPUT_DATA_KEY
 import com.intellij.notebooks.visualization.outputs.NotebookOutputComponentFactory
-import com.intellij.notebooks.visualization.outputs.NotebookOutputComponentFactory.Companion.gutterPainter
+import com.intellij.notebooks.visualization.outputs.NotebookOutputComponentFactory.Companion.executionCountHolder
 import com.intellij.notebooks.visualization.outputs.NotebookOutputComponentFactoryGetter
 import com.intellij.notebooks.visualization.outputs.NotebookOutputDataKey
 import com.intellij.notebooks.visualization.outputs.impl.CollapsingComponent
@@ -22,6 +23,7 @@ import com.intellij.openapi.application.runInEdt
 import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.editor.Document
 import com.intellij.openapi.editor.Inlay
+import com.intellij.openapi.editor.impl.EditorEmbeddedComponentManager
 import com.intellij.openapi.editor.impl.EditorImpl
 import com.intellij.openapi.util.Disposer
 import com.intellij.util.asSafely
@@ -136,15 +138,24 @@ class EditorCellOutputsView(
     }
   }
 
+
   @RequiresEdt
   private fun updateData(outputs: List<EditorCellOutput>): Boolean {
+
+    var outputs = outputs
+    if(outputs.isNotEmpty()) {
+      EditorCellOutputsPreprocessor.EP_NAME.extensionList.forEach {
+        outputs = it.processOutputs(outputs)
+      }
+    }
+
     val newOutputsIterator = outputs.iterator()
     val oldComponentsWithFactories = getComponentsWithFactories().iterator()
     var isFilled = false
     for ((idx, pair1) in newOutputsIterator.zip(oldComponentsWithFactories).withIndex()) {
       val (output, pair2) = pair1
       val (oldComponent: JComponent, oldFactory: NotebookOutputComponentFactory<*, *>) = pair2
-      val outputDataKey = output.dataKey.get()
+      val outputDataKey = output.dataKey
       isFilled =
         when (oldFactory.matchWithTypes(oldComponent, outputDataKey)) {
           NotebookOutputComponentFactory.Match.NONE -> {
@@ -190,15 +201,16 @@ class EditorCellOutputsView(
   }
 
   private fun createOutputGuessingFactory(output: EditorCellOutput): NotebookOutputComponentFactory.CreatedComponent<*>? {
-    val outputDataKey = output.dataKey.get()
-    return NotebookOutputComponentFactoryGetter.instance.list.asSequence()
+    val outputDataKey = output.dataKey
+    val createdComponent = NotebookOutputComponentFactoryGetter.instance.list.asSequence()
       .filter { factory ->
         factory.outputDataKeyClass.isAssignableFrom(outputDataKey.javaClass)
       }
-      .mapNotNull { factory ->
+      .firstNotNullOfOrNull { factory ->
         createOutput(@Suppress("UNCHECKED_CAST") (factory as NotebookOutputComponentFactory<*, NotebookOutputDataKey>), output, outputDataKey)
       }
-      .firstOrNull()
+
+    return createdComponent
   }
 
   private fun <K : NotebookOutputDataKey> createOutput(
@@ -212,18 +224,17 @@ class EditorCellOutputsView(
     catch (t: Throwable) {
       thisLogger().error("${factory.javaClass.name} shouldn't throw exceptions at .createComponent()", t)
       null
-    }
-    result?.also {
-      val component = it.component
-      component.outputComponentFactory = factory
-      component.gutterPainter = it.gutterPainter
+    } ?: return null
 
-      val disposable = it.disposable
-      if (disposable != null) {
-        // Parent disposable might be better, but it's better than nothing
-        Disposer.register(editor.disposable, disposable)
-      }
+    val component = result.component
+    component.outputComponentFactory = factory
+    component.executionCountHolder = result.executionCountHolder
+
+    val disposable = result.disposable
+    if (disposable != null) {
+      Disposer.register(this, disposable)
     }
+
     return result
   }
 
@@ -249,12 +260,19 @@ class EditorCellOutputsView(
     outerComponent,
     isRelatedToPrecedingText = true,
     showAbove = false,
-    priority = editor.notebookAppearance.NOTEBOOK_OUTPUT_INLAY_PRIORITY,
+    priority = editor.notebookAppearance.cellOutputToolbarInlayPriority,
     offset = computeInlayOffset(editor.document, cell.interval.lines),
+    rendererFactory = makeGutterIcon(),
   ).also { inlay ->
     Disposer.register(this, inlay)
     Disposer.register(inlay) {
       onInlayDisposed(this)
+    }
+  }
+
+  private fun makeGutterIcon(): EditorEmbeddedComponentManager.Properties.RendererFactory? {
+    return outputs.firstNotNullOfOrNull { it.gutterRenderer }?.let { renderer ->
+      EditorEmbeddedComponentManager.Properties.RendererFactory { renderer }
     }
   }
 
@@ -273,7 +291,7 @@ class EditorCellOutputsView(
       }
     }
 
-    val outputComponent = EditorCellOutputView(editor, output, collapsingComponent, newComponent.disposable)
+    val outputComponent = EditorCellOutputView(editor, output, collapsingComponent, newComponent.disposable, newComponent.gutterRenderer)
 
     innerComponent.add(
       collapsingComponent,
@@ -298,12 +316,13 @@ class EditorCellOutputsView(
     override fun next(): Pair<A, B> = this@zip.next() to other.next()
   }
 
-  override fun doGetInlays(): Sequence<Inlay<*>> {
-    return inlay?.let { sequenceOf(it) } ?: emptySequence()
-  }
-
   override fun doCheckAndRebuildInlays() {
-    val offset = computeInlayOffset(editor.document, cell.interval.lines)
+    val interval = cell.intervalOrNull ?: let {
+      inlay?.let { Disposer.dispose(it) }
+      inlay = null
+      return
+    }
+    val offset = computeInlayOffset(editor.document, interval.lines)
     inlay?.let { currentInlay ->
       if (!currentInlay.isValid || currentInlay.offset != offset) {
         currentInlay.let { Disposer.dispose(it) }

@@ -3,17 +3,20 @@ package com.intellij.python.community.impl.venv
 
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.diagnostic.fileLogger
+import com.intellij.python.community.execService.BinaryToExec
 import com.intellij.python.community.execService.ExecOptions
 import com.intellij.python.community.execService.ExecService
-import com.intellij.python.community.execService.HelperName
-import com.intellij.python.community.execService.WhatToExec
+import com.intellij.python.community.execService.asBinToExec
+import com.intellij.python.community.execService.python.HelperName
+import com.intellij.python.community.execService.python.executeHelper
+import com.intellij.python.community.execService.python.validatePythonAndGetInfo
 import com.jetbrains.python.PythonBinary
 import com.jetbrains.python.Result
 import com.jetbrains.python.errorProcessing.PyResult
-import com.jetbrains.python.errorProcessing.failure
+import com.jetbrains.python.errorProcessing.getOr
+import com.jetbrains.python.psi.LanguageLevel
 import com.jetbrains.python.sdk.PySdkSettings
 import com.jetbrains.python.sdk.flavors.PythonSdkFlavor
-import com.jetbrains.python.validatePythonAndGetVersion
 import com.jetbrains.python.venvReader.Directory
 import com.jetbrains.python.venvReader.VirtualEnvReader
 import kotlinx.coroutines.Dispatchers
@@ -37,21 +40,11 @@ suspend fun createVenv(
   inheritSitePackages: Boolean = false,
   envReader: VirtualEnvReader = VirtualEnvReader.Instance,
 ): PyResult<PythonBinary> {
-  val execService = ExecService()
-  val args = buildList {
-    if (inheritSitePackages) {
-      add("--system-site-packages")
-    }
-    add(venvDir.pathString)
-  }
-  val version = python.validatePythonAndGetVersion().getOr { return failure(it.error) }
-  val helper = if (version.isPy3K) VIRTUALENV_ZIPAPP_NAME else PY_2_VIRTUALENV_ZIPAPP_NAME
-  execService.execGetStdout(WhatToExec.Helper(python, helper = helper), args, ExecOptions(timeout = 3.minutes)).getOr { return it }
-
+  createVenv(python.asBinToExec(), venvDir.pathString, inheritSitePackages).getOr { return it }
 
   val venvPython = withContext(Dispatchers.IO) {
     envReader.findPythonInPythonRoot(venvDir)
-  } ?: return failure(PyVenvBundle.message("py.venv.error.after.creation", venvDir))
+  } ?: return PyResult.localizedError(PyVenvBundle.message("py.venv.error.after.creation", venvDir))
   fileLogger().info("Venv created: $venvPython")
 
   withContext(Dispatchers.EDT) {
@@ -62,9 +55,32 @@ suspend fun createVenv(
   return Result.success(venvPython)
 }
 
+@Internal
+@CheckReturnValue
+suspend fun createVenv(
+  python: BinaryToExec,
+  venvDir: String,
+  inheritSitePackages: Boolean = false,
+): PyResult<Unit> {
+  val execService = ExecService()
+  val args = buildList {
+    if (inheritSitePackages) {
+      add("--system-site-packages")
+    }
+    add(venvDir)
+  }
+  val version = python.validatePythonAndGetInfo().getOr(PyVenvBundle.message("py.venv.error.cant.base.version")) { return it }.languageLevel
+  val helper = if (version.isAtLeast(LanguageLevel.PYTHON38)) VIRTUALENV_ZIPAPP_NAME else LEGACY_VIRTUALENV_ZIPAPP_NAME
+  execService.executeHelper(python, helper, args, ExecOptions(timeout = 3.minutes))
+    .getOr(PyVenvBundle.message("py.venv.error.executing.script", helper)) { return it }
+
+  return Result.success(Unit)
+}
+
 // venv helper, update from https://bootstrap.pypa.io/virtualenv.pyz
 @Internal
 const val VIRTUALENV_ZIPAPP_NAME: HelperName = "virtualenv-py3.pyz"
 
-// Ancient version, the last one compatible with Py2
-private const val PY_2_VIRTUALENV_ZIPAPP_NAME = "virtualenv-20.13.0.pyz"
+// Ancient version, the last one compatible with Py 2.7, 3.6, 3.7
+@Internal
+const val LEGACY_VIRTUALENV_ZIPAPP_NAME: HelperName = "virtualenv-20.13.0.pyz"

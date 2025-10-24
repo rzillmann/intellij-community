@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 
 package org.jetbrains.uast.kotlin
 
@@ -9,16 +9,14 @@ import com.intellij.util.SmartList
 import com.intellij.util.containers.addIfNotNull
 import org.jetbrains.kotlin.analysis.api.KaExperimentalApi
 import org.jetbrains.kotlin.analysis.api.KaSession
+import org.jetbrains.kotlin.analysis.api.annotations.KaAnnotation
 import org.jetbrains.kotlin.analysis.api.projectStructure.KaLibraryModule
 import org.jetbrains.kotlin.analysis.api.projectStructure.KaModuleProvider
 import org.jetbrains.kotlin.analysis.api.projectStructure.KaSourceModule
 import org.jetbrains.kotlin.analysis.api.resolution.*
 import org.jetbrains.kotlin.analysis.api.symbols.*
 import org.jetbrains.kotlin.analysis.api.symbols.markers.KaNamedSymbol
-import org.jetbrains.kotlin.analysis.api.types.KaErrorType
-import org.jetbrains.kotlin.analysis.api.types.KaType
-import org.jetbrains.kotlin.analysis.api.types.KaTypeMappingMode
-import org.jetbrains.kotlin.analysis.api.types.KaTypeNullability
+import org.jetbrains.kotlin.analysis.api.types.*
 import org.jetbrains.kotlin.asJava.toLightAnnotation
 import org.jetbrains.kotlin.descriptors.Modality
 import org.jetbrains.kotlin.idea.references.mainReference
@@ -34,6 +32,7 @@ import org.jetbrains.uast.*
 import org.jetbrains.uast.analysis.KotlinExtensionConstants.LAMBDA_THIS_PARAMETER_NAME
 import org.jetbrains.uast.kotlin.internal.*
 import org.jetbrains.uast.kotlin.psi.UastFakeDeserializedSymbolAnnotation
+import org.jetbrains.uast.kotlin.psi.UastFakeLightMethodBase
 import org.jetbrains.uast.kotlin.psi.UastKotlinPsiParameterBase
 
 interface FirKotlinUastResolveProviderService : BaseKotlinUastResolveProviderService {
@@ -49,24 +48,38 @@ interface FirKotlinUastResolveProviderService : BaseKotlinUastResolveProviderSer
 
     fun isSupportedFile(file: KtFile): Boolean = true
 
+    context(_: KaSession)
+    private fun KaAnnotation.toFakeDeserializedSymbol(
+        parent: KtDeclaration,
+        symbol: KaDeclarationSymbol,
+        ktAnnotationEntry: KtAnnotationEntry,
+    ): UastFakeDeserializedSymbolAnnotation {
+        return UastFakeDeserializedSymbolAnnotation(symbol.createPointer(), classId, parent, ktAnnotationEntry)
+    }
+
     override fun convertToPsiAnnotation(ktElement: KtElement): PsiAnnotation? {
-        val ktDeclaration = ktElement.getStrictParentOfType<KtModifierList>()?.parent as? KtDeclaration
-        // SLC won't model a declaration with value class in its signature.
-        if (ktDeclaration != null && hasTypeForValueClassInSignature(ktDeclaration)) {
+        ktElement.toLightAnnotation()?.let { return it }
+        val declaration = ktElement.getStrictParentOfType<KtModifierList>()?.parent as? KtDeclaration
+        return if (declaration != null) {
             (ktElement as? KtAnnotationEntry)?.let { entry ->
-                analyzeForUast(ktDeclaration) {
-                    val declaration = ktDeclaration.symbol
-                    declaration.annotations.find { it.psi == entry }?.let { annoApp ->
-                        return UastFakeDeserializedSymbolAnnotation(
-                            declaration.createPointer(),
-                            annoApp.classId,
-                            ktDeclaration
-                        )
+                analyzeForUast(declaration) {
+                    val declarationSymbol = declaration.symbol
+                    declaration.symbol.annotations.firstOrNull { it.psi == entry }?.let { annotation ->
+                        return annotation.toFakeDeserializedSymbol(declaration, declarationSymbol, entry)
+                    }
+
+                    if (entry.useSiteTarget == null || declarationSymbol !is KaPropertySymbol) return null
+
+                    declarationSymbol.getter?.annotations?.firstOrNull { it.psi == entry }?.let { annotation ->
+                        return annotation.toFakeDeserializedSymbol(declaration, declarationSymbol.getter!!, entry)
+                    }
+
+                    declarationSymbol.setter?.annotations?.firstOrNull { it.psi == entry }?.let { annotation ->
+                        return annotation.toFakeDeserializedSymbol(declaration, declarationSymbol.setter!!, entry)
                     }
                 }
             }
-        }
-        return ktElement.toLightAnnotation()
+        } else null
     }
 
     override fun convertValueArguments(ktCallElement: KtCallElement, parent: UElement): List<UNamedExpression>? {
@@ -75,8 +88,9 @@ interface FirKotlinUastResolveProviderService : BaseKotlinUastResolveProviderSer
             val handledParameters = mutableSetOf<KaValueParameterSymbol>()
             val valueArguments = SmartList<UNamedExpression>()
             // NB: we need a loop over call element's value arguments to preserve their order.
-            ktCallElement.valueArguments.forEach {
-                val parameter = argumentMapping[it.getArgumentExpression()]?.symbol ?: return@forEach
+            ktCallElement.valueArguments.forEach { valueArg ->
+                val exp = valueArg.getArgumentExpression()
+                val parameter = argumentMapping[exp]?.symbol ?: return@forEach
                 if (!handledParameters.add(parameter)) return@forEach
                 val arguments = argumentMapping.entries
                     .filter { (_, param) -> param.symbol == parameter }
@@ -354,7 +368,8 @@ interface FirKotlinUastResolveProviderService : BaseKotlinUastResolveProviderSer
         analyzeForUast(ktCallElement) {
             val resolvedAnnotationConstructorSymbol =
                 ktCallElement.resolveToCall()?.singleConstructorCallOrNull()?.symbol ?: return null
-            return resolvedAnnotationConstructorSymbol.containingClassId
+            val type = resolvedAnnotationConstructorSymbol.returnType.fullyExpandedType
+            return type.symbol?.classId
                 ?.asSingleFqName()
                 ?.toString()
         }
@@ -488,6 +503,12 @@ interface FirKotlinUastResolveProviderService : BaseKotlinUastResolveProviderSer
                 resolvedTargetElement is PsiPackageImpl ||
                 !isKotlin(resolvedTargetElement)
             ) {
+                return resolvedTargetElement
+            }
+
+            // If the resolution result is "fake" PSI, it doesn't belong to any module.
+            // Before falling to the following module lookup, bail out here.
+            if (resolvedTargetElement is UastFakeLightMethodBase) {
                 return resolvedTargetElement
             }
 
@@ -723,6 +744,8 @@ interface FirKotlinUastResolveProviderService : BaseKotlinUastResolveProviderSer
     }
 
     override fun getType(ktDeclaration: KtDeclaration, source: UElement): PsiType? {
+        if (ktDeclaration !is KtDeclarationWithReturnType) return null
+
         analyzeForUast(ktDeclaration) {
             val ktType = ktDeclaration.returnType
             return toPsiType(
@@ -742,6 +765,8 @@ interface FirKotlinUastResolveProviderService : BaseKotlinUastResolveProviderSer
         containingLightDeclaration: PsiModifierListOwner?,
         isForFake: Boolean,
     ): PsiType? {
+        if (ktDeclaration !is KtDeclarationWithReturnType) return null
+
         analyzeForUast(ktDeclaration) {
             val ktType = ktDeclaration.returnType
             return toPsiType(

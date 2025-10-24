@@ -32,6 +32,8 @@ import javax.swing.*;
 import java.util.*;
 import java.util.stream.Collectors;
 
+import static com.jetbrains.python.psi.types.PyNoneTypeKt.isNoneType;
+
 
 public class PyNamedParameterImpl extends PyBaseElementImpl<PyNamedParameterStub> implements PyNamedParameter, ContributedReferenceHost {
   public PyNamedParameterImpl(ASTNode astNode) {
@@ -132,11 +134,6 @@ public class PyNamedParameterImpl extends PyBaseElementImpl<PyNamedParameterStub
   }
 
   @Override
-  public @NotNull String getRepr(boolean includeDefaultValue, @Nullable TypeEvalContext context) {
-    return PyCallableParameterImpl.psi(this).getPresentableText(includeDefaultValue, context);
-  }
-
-  @Override
   public @Nullable PyType getArgumentType(@NotNull TypeEvalContext context) {
     return PyCallableParameterImpl.psi(this).getArgumentType(context);
   }
@@ -200,7 +197,7 @@ public class PyNamedParameterImpl extends PyBaseElementImpl<PyNamedParameterStub
           final PyExpression defaultValue = getDefaultValue();
           if (defaultValue != null) {
             final PyType type = context.getType(defaultValue);
-            if (type != null && !(type instanceof PyNoneType)) {
+            if (type != null && !isNoneType(type)) {
               if (type instanceof PyTupleType) {
                 return PyUnionType.createWeakType(type);
               }
@@ -208,36 +205,43 @@ public class PyNamedParameterImpl extends PyBaseElementImpl<PyNamedParameterStub
             }
           }
         }
-        // Guess the type from file-local calls
-        if (context.allowCallContext(this)) {
-          final List<PyType> types = new ArrayList<>();
-          final PyResolveContext resolveContext = PyResolveContext.defaultContext(context);
-          final PyCallableParameter parameter = PyCallableParameterImpl.psi(this);
+        // Guess the type under an assumed type to prevent recursion
+        final PyType assumedResult = context.assumeType(this, null, ctx -> {
+          // Guess the type from file-local calls
+          if (ctx.allowCallContext(this)) {
+            final List<PyType> types = new ArrayList<>();
+            final PyResolveContext resolveContext = PyResolveContext.defaultContext(ctx);
+            final PyCallableParameter parameter = PyCallableParameterImpl.psi(this);
 
-          processLocalCalls(
-            func, call -> {
-              StreamEx
-                .of(call.multiMapArguments(resolveContext))
-                .flatCollection(mapping -> mapping.getMappedParameters().entrySet())
-                .filter(entry -> parameter.equals(entry.getValue()))
-                .map(Map.Entry::getKey)
-                .nonNull()
-                .map(context::getType)
-                .nonNull()
-                .forEach(types::add);
-              return true;
+            processLocalCalls(
+              func, call -> {
+                StreamEx
+                  .of(call.multiMapArguments(resolveContext))
+                  .flatCollection(mapping -> mapping.getMappedParameters().entrySet())
+                  .filter(entry -> parameter.equals(entry.getValue()))
+                  .map(Map.Entry::getKey)
+                  .nonNull()
+                  .map(ctx::getType)
+                  .nonNull()
+                  .forEach(types::add);
+                return true;
+              }
+            );
+
+            if (!types.isEmpty()) {
+              return PyUnionType.createWeakType(PyUnionType.union(types));
             }
-          );
-
-          if (!types.isEmpty()) {
-            return PyUnionType.createWeakType(PyUnionType.union(types));
           }
-        }
-        if (context.maySwitchToAST(this)) {
-          final PyType typeFromUsages = getTypeFromUsages(context);
-          if (typeFromUsages != null) {
-            return typeFromUsages;
+          if (ctx.maySwitchToAST(this)) {
+            final PyType typeFromUsages = getTypeFromUsages(ctx);
+            if (typeFromUsages != null) {
+              return typeFromUsages;
+            }
           }
+          return null;
+        });
+        if (assumedResult != null) {
+          return assumedResult;
         }
       }
     }
@@ -351,9 +355,13 @@ public class PyNamedParameterImpl extends PyBaseElementImpl<PyNamedParameterStub
           final PyExpression lhs = node.getLeftExpression();
           final PyExpression rhs = node.getRightExpression();
 
-          if (isReferenceToParameter(lhs) ^ isReferenceToParameter(rhs) &&
-              (lhs != null && context.getType(lhs) instanceof PyNoneType) ^ (rhs != null && context.getType(rhs) instanceof PyNoneType)) {
-            noneComparison.set(true);
+          boolean lhsIsParam = isReferenceToParameter(lhs);
+          boolean rhsIsParam = isReferenceToParameter(rhs);
+          if (lhsIsParam ^ rhsIsParam) {
+            final PyExpression other = lhsIsParam ? rhs : lhs;
+            if (other != null && isNoneType(context.getType(other))) {
+              noneComparison.set(true);
+            }
           }
         }
 
@@ -368,7 +376,7 @@ public class PyNamedParameterImpl extends PyBaseElementImpl<PyNamedParameterStub
 
     if (!usedAttributes.isEmpty()) {
       final PyStructuralType structuralType = new PyStructuralType(usedAttributes, true);
-      return noneComparison.get() ? PyUnionType.union(structuralType, PyNoneType.INSTANCE) : structuralType;
+      return noneComparison.get() ? PyUnionType.union(structuralType, PyBuiltinCache.getInstance(this).getNoneType()) : structuralType;
     }
 
     return null;

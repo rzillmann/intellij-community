@@ -2,6 +2,7 @@
 package org.jetbrains.intellij.build
 
 import org.jetbrains.intellij.build.impl.projectStructureMapping.DistributionFileEntry
+import org.jetbrains.jps.model.serialization.JpsMavenSettings.getMavenRepositoryPath
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.PathMatcher
@@ -14,7 +15,7 @@ const val UTIL_8_JAR: String = "util-8.jar"
 internal val isWindows: Boolean = System.getProperty("os.name").startsWith("windows", ignoreCase = true)
 
 private val USER_HOME = Path.of(System.getProperty("user.home"))
-internal val MAVEN_REPO: Path = USER_HOME.resolve(".m2/repository")
+internal val MAVEN_REPO: Path = Path.of(getMavenRepositoryPath())
 
 sealed interface Source {
   val filter: ((String) -> Boolean)?
@@ -61,6 +62,7 @@ data class ZipSource(
   @JvmField val isPreSignedAndExtractedCandidate: Boolean = false,
   @JvmField val optimizeConfigId: String? = null,
   @JvmField val distributionFileEntryProducer: DistributionFileEntryProducer?,
+  @JvmField val moduleName: String?,
   override val filter: ((String) -> Boolean),
 ) : Source, Comparable<ZipSource> {
   init {
@@ -103,6 +105,7 @@ data class DirSource(
   @JvmField val dir: Path,
   @JvmField val excludes: List<PathMatcher> = emptyList(),
   @JvmField val prefix: String = "",
+  @JvmField val moduleName: String?,
 ) : Source {
   init {
     assert(!Files.isRegularFile(dir)) { "'$dir' should not be a file" }

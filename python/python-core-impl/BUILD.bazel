@@ -1,9 +1,9 @@
 ### auto-generated section `build intellij.python.community.core.impl` start
-load("@rules_jvm//:jvm.bzl", "jvm_library", "jvm_resources")
+load("@rules_jvm//:jvm.bzl", "jvm_library", "resourcegroup")
 
-jvm_resources(
+resourcegroup(
   name = "community-core-impl_resources",
-  files = glob(["resources/**/*"]),
+  srcs = glob(["resources/**/*"]),
   strip_prefix = "resources"
 )
 
@@ -11,16 +11,23 @@ jvm_library(
   name = "community-core-impl",
   module_name = "intellij.python.community.core.impl",
   visibility = ["//visibility:public"],
-  srcs = glob(["src/**/*.kt", "src/**/*.java"], allow_empty = True),
+  srcs = glob(["src/**/*.kt", "src/**/*.java", "src/**/*.form"], allow_empty = True),
+  resources = [":community-core-impl_resources"],
   deps = [
+    "//platform/analysis-api:analysis",
+    "//platform/core-api:core",
+    "//platform/indexing-api:indexing",
+    "//jps/model-api:model",
+    "//platform/projectModel-api:projectModel",
     "//python/python-psi-api:psi",
     "//platform/analysis-impl",
     "//platform/lang-impl",
     "//RegExpSupport:regexp",
-    "@lib//:guava",
+    "//libraries/guava",
     "//python/python-psi-impl:psi-impl",
     "//python/python-sdk:sdk",
-  ],
-  runtime_deps = [":community-core-impl_resources"]
+    "@lib//:kotlin-stdlib",
+    "//platform/core-impl",
+  ]
 )
 ### auto-generated section `build intellij.python.community.core.impl` end

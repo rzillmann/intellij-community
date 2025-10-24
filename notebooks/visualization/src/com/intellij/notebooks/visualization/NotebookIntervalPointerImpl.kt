@@ -1,5 +1,6 @@
 package com.intellij.notebooks.visualization
 
+import com.intellij.notebooks.visualization.NotebookIntervalPointerFactory.Companion.compareIntervals
 import com.intellij.notebooks.visualization.NotebookIntervalPointersEvent.*
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.command.undo.BasicUndoableAction
@@ -110,7 +111,7 @@ class NotebookIntervalPointerFactoryImpl(
 
   override fun create(interval: NotebookCellLines.Interval): NotebookIntervalPointer {
     return pointers[interval.ordinal].also {
-      require(it.interval == interval)
+      compareIntervals(it.interval, interval)
     }
   }
 

@@ -209,10 +209,6 @@ abstract class RunManager {
     return oldName != settings.name
   }
 
-  @Deprecated("The method name is grammatically incorrect", replaceWith = ReplaceWith("this.setUniqueNameIfNeeded(settings)"))
-  @ApiStatus.ScheduledForRemoval
-  fun setUniqueNameIfNeed(settings: RunnerAndConfigurationSettings): Boolean = setUniqueNameIfNeeded(settings)
-
   /**
    * Sets unique name if existing one is not 'unique' for corresponding configuration type
    * @return `true` if name was changed
@@ -236,8 +232,17 @@ abstract class RunManager {
 
   abstract fun setTemporaryConfiguration(tempConfiguration: RunnerAndConfigurationSettings?)
 
-  // due to historical reasons findSettings() searches by name in addition to instance and this behavior is bad for isTemplate,
-  // so, client cannot for now use `findSettings()?.isTemplate() ?: false`.
+  /**
+   * Returns true if the provided configuration settings object represents a template used to create other configurations
+   * of the same type.
+   *
+   * Plugins should use `RunManager#findSettings()?.isTemplate() ?: false`.
+   *
+   * Due to historical reasons, [findSettings] searches by name in addition to instance and this behavior is bad for [isTemplate],
+   * so, for now, the client uses this instead.
+   *
+   * @return `true` if the configuration is a template, `false` otherwise.
+   */
   @ApiStatus.Internal
   abstract fun isTemplate(configuration: RunConfiguration): Boolean
 }

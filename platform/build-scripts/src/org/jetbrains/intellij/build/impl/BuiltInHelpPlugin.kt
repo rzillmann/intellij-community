@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.intellij.build.impl
 
 import io.opentelemetry.api.trace.Span
@@ -14,9 +14,9 @@ import org.jetbrains.intellij.build.telemetry.TraceManager.spanBuilder
 import org.jetbrains.intellij.build.telemetry.use
 import java.nio.file.Files
 import java.nio.file.Path
+import kotlin.io.path.exists
 
 internal const val BUILT_IN_HELP_MODULE_NAME = "intellij.builtInHelp"
-private val LUCENE_LIBRARIES = setOf("lucene-queryparser", "lucene-highlighter", "lucene-memory")
 
 internal fun buildHelpPlugin(pluginVersion: String, context: BuildContext): PluginLayout? {
   val productName = context.applicationInfo.fullProductName
@@ -26,12 +26,20 @@ internal fun buildHelpPlugin(pluginVersion: String, context: BuildContext): Plug
     return null
   }
 
-  return PluginLayout.plugin(BUILT_IN_HELP_MODULE_NAME) { spec ->
+  return PluginLayout.pluginAutoWithCustomDirName(BUILT_IN_HELP_MODULE_NAME) { spec ->
     val productLowerCase = productName.replace(' ', '-').lowercase()
     spec.mainJarName = "$productLowerCase-help.jar"
     spec.directoryName = "${productName.replace(" ", "")}Help"
     spec.excludeFromModule(BUILT_IN_HELP_MODULE_NAME, "com/jetbrains/builtInHelp/indexer/**")
-    spec.doNotCopyModuleLibrariesAutomatically(listOf("jsoup"))
+    spec.withPatch { patcher, buildContext ->
+      patcher.patchModuleOutput(
+        moduleName = BUILT_IN_HELP_MODULE_NAME,
+        path = "META-INF/plugin.xml",
+        content = pluginXml(buildContext, pluginVersion),
+        overwrite = PatchOverwriteMode.TRUE
+      )
+    }
+    spec.withProjectLibrary("lucene-core")
     spec.withGeneratedResources { targetDir, buildContext ->
       val assetJar = targetDir.resolve("lib/help-$productLowerCase-assets.jar")
       buildResourcesForHelpPlugin(
@@ -41,16 +49,6 @@ internal fun buildHelpPlugin(pluginVersion: String, context: BuildContext): Plug
         context = context,
       )
     }
-    spec.withPatch { patcher, buildContext ->
-      patcher.patchModuleOutput(moduleName = BUILT_IN_HELP_MODULE_NAME,
-                                path = "META-INF/services/org.apache.lucene.codecs.Codec",
-                                content = "org.apache.lucene.codecs.lucene50.Lucene50Codec")
-      patcher.patchModuleOutput(moduleName = BUILT_IN_HELP_MODULE_NAME,
-                                path = "META-INF/plugin.xml",
-                                content = pluginXml(buildContext, pluginVersion),
-                                overwrite = PatchOverwriteMode.TRUE)
-    }
-    LUCENE_LIBRARIES.forEach { spec.withProjectLibrary(it) }
   }
 }
 
@@ -70,6 +68,9 @@ private fun pluginXml(buildContext: BuildContext, version: String): String {
   <description>$productName Web Help for offline use: when help is invoked, pages are delivered via built-in Web server. In the plugin settings (Settings | Tools | $productName Help), you can opt to always use built-in help, even when Internet connection is available.</description>
 
   <depends>$productModuleDep</depends>
+  <dependencies>
+    <module name="intellij.libraries.lucene.common"/>
+  </dependencies>
   <resource-bundle>messages.BuiltInHelpBundle</resource-bundle>
 
   <extensions defaultExtensionNs="com.intellij">
@@ -88,25 +89,63 @@ private fun pluginXml(buildContext: BuildContext, version: String): String {
  */
 private val helpIndexerMutex = Mutex()
 
+
+/*  Offline help plugins include a separate set of help topics for each of the supported languages.
+This is a map of language code to descriptors that define resources associated with that language.
+ */
+
+private data class LanguageResourcesDescriptor(
+  val isRequired: Boolean = false,
+  val resPath: String,
+  val resList: List<String> = listOf("topics", "images", "search"),
+)
+
+private val supportedLanguages = mapOf(
+  //Localized resources don't include images
+  Pair("zh-cn", LanguageResourcesDescriptor(resPath = "zh-cn/", resList = listOf("topics", "search"))),
+  Pair("en-us", LanguageResourcesDescriptor(isRequired = true, resPath = ""))
+)
+
 private suspend fun buildResourcesForHelpPlugin(resourceRoot: Path, classPath: List<String>, assetJar: Path, context: CompilationContext) {
   spanBuilder("index help topics").use {
     helpIndexerMutex.withLock {
-      runJavaForIntellijModule(
-        context = context, mainClass = "com.jetbrains.builtInHelp.indexer.HelpIndexer",
-        args = listOf(
-          resourceRoot.resolve("search").toString(),
-          resourceRoot.resolve("topics").toString(),
-        ),
-        jvmArgs = emptyList(),
-        classPath = classPath,
-      )
+      supportedLanguages.forEach { (lang, descriptor) ->
+        val topicPath = resourceRoot.resolve("${descriptor.resPath}topics")
+
+        if (topicPath.exists())
+          runJavaForIntellijModule(
+            context = context, mainClass = "com.jetbrains.builtInHelp.indexer.HelpIndexer",
+            args = listOf(
+              resourceRoot.resolve("${descriptor.resPath}search").toString(),
+              topicPath.toString(),
+            ),
+            jvmArgs = emptyList(),
+            classPath = classPath,
+          )
+        else
+          Span.current().addEvent("skip \"${lang}\" for offline help plugin because it was not supplied. ")
+      }
     }
+
     writeNewZipWithoutIndex(file = assetJar, compress = true) { zipCreator ->
       val archiver = ZipArchiver()
       archiver.setRootDir(resourceRoot)
-      archiveDir(startDir = resourceRoot.resolve("topics"), addFile = { archiver.addFile(it, zipCreator) })
-      archiveDir(startDir = resourceRoot.resolve("images"), addFile = { archiver.addFile(it, zipCreator) })
-      archiveDir(startDir = resourceRoot.resolve("search"), addFile = { archiver.addFile(it, zipCreator) })
+
+      supportedLanguages.forEach { (lang, descriptor) ->
+        val langRootDir = resourceRoot.resolve(descriptor.resPath)
+        if (langRootDir.exists()) {
+          Span.current().addEvent("adding \"${lang}\" to the resulting ZIP.")
+          descriptor.resList.forEach { resDir ->
+            archiveDir(
+              startDir = langRootDir.resolve(resDir),
+              addFile = { archiver.addFile(it, zipCreator) })
+          }
+        }
+        else
+          Span.current().addEvent("skip adding \"${lang}\" to the resulting ZIP because it was not supplied.")
+      }
     }
   }
 }
+
+

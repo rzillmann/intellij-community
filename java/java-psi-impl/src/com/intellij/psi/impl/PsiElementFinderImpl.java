@@ -117,13 +117,21 @@ public final class PsiElementFinderImpl extends PsiElementFinder implements Dumb
     }
 
     if (list.size() > 1) {
-      ContainerUtil.quickSort(list, PsiClassUtil.createScopeComparator(scope));
+      if (shortName != null) {
+        ContainerUtil.quickSort(list, PsiClassUtil.createScopeComparator(scope));
+      } else {
+        ContainerUtil.quickSort(list, Comparator.comparing(PsiClass::getName, Comparator.nullsLast(Comparator.naturalOrder()))
+          .thenComparing(PsiClassUtil.createScopeComparator(scope)));
+      }
     }
 
     return list.toArray(PsiClass.EMPTY_ARRAY);
   }
 
-  private static List<PsiClass> processClasses(@Nullable String shortName, PsiClass[] classes, List<PsiClass> list, String packageName) {
+  private static @Nullable List<PsiClass> processClasses(@Nullable String shortName,
+                                                         PsiClass @NotNull [] classes,
+                                                         @Nullable List<PsiClass> list,
+                                                         @NotNull String packageName) {
     if (classes.length == 0) return list;
     if (list == null) list = new ArrayList<>();
     for (PsiClass aClass : classes) {

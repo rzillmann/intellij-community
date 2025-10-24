@@ -10,6 +10,7 @@ import com.intellij.execution.impl.RunManagerImpl
 import com.intellij.execution.impl.RunnerAndConfigurationSettingsImpl
 import com.intellij.execution.ui.UIExperiment
 import com.intellij.execution.ui.layout.impl.RunnerLayoutSettings
+import com.intellij.find.impl.FindPopupItem
 import com.intellij.ide.DataManager
 import com.intellij.ide.IdeBundle
 import com.intellij.openapi.actionSystem.ActionPlaces
@@ -22,6 +23,7 @@ import com.intellij.openapi.application.ApplicationNamesInfo
 import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.client.ClientSystemInfo
 import com.intellij.openapi.editor.Editor
+import com.intellij.openapi.editor.EditorKind
 import com.intellij.openapi.editor.EditorModificationUtil
 import com.intellij.openapi.editor.LogicalPosition
 import com.intellij.openapi.editor.ex.EditorEx
@@ -51,6 +53,7 @@ import com.intellij.ui.ComponentUtil
 import com.intellij.ui.ExperimentalUI
 import com.intellij.ui.ScreenUtil
 import com.intellij.ui.content.Content
+import com.intellij.ui.searchComponents.ExtendableSearchTextField
 import com.intellij.usageView.UsageViewContentManager
 import com.intellij.util.messages.Topic
 import com.intellij.util.ui.UIUtil
@@ -69,14 +72,8 @@ import training.learn.LearnBundle
 import training.learn.LessonsBundle
 import training.learn.course.Lesson
 import training.learn.lesson.LessonManager
-import training.ui.LEARN_TOOL_WINDOW_ID
-import training.ui.LearningUiHighlightingManager
-import training.ui.LearningUiManager
-import training.ui.LearningUiUtil
+import training.ui.*
 import training.ui.LearningUiUtil.findComponentWithTimeout
-import training.ui.LessonMessagePane
-import training.ui.UISettings
-import training.ui.showOnboardingFeedbackNotification
 import training.util.LessonEndInfo
 import training.util.getActionById
 import training.util.learningToolWindow
@@ -87,11 +84,12 @@ import java.awt.Rectangle
 import java.awt.Window
 import java.awt.event.InputEvent
 import java.awt.event.KeyEvent
-import java.util.Locale
+import java.util.*
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
 import javax.swing.JComponent
 import javax.swing.JList
+import javax.swing.JTable
 import javax.swing.JWindow
 import javax.swing.KeyStroke
 
@@ -154,6 +152,21 @@ object LessonUtil {
     }
   }
 
+  fun TaskContext.showWarningIfSearchPopupClosed() {
+    showWarning(LessonsBundle.message("goto.action.popup.closed.warning.message", action("GotoAction"),
+                                      rawKeyStroke(KeyEvent.VK_SHIFT))) {
+      !checkInsideSearchEverywhere()
+    }
+  }
+
+  fun TaskRuntimeContext.selectNeededItem(isTotalItem: (Any) -> Boolean): Boolean? {
+    return (previous.ui as? JList<*>)?.let { ui ->
+      if (!ui.isShowing) return false
+      val selectedIndex = ui.selectedIndex
+      selectedIndex != -1 && isTotalItem(ui.model.getElementAt(selectedIndex))
+    }
+  }
+
   fun TaskRuntimeContext.checkPositionOfEditor(sample: LessonSample,
                                                checkCaret: TaskRuntimeContext.(LessonSample) -> Boolean = { checkCaretValid(it) }
   ): TaskContext.RestoreNotification? {
@@ -207,7 +220,7 @@ object LessonUtil {
     return if (message != null) sampleRestoreNotification(message, sample) else null
   }
 
-  fun TaskRuntimeContext.sampleRestoreNotification(@Nls message: String, sample: LessonSample) =
+  fun TaskRuntimeContext.sampleRestoreNotification(@Nls message: String, sample: LessonSample): TaskContext.RestoreNotification =
     TaskContext.RestoreNotification(message) { setSample(sample) }
 
   fun TaskRuntimeContext.checkEditorModification(sample: LessonSample,
@@ -230,6 +243,14 @@ object LessonUtil {
     return change.replace(" ", "") == needChange
   }
 
+  fun TaskRuntimeContext.checkInsideSearchEverywhere(): Boolean {
+    return UIUtil.getParentOfType(ExtendableSearchTextField::class.java, focusOwner) != null
+  }
+
+  fun isMainEditorComponent(component: Component?): Boolean {
+    return component is EditorComponentImpl && component.editor.editorKind == EditorKind.MAIN_EDITOR
+  }
+
   fun findItem(ui: JList<*>, checkList: (item: Any) -> Boolean): Int? {
     for (i in 0 until ui.model.size) {
       val elementAt = ui.model.getElementAt(i)
@@ -238,6 +259,16 @@ object LessonUtil {
       }
     }
     return null
+  }
+
+  fun findLastRowIndexOfItemWithText(ui: JTable, textToFind: String): Int {
+    for (i in (ui.rowCount - 1) downTo 0) {
+      val item = ui.getValueAt(i, 0) as? FindPopupItem
+      if (item?.presentableText?.contains(textToFind, true) == true) {
+        return i
+      }
+    }
+    return -1
   }
 
   fun setEditorReadOnly(editor: Editor) {
@@ -272,7 +303,7 @@ object LessonUtil {
     }
   }
 
-  fun rawShift() = rawKeyStroke(KeyStroke.getKeyStroke("SHIFT"))
+  fun rawShift(): String = rawKeyStroke(KeyStroke.getKeyStroke("SHIFT"))
 
   val breakpointXRange: (width: Int) -> IntRange = { IntRange(5, it - 38) }
 
@@ -440,6 +471,12 @@ object LessonUtil {
   fun lastHighlightedUi(): JComponent? {
     return LearningUiHighlightingManager.highlightingComponents.getOrNull(0) as? JComponent
   }
+}
+
+object EditorSettingsState {
+  fun isLineNumbersShown(): Boolean = EditorSettingsExternalizable.getInstance().isLineNumbersShown
+
+  fun isWhitespacesShown(): Boolean = EditorSettingsExternalizable.getInstance().isWhitespacesShown
 }
 
 fun LessonContext.firstLessonCompletedMessage() {
@@ -776,7 +813,7 @@ fun TaskContext.showBalloonOnHighlightingComponent(@Language("HTML") @Nls messag
   text(message, useBalloon)
 }
 
-fun LessonContext.showInvalidDebugLayoutWarning() = task {
+fun LessonContext.showInvalidDebugLayoutWarning(): Unit = task {
   val step = stateCheck {
     val viewImpl = getDebugFramesView()
     !(viewImpl?.isMinimizedInGrid ?: false)
@@ -836,7 +873,7 @@ fun showEndOfLessonDialogAndFeedbackForm(onboardingLesson: Lesson, lessonEndInfo
         dataContextPromise.onSuccess { context ->
           invokeLater {
             val event = AnActionEvent.createFromAnAction(closeAction, null, ActionPlaces.LEARN_TOOLWINDOW, context)
-            ActionUtil.performActionDumbAwareWithCallbacks(closeAction, event)
+            ActionUtil.performAction(closeAction, event)
           }
         }
       }

@@ -2,76 +2,61 @@
 package com.jetbrains.python.packaging.conda
 
 import com.intellij.openapi.components.service
-import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.projectRoots.Sdk
-import com.intellij.openapi.util.text.StringUtil
-import com.jetbrains.python.PyBundle
-import com.jetbrains.python.packaging.PyPackageVersion
-import com.jetbrains.python.packaging.PyPackageVersionNormalizer
+import com.jetbrains.python.errorProcessing.PyResult
 import com.jetbrains.python.packaging.common.PythonPackageDetails
-import com.jetbrains.python.packaging.common.PythonPackageSpecification
-import com.jetbrains.python.packaging.pip.PipBasedRepositoryManager
+import com.jetbrains.python.packaging.pip.PipRepositoryManager
 import com.jetbrains.python.packaging.repository.PyPackageRepository
+import com.jetbrains.python.packaging.repository.PythonRepositoryManagerBase
 import org.jetbrains.annotations.ApiStatus
 
 @ApiStatus.Internal
-internal class CondaRepositoryManger(
-  override val project: Project,
-  @Deprecated("Don't use sdk from here") val sdk: Sdk,
-) : PipBasedRepositoryManager() {
+internal class CondaRepositoryManger(override val project: Project, val sdk: Sdk) : PythonRepositoryManagerBase() {
+  private val pipRepositoryManger = PipRepositoryManager.getInstance(project)
 
   override val repositories: List<PyPackageRepository>
-    get() = listOf(CondaPackageRepository) + super.repositories
+    get() = listOf(CondaPackageRepository) + pipRepositoryManger.repositories
 
-  override fun buildPackageDetails(rawInfo: String?, spec: PythonPackageSpecification): PythonPackageDetails {
-    if (spec is CondaPackageSpecification) {
-      val versions = service<CondaPackageCache>()[spec.name] ?: error("No conda package versions in cache")
-      if (rawInfo == null) return CondaPackageDetails(spec.name, versions, PyBundle.message("conda.packaging.empty.pypi.info"))
+  private val condaPackageCache = service<CondaPackageCache>()
 
-      val detailsFromPyPI = super.buildPackageDetails(rawInfo, spec)
-
-      return CondaPackageDetails(detailsFromPyPI.name,
-                                 versions,
-                                 detailsFromPyPI.summary,
-                                 detailsFromPyPI.description,
-                                 detailsFromPyPI.descriptionContentType,
-                                 detailsFromPyPI.documentationUrl)
-
-    }
-    return super.buildPackageDetails(rawInfo, spec)
+  init {
+    if (!shouldBeInitInstantly())
+      initializationJob.start()
   }
 
-  override suspend fun getLatestVersion(spec: PythonPackageSpecification): PyPackageVersion? {
-    if (spec is CondaPackageSpecification) {
-      if (spec.name == "python") return null
-      val versions = service<CondaPackageCache>()[spec.name]
-      if (versions.isNullOrEmpty()) {
-        thisLogger().info("No versions in conda cache for package ${spec.name}")
-        return null
-      }
-      return PyPackageVersionNormalizer.normalize(versions.first())
-    }
-    return super.getLatestVersion(spec)
+  override fun allPackages(): Set<String> {
+    return CondaPackageRepository.getPackages() + pipRepositoryManger.allPackages()
+  }
+
+  override suspend fun getPackageDetails(packageName: String, repository: PyPackageRepository?): PyResult<PythonPackageDetails> {
+    waitForInit()
+    val packageDetails = pipRepositoryManger.getPackageDetails(packageName, repository)
+    return packageDetails
   }
 
   override suspend fun refreshCaches() {
-    super.refreshCaches()
-    service<CondaPackageCache>().forceReloadCache(sdk, project)
+    pipRepositoryManger.refreshCaches()
+    condaPackageCache.reloadCache(sdk, project, force = true)
   }
 
   override suspend fun initCaches() {
-    super.initCaches()
-    service<CondaPackageCache>().reloadCache(sdk, project)
+    pipRepositoryManger.waitForInit()
+    condaPackageCache.reloadCache(sdk, project)
   }
 
-  override fun searchPackages(query: String, repository: PyPackageRepository): List<String> {
-    return if (repository is CondaPackageRepository) {
-      service<CondaPackageCache>().packages
-        .filter { StringUtil.containsIgnoreCase(it, query) }
-    }
-    else {
-      super.searchPackages(query, repository)
+  override suspend fun getVersions(packageName: String, repository: PyPackageRepository?): List<String>? {
+    waitForInit()
+    return when (repository) {
+      null -> {
+        val condaVersions = condaPackageCache[packageName]
+        val pipVersions = pipRepositoryManger.getVersions(packageName, repository)
+        if (condaVersions == null && pipVersions == null) return null
+        val allVersions = (condaVersions ?: emptyList()) + (pipVersions ?: emptyList())
+        allVersions.distinct()
+      }
+      is CondaPackageRepository -> condaPackageCache[packageName]
+      else -> pipRepositoryManger.getVersions(packageName, repository)
     }
   }
 }

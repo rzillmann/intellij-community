@@ -12,7 +12,6 @@ import com.intellij.ui.dsl.listCellRenderer.textListCellRenderer
 import com.jetbrains.python.PyBundle.message
 import com.jetbrains.python.errorProcessing.ErrorSink
 import com.jetbrains.python.errorProcessing.PyResult
-import com.jetbrains.python.errorProcessing.asPythonResult
 import com.jetbrains.python.newProject.collector.InterpreterStatisticsInfo
 import com.jetbrains.python.psi.LanguageLevel
 import com.jetbrains.python.sdk.ModuleOrProject
@@ -22,13 +21,15 @@ import com.jetbrains.python.sdk.flavors.conda.NewCondaEnvRequest
 import com.jetbrains.python.statistics.InterpreterCreationMode
 import com.jetbrains.python.statistics.InterpreterType
 import com.jetbrains.python.ui.flow.bindText
+import kotlinx.coroutines.CoroutineScope
 
-internal class CondaNewEnvironmentCreator(model: PythonMutableTargetAddInterpreterModel) : PythonNewEnvironmentCreator(model) {
+internal class CondaNewEnvironmentCreator<P: PathHolder>(model: PythonMutableTargetAddInterpreterModel<P>) : PythonNewEnvironmentCreator<P>(model) {
 
   private lateinit var pythonVersion: ObservableMutableProperty<LanguageLevel>
   private lateinit var versionComboBox: ComboBox<LanguageLevel>
+  private lateinit var condaExecutable: ValidatedPathField<Version, P, ValidatedPath.Executable<P>>
 
-  override fun buildOptions(panel: Panel, validationRequestor: DialogValidationRequestor, errorSink: ErrorSink) {
+  override fun setupUI(panel: Panel, validationRequestor: DialogValidationRequestor) {
     with(panel) {
       row(message("sdk.create.python.version")) {
         pythonVersion = propertyGraph.property(condaSupportedLanguages.first())
@@ -37,37 +38,44 @@ internal class CondaNewEnvironmentCreator(model: PythonMutableTargetAddInterpret
           .component
       }
       row(message("sdk.create.custom.conda.env.name")) {
-        val envName = textField()
-          .bindText(model.state.newCondaEnvName)
-        // TODO: DOC
-        envName.bindText(model.myProjectPathFlows.projectName)
+        textField()
+          .bindText(model.condaViewModel.newCondaEnvName) // property setter for getOrCreateSdk
+          .bindText(model.projectPathFlows.projectName) // default value getter
       }
 
-      executableSelector(model.state.condaExecutable,
-                         validationRequestor,
-                         message("sdk.create.custom.venv.executable.path", "conda"),
-                         message("sdk.create.custom.venv.missing.text", "conda"),
-                         createInstallCondaFix(model, errorSink))
-        .displayLoaderWhen(model.condaEnvironmentsLoading, scope = model.scope, uiContext = model.uiContext)
+      condaExecutable = validatablePathField(
+        fileSystem = model.fileSystem,
+        pathValidator = model.condaViewModel.toolValidator,
+        validationRequestor = validationRequestor,
+        labelText = message("sdk.create.custom.venv.executable.path", "conda"),
+        missingExecutableText = message("sdk.create.custom.venv.missing.text", "conda"),
+        installAction = createInstallCondaFix(model)
+      )
     }
   }
 
-  override fun onShown() = Unit
+  override fun onShown(scope: CoroutineScope) {
+    condaExecutable.initialize(scope)
+    condaExecutable.displayLoaderWhen(
+      loading = model.condaViewModel.condaEnvironmentsLoading,
+      scope = scope,
+    )
+  }
 
   override suspend fun getOrCreateSdk(moduleOrProject: ModuleOrProject): PyResult<Sdk> {
-    return model.createCondaEnvironment(NewCondaEnvRequest.EmptyNamedEnv(pythonVersion.get(), model.state.newCondaEnvName.get())).asPythonResult()
+    return model.createCondaEnvironment(moduleOrProject, NewCondaEnvRequest.EmptyNamedEnv(pythonVersion.get(), model.condaViewModel.newCondaEnvName.get()))
   }
 
   override fun createStatisticsInfo(target: PythonInterpreterCreationTargets): InterpreterStatisticsInfo {
-    //val statisticsTarget = if (presenter.projectLocationContext is WslContext) InterpreterTarget.TARGET_WSL else target.toStatisticsField()
     val statisticsTarget = target.toStatisticsField() // todo fix for wsl
-    return InterpreterStatisticsInfo(InterpreterType.CONDAVENV,
-                                     statisticsTarget,
-                                     false,
-                                     false,
-                                     false,
-      //presenter.projectLocationContext is WslContext,
-                                     false, // todo fix for wsl
-                                     InterpreterCreationMode.CUSTOM)
+    return InterpreterStatisticsInfo(
+      type = InterpreterType.CONDAVENV,
+      target = statisticsTarget,
+      globalSitePackage = false,
+      makeAvailableToAllProjects = false,
+      previouslyConfigured = false,
+      isWSLContext = false, // todo fix for wsl
+      creationMode = InterpreterCreationMode.CUSTOM
+    )
   }
 }

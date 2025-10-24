@@ -1,4 +1,4 @@
-// Copyright 2000-2021 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license that can be found in the LICENSE file.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.terminal;
 
 import com.intellij.ide.IdeBundle;
@@ -67,13 +67,14 @@ public class JBTerminalSystemSettingsProviderBase extends DefaultSettingsProvide
     // Use `myFontSettingsProvider` to make it possible to substitute another implementation in descendants.
     myFontSizeProvider.addListener(parentDisposable, new TerminalFontSizeProvider.Listener() {
       @Override
-      public void fontChanged() {
+      public void fontChanged(boolean showZoomIndicator) {
         listener.fontChanged();
       }
     });
   }
 
-  private @NotNull EditorColorsScheme getColorsScheme() {
+  @ApiStatus.Internal
+  protected @NotNull EditorColorsScheme getColorsScheme() {
     return myUiSettingsManager.getEditorColorsScheme();
   }
 
@@ -161,7 +162,7 @@ public class JBTerminalSystemSettingsProviderBase extends DefaultSettingsProvide
   }
 
   public @NotNull TerminalAction getGotoNextSplitTerminalAction(@Nullable JBTerminalWidgetListener listener, boolean forward) {
-    @Language("devkit-action-id") String actionId = forward ? "Terminal.NextSplitter" : "Terminal.PrevSplitter";
+    @Language("devkit-action-id") String actionId = forward ? "TW.MoveToNextSplitter" : "TW.MoveToPreviousSplitter";
     String text = UIUtil.removeMnemonic(getGotoNextSplitTerminalActionText(forward));
     return new TerminalAction(new TerminalActionPresentation(text, getKeyStrokesByActionId(actionId)), event -> {
       if (listener != null) {
@@ -254,7 +255,7 @@ public class JBTerminalSystemSettingsProviderBase extends DefaultSettingsProvide
 
   @ApiStatus.Internal
   public FontPreferences getFontPreferences() {
-    return getColorsScheme().getFontPreferences();
+    return getColorsScheme().getConsoleFontPreferences();
   }
 
   @Override

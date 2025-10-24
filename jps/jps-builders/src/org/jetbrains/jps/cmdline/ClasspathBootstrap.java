@@ -6,13 +6,14 @@ import com.github.benmanes.caffeine.cache.Caffeine;
 import com.google.gson.Gson;
 import com.google.protobuf.Message;
 import com.intellij.compiler.notNullVerification.NotNullVerifyingInstrumenter;
+import com.intellij.openapi.application.ArchivedCompilationContextUtil;
 import com.intellij.openapi.application.ClassPathUtil;
 import com.intellij.openapi.application.PathManager;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.util.SystemInfoRt;
 import com.intellij.openapi.util.io.FileUtilRt;
 import com.intellij.openapi.util.text.Strings;
-import com.intellij.platform.runtime.repository.RuntimeModuleRepository;
+import com.intellij.platform.eel.fs.EelFiles;
 import com.intellij.tracing.Tracer;
 import com.intellij.uiDesigner.compiler.AlienFormFileException;
 import com.intellij.uiDesigner.core.GridConstraints;
@@ -22,6 +23,7 @@ import com.intellij.util.lang.JavaVersion;
 import com.jgoodies.forms.layout.CellConstraints;
 import com.thoughtworks.qdox.JavaProjectBuilder;
 import kotlin.metadata.jvm.JvmMetadataUtil;
+import kotlinx.coroutines.Deferred;
 import net.n3.nanoxml.IXMLBuilder;
 import org.h2.mvstore.MVStore;
 import org.jetbrains.annotations.ApiStatus;
@@ -32,6 +34,7 @@ import org.jetbrains.idea.maven.aether.ArtifactRepositoryManager;
 import org.jetbrains.jps.builders.impl.java.EclipseCompilerTool;
 import org.jetbrains.jps.builders.java.JavaCompilingTool;
 import org.jetbrains.jps.builders.java.JavaSourceTransformer;
+import org.jetbrains.jps.dependency.DependencyGraph;
 import org.jetbrains.jps.javac.ExternalJavacProcess;
 import org.jetbrains.jps.javac.ast.JavacReferenceCollector;
 import org.jetbrains.jps.model.JpsModel;
@@ -47,6 +50,8 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
 import java.util.function.Consumer;
+
+import static org.jetbrains.jps.model.serialization.JpsMavenSettings.getMavenRepositoryPath;
 
 @ApiStatus.Internal
 public final class ClasspathBootstrap {
@@ -67,6 +72,10 @@ public final class ClasspathBootstrap {
   };
 
   private static final String[] REFLECTION_OPEN_PACKAGES = {
+    "java.base/sun.nio=ALL-UNNAMED",
+    "java.base/sun.nio.ch=ALL-UNNAMED",
+    "java.base/jdk.internal.ref=ALL-UNNAMED",
+
     // needed for jps core functioning
     "jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED",
     "jdk.compiler/com.sun.tools.javac.util=ALL-UNNAMED",
@@ -85,10 +94,9 @@ public final class ClasspathBootstrap {
 
   private static final String[] FORBIDDEN_JARS = {
     "app.jar",
-    "app-client.java"
+    "app-backend.java"
   };
 
-  private static final String DEFAULT_MAVEN_REPOSITORY_PATH = ".m2/repository";
   @VisibleForTesting
   public static final String NETTY_JPS_VERSION = "4.1.117.Final";
   private static final String NETTY_JPS_DISTRIBUTION_JAR_NAME = "netty-jps.jar";
@@ -106,16 +114,11 @@ public final class ClasspathBootstrap {
     else {
       // running from sources or on the build server
       // take the library from the local maven repository
-      Path artifactRoot = getMavenLocalRepositoryDir().resolve("io").resolve("netty");
+      Path artifactRoot = Path.of(getMavenRepositoryPath()).resolve("io").resolve("netty");
       for (String artifactName : NETTY_ARTIFACT_NAMES) {
         consumer.accept(artifactRoot.resolve(artifactName).resolve(NETTY_JPS_VERSION).resolve(artifactName + "-" + NETTY_JPS_VERSION + ".jar"));
       }
     }
-  }
-
-  private static @NotNull Path getMavenLocalRepositoryDir() {
-    final String userHome = System.getProperty("user.home", null);
-    return userHome != null ? Path.of(userHome, DEFAULT_MAVEN_REPOSITORY_PATH) : Path.of(DEFAULT_MAVEN_REPOSITORY_PATH);
   }
 
   private static void addToClassPath(Set<String> result, Class<?> aClass) {
@@ -158,19 +161,22 @@ public final class ClasspathBootstrap {
     addToClassPath(cp, BuildMain.class);
     addToClassPath(cp, ExternalJavacProcess.class);  // intellij.platform.jps.build.javac.rt part
     addToClassPath(cp, JavacReferenceCollector.class);  // jps-javac-extension library
+    addToClassPath(cp, DependencyGraph.class);  // dep-graph
 
     // intellij.platform.util
     addToClassPath(cp, ClassPathUtil.getUtilClasses());
     addToClassPath(cp, HashMapZipFile.class); // intellij.platform.util.zip
+    // intellij.platform.concurrency
+    //addToClassPath(cp, VarHandleWrapperImpl.class);
 
     ClassPathUtil.addKotlinStdlib(cp);
+    addToClassPath(cp, Deferred.class);  // kotlinx.coroutines, used intellij.platform.util, EnvironmentUtil
     addToClassPath(cp, JvmMetadataUtil.class);  // kotlin metadata parsing
     addToClassPath(cp, COMMON_REQUIRED_CLASSES);
     getNettyForJpsClasspath(path -> cp.add(path.toString()));
 
     addToClassPath(cp, ClassWriter.class);  // asm
     addToClassPath(cp, ClassVisitor.class);  // asm-commons
-    addToClassPath(cp, RuntimeModuleRepository.class); // intellij.platform.runtime.repository
     addToClassPath(cp, JpsModel.class);  // intellij.platform.jps.model
     addToClassPath(cp, JpsModelImpl.class);  // intellij.platform.jps.model.impl
     addToClassPath(cp, JpsProjectLoader.class);  // intellij.platform.jps.model.serialization
@@ -191,6 +197,8 @@ public final class ClasspathBootstrap {
 
     addToClassPath(cp, ArtifactRepositoryManager.getClassesFromDependencies());
     addToClassPath(cp, Tracer.class); // tracing infrastructure
+
+    addToClassPath(cp, EelFiles.class);
 
     try {
       Class<?> cmdLineWrapper = Class.forName("com.intellij.rt.execution.CommandLineWrapper");
@@ -301,8 +309,8 @@ public final class ClasspathBootstrap {
       return Arrays.asList(instrumentationUtilPath, new File(instrumentationUtil.getParentFile(), "intellij.java.compiler.instrumentationUtil.java8").getAbsolutePath());
     }
     else {
-      var relevantJarsRoot = PathManager.getArchivedCompliedClassesLocation();
-      Map<String, String> mapping = PathManager.getArchivedCompiledClassesMapping();
+      var relevantJarsRoot = ArchivedCompilationContextUtil.getArchivedCompiledClassesLocation();
+      Map<String, String> mapping = ArchivedCompilationContextUtil.getArchivedCompiledClassesMapping();
       if (relevantJarsRoot != null && mapping != null && instrumentationUtilPath.startsWith(relevantJarsRoot)) {
         return Arrays.asList(instrumentationUtilPath, mapping.get("production/intellij.java.compiler.instrumentationUtil.java8"));
       }

@@ -1,10 +1,11 @@
-// Copyright 2000-2021 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license that can be found in the LICENSE file.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.jetbrains.python.parsing;
 
 import com.intellij.lang.LanguageASTFactory;
 import com.intellij.openapi.util.registry.Registry;
 import com.intellij.psi.PsiFile;
 import com.intellij.psi.util.PsiTreeUtil;
+import com.intellij.python.community.helpersLocator.PythonHelpersLocator;
 import com.intellij.testFramework.ParsingTestCase;
 import com.intellij.testFramework.TestDataPath;
 import com.jetbrains.python.*;
@@ -81,6 +82,30 @@ public class PythonParsingTest extends ParsingTestCase {
     doTest();
   }
 
+  public void testTryExceptAs() {   // PY-293
+    doTest();
+  }
+
+  // PY-52930
+  public void testTryExceptStarNoExpression() {
+    doTest();
+  }
+
+  // PY-84077
+  public void testTryExceptMultipleNoParensPre314() {
+    doTest(LanguageLevel.PYTHON26);
+  }
+
+  // PY-84077
+  public void testTryExceptMultipleNoParensPost314() {
+    doTest(LanguageLevel.PYTHON314);
+  }
+
+  // PY-84077
+  public void testTryExceptMultipleWithParens() {
+    doTest();
+  }
+
   public void testTryFinally() {
     doTest();
   }
@@ -108,15 +133,6 @@ public class PythonParsingTest extends ParsingTestCase {
   }
 
   public void testDecoratedFunction() {
-    doTest();
-  }
-
-  public void testTryExceptAs() {   // PY-293
-    doTest();
-  }
-
-  // PY-52930
-  public void testTryExceptStarNoExpression() {
     doTest();
   }
 
@@ -1381,6 +1397,36 @@ public class PythonParsingTest extends ParsingTestCase {
 
   public void testTypeKeywordAsIdentifier() {
     doTest(LanguageLevel.PYTHON312);
+  }
+
+  // PY-79967
+  public void testTemplateStrings() {
+    doTest(LanguageLevel.PYTHON314);
+  }
+
+  // PY-79967
+  public void testTemplateStringWithFragment() {
+    doTest(LanguageLevel.PYTHON314);
+  }
+
+  // PY-79967
+  public void testEmptyTemplateStrings() {
+    doTest(LanguageLevel.PYTHON314);
+  }
+
+  // PY-79967
+  public void testNestedTemplateStrings() {
+    doTest(LanguageLevel.PYTHON314);
+  }
+
+  // PY-79967
+  public void testTemplateStringInsideFString() {
+    doTest(LanguageLevel.PYTHON314);
+  }
+
+  // PY-79967
+  public void testFStringInsideTemplateString() {
+    doTest(LanguageLevel.PYTHON314);
   }
 
   public void doTest() {

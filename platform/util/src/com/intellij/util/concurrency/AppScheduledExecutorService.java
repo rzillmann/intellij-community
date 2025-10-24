@@ -5,16 +5,20 @@ import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.progress.ProcessCanceledException;
 import com.intellij.openapi.util.LowMemoryWatcherManager;
 import com.intellij.util.IncorrectOperationException;
+import com.intellij.util.ThrowableConsumer;
+import com.intellij.util.containers.ContainerUtil;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
-import org.jetbrains.annotations.VisibleForTesting;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.*;
 import java.util.function.BiConsumer;
 
 import static com.intellij.util.concurrency.AppExecutorUtil.propagateContext;
+import static java.util.concurrent.TimeUnit.MINUTES;
+import static java.util.concurrent.TimeUnit.SECONDS;
 
 /**
  * A ThreadPoolExecutor which also implements {@link ScheduledExecutorService} by awaiting scheduled tasks in a separate thread
@@ -25,32 +29,47 @@ import static com.intellij.util.concurrency.AppExecutorUtil.propagateContext;
 @ApiStatus.Internal
 public final class AppScheduledExecutorService extends SchedulingWrapper {
   public static final String POOLED_THREAD_PREFIX = "ApplicationImpl pooled thread ";
+
   private final @NotNull String myName;
   private final LowMemoryWatcherManager myLowMemoryWatcherManager;
 
   private static final class Holder {
-    private static final AppScheduledExecutorService INSTANCE = new AppScheduledExecutorService("Global instance", 1, TimeUnit.MINUTES);
+    private static final AppScheduledExecutorService INSTANCE = new AppScheduledExecutorService("Global instance", 1, MINUTES, true);
   }
-
   static @NotNull ScheduledExecutorService getInstance() {
     return Holder.INSTANCE;
   }
 
-  @VisibleForTesting
-  public AppScheduledExecutorService(@NotNull String name, long keepAliveTime, @NotNull TimeUnit unit) {
+  /**
+   * @param initLowMemoryWatcherManager introduced to test AppScheduledExecutorService without initializing LowMemoryWatcherManager inside.
+   *                                    LowMemoryWatcherManager complicates the behavior of the AppScheduledExecutorService which makes it
+   *                                    harder to test
+   */
+  private AppScheduledExecutorService(@NotNull String name, long keepAliveTime, @NotNull TimeUnit unit, boolean initLowMemoryWatcherManager) {
     super(new BackendThreadPoolExecutor(new MyThreadFactory(), keepAliveTime, unit), new AppDelayQueue());
     myName = name;
-    myLowMemoryWatcherManager = new LowMemoryWatcherManager(this);
+    //TODO RC: why LowMemoryWatcher is owned by AppScheduledExecutorService? Shouldn't it be a dedicated service itself?
+    //         There are issues in LowMemoryWatcherManager initialization because of that, and also issues in tests,
+    //         (for those issues initLowMemoryWatcherManager=false option was introduced)
+    if (initLowMemoryWatcherManager) {
+      myLowMemoryWatcherManager = new LowMemoryWatcherManager(this);
+    }
+    else {
+      myLowMemoryWatcherManager = null;
+    }
   }
 
   private MyThreadFactory getCountingThreadFactory() {
     return (MyThreadFactory)((BackendThreadPoolExecutor)backendExecutorService).getThreadFactory();
   }
 
+  public LowMemoryWatcherManager getLowMemoryWatcherManager() {
+    return myLowMemoryWatcherManager;
+  }
+
   private static final class MyThreadFactory extends CountingThreadFactory {
     private BiConsumer<? super Thread, ? super Runnable> newThreadListener;
     private final ThreadFactory myThreadFactory = Executors.privilegedThreadFactory();
-
     @Override
     public @NotNull Thread newThread(final @NotNull Runnable r) {
       Thread thread = myThreadFactory.newThread(r);
@@ -70,7 +89,6 @@ public final class AppScheduledExecutorService extends SchedulingWrapper {
       newThreadListener = threadListener;
     }
   }
-
   public void setNewThreadListener(@NotNull BiConsumer<? super Thread, ? super Runnable> threadListener) {
     getCountingThreadFactory().setNewThreadListener(threadListener);
   }
@@ -85,7 +103,6 @@ public final class AppScheduledExecutorService extends SchedulingWrapper {
     notAllowedMethodCall();
   }
 
-  @ApiStatus.Internal
   public static @NotNull List<Runnable> notAllowedMethodCall() {
     throw new IncorrectOperationException("You must not call this method on the global app pool");
   }
@@ -95,18 +112,13 @@ public final class AppScheduledExecutorService extends SchedulingWrapper {
     ((BackendThreadPoolExecutor)backendExecutorService).superShutdown();
   }
 
-  @ApiStatus.Internal
-  public void shutdownAppScheduledExecutorService() {
-    // LowMemoryWatcher starts background threads so stop it now to avoid RejectedExecutionException
-    myLowMemoryWatcherManager.shutdown();
-    doShutdown();
-    delayQueue.shutdown(new SchedulingWrapper.MyScheduledFutureTask<Void>(()->{}, null, 0) {
-        @Override
-        public boolean executeMeInBackendExecutor() {
-          set(null);
-          return false;
-        }
-      });
+  void shutdownAppScheduledExecutorService() {
+    // LowMemoryWatcher starts background tasks so stop it now to avoid RejectedExecutionException
+    if (myLowMemoryWatcherManager != null) {
+      myLowMemoryWatcherManager.shutdown();
+    }
+    doShutdown(true);
+    delayQueue.shutdown(this);
   }
 
   @Override
@@ -134,20 +146,12 @@ public final class AppScheduledExecutorService extends SchedulingWrapper {
     return ((BackendThreadPoolExecutor)backendExecutorService).getPoolSize();
   }
 
-  @TestOnly
-  @ApiStatus.Internal
-  public void setBackendPoolCorePoolSize(int size) {
-    ((BackendThreadPoolExecutor)backendExecutorService).superSetCorePoolSize(size);
-  }
-
-  @ApiStatus.Internal
-  public static final class BackendThreadPoolExecutor extends ThreadPoolExecutor {
+  private static final class BackendThreadPoolExecutor extends ThreadPoolExecutor {
     BackendThreadPoolExecutor(@NotNull ThreadFactory factory,
                               long keepAliveTime,
                               @NotNull TimeUnit unit) {
       super(1, Integer.MAX_VALUE, keepAliveTime, unit, new SynchronousQueue<>(), factory);
     }
-
     @Override
     public void execute(@NotNull Runnable command) {
       super.execute(capturePropagationAndCancellationContext(command));
@@ -174,16 +178,11 @@ public final class AppScheduledExecutorService extends SchedulingWrapper {
       super.shutdown();
     }
 
-    private @NotNull List<Runnable> superShutdownNow() {
-      return super.shutdownNow();
-    }
-
     // stub out sensitive methods
     @Override
     public void shutdown() {
       notAllowedMethodCall();
     }
-
     @Override
     public @NotNull List<Runnable> shutdownNow() {
       return notAllowedMethodCall();
@@ -213,7 +212,7 @@ public final class AppScheduledExecutorService extends SchedulingWrapper {
       notAllowedMethodCall();
     }
 
-    void superSetKeepAliveTime(long time, TimeUnit unit) {
+    private void superSetKeepAliveTime(long time, TimeUnit unit) {
       super.setKeepAliveTime(time, unit);
     }
 
@@ -222,15 +221,8 @@ public final class AppScheduledExecutorService extends SchedulingWrapper {
       notAllowedMethodCall();
     }
   }
-
   public static @NotNull Thread getPeriodicTasksThread() {
     return Holder.INSTANCE.delayQueue.getThread();
-  }
-
-  @TestOnly
-  void waitForLowMemoryWatcherManagerInit(int timeout, @NotNull TimeUnit unit)
-    throws InterruptedException, ExecutionException, TimeoutException {
-    myLowMemoryWatcherManager.waitForInitComplete(timeout, unit);
   }
 
   public static @NotNull Runnable capturePropagationAndCancellationContext(@NotNull Runnable command) {
@@ -243,7 +235,6 @@ public final class AppScheduledExecutorService extends SchedulingWrapper {
   /**
    * This function intentionally has a scary name so that no one would try to use it.
    */
-  @ApiStatus.Internal
   public static @NotNull Runnable captureContextCancellationForRunnableThatDoesNotOutliveContextScope(@NotNull Runnable r) {
     return Propagation.capturePropagationContext(r, true);
   }
@@ -253,5 +244,46 @@ public final class AppScheduledExecutorService extends SchedulingWrapper {
       return new FutureTask<>(callable);
     }
     return Propagation.capturePropagationContext(callable);
+  }
+
+  @TestOnly
+  public void waitUntilAllTasksAreTransferredInTests(long timeout, @NotNull TimeUnit timeUnit) throws TimeoutException {
+    AppDelayQueue delayQueue = getDelayQueue();
+    long deadline = System.nanoTime() + timeUnit.toNanos(timeout);
+    while (!delayQueue.isEmpty()) {
+      Thread.yield();
+      // wait till all tasks transferred from delayQueue to backend executor:
+      if (System.nanoTime() > deadline) {
+        List<Runnable> unprocessedTasks = new ArrayList<>(delayQueue);
+        if (!unprocessedTasks.isEmpty()) {
+          throw new TimeoutException("Not transferred after 20 seconds: " + ContainerUtil.map(unprocessedTasks, info -> BoundedTaskExecutor.info(info)) + ";\n" + unprocessedTasks);
+        }
+      }
+    }
+  }
+
+
+  @TestOnly
+  public void setBackendThreadPoolExecutorKeepAliveTimeInTests(int i, TimeUnit unit) {
+    ((BackendThreadPoolExecutor)backendExecutorService).superSetKeepAliveTime(i, unit);
+  }
+  @TestOnly
+  public void setBackendThreadPoolCorePoolSizeAndPrestartCoreThreadInTests(int size) {
+    ((BackendThreadPoolExecutor)backendExecutorService).superSetCorePoolSize(size);
+    ((ThreadPoolExecutor)backendExecutorService).prestartCoreThread();
+  }
+  @TestOnly
+  public static void withTemporaryAppScheduledServiceInTests(@NotNull String name,
+                                                             @NotNull ThrowableConsumer<? super AppScheduledExecutorService, Throwable> consumer)
+    throws Throwable {
+    AppScheduledExecutorService service = new AppScheduledExecutorService(name, 10, MINUTES, false);
+    try {
+      consumer.consume(service);
+    }
+    finally {
+      service.shutdownAppScheduledExecutorService();
+      boolean terminated = service.awaitTermination(20, SECONDS);
+      assert terminated;
+    }
   }
 }

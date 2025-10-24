@@ -1,15 +1,14 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.util.indexing.testEntities.impl
 
 import com.intellij.platform.workspace.storage.ConnectionId
 import com.intellij.platform.workspace.storage.EntitySource
-import com.intellij.platform.workspace.storage.EntityType
 import com.intellij.platform.workspace.storage.GeneratedCodeApiVersion
 import com.intellij.platform.workspace.storage.GeneratedCodeImplVersion
+import com.intellij.platform.workspace.storage.WorkspaceEntityBuilder
 import com.intellij.platform.workspace.storage.MutableEntityStorage
 import com.intellij.platform.workspace.storage.WorkspaceEntity
 import com.intellij.platform.workspace.storage.WorkspaceEntityInternalApi
-import com.intellij.platform.workspace.storage.annotations.Child
 import com.intellij.platform.workspace.storage.impl.EntityLink
 import com.intellij.platform.workspace.storage.impl.ModifiableWorkspaceEntityBase
 import com.intellij.platform.workspace.storage.impl.WorkspaceEntityBase
@@ -21,10 +20,12 @@ import com.intellij.platform.workspace.storage.instrumentation.EntityStorageInst
 import com.intellij.platform.workspace.storage.instrumentation.MutableEntityStorageInstrumentation
 import com.intellij.platform.workspace.storage.metadata.model.EntityMetadata
 import com.intellij.util.indexing.testEntities.ChildTestEntity
+import com.intellij.util.indexing.testEntities.ChildTestEntityBuilder
 import com.intellij.util.indexing.testEntities.ParentTestEntity
+import com.intellij.util.indexing.testEntities.ParentTestEntityBuilder
 
 @GeneratedCodeApiVersion(3)
-@GeneratedCodeImplVersion(6)
+@GeneratedCodeImplVersion(7)
 @OptIn(WorkspaceEntityInternalApi::class)
 internal class ChildTestEntityImpl(private val dataSource: ChildTestEntityData) : ChildTestEntity, WorkspaceEntityBase(dataSource) {
 
@@ -59,7 +60,7 @@ internal class ChildTestEntityImpl(private val dataSource: ChildTestEntityData) 
 
 
   internal class Builder(result: ChildTestEntityData?) : ModifiableWorkspaceEntityBase<ChildTestEntity, ChildTestEntityData>(
-    result), ChildTestEntity.Builder {
+    result), ChildTestEntityBuilder {
     internal constructor() : this(ChildTestEntityData())
 
     override fun applyToBuilder(builder: MutableEntityStorage) {
@@ -127,16 +128,16 @@ internal class ChildTestEntityImpl(private val dataSource: ChildTestEntityData) 
 
       }
 
-    override var parent: ParentTestEntity.Builder
+    override var parent: ParentTestEntityBuilder
       get() {
         val _diff = diff
         return if (_diff != null) {
           @OptIn(EntityStorageInstrumentationApi::class)
-          ((_diff as MutableEntityStorageInstrumentation).getParentBuilder(PARENT_CONNECTION_ID, this) as? ParentTestEntity.Builder)
-          ?: (this.entityLinks[EntityLink(false, PARENT_CONNECTION_ID)]!! as ParentTestEntity.Builder)
+          ((_diff as MutableEntityStorageInstrumentation).getParentBuilder(PARENT_CONNECTION_ID, this) as? ParentTestEntityBuilder)
+          ?: (this.entityLinks[EntityLink(false, PARENT_CONNECTION_ID)]!! as ParentTestEntityBuilder)
         }
         else {
-          this.entityLinks[EntityLink(false, PARENT_CONNECTION_ID)]!! as ParentTestEntity.Builder
+          this.entityLinks[EntityLink(false, PARENT_CONNECTION_ID)]!! as ParentTestEntityBuilder
         }
       }
       set(value) {
@@ -181,7 +182,7 @@ internal class ChildTestEntityData : WorkspaceEntityData<ChildTestEntity>() {
 
   internal fun isCustomChildPropertyInitialized(): Boolean = ::customChildProperty.isInitialized
 
-  override fun wrapAsModifiable(diff: MutableEntityStorage): WorkspaceEntity.Builder<ChildTestEntity> {
+  override fun wrapAsModifiable(diff: MutableEntityStorage): WorkspaceEntityBuilder<ChildTestEntity> {
     val modifiable = ChildTestEntityImpl.Builder(null)
     modifiable.diff = diff
     modifiable.id = createEntityId()
@@ -207,9 +208,9 @@ internal class ChildTestEntityData : WorkspaceEntityData<ChildTestEntity>() {
     return ChildTestEntity::class.java
   }
 
-  override fun createDetachedEntity(parents: List<WorkspaceEntity.Builder<*>>): WorkspaceEntity.Builder<*> {
+  override fun createDetachedEntity(parents: List<WorkspaceEntityBuilder<*>>): WorkspaceEntityBuilder<*> {
     return ChildTestEntity(customChildProperty, entitySource) {
-      parents.filterIsInstance<ParentTestEntity.Builder>().singleOrNull()?.let { this.parent = it }
+      parents.filterIsInstance<ParentTestEntityBuilder>().singleOrNull()?.let { this.parent = it }
     }
   }
 

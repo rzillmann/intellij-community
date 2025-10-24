@@ -9,8 +9,10 @@ import com.intellij.diff.fragments.LineFragmentImpl
 import com.intellij.lang.LanguageCommenters
 import com.intellij.openapi.fileTypes.FileType
 import com.intellij.openapi.fileTypes.LanguageFileType
+import com.intellij.openapi.fileTypes.PlainTextFileType
 import com.intellij.openapi.progress.DumbProgressIndicator
 import com.intellij.openapi.util.text.StringUtil
+import com.intellij.openapi.util.text.getLineBreakCount
 import one.util.streamex.StreamEx
 import org.jetbrains.annotations.TestOnly
 
@@ -19,12 +21,49 @@ data class IntentionPreviewDiffResult(val diffs: List<DiffInfo>, @TestOnly val n
 
   data class Fragment(val type: HighlightingType, val start: Int, val end: Int)
 
+  /**
+   * Preview texts with specified fragment highlighting.
+   *
+   * @param fileType type of file from which fileText is taken
+   * @param fileText preview text
+   * @param startLine line in the file where fileText starts
+   * @param length fileText's line count
+   * @param fragments list fragments to be highlighted in preview
+   */
   data class DiffInfo(
     val fileType: FileType,
     val fileText: String,
     val startLine: Int,
     val length: Int,
-    val fragments: List<Fragment>)
+    val fragments: List<Fragment>) {
+    fun cutLines(length: Int): DiffInfo {
+      if (this.length <= length) return this
+      val newText = fileText.lines().take(length).joinToString("\n")
+      val newFragments = fragments.filter { it.start < newText.length }
+        .map { if (it.end <= newText.length) it else it.copy(end = newText.length) }
+      return DiffInfo(fileType, newText, startLine, length, newFragments)
+    }
+  }
+  
+  fun shorten(maxLines: Int) : IntentionPreviewDiffResult {
+    var length = 0
+    for (idx in 0..<diffs.size) {
+      val info = diffs[idx]
+      val nextLength = length + info.length
+      if (nextLength < maxLines) {
+        length = nextLength
+        continue
+      }
+      val ellipsis = DiffInfo(PlainTextFileType.INSTANCE, "...", -1, 1, listOf())
+      if (nextLength == maxLines) {
+        if (idx == diffs.size - 1) return this
+        return IntentionPreviewDiffResult(diffs.subList(0, idx + 1) + ellipsis, newText)
+      }
+      return IntentionPreviewDiffResult(diffs.subList(0, idx) +
+                                        info.cutLines(length = maxLines - length) + ellipsis, newText)
+    }
+    return this
+  }
 
   companion object {
     private fun getOffset(fileText: String, lineNumber: Int): Int {
@@ -55,7 +94,7 @@ data class IntentionPreviewDiffResult(val diffs: List<DiffInfo>, @TestOnly val n
         }
       }
       comment ?: return null
-      return DiffInfo(fileType, comment, -1, comment.length, listOf())
+      return DiffInfo(fileType, comment, -1, comment.getLineBreakCount() + 1, listOf())
     }
 
     @JvmStatic
@@ -147,6 +186,12 @@ data class IntentionPreviewDiffResult(val diffs: List<DiffInfo>, @TestOnly val n
       val diffInfos = diffs.flatMap { diff -> diff.diffs }
       val text = diffs.joinToString("\n----------\n") { diff -> diff.newText }
       return IntentionPreviewDiffResult(diffInfos, text)
+    }
+
+    @JvmStatic
+    fun fromSnippet(info: IntentionPreviewInfo.Snippet): IntentionPreviewDiffResult {
+      val diffInfo = DiffInfo(info.fileType, info.text, info.startLine, info.text.lines().size, listOf())
+      return IntentionPreviewDiffResult(listOf(diffInfo), info.text)
     }
   }
 }

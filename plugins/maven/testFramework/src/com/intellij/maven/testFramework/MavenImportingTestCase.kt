@@ -12,6 +12,8 @@ import com.intellij.openapi.module.LanguageLevelUtil
 import com.intellij.openapi.module.Module
 import com.intellij.openapi.module.ModuleManager
 import com.intellij.openapi.module.ModuleWithNameAlreadyExists
+import com.intellij.openapi.progress.EmptyProgressIndicator
+import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.runBlockingCancellable
 import com.intellij.openapi.progress.runBlockingMaybeCancellable
 import com.intellij.openapi.project.DumbService
@@ -65,26 +67,6 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
-/**
- * This test case uses the NIO API for handling file operations.
- *
- * **Background**:
- * The test framework is transitioning from the `IO` API to the`NIO` API
- *
- * **Implementation Notes**:
- * - `<TestCase>` represents the updated implementation using the `NIO` API.
- * - `<TestCaseLegacy>` represents the legacy implementation using the `IO` API.
- * - For now, both implementations coexist to allow for a smooth transition and backward compatibility.
- * - Eventually, `<TestCaseLegacy>` will be removed from the codebase.
- *
- * **Action Items**:
- * - Prefer using `<TestCase>` for new test cases.
- * - Update existing tests to use `<TestCase>` where possible.
- *
- * **Future Direction**:
- * Once the transition is complete, all test cases relying on the `IO` API will be retired,
- * and the codebase will exclusively use the `NIO` implementation.
- */
 abstract class MavenImportingTestCase : MavenTestCase() {
 
   private var myProjectsManager: MavenProjectsManager? = null
@@ -114,7 +96,12 @@ abstract class MavenImportingTestCase : MavenTestCase() {
       ThrowableRunnable<Throwable> { WriteAction.runAndWait<RuntimeException> { JavaAwareProjectJdkTableImpl.removeInternalJdkInTests() } },
       ThrowableRunnable<Throwable> { TestDialogManager.setTestDialog(TestDialog.DEFAULT) },
       ThrowableRunnable<Throwable> { removeFromLocalRepository("test") },
-      ThrowableRunnable<Throwable> { CompilerTestUtil.deleteBuildSystemDirectory(project) },
+      ThrowableRunnable<Throwable> {
+        ProgressManager.getInstance().runProcess({
+                                                   CompilerTestUtil.deleteBuildSystemDirectory(project)
+                                                 }, EmptyProgressIndicator())
+
+         },
       ThrowableRunnable<Throwable> { myProjectsManager = null },
       ThrowableRunnable<Throwable> { super.tearDown() },
       ThrowableRunnable<Throwable> {
@@ -321,7 +308,7 @@ abstract class MavenImportingTestCase : MavenTestCase() {
   protected fun getModule(name: String): Module {
     val m = ReadAction.compute<Module?, RuntimeException> { ModuleManager.getInstance(project).findModuleByName(name) }
     assertNotNull("Module $name not found", m)
-    return m
+    return m as Module
   }
 
   protected fun assertMavenizedModule(name: String) {

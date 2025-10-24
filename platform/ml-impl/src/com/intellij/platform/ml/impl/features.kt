@@ -37,12 +37,8 @@ class IJFeatureValueType {
 @ApiStatus.Internal
 class IJFeatureDeclaration {
   companion object {
-    @Deprecated("Use the declaration with the description")
-    fun version(name: String) = FeatureDeclaration(name, IJFeatureValueType.Version)
     fun version(name: String, descriptionProvider: () -> String) = FeatureDeclaration(name, IJFeatureValueType.Version, descriptionProvider)
 
-    @Deprecated("Use the declaration with the description")
-    fun language(name: String) = FeatureDeclaration(name, IJFeatureValueType.Language)
     fun language(name: String, descriptionProvider: () -> String) = FeatureDeclaration(name, IJFeatureValueType.Language, descriptionProvider)
   }
 }

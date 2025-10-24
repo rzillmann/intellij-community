@@ -3,6 +3,7 @@ package com.intellij.internal.statistic.utils
 
 import com.intellij.ide.plugins.PluginInfoProvider
 import com.intellij.ide.plugins.PluginManagerCore
+import com.intellij.ide.plugins.PluginUtils
 import com.intellij.ide.plugins.cl.PluginAwareClassLoader
 import com.intellij.internal.statistic.FeaturedPluginsInfoProvider
 import com.intellij.openapi.application.ex.ApplicationInfoEx
@@ -26,22 +27,6 @@ fun getPluginInfo(aClass: Class<*>): PluginInfo {
   }
 }
 
-internal fun isPlatformOrJetBrainsBundled(aClass: Class<*>): Boolean {
-  val classLoader = aClass.classLoader
-  when {
-    classLoader is PluginAwareClassLoader -> {
-      val plugin = classLoader.pluginDescriptor
-      return plugin.isBundled && PluginManagerCore.isDevelopedByJetBrains(plugin)
-    }
-    PluginManagerCore.isRunningFromSources() -> {
-      return true
-    }
-    else -> {
-      return PluginManagerCore.getPluginDescriptorIfIdeaClassLoaderIsUsed(aClass) == null
-    }
-  }
-}
-
 @ApiStatus.Internal
 fun hasStandardExceptionPrefix(className: String): Boolean =
   className.startsWith("java.") || className.startsWith("javax.") ||
@@ -54,7 +39,7 @@ fun getPluginInfo(className: String): PluginInfo {
     return jvmCore
   }
 
-  val plugin = PluginManagerCore.getPluginDescriptorOrPlatformByClassName(className) ?: return unknownPlugin
+  val plugin = PluginUtils.getPluginDescriptorOrPlatformByClassName(className) ?: return unknownPlugin
   return getPluginInfoByDescriptor(plugin)
 }
 
@@ -193,8 +178,10 @@ fun findPluginTypeByValue(value: String): PluginType? {
 private const val tbePluginId = "org.jetbrains.toolbox-enterprise-client"
 private const val aeExperimentsPluginId = "com.jetbrains.ae.experiments"
 private const val aeDatabasePluginId = "com.jetbrains.ae.database"
+private const val aiAssistantPluginId = "com.intellij.ml.llm"
+private const val juniePluginId = "org.jetbrains.junie"
 
-private val allowedPlugins = setOf(tbePluginId, aeExperimentsPluginId, aeDatabasePluginId)
+private val allowedPlugins = setOf(tbePluginId, aeExperimentsPluginId, aeDatabasePluginId, aiAssistantPluginId, juniePluginId)
 
 data class PluginInfo(val type: PluginType, val id: String?, val version: String?) {
   /**
@@ -257,7 +244,7 @@ private fun isClassFromCoreOrJetBrainsPlugin(clazz: Class<*>): Boolean {
   if (loader is PluginAwareClassLoader) {
     return isCoreOrJetBrainsPlugin((loader as PluginAwareClassLoader).pluginDescriptor)
   }
-  val descriptor = PluginManagerCore.getPluginDescriptorOrPlatformByClassName(clazz.name)
+  val descriptor = PluginUtils.getPluginDescriptorOrPlatformByClassName(clazz.name)
   return descriptor != null && isCoreOrJetBrainsPlugin(descriptor)
 }
 

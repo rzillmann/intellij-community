@@ -5,8 +5,10 @@ package org.jetbrains.kotlin.idea.completion.lookups
 import org.jetbrains.annotations.NonNls
 import org.jetbrains.kotlin.analysis.api.KaExperimentalApi
 import org.jetbrains.kotlin.analysis.api.KaSession
+import org.jetbrains.kotlin.analysis.api.components.render
 import org.jetbrains.kotlin.analysis.api.renderer.types.KaExpandedTypeRenderingMode
 import org.jetbrains.kotlin.analysis.api.renderer.types.impl.KaTypeRendererForSource
+import org.jetbrains.kotlin.analysis.api.renderer.types.renderers.KaFunctionalTypeRenderer
 import org.jetbrains.kotlin.analysis.api.signatures.KaVariableSignature
 import org.jetbrains.kotlin.analysis.api.symbols.KaValueParameterSymbol
 import org.jetbrains.kotlin.analysis.api.types.KaErrorType
@@ -18,26 +20,26 @@ import org.jetbrains.kotlin.types.Variance
 
 internal object CompletionShortNamesRenderer {
 
-    context(KaSession)
+    context(_: KaSession)
     @OptIn(KaExperimentalApi::class)
     fun renderFunctionalTypeParameters(functionalType: KaFunctionType): String = functionalType.parameterTypes.joinToString(
         prefix = "(",
         postfix = ")",
     ) { it.renderVerbose() }
 
-    context(KaSession)
+    context(_: KaSession)
     fun renderVariable(variable: KaVariableSignature<*>): String {
         return renderReceiver(variable)
     }
 
-    context(KaSession)
+    context(_: KaSession)
     @OptIn(KaExperimentalApi::class)
     private fun renderReceiver(variable: KaVariableSignature<*>): String {
         val receiverType = variable.receiverType ?: return ""
         return receiverType.renderVerbose() + "."
     }
 
-    context(KaSession)
+    context(_: KaSession)
     fun renderFunctionParameters(
         parameters: List<KaVariableSignature<KaValueParameterSymbol>>,
     ): @NonNls String = parameters.joinToString(
@@ -45,7 +47,7 @@ internal object CompletionShortNamesRenderer {
         postfix = ")",
     ) { renderFunctionParameter(it) }
 
-    context(KaSession)
+    context(_: KaSession)
     fun renderTrailingFunction(
         trailingFunctionSignature: KaVariableSignature<KaValueParameterSymbol>,
         trailingFunctionType: KaFunctionType,
@@ -58,7 +60,8 @@ internal object CompletionShortNamesRenderer {
         append(" }")
     }
 
-    context(KaSession)
+    @OptIn(KaExperimentalApi::class)
+    context(_: KaSession)
     private fun renderFunctionParameter(
         parameter: KaVariableSignature<KaValueParameterSymbol>,
     ): @NonNls String = buildString {
@@ -72,12 +75,12 @@ internal object CompletionShortNamesRenderer {
             parameterType = parameter.returnType.takeUnless { it is KaErrorType } ?: symbol.returnType,
         )
 
-        if (symbol.hasDefaultValue) {
+        if (symbol.hasDeclaredDefaultValue) {
             append(" = ...")
         }
     }
 
-    context(KaSession)
+    context(_: KaSession)
     @OptIn(KaExperimentalApi::class)
     private fun <A : Appendable> A.appendParameter(
         parameterName: Name,
@@ -89,7 +92,7 @@ internal object CompletionShortNamesRenderer {
     }
 
     @KaExperimentalApi
-    val renderer = KaTypeRendererForSource.WITH_SHORT_NAMES
+    val renderer = KaTypeRendererForSource.WITH_SHORT_NAMES_WITHOUT_PARAMETER_NAMES
 
     @KaExperimentalApi
     val rendererVerbose = renderer.with {
@@ -97,7 +100,7 @@ internal object CompletionShortNamesRenderer {
     }
 }
 
-context(KaSession)
+context(_: KaSession)
 @KaExperimentalApi
 internal fun KaType.renderVerbose(): @NonNls String = render(
     renderer = CompletionShortNamesRenderer.rendererVerbose,

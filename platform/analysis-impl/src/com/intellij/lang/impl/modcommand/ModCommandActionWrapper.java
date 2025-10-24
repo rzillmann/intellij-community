@@ -10,6 +10,7 @@ import com.intellij.codeInsight.intention.preview.IntentionPreviewInfo;
 import com.intellij.modcommand.*;
 import com.intellij.openapi.diagnostic.ReportingClassSubstitutor;
 import com.intellij.openapi.editor.Editor;
+import com.intellij.openapi.editor.colors.EditorColors;
 import com.intellij.openapi.project.DumbService;
 import com.intellij.openapi.project.PossiblyDumbAware;
 import com.intellij.openapi.project.Project;
@@ -66,23 +67,23 @@ public final class ModCommandActionWrapper implements IntentionAction, PriorityA
   }
 
   @Override
-  public boolean isAvailable(@NotNull Project project, Editor editor, PsiFile file) {
+  public boolean isAvailable(@NotNull Project project, Editor editor, PsiFile psiFile) {
     if (!DumbService.getInstance(project).isUsableInCurrentContext(myModAction)) return false;
-    Presentation presentation = myModAction.getPresentation(ActionContext.from(editor, file));
+    Presentation presentation = myModAction.getPresentation(ActionContext.from(editor, psiFile));
     if (presentation == null) return false;
     myPresentation = presentation;
     return true;
   }
 
   @Override
-  public void invoke(@NotNull Project project, Editor editor, PsiFile file) throws IncorrectOperationException {
-    ActionContext context = ActionContext.from(editor, file);
+  public void invoke(@NotNull Project project, Editor editor, PsiFile psiFile) throws IncorrectOperationException {
+    ActionContext context = ActionContext.from(editor, psiFile);
     ModCommand command = myModAction.perform(context);
     ModCommandExecutor instance = ModCommandExecutor.getInstance();
-    if (file.isPhysical()) {
+    if (psiFile.isPhysical()) {
       instance.executeInteractively(context, command, editor);
     } else {
-      instance.executeForFileCopy(command, file);
+      instance.executeForFileCopy(command, psiFile);
     }
   }
 
@@ -92,8 +93,8 @@ public final class ModCommandActionWrapper implements IntentionAction, PriorityA
   }
 
   @Override
-  public @NotNull IntentionPreviewInfo generatePreview(@NotNull Project project, @NotNull Editor editor, @NotNull PsiFile file) {
-    return myModAction.generatePreview(ActionContext.from(editor, file));
+  public @NotNull IntentionPreviewInfo generatePreview(@NotNull Project project, @NotNull Editor editor, @NotNull PsiFile psiFile) {
+    return myModAction.generatePreview(ActionContext.from(editor, psiFile));
   }
 
   @Override
@@ -115,9 +116,18 @@ public final class ModCommandActionWrapper implements IntentionAction, PriorityA
   @Override
   public @Unmodifiable @NotNull List<RangeToHighlight> getRangesToHighlight(@NotNull Editor editor, @NotNull PsiFile file) {
     if (myPresentation == null) return List.of();
-    return ContainerUtil.map(myPresentation.rangesToHighlight(), range -> new RangeToHighlight(file, range.range(), range.highlightKey()));
+    return ContainerUtil.mapNotNull(myPresentation.rangesToHighlight(), range -> convertToRangeToHighlight(file, range));
   }
-  
+
+  private static @Nullable RangeToHighlight convertToRangeToHighlight(@NotNull PsiFile file, @Nullable Presentation.HighlightRange range) {
+    if (range == null) return null;
+    return switch (range.highlightingKind()) {
+      case AFFECTED_RANGE -> new RangeToHighlight(file, range.range(), EditorColors.SEARCH_RESULT_ATTRIBUTES);
+      case DELETED_RANGE -> new RangeToHighlight(file, range.range(), EditorColors.DELETED_TEXT_ATTRIBUTES);
+      case APPLICABLE_TO_RANGE -> null;
+    };
+  }
+
   @Override
   public boolean belongsToMyFamily(@NotNull IntentionActionWithFixAllOption action) {
     ModCommandAction unwrapped = action.asModCommandAction();

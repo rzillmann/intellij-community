@@ -7,11 +7,13 @@ import com.intellij.openapi.Disposable;
 import com.intellij.openapi.actionSystem.IdeActions;
 import com.intellij.openapi.actionSystem.ex.ActionUtil;
 import com.intellij.openapi.application.ApplicationManager;
+import com.intellij.openapi.application.ReadAction;
 import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.editor.EditorFactory;
 import com.intellij.openapi.editor.ex.EditorEx;
 import com.intellij.openapi.editor.ex.FocusChangeListener;
+import com.intellij.openapi.editor.highlighter.EditorHighlighter;
 import com.intellij.openapi.editor.highlighter.EditorHighlighterFactory;
 import com.intellij.openapi.fileEditor.*;
 import com.intellij.openapi.fileEditor.impl.FileEditorManagerImpl;
@@ -24,6 +26,7 @@ import com.intellij.ui.RemoteTransferUIManager;
 import com.intellij.util.DocumentUtil;
 import com.intellij.util.ObjectUtils;
 import com.intellij.util.messages.MessageBusConnection;
+import com.intellij.util.messages.impl.MessageBusImpl;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -69,10 +72,19 @@ public final class ConsoleExecutionEditor implements Disposable {
     }
   };
 
+  private void setEditorHighlighter() {
+    ApplicationManager.getApplication().executeOnPooledThread(
+      () -> {
+        EditorHighlighter highlighter = ReadAction.compute(() -> EditorHighlighterFactory.getInstance().createEditorHighlighter(
+          getVirtualFile(), myConsoleEditor.getColorsScheme(), getProject()));
+        ApplicationManager.getApplication().invokeLater(() -> myConsoleEditor.setHighlighter(highlighter));
+      }
+    );
+  }
+
   public void initComponent() {
     myConsoleEditor.setContextMenuGroupId(IdeActions.GROUP_CONSOLE_EDITOR_POPUP);
-    myConsoleEditor.setHighlighter(
-      EditorHighlighterFactory.getInstance().createEditorHighlighter(getVirtualFile(), myConsoleEditor.getColorsScheme(), getProject()));
+    setEditorHighlighter();
     myConsolePromptDecorator.update();
   }
 
@@ -197,7 +209,11 @@ public final class ConsoleExecutionEditor implements Disposable {
 
   @Override
   public void dispose() {
-    myBusConnection.deliverImmediately();
+    if (myBusConnection instanceof MessageBusImpl.MessageHandlerHolder messageHandlerHolder) {
+      if (!messageHandlerHolder.isDisposed()) {
+        myBusConnection.deliverImmediately();
+      }
+    }
     Disposer.dispose(myBusConnection);
     EditorFactory editorFactory = EditorFactory.getInstance();
     editorFactory.releaseEditor(myConsoleEditor);

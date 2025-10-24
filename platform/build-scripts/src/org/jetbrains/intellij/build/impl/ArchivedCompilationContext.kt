@@ -11,7 +11,7 @@ import org.jetbrains.intellij.build.BuildPaths
 import org.jetbrains.intellij.build.CompilationContext
 import org.jetbrains.intellij.build.TestingOptions
 import org.jetbrains.intellij.build.impl.compilation.ArchivedCompilationOutputStorage
-import org.jetbrains.intellij.build.impl.moduleBased.OriginalModuleRepositoryImpl
+import org.jetbrains.intellij.build.impl.moduleBased.buildOriginalModuleRepository
 import org.jetbrains.intellij.build.io.ZipEntryProcessorResult
 import org.jetbrains.intellij.build.io.readZipFile
 import org.jetbrains.intellij.build.moduleBased.OriginalModuleRepository
@@ -38,40 +38,42 @@ class ArchivedCompilationContext(
   val archivesLocation: Path
     get() = storage.archivedOutputDirectory
 
-  override suspend fun getOriginalModuleRepository(): OriginalModuleRepository {
-    generateRuntimeModuleRepository(this)
-    return OriginalModuleRepositoryImpl(this)
+  private val originalModuleRepository = asyncLazy("Build original module repository") {
+    buildOriginalModuleRepository(this@ArchivedCompilationContext)
   }
 
-  override suspend fun getModuleOutputDir(module: JpsModule, forTests: Boolean): Path {
-    return replaceWithCompressedIfNeeded(delegate.getModuleOutputDir(module = module, forTests = forTests))
-  }
+  override suspend fun getOriginalModuleRepository(): OriginalModuleRepository = originalModuleRepository.await()
 
-  override suspend fun getModuleTestsOutputDir(module: JpsModule): Path {
-    return replaceWithCompressedIfNeeded(delegate.getModuleTestsOutputDir(module))
+  override suspend fun getModuleOutputRoots(module: JpsModule, forTests: Boolean): List<Path> {
+    return delegate.getModuleOutputRoots(module, forTests).map { replaceWithCompressedIfNeeded(it) }
   }
 
   override suspend fun getModuleRuntimeClasspath(module: JpsModule, forTests: Boolean): List<String> {
     return doReplace(delegate.getModuleRuntimeClasspath(module, forTests), inputMapper = { Path.of(it) }, resultMapper = { it.toString() })
   }
 
-  override suspend fun readFileContentFromModuleOutput(module: JpsModule, relativePath: String): ByteArray? {
-    val moduleOutput = getModuleOutputDir(module)
-    if (!moduleOutput.startsWith(archivesLocation)) {
-      return delegate.readFileContentFromModuleOutput(module, relativePath)
-    }
+  override suspend fun readFileContentFromModuleOutput(module: JpsModule, relativePath: String, forTests: Boolean): ByteArray? {
+    val result = getModuleOutputRoots(module, forTests).mapNotNull { moduleOutput ->
+      if (!moduleOutput.startsWith(archivesLocation)) {
+        return delegate.readFileContentFromModuleOutput(module, relativePath)
+      }
 
-    var fileContent: ByteArray? = null
-    readZipFile(moduleOutput) { name, data ->
-      if (name == relativePath) {
-        fileContent = data().toByteArray()
-        ZipEntryProcessorResult.STOP
+      var fileContent: ByteArray? = null
+      readZipFile(moduleOutput) { name, data ->
+        if (name == relativePath) {
+          fileContent = data().toByteArray()
+          ZipEntryProcessorResult.STOP
+        }
+        else {
+          ZipEntryProcessorResult.CONTINUE
+        }
       }
-      else {
-        ZipEntryProcessorResult.CONTINUE
-      }
+      return@mapNotNull fileContent
     }
-    return fileContent
+    check(result.size < 2) {
+      "More than one '$relativePath' file for module '${module.name}' in output roots"
+    }
+    return result.singleOrNull()
   }
 
   override fun createCopy(messages: BuildMessages, options: BuildOptions, paths: BuildPaths): CompilationContext {
@@ -121,6 +123,7 @@ val CompilationContext.asArchived: CompilationContext
   get() {
     return when (this) {
       is ArchivedCompilationContext -> this
+      is BazelCompilationContext -> error("BazelCompilationContext must not be used as archived")
       is BuildContextImpl -> compilationContext.asArchived
       else -> ArchivedCompilationContext(this)
     }

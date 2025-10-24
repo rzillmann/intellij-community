@@ -6,11 +6,11 @@ import com.intellij.codeInsight.daemon.HighlightDisplayKey
 import com.intellij.openapi.project.Project
 import com.intellij.profile.codeInspection.InspectionProfileManager
 import com.intellij.profile.codeInspection.ProjectInspectionProfileManager
-import org.jetbrains.kotlin.idea.inspections.ReplaceUntilWithRangeUntilInspection
+import org.jetbrains.kotlin.idea.codeInsight.inspections.shared.ReplaceUntilWithRangeUntilInspection
 import org.jetbrains.kotlin.tools.projectWizard.core.service.InspectionWizardService
 import org.jetbrains.kotlin.tools.projectWizard.wizard.service.IdeaWizardService
 
-class IdeaInspectionsWizardService(private val project: Project) : InspectionWizardService, IdeaWizardService {
+private class IdeaInspectionsWizardService(private val project: Project) : InspectionWizardService, IdeaWizardService {
     override fun changeInspectionSettings() {
         val projectProfile = ProjectInspectionProfileManager.getInstance(project).projectProfile
         val key = HighlightDisplayKey.find(ReplaceUntilWithRangeUntilInspection().shortName)

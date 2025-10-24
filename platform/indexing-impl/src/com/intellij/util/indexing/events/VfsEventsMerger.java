@@ -1,19 +1,15 @@
 // Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.util.indexing.events;
 
-import com.intellij.concurrency.ConcurrentCollectionFactory;
-import com.intellij.openapi.application.PathManager;
-import com.intellij.openapi.diagnostic.JulLogger;
-import com.intellij.openapi.diagnostic.Logger;
-import com.intellij.openapi.diagnostic.RollingFileHandler;
-import com.intellij.openapi.fileTypes.FileType;
 import com.intellij.openapi.progress.ProcessCanceledException;
 import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.openapi.vfs.VirtualFileWithId;
+import com.intellij.serviceContainer.AlreadyDisposedException;
 import com.intellij.util.containers.ConcurrentIntObjectMap;
 import com.intellij.util.containers.ContainerUtil;
-import com.intellij.util.indexing.*;
+import com.intellij.util.indexing.FileBasedIndex;
+import com.intellij.util.indexing.FileBasedIndexEx;
 import org.intellij.lang.annotations.MagicConstant;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.ApiStatus.Internal;
@@ -21,48 +17,44 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.VisibleForTesting;
 
-import java.io.IOException;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.time.ZoneId;
-import java.time.ZonedDateTime;
 import java.util.Iterator;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.Supplier;
-import java.util.logging.Formatter;
-import java.util.logging.Level;
-import java.util.logging.LogRecord;
 
+import static com.intellij.concurrency.ConcurrentCollectionFactory.createConcurrentIntObjectMap;
+
+/**
+ * Accumulates VFS file-change events
+ * [file: (ADDED | REMOVED | CONTENT_CHANGED | TRANSIENT_STATE_CHANGED)]
+ * and merges same-file events into a single record.
+ * </p>
+ * Accumulated changes could then be consumed with {@link #processChanges(VfsEventProcessor)}
+ */
 @Internal
 public final class VfsEventsMerger {
-  private static final boolean DEBUG = FileBasedIndexEx.TRACE_STUB_INDEX_UPDATES || Boolean.getBoolean("log.index.vfs.events");
-  private static final Logger LOG = MyLoggerFactory.getLoggerInstance();
 
-  static {
-    if (LOG != null) {
-      LOG.info("-------------- VfsEventsMerger initialized --------------------");
-    }
-  }
+  /** Map[ fileId -> ChangeInfo] */
+  private final ConcurrentIntObjectMap<ChangeInfo> myChangeInfos = createConcurrentIntObjectMap();
+
+  /** Number of file events applied (='published') to {@link #myChangeInfos}, since start. */
+  private final AtomicInteger myPublishedEventIndex = new AtomicInteger();
 
   @ApiStatus.Internal
   public void recordFileEvent(@NotNull VirtualFile file, boolean contentChange) {
-    tryLog(contentChange ? "FILE_CONTENT_CHANGED" : "FILE_ADDED", file);
+    IndexingEventsLogger.tryLog(contentChange ? "FILE_CONTENT_CHANGED" : "FILE_ADDED", file);
     updateChange(file, contentChange ? FILE_CONTENT_CHANGED : FILE_ADDED);
   }
 
   @ApiStatus.Internal
   public void recordFileRemovedEvent(@NotNull VirtualFile file) {
-    tryLog("FILE_REMOVED", file);
+    IndexingEventsLogger.tryLog("FILE_REMOVED", file);
     updateChange(file, FILE_REMOVED);
   }
 
   @ApiStatus.Internal
   public void recordTransientStateChangeEvent(@NotNull VirtualFile file) {
-    tryLog("FILE_TRANSIENT_STATE_CHANGED", file);
+    IndexingEventsLogger.tryLog("FILE_TRANSIENT_STATE_CHANGED", file);
     updateChange(file, FILE_TRANSIENT_STATE_CHANGED);
   }
-
-  private final AtomicInteger myPublishedEventIndex = new AtomicInteger();
 
   @ApiStatus.Internal
   public int getPublishedEventIndex() {
@@ -77,31 +69,43 @@ public final class VfsEventsMerger {
 
   // NB: this code is executed not only during vfs events dispatch (in write action) but also during requestReindex (in read action)
   private void updateChange(int fileId, @NotNull VirtualFile file, @EventMask short mask) {
-    while (true) {
+    while (true) {// CAS-like loop:
       ChangeInfo existingChangeInfo = myChangeInfos.get(fileId);
+      if (existingChangeInfo != null && existingChangeInfo.eventMask == mask) {
+        return;//nothing to update
+      }
+
       ChangeInfo newChangeInfo = new ChangeInfo(file, mask, existingChangeInfo);
-      if(myChangeInfos.put(fileId, newChangeInfo) == existingChangeInfo) {
-        myPublishedEventIndex.incrementAndGet();
-        break;
+      if (existingChangeInfo == null) { //.replace() impl doesn't support oldValue=null, hence the branch:
+        if (myChangeInfos.putIfAbsent(fileId, newChangeInfo) == null) {
+          break;
+        }
+      }
+      else {
+        if (myChangeInfos.replace(fileId, existingChangeInfo, newChangeInfo)) {
+          break;
+        }
       }
     }
+    myPublishedEventIndex.incrementAndGet();
   }
 
   @FunctionalInterface
   public interface VfsEventProcessor {
     boolean process(@NotNull ChangeInfo changeInfo);
 
-    /**
-     * this is a helper method that designates the end of the events batch, can be used for optimizations
-     */
-    default void endBatch() {}
+    /** this is a helper method that designates the end of the events batch, can be used for optimizations */
+    default void endBatch() { }
   }
 
-  // 1. Method can be invoked in several threads
-  // 2. Method processes snapshot of available events at the time of the invokation, it does mean that if events are produced concurrently
-  // with the processing then set of events will be not empty
-  // 3. Method regularly checks for cancellations (thus can finish with PCEs) but event processor should process the change info atomically
-  // (without PCE)
+  /**
+   * 1. Method can be invoked in several threads
+   * 2. Method processes the snapshot of available events at the time of the invocation: it means
+   * that if events are produced concurrently with their processing then the set of events will
+   * be not empty
+   * 3. Method regularly checks for cancellations (thus can finish with PCEs), but event processor \
+   * should process the change info atomically (without PCE)
+   */
   @VisibleForTesting
   public boolean processChanges(@NotNull VfsEventProcessor eventProcessor) {
     if (!myChangeInfos.isEmpty()) {
@@ -115,15 +119,20 @@ public final class VfsEventsMerger {
           if (info == null) continue;
 
           try {
-            if (LOG != null) {
-              LOG.info("Processing " + info);
-            }
+            IndexingEventsLogger.tryLog(() -> "Processing " + info);
+
             if (!eventProcessor.process(info)) {
               eventProcessor.endBatch();
               return false;
             }
           }
-          catch (ProcessCanceledException pce) { // todo remove (IJPL-9805)
+          catch (AlreadyDisposedException e) {
+            throw e;
+          }
+          catch (ProcessCanceledException pce) {
+            //IJPL-9805: it should be no PCE here -- eventProcessor.process()/.endBatch() should
+            //           be 'atomic': a change is either processed, or not, so throw PCE from inside
+            //           the processor is an error
             ((FileBasedIndexEx)FileBasedIndex.getInstance()).getLogger().error(new RuntimeException(pce));
             assert false;
           }
@@ -135,9 +144,10 @@ public final class VfsEventsMerger {
         throw t;
       }
       finally {
-        if (LOG != null) {
-          LOG.info("Processing " + (interruptReason != null ? "interrupted: " + interruptReason : "finished"));
-        }
+        final Throwable finalInterruptReason = interruptReason;
+        IndexingEventsLogger.tryLog(() -> {
+          return "Processing " + (finalInterruptReason != null ? "interrupted: " + finalInterruptReason : "finished");
+        });
       }
     }
     return true;
@@ -157,16 +167,13 @@ public final class VfsEventsMerger {
     return ContainerUtil.mapIterator(myChangeInfos.values().iterator(), ChangeInfo::getFile);
   }
 
-  private final ConcurrentIntObjectMap<ChangeInfo> myChangeInfos =
-    ConcurrentCollectionFactory.createConcurrentIntObjectMap();
-
   private static final short FILE_ADDED = 1;
   private static final short FILE_REMOVED = 2;
   private static final short FILE_CONTENT_CHANGED = 4;
   private static final short FILE_TRANSIENT_STATE_CHANGED = 8;
 
   @MagicConstant(flags = {FILE_ADDED, FILE_REMOVED, FILE_CONTENT_CHANGED, FILE_TRANSIENT_STATE_CHANGED})
-  @interface EventMask { }
+  @interface EventMask {}
 
   @VisibleForTesting
   public static final class ChangeInfo {
@@ -237,111 +244,6 @@ public final class VfsEventsMerger {
       int fileId = FileBasedIndex.getFileId(file);
       assert fileId >= 0;
       return fileId;
-    }
-  }
-
-  public static void tryLog(@NotNull String eventName, @NotNull VirtualFile file) {
-    tryLog(eventName, file, null);
-  }
-
-  public static void tryLog(@NotNull String eventName, int fileId) {
-    tryLog(() -> {
-      return "e=" + eventName +
-             ",id=" + fileId;
-    });
-  }
-
-  public static void tryLog(@NotNull String eventName, @NotNull VirtualFile file, @Nullable Supplier<String> additionalMessage) {
-    tryLog(() -> {
-      return "e=" + eventName +
-             (file instanceof VirtualFileWithId fileWithId ? (",id=" + fileWithId.getId()) : (",f=" + file.getPath())) +
-             ",flen=" + file.getLength() +
-             (additionalMessage == null ? "" : ("," + additionalMessage.get()));
-    });
-  }
-
-  public static void tryLog(@NotNull String eventName, @NotNull IndexedFile indexedFile, @Nullable Supplier<String> additionalMessage) {
-    VirtualFile file = indexedFile.getFile();
-
-    tryLog(eventName, file, () -> {
-      String extra = "f@" + System.identityHashCode(indexedFile);
-
-      if (indexedFile instanceof FileContentImpl fileContentImpl) {
-        extra += ",tr=" + (fileContentImpl.isTransientContent() ? "t" : "f");
-      }
-
-      if (indexedFile instanceof FileContent fileContent) {
-        extra += ",contLen(b)=" + fileContent.getContent().length;
-        FileType fileType = fileContent.getFileType();
-        // WARNING: LanguageFileType does not guarantee that there is a PsiFile.
-        // Example: org.jetbrains.bazel.languages.projectview.base.ProjectViewFileType
-        // psiLen has never been helpful to me, so don't log it for now.
-        // extra += ",psiLen=" + (fileType instanceof LanguageFileType ? fileContent.getPsiFile().getTextLength() : -1);
-        extra += ",bin=" + (fileType.isBinary() ? "t" : "f");
-      }
-
-      if (additionalMessage != null) {
-        extra += "," + additionalMessage.get();
-      }
-      return extra;
-    });
-  }
-
-  public static void tryLog(Supplier<String> message) {
-    if (LOG != null) {
-      try {
-        LOG.info(message.get());
-      }
-      catch (Throwable t) {
-        Logger.getInstance(VfsEventsMerger.class).error("Could not evaluate log message (message.get())", t);
-      }
-    }
-  }
-
-  private static final class MyLoggerFactory implements Logger.Factory {
-    private static final @Nullable MyLoggerFactory ourFactory;
-
-    static {
-      MyLoggerFactory factory = null;
-      try {
-        if (DEBUG) {
-          factory = new MyLoggerFactory();
-        }
-      }
-      catch (IOException e) {
-        ((FileBasedIndexEx)FileBasedIndex.getInstance()).getLogger().error(e);
-      }
-      ourFactory = factory;
-    }
-
-    private final @NotNull RollingFileHandler myAppender;
-
-    MyLoggerFactory() throws IOException {
-      Path indexingDiagnosticDir = Paths.get(PathManager.getLogPath()).resolve("indexing-diagnostic");
-      Path logPath = indexingDiagnosticDir.resolve("index-vfs-events.log");
-      myAppender = new RollingFileHandler(logPath, 20000000, 50, false);
-      myAppender.setFormatter(new Formatter() {
-        @Override
-        public String format(LogRecord record) {
-          ZonedDateTime zdt = ZonedDateTime.ofInstant(record.getInstant(), ZoneId.systemDefault());
-          return String.format("%1$tY-%1$tm-%1$td %1$tH:%1$tM:%1$tS.%1$tL [%3$d] %2$s%n", zdt, record.getMessage(),
-                               record.getLongThreadID());
-        }
-      });
-    }
-
-    @Override
-    public @NotNull Logger getLoggerInstance(@NotNull String category) {
-      final java.util.logging.Logger logger = java.util.logging.Logger.getLogger(category);
-      JulLogger.clearHandlers(logger);
-      logger.addHandler(myAppender);
-      logger.setUseParentHandlers(false);
-      logger.setLevel(Level.INFO);
-      return new JulLogger(logger);
-    }
-
-    public static @Nullable Logger getLoggerInstance() {
-      return ourFactory == null ? null : ourFactory.getLoggerInstance("#" + VfsEventsMerger.class.getName());
     }
   }
 }

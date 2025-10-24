@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.intellij.build
 
 import kotlinx.collections.immutable.PersistentList
@@ -20,31 +20,35 @@ open class WindowsDistributionCustomizer {
   /**
    * If `true`, *.bat files (productName.bat and inspect.bat) will be included in the distribution.
    */
-  var includeBatchLaunchers = true
+  var includeBatchLaunchers: Boolean = true
 
   /**
    * If `true`, build a ZIP archive with JetBrains Runtime.
    */
-  var buildZipArchiveWithBundledJre = true
+  var buildZipArchiveWithBundledJre: Boolean = true
 
   /**
    * If `true`, build a ZIP archive without JetBrains Runtime.
    */
-  var buildZipArchiveWithoutBundledJre = false
+  var buildZipArchiveWithoutBundledJre: Boolean = false
 
-  var zipArchiveWithBundledJreSuffix = ".win"
-  var zipArchiveWithoutBundledJreSuffix = "-no-jbr.win"
+  var zipArchiveWithBundledJreSuffix: String = ".win"
+  var zipArchiveWithoutBundledJreSuffix: String = "-no-jbr.win"
 
   /**
    * If `true`, Windows Installer will associate *.ipr files with the IDE in Registry.
    */
-  var associateIpr = true
+  var associateIpr: Boolean = true
 
   /**
    * Path to a directory containing images for installer: `logo.bmp`, `headerlogo.bmp`, `install.ico`, `uninstall.ico`.
    */
-  @Suppress("SpellCheckingInspection")
   var installerImagesPath: String? = null
+
+  /**
+   * Set to `false` for products that are not updated with patches.
+   */
+  var publishUninstaller: Boolean = true
 
   /**
    * List of file extensions (without a leading dot) which the installer will suggest to associate with the product.
@@ -65,9 +69,8 @@ open class WindowsDistributionCustomizer {
   /**
    * Name of the Windows installation directory and Desktop shortcut.
    */
-  open fun getNameForInstallDirAndDesktopShortcut(appInfo: ApplicationInfoProperties, buildNumber: String): String {
-    return "${getFullNameIncludingEdition(appInfo)} ${if (appInfo.isEAP) buildNumber else appInfo.fullVersion}"
-  }
+  open fun getNameForInstallDirAndDesktopShortcut(appInfo: ApplicationInfoProperties, buildNumber: String): String =
+    "${getFullNameIncludingEdition(appInfo)} ${if (appInfo.isEAP) buildNumber else appInfo.fullVersion}"
 
   /**
    * Override this method to copy additional files to the Windows distribution of the product.
@@ -77,16 +80,20 @@ open class WindowsDistributionCustomizer {
   }
 
   /**
-   * The returned name will be shown in Windows Installer and used in Registry keys.
+   * The returned name will be shown in the Windows Installer and used in Registry keys.
    */
   open fun getFullNameIncludingEdition(appInfo: ApplicationInfoProperties): String = appInfo.fullProductName
 
   /**
+   * The returned name will be used in the Windows Installer to look for previous versions.
+   */
+  open fun getAlternativeFullNameIncludingEdition(appInfo: ApplicationInfoProperties): String? = null
+
+  /**
    * The returned name will be used to create links on Desktop.
    */
-  open fun getFullNameIncludingEditionAndVendor(appInfo: ApplicationInfoProperties): String {
-    return appInfo.shortCompanyName + ' ' + getFullNameIncludingEdition(appInfo)
-  }
+  open fun getFullNameIncludingEditionAndVendor(appInfo: ApplicationInfoProperties): String =
+    appInfo.shortCompanyName + ' ' + getFullNameIncludingEdition(appInfo)
 
   open fun getUninstallFeedbackPageUrl(appInfo: ApplicationInfoProperties): String? = null
 

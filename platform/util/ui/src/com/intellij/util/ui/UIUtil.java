@@ -1,9 +1,10 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.util.ui;
 
 import com.intellij.BundleBase;
 import com.intellij.icons.AllIcons;
 import com.intellij.openapi.Disposable;
+import com.intellij.openapi.application.AccessToken;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.ui.GraphicsConfig;
 import com.intellij.openapi.util.*;
@@ -23,6 +24,8 @@ import com.intellij.util.concurrency.SynchronizedClearableLazy;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.containers.JBIterable;
 import com.intellij.util.containers.JBTreeTraverser;
+import com.intellij.util.system.OS;
+import kotlin.text.StringsKt;
 import org.intellij.lang.annotations.JdkConstants;
 import org.intellij.lang.annotations.Language;
 import org.intellij.lang.annotations.MagicConstant;
@@ -209,16 +212,6 @@ public final class UIUtil {
   public static final char MNEMONIC = BundleBase.MNEMONIC;
   public static final @NlsSafe String HTML_MIME = "text/html";
   public static final @NonNls String TABLE_FOCUS_CELL_BACKGROUND_PROPERTY = "Table.focusCellBackground";
-  /**
-   * Prevent component DataContext from returning parent editor
-   * Useful for components that are manually painted over the editor to prevent shortcuts from falling-through to editor
-   * <p>
-   * Usage: {@code component.putClientProperty(HIDE_EDITOR_FROM_DATA_CONTEXT_PROPERTY, Boolean.TRUE)}
-   *
-   * @deprecated Use {@link com.intellij.openapi.actionSystem.CustomizedDataContext#EXPLICIT_NULL} instead.
-   */
-  @Deprecated(forRemoval = true)
-  public static final @NonNls String HIDE_EDITOR_FROM_DATA_CONTEXT_PROPERTY = "AuxEditorComponent";
   public static final @NonNls String CENTER_TOOLTIP_DEFAULT = "ToCenterTooltip";
   public static final @NonNls String CENTER_TOOLTIP_STRICT = "ToCenterTooltip.default";
 
@@ -341,6 +334,13 @@ public final class UIUtil {
   @Deprecated
   public static <T> void putClientProperty(@NotNull JComponent component, @NotNull Key<T> key, T value) {
     component.putClientProperty(key, value);
+  }
+
+  @Contract(pure = true)
+  @ApiStatus.Internal
+  public static @NotNull String getHtmlBodyWithoutPreWrapper(@NotNull String text) {
+    String result = getHtmlBody(text);
+    return StringsKt.removeSuffix(StringsKt.removePrefix(result, "<pre>"), "</pre>");
   }
 
   @Contract(pure = true)
@@ -792,15 +792,15 @@ public final class UIUtil {
   }
 
   public static @NotNull Color getToolTipBackground() {
-    return JBColor.namedColor("ToolTip.background", new JBColor(Gray.xF2, new Color(0x3c3f41)));
+    return JBUI.CurrentTheme.Tooltip.background();
   }
 
   public static @NotNull Color getToolTipActionBackground() {
-    return JBColor.namedColor("ToolTip.Actions.background", new JBColor(Gray.xEB, new Color(0x43474a)));
+    return JBUI.CurrentTheme.Tooltip.Actions.background();
   }
 
   public static @NotNull Color getToolTipForeground() {
-    return JBColor.namedColor("ToolTip.foreground", new JBColor(Gray.x00, Gray.xBF));
+    return JBUI.CurrentTheme.Tooltip.foreground();
   }
 
   public static Color getComboBoxDisabledForeground() {
@@ -864,7 +864,7 @@ public final class UIUtil {
   }
 
   public static Font getToolTipFont() {
-    return UIManager.getFont("ToolTip.font");
+    return JBUI.CurrentTheme.Tooltip.font();
   }
 
   public static void setSliderIsFilled(final @NotNull JSlider slider, final boolean value) {
@@ -881,15 +881,6 @@ public final class UIUtil {
 
   public static Font getOptionPaneMessageFont() {
     return UIManager.getFont("OptionPane.messageFont");
-  }
-
-  /**
-   * @deprecated Use {@link FontUtil#getMenuFont()}
-   */
-  @Deprecated(forRemoval = true)
-  @SuppressWarnings("unused")
-  public static Font getMenuFont() {
-    return FontUtil.getMenuFont();
   }
 
   /**
@@ -1463,7 +1454,9 @@ public final class UIUtil {
    */
   @TestOnly
   public static void dispatchAllInvocationEvents() {
-    EDT.dispatchAllInvocationEvents();
+    try (AccessToken ignored = UtilKt.reportTooLongDispatch()) {
+      EDT.dispatchAllInvocationEvents();
+    }
   }
 
   public static void addAwtListener(@NotNull AWTEventListener listener, long mask, @NotNull Disposable parent) {
@@ -1748,13 +1741,29 @@ public final class UIUtil {
         component = getDeepestComponentAtForComponent(parent, x, y, rootPane.getContentPane());
       }
     }
-    if (component != null && component.getParent() instanceof JLayeredPane) { // Handle LoadingDecorator
+    if (component != null && component.getParent() instanceof LoadingDecoratorLayeredPane) {
       Component[] components = ((JLayeredPane)component.getParent()).getComponentsInLayer(JLayeredPane.DEFAULT_LAYER);
       if (components.length == 1 && ArrayUtilRt.indexOf(components, component, 0, components.length) == -1) {
         component = getDeepestComponentAtForComponent(parent, x, y, components[0]);
       }
     }
     return component;
+  }
+
+  public static @Nullable JLayeredPane getWindowLayeredPaneFor(@NotNull Component component) {
+    Window window = SwingUtilities.windowForComponent(component);
+    if (window instanceof JFrame) {
+      return ((JFrame)window).getLayeredPane();
+    }
+    else if (window instanceof JDialog) {
+      return ((JDialog)window).getLayeredPane();
+    }
+    else if (window instanceof JWindow) {
+      return ((JWindow)window).getLayeredPane();
+    }
+    else {
+      return null;
+    }
   }
 
   private static Component getDeepestComponentAtForComponent(@NotNull Component parent, int x, int y, @NotNull Component component) {
@@ -1785,7 +1794,7 @@ public final class UIUtil {
            + "body, div, td, p {" + familyAndSize
            + (fgColor != null ? " color:#" + ColorUtil.toHex(fgColor) + ';' : "")
            + "}\n"
-           + "a {" + familyAndSize
+           + "a {"
            + (linkColor != null ? " color:#" + ColorUtil.toHex(linkColor) + ';' : "")
            + "}\n"
            + "code {font-size:" + font.getSize() + "pt;}\n"
@@ -1953,14 +1962,14 @@ public final class UIUtil {
         // this might happen e.g., if we're running under newer runtime, forbidding access to sun.font package
         getLogger().warn(e);
         // this might not give the same result, but we have no choice here
-        return StartupUiUtilKt.getFontWithFallback(font.getFamily(), font.getStyle(), font.getSize());
+        return StartupUiUtil.getFontWithFallback(font.getFamily(), font.getStyle(), font.getSize());
       }
     }
     return font instanceof FontUIResource ? (FontUIResource)font : new FontUIResource(font);
   }
 
   public static @NotNull FontUIResource getFontWithFallback(@Nullable String familyName, @JdkConstants.FontStyle int style, int size) {
-    return StartupUiUtilKt.getFontWithFallback(familyName, style, size);
+    return StartupUiUtil.getFontWithFallback(familyName, style, size);
   }
 
   //Escape error-prone HTML data (if any) when we use it in renderers, see IDEA-170768
@@ -2454,9 +2463,10 @@ public final class UIUtil {
   }
 
   public static void setEnabledRecursively(@NotNull Component component, boolean enabled) {
-    forEachComponentInHierarchy(component, c -> {
-      c.setEnabled(enabled);
-    });
+    forEachComponentInHierarchy(component, c -> c.setEnabled(enabled));
+    // Changing the enable state for some UI elements change their size or visibility.
+    // For example, the label component with icon hides icon if it disabled.
+    component.revalidate();
   }
 
   public static void setBackgroundRecursively(@NotNull Component component, @NotNull Color bg) {
@@ -3141,7 +3151,7 @@ public final class UIUtil {
   }
 
   public static @NotNull Color getTooltipSeparatorColor() {
-    return JBColor.namedColor("Tooltip.separatorColor", 0xd1d1d1, 0x545658);
+    return JBUI.CurrentTheme.Tooltip.separatorColor();
   }
 
   /**
@@ -3152,18 +3162,20 @@ public final class UIUtil {
     if (document instanceof HTMLDocument) {
       Element elementById = ((HTMLDocument)document).getElement(reference);
       if (elementById != null) {
-        try {
-          int pos = elementById.getStartOffset();
-          Rectangle r = editor.modelToView(pos);
-          if (r != null) {
-            r.height = editor.getVisibleRect().height;
-            editor.scrollRectToVisible(r);
-            editor.setCaretPosition(pos);
+        SwingUtilities.invokeLater(() -> {
+          try {
+            int pos = elementById.getStartOffset();
+            Rectangle r = editor.modelToView2D(pos).getBounds();
+            if (r != null) {
+              r.height = editor.getVisibleRect().height;
+              editor.scrollRectToVisible(r);
+              editor.setCaretPosition(pos);
+            }
           }
-        }
-        catch (BadLocationException e) {
-          getLogger().error(e);
-        }
+          catch (BadLocationException e) {
+            getLogger().error(e);
+          }
+        });
         return;
       }
     }
@@ -3301,7 +3313,7 @@ public final class UIUtil {
                                @Nullable Rectangle dstBounds,
                                @Nullable Rectangle srcBounds,
                                @Nullable ImageObserver observer) {
-    StartupUiUtilKt.drawImage(g, image, dstBounds, srcBounds, null, observer);
+    StartupUiUtil.drawImage(g, image, dstBounds, srcBounds, null, observer);
   }
 
   @TestOnly
@@ -3374,7 +3386,7 @@ public final class UIUtil {
 
   public static boolean isXServerOnWindows() {
     // This is heuristics to detect using Cygwin/X or other build of X.Org server on Windows in a WSL 2 environment
-    return SystemInfoRt.isUnix && !SystemInfoRt.isMac && !SystemInfo.isWayland && System.getenv("WSLENV") != null;
+    return OS.isGenericUnix() && !StartupUiUtil.isWayland() && System.getenv("WSLENV") != null;
   }
 
   public static void applyDeprecatedBackground(@Nullable JComponent component) {

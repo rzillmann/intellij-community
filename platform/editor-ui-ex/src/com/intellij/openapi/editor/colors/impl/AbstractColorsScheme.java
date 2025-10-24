@@ -20,10 +20,10 @@ import com.intellij.openapi.util.Comparing;
 import com.intellij.openapi.util.InvalidDataException;
 import com.intellij.openapi.util.NlsSafe;
 import com.intellij.openapi.util.Ref;
-import com.intellij.openapi.util.registry.Registry;
 import com.intellij.ui.JBColor;
 import com.intellij.util.JdomKt;
 import com.intellij.util.PlatformUtils;
+import com.intellij.util.SystemProperties;
 import org.jdom.Element;
 import org.jetbrains.annotations.*;
 
@@ -34,8 +34,6 @@ import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
-import static com.intellij.openapi.editor.markup.TextAttributeKeyColor.markTextAttributeColors;
-
 @SuppressWarnings("UseJBColor")
 public abstract class AbstractColorsScheme extends EditorFontCacheImpl implements EditorColorsScheme, SerializableScheme {
   private static final Logger LOG = Logger.getInstance(AbstractColorsScheme.class);
@@ -45,6 +43,9 @@ public abstract class AbstractColorsScheme extends EditorFontCacheImpl implement
   public static final Color NULL_COLOR_MARKER = JBColor.marker("NULL_COLOR_MARKER");
 
   public static final int CURR_VERSION = 142;
+
+  @ApiStatus.Internal
+  public static final String ENABLE_RUNTIME_SCHEME_COLOR_WRAPPER_OPTION = "editor.color.scheme.mark.colors";
 
   public static final String NAME_BUNDLE_PROPERTY = "lcNameBundle";
   public static final String NAME_KEY_PROPERTY = "lcNameKey";
@@ -87,8 +88,8 @@ public abstract class AbstractColorsScheme extends EditorFontCacheImpl implement
   public static final @NonNls String META_INFO_ORIGINAL = "originalScheme";
   private static final @NonNls String META_INFO_PARTIAL = "partialSave";
 
-  private final boolean myMarkColorIds = Registry.is("editor.color.scheme.mark.colors", true);
-  private final ValueElementReader myValueReader = new TextAttributesReader();
+  private final boolean myMarkColorIds = SystemProperties.getBooleanProperty(ENABLE_RUNTIME_SCHEME_COLOR_WRAPPER_OPTION, false);
+  private final TextAttributesReader myValueReader = new TextAttributesReader();
   //region Meta info-related fields
   private final Properties metaInfo = new Properties();
   protected EditorColorsScheme parentScheme;
@@ -445,13 +446,10 @@ public abstract class AbstractColorsScheme extends EditorFontCacheImpl implement
     for (Element e : childNode.getChildren(OPTION_ELEMENT)) {
       String keyName = e.getAttributeValue(NAME_ATTR);
       Element valueElement = e.getChild(VALUE_ELEMENT);
-      TextAttributes attr = valueElement != null ? myValueReader.read(TextAttributes.class, valueElement) :
+      TextAttributes attr = valueElement != null ? myValueReader.readAttributes(valueElement, myMarkColorIds ? keyName : null) :
                             e.getAttributeValue(BASE_ATTRIBUTES_ATTR) != null ? INHERITED_ATTRS_MARKER :
                             null;
       if (attr != null) {
-        if (keyName != null && valueElement != null && myMarkColorIds) {
-          markTextAttributeColors(keyName, attr);
-        }
         attributesMap.put(keyName, attr);
       }
     }

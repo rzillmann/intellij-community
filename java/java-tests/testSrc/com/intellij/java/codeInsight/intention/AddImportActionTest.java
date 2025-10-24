@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.java.codeInsight.intention;
 
 import com.intellij.application.options.CodeStyle;
@@ -434,7 +434,7 @@ public class AddImportActionTest extends LightJavaCodeInsightFixtureTestCase {
   }
 
   public void testImportFoldingWithConflictsToJavaBaseModule() {
-    IdeaTestUtil.withLevel(getModule(), JavaFeature.MODULE_IMPORT_DECLARATIONS.getMinimumLevel(), () -> {
+    IdeaTestUtil.withLevel(getModule(), JavaFeature.MODULE_IMPORT_DECLARATIONS.getStandardLevel(), () -> {
 
       myFixture.addClass("package p1; public class List {}");
       myFixture.addClass("package p1; public class A1 {}");
@@ -492,7 +492,7 @@ public class AddImportActionTest extends LightJavaCodeInsightFixtureTestCase {
   }
 
   public void testImportFoldingWithConflictsToJavaBaseModuleImplicitClass() {
-    IdeaTestUtil.withLevel(getModule(), JavaFeature.MODULE_IMPORT_DECLARATIONS.getMinimumLevel(), () -> {
+    IdeaTestUtil.withLevel(getModule(), JavaFeature.MODULE_IMPORT_DECLARATIONS.getStandardLevel(), () -> {
 
       myFixture.addClass("package p1; public class List {}");
       myFixture.addClass("package p1; public class A1 {}");
@@ -1176,7 +1176,7 @@ public class AddImportActionTest extends LightJavaCodeInsightFixtureTestCase {
   }
 
   public void testModuleImportClassUnnecessaryQualifier() {
-    IdeaTestUtil.withLevel(getModule(), JavaFeature.PACKAGE_IMPORTS_SHADOW_MODULE_IMPORTS.getMinimumLevel(), () -> {
+    IdeaTestUtil.withLevel(getModule(), JavaFeature.PACKAGE_IMPORTS_SHADOW_MODULE_IMPORTS.getStandardLevel(), () -> {
 
       myFixture.addClass("package a; public class List {}");
 
@@ -1207,7 +1207,7 @@ public class AddImportActionTest extends LightJavaCodeInsightFixtureTestCase {
   }
 
   public void testModuleImportClassUnnecessaryQualifierAlreadyUsed() {
-    IdeaTestUtil.withLevel(getModule(), JavaFeature.PACKAGE_IMPORTS_SHADOW_MODULE_IMPORTS.getMinimumLevel(), () -> {
+    IdeaTestUtil.withLevel(getModule(), JavaFeature.PACKAGE_IMPORTS_SHADOW_MODULE_IMPORTS.getStandardLevel(), () -> {
 
       myFixture.addClass("package a; public class List {}");
 
@@ -1228,7 +1228,7 @@ public class AddImportActionTest extends LightJavaCodeInsightFixtureTestCase {
   }
 
   public void testModuleImportClassUnnecessaryQualifierImportFromDemand() {
-    IdeaTestUtil.withLevel(getModule(), JavaFeature.PACKAGE_IMPORTS_SHADOW_MODULE_IMPORTS.getMinimumLevel(), () -> {
+    IdeaTestUtil.withLevel(getModule(), JavaFeature.PACKAGE_IMPORTS_SHADOW_MODULE_IMPORTS.getStandardLevel(), () -> {
 
       myFixture.addClass("package a; public class List {}");
 
@@ -1256,7 +1256,7 @@ public class AddImportActionTest extends LightJavaCodeInsightFixtureTestCase {
   }
 
   public void testModuleImportUnnecessaryQualifierAlreadyImported() {
-    IdeaTestUtil.withLevel(getModule(), JavaFeature.PACKAGE_IMPORTS_SHADOW_MODULE_IMPORTS.getMinimumLevel(), () -> {
+    IdeaTestUtil.withLevel(getModule(), JavaFeature.PACKAGE_IMPORTS_SHADOW_MODULE_IMPORTS.getStandardLevel(), () -> {
 
       myFixture.configureByText("Test.java", """
         import module java.base;
@@ -1280,7 +1280,7 @@ public class AddImportActionTest extends LightJavaCodeInsightFixtureTestCase {
   }
 
   public void testImplicitClassUnnecessaryQualifier() {
-    IdeaTestUtil.withLevel(getModule(), JavaFeature.PACKAGE_IMPORTS_SHADOW_MODULE_IMPORTS.getMinimumLevel(), () -> {
+    IdeaTestUtil.withLevel(getModule(), JavaFeature.PACKAGE_IMPORTS_SHADOW_MODULE_IMPORTS.getStandardLevel(), () -> {
 
       myFixture.addClass("package a; public class List {}");
 
@@ -1306,7 +1306,7 @@ public class AddImportActionTest extends LightJavaCodeInsightFixtureTestCase {
   }
 
   public void testImplicitClassUnnecessaryQualifierAlreadyImported() {
-    IdeaTestUtil.withLevel(getModule(), JavaFeature.PACKAGE_IMPORTS_SHADOW_MODULE_IMPORTS.getMinimumLevel(), () -> {
+    IdeaTestUtil.withLevel(getModule(), JavaFeature.PACKAGE_IMPORTS_SHADOW_MODULE_IMPORTS.getStandardLevel(), () -> {
 
 
       myFixture.configureByText("Test.java", """
@@ -1325,7 +1325,7 @@ public class AddImportActionTest extends LightJavaCodeInsightFixtureTestCase {
   }
 
   public void testImportFoldingWithConflictsToJavaBaseModuleImplicitClassDemandsOverModule() {
-    IdeaTestUtil.withLevel(getModule(), JavaFeature.PACKAGE_IMPORTS_SHADOW_MODULE_IMPORTS.getMinimumLevel(), () -> {
+    IdeaTestUtil.withLevel(getModule(), JavaFeature.PACKAGE_IMPORTS_SHADOW_MODULE_IMPORTS.getStandardLevel(), () -> {
 
       myFixture.addClass("package p1; public class List {}");
       myFixture.addClass("package p1; public class A1 {}");
@@ -1381,7 +1381,7 @@ public class AddImportActionTest extends LightJavaCodeInsightFixtureTestCase {
   }
 
   public void testImportFoldingWithConflictsToJavaBaseModuleImplicitClassFromPackageDemandsOverModule() {
-    IdeaTestUtil.withLevel(getModule(), JavaFeature.PACKAGE_IMPORTS_SHADOW_MODULE_IMPORTS.getMinimumLevel(), () -> {
+    IdeaTestUtil.withLevel(getModule(), JavaFeature.PACKAGE_IMPORTS_SHADOW_MODULE_IMPORTS.getStandardLevel(), () -> {
 
       myFixture.addClass("package p1; public class List {}");
       myFixture.addClass("package p1; public class A1 {}");
@@ -1433,5 +1433,31 @@ public class AddImportActionTest extends LightJavaCodeInsightFixtureTestCase {
           }
           """);
     });
+  }
+
+  public void testActionRemainsAvailable() {
+    myFixture.addClass("package foo; public class List1 {}");
+    myFixture.addClass("package foo2; public class List1 {}");
+
+    myFixture.configureByText("Foo.java", """
+      package foo3;
+      
+      public class Foo {
+          void test() {
+            <caret>
+          }
+      }
+      """);
+
+    myFixture.type("List1<String> list");
+    myFixture.doHighlighting();
+
+    //the import fix should be preserved, because only PsiWhitespace is changed
+    myFixture.type("\n");
+    PsiDocumentManager.getInstance(getProject()).commitAllDocuments();
+
+    getEditor().getCaretModel().moveToOffset(getEditor().getDocument().getText().indexOf("List1"));
+
+    assertEquals(1, myFixture.filterAvailableIntentions("Import class").size());
   }
 }

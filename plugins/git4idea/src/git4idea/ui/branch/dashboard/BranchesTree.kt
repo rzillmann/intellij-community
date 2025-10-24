@@ -6,6 +6,7 @@ import com.intellij.dvcs.branch.GroupingKey
 import com.intellij.ide.dnd.TransferableList
 import com.intellij.ide.dnd.aware.DnDAwareTree
 import com.intellij.ide.util.treeView.TreeState
+import com.intellij.idea.AppMode
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.application.runInEdt
@@ -25,31 +26,25 @@ import com.intellij.ui.speedSearch.SpeedSearchSupply
 import com.intellij.ui.treeStructure.Tree
 import com.intellij.util.containers.FList
 import com.intellij.util.ui.JBUI
-import com.intellij.util.ui.StatusText
 import com.intellij.util.ui.UIUtil
 import com.intellij.util.ui.launchOnShow
 import com.intellij.util.ui.tree.TreeUtil
-import com.intellij.util.ui.update.Activatable
-import com.intellij.util.ui.update.UiNotifyConnector
 import com.intellij.vcs.branch.BranchData
 import com.intellij.vcs.branch.BranchPresentation
 import com.intellij.vcs.branch.LinkedBranchDataImpl
-import com.intellij.vcs.git.shared.ui.GitBranchesTreeIconProvider
+import com.intellij.vcs.git.branch.GitBranchesMatcherWrapper
+import com.intellij.vcs.git.branch.calcTooltip
+import com.intellij.vcs.git.branch.tree.GitBranchesTreeUtil
+import com.intellij.vcs.git.ui.GitBranchesTreeIconProvider
+import com.intellij.vcs.git.ui.GitIncomingOutgoingUi
 import com.intellij.vcsUtil.VcsImplUtil
-import git4idea.branch.calcTooltip
-import git4idea.i18n.GitBundle.message
+import git4idea.config.GitVcsSettings
 import git4idea.repo.GitRepository
 import git4idea.repo.GitRepositoryManager
-import git4idea.ui.branch.GitBranchManager
-import git4idea.ui.branch.GitBranchesMatcherWrapper
 import git4idea.ui.branch.dashboard.BranchesDashboardActions.BranchesTreeActionGroup
-import git4idea.ui.branch.popup.createIncomingLabel
-import git4idea.ui.branch.popup.createOutgoingLabel
-import git4idea.ui.branch.popup.updateIncomingCommitLabel
-import git4idea.ui.branch.popup.updateOutgoingCommitLabel
-import git4idea.ui.branch.tree.GitBranchesTreeUtil
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.filterNotNull
@@ -78,16 +73,18 @@ internal class BranchesTreeComponent(project: Project) : DnDAwareTree() {
     isOpaque = false
     isHorizontalAutoScrollingEnabled = false
     SmartExpander.installOn(this)
-    TreeHoverListener.DEFAULT.addTo(this)
+    if (!AppMode.isRemoteDevHost()) {
+      TreeHoverListener.DEFAULT.addTo(this)
+    }
     initDnD()
   }
 
   private inner class BranchTreeCellRenderer(project: Project) : ColoredTreeCellRenderer() {
     private val repositoryManager = GitRepositoryManager.getInstance(project)
-    private val branchManager = project.service<GitBranchManager>()
+    private val settings = GitVcsSettings.getInstance(project)
 
-    private val incomingLabel = createIncomingLabel()
-    private val outgoingLabel = createOutgoingLabel()
+    private val incomingLabel = GitIncomingOutgoingUi.createIncomingLabel()
+    private val outgoingLabel = GitIncomingOutgoingUi.createOutgoingLabel()
 
     override fun customizeCellRenderer(
       tree: JTree,
@@ -101,7 +98,7 @@ internal class BranchesTreeComponent(project: Project) : DnDAwareTree() {
       if (value !is BranchTreeNode) return
       val descriptor = value.getNodeDescriptor()
 
-      icon = when(descriptor) {
+      icon = when (descriptor) {
         is BranchNodeDescriptor.Ref -> GitBranchesTreeIconProvider.forRef(
           descriptor.refInfo.ref,
           current = descriptor.refInfo.isCurrent,
@@ -118,20 +115,20 @@ internal class BranchesTreeComponent(project: Project) : DnDAwareTree() {
 
       val refInfo = (descriptor as? BranchNodeDescriptor.Ref)?.refInfo
       if (refInfo != null) {
-        val repositoryGrouping = branchManager.isGroupingEnabled(GroupingKey.GROUPING_BY_REPOSITORY)
+        val repositoryGrouping = settings.branchSettings.isGroupingEnabled(GroupingKey.GROUPING_BY_REPOSITORY)
         if (!repositoryGrouping && refInfo.repositories.size < repositoryManager.repositories.size) {
           append(" (${DvcsUtil.getShortNames(refInfo.repositories)})", SimpleTextAttributes.GRAYED_ATTRIBUTES)
         }
       }
-      
+
       if (refInfo is BranchInfo) {
         toolTipText =
           if (refInfo.isLocalBranch) BranchPresentation.getTooltip(getBranchesTooltipData(refInfo.branchName, BranchesTreeSelection.getSelectedRepositories(value)))
           else null
 
         val incomingOutgoingState = refInfo.incomingOutgoingState
-        updateIncomingCommitLabel(incomingLabel, incomingOutgoingState)
-        updateOutgoingCommitLabel(outgoingLabel, incomingOutgoingState)
+        GitIncomingOutgoingUi.updateIncomingCommitLabel(incomingLabel, incomingOutgoingState)
+        GitIncomingOutgoingUi.updateOutgoingCommitLabel(outgoingLabel, incomingOutgoingState)
 
         val fontMetrics = incomingLabel.getFontMetrics(incomingLabel.font)
         incomingLabel.size = Dimension(fontMetrics.stringWidth(incomingLabel.text) + JBUI.scale(1) + incomingLabel.icon.iconWidth, fontMetrics.height)
@@ -222,50 +219,43 @@ internal class FilteringBranchesTree(
   place: @NonNls String,
   private val disposable: Disposable,
 ) : FilteringBranchesTreeBase(model, component) {
-
-  init {
-    UiNotifyConnector.installOn(tree, object : Activatable {
-      private val listener = object : BranchesTreeModel.Listener {
-        override fun onTreeChange() {
-          updateTree()
-        }
-
-        override fun onLoadingStateChange() {
-          if (model.isLoading) {
-            component.emptyText.text = message("action.Git.Loading.Branches.progress")
-          }
-          else {
-            component.emptyText.text = StatusText.getDefaultEmptyText()
-          }
-        }
-      }
-
-      override fun showNotify() {
-        updateTree()
-        model.addListener(listener)
-      }
-
-      override fun hideNotify() {
-        model.removeListener(listener)
-      }
-
-      private fun updateTree() {
-        runPreservingTreeState(!initialUpdateDone) {
-          searchModel.updateStructure()
-        }
-        initialUpdateDone = true
-      }
-    })
-  }
-
   private var initialUpdateDone = false
 
   private val treeStateProvider = BranchesTreeStateProvider(this, disposable)
 
-  private val treeStateHolder: BranchesTreeStateHolder get() =
-    BackgroundTaskUtil.runUnderDisposeAwareIndicator(disposable, Supplier { project.service() })
+  private val treeStateHolder: BranchesTreeStateHolder
+    get() =
+      BackgroundTaskUtil.runUnderDisposeAwareIndicator(disposable, Supplier { project.service() })
 
   init {
+    val listener = object : BranchesTreeModel.Listener {
+      override fun onTreeChange() {
+        updateTree()
+      }
+
+      override fun onTreeDataChange() {
+        tree.revalidate()
+        tree.repaint()
+      }
+    }
+
+    tree.launchOnShow("Git Dashboard Tree") {
+      // need EDT because of RA in TreeUtil.promiseVisit
+      withContext(Dispatchers.EDT) {
+        model.addListener(listener)
+        try {
+          val currentlyEmpty = searchModel.root.childCount > 0
+          if (!currentlyEmpty || model.root.children.isNotEmpty()) {
+            updateTree()
+          }
+          awaitCancellation()
+        }
+        finally {
+          model.removeListener(listener)
+        }
+      }
+    }
+
     runInEdt {
       PopupHandler.installPopupMenu(component, BranchesTreeActionGroup(), place)
       setupTreeListeners()
@@ -291,14 +281,11 @@ internal class FilteringBranchesTree(
     component.addTreeSelectionListener { treeStateHolder.setStateProvider(treeStateProvider) }
   }
 
-  fun update(initial: Boolean, repaint: Boolean) {
-    runPreservingTreeState(initial) {
+  private fun updateTree() {
+    runPreservingTreeState(!initialUpdateDone) {
       searchModel.updateStructure()
     }
-    if (repaint) {
-      tree.revalidate()
-      tree.repaint()
-    }
+    initialUpdateDone = true
   }
 
   private fun runPreservingTreeState(loadSaved: Boolean, runnable: () -> Unit) {

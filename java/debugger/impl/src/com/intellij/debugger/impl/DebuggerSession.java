@@ -58,10 +58,7 @@ import com.sun.jdi.request.EventRequest;
 import com.sun.jdi.request.StepRequest;
 import kotlinx.coroutines.flow.Flow;
 import kotlinx.coroutines.flow.MutableStateFlow;
-import org.jetbrains.annotations.ApiStatus;
-import org.jetbrains.annotations.Nls;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.*;
 
 import javax.swing.event.HyperlinkEvent;
 import java.lang.ref.WeakReference;
@@ -171,6 +168,9 @@ public final class DebuggerSession implements AbstractDebuggerSession {
                          final @NlsContexts.Label String description) {
       ThreadingAssertions.assertEventDispatchThread();
       final DebuggerSession session = context.getDebuggerSession();
+      if (description != null) {
+        LOG.info(description);
+      }
       LOG.assertTrue(session == DebuggerSession.this || session == null);
       final Runnable setStateRunnable = () -> {
         LOG.assertTrue(myDebuggerContext.isInitialised());
@@ -197,14 +197,15 @@ public final class DebuggerSession implements AbstractDebuggerSession {
           @Override
           public void contextAction(@NotNull SuspendContextImpl suspendContext) {
             context.initCaches();
-            DebuggerInvocationUtil.swingInvokeLater(getProject(), setStateRunnable);
+            DebuggerInvocationUtil.invokeLaterAnyModality(getProject(), setStateRunnable);
           }
         });
       }
     }
   }
 
-  static DebuggerSession create(final @NotNull DebugProcessImpl debugProcess, DebugEnvironment environment)
+  @VisibleForTesting
+  public static DebuggerSession create(final @NotNull DebugProcessImpl debugProcess, DebugEnvironment environment)
     throws ExecutionException {
     DebuggerSession session = new DebuggerSession(environment.getSessionName(), debugProcess, environment);
     try {
@@ -238,7 +239,14 @@ public final class DebuggerSession implements AbstractDebuggerSession {
     if (jre != null) {
       LanguageLevel level = LanguageLevel.parse(jre.getVersionString());
       if (level != null) {
+        // preserve DebuggerGlobalSearchScope for the correct sorting inside the new scope
+        if (myBaseScope instanceof DebuggerGlobalSearchScope debuggerScope) {
+          scope = debuggerScope.getDelegate();
+        }
         scope = new JavaVersionBasedScope(getProject(), scope, level);
+        if (myBaseScope instanceof DebuggerGlobalSearchScope) {
+          scope = new DebuggerGlobalSearchScope(scope, getProject());
+        }
       }
     }
     mySearchScope = scope;
@@ -447,7 +455,7 @@ public final class DebuggerSession implements AbstractDebuggerSession {
     getProcess().dispose();
     clearSteppingThrough();
     myLastThread.set(null);
-    DebuggerInvocationUtil.swingInvokeLater(getProject(), () -> {
+    DebuggerInvocationUtil.invokeLaterAnyModality(getProject(), () -> {
       myContextManager.setState(SESSION_EMPTY_CONTEXT, State.DISPOSED, Event.DISPOSE, null);
       myContextManager.dispose();
     });
@@ -496,7 +504,7 @@ public final class DebuggerSession implements AbstractDebuggerSession {
       String connectionName = DebuggerUtilsImpl.getConnectionDisplayName(remoteConnection);
       description.append("; ").append(JavaDebuggerBundle.message("status.waiting.attach.address", connectionName));
     }
-    DebuggerInvocationUtil.swingInvokeLater(getProject(), () -> {
+    DebuggerInvocationUtil.invokeLaterAnyModality(() -> {
       getContextManager().setState(SESSION_EMPTY_CONTEXT, State.WAITING_ATTACH, Event.START_WAIT_ATTACH, description.toString());
     });
   }

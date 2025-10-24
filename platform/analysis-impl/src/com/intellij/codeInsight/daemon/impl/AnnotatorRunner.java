@@ -21,6 +21,7 @@ import com.intellij.openapi.project.DumbService;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.ProperTextRange;
 import com.intellij.openapi.util.TextRange;
+import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.psi.PsiElement;
 import com.intellij.psi.PsiFile;
 import com.intellij.psi.impl.source.tree.injected.InjectedFileViewProvider;
@@ -29,6 +30,7 @@ import com.intellij.util.ReflectionUtil;
 import com.intellij.util.containers.CollectionFactory;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.containers.HashingStrategy;
+import com.intellij.workspaceModel.core.fileIndex.WorkspaceFileIndex;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 
@@ -117,13 +119,14 @@ final class AnnotatorRunner {
     if (supported.isEmpty()) {
       return;
     }
+    VirtualFile virtualFile = myPsiFile.getVirtualFile();
     // create AnnotationHolderImpl for each Annotator to make it immutable thread-safe converter to the corresponding HighlightInfo
     AnnotationSessionImpl.computeWithSession(myBatchMode, annotator, myAnnotationSession, annotationHolder -> {
       for (PsiElement psiElement : insideThenOutside) {
         if (!supported.contains(psiElement.getLanguage())) {
           continue;
         }
-        if (!myDumbService.isUsableInCurrentContext(annotator)) {
+        if (!myDumbService.isUsableInCurrentContext(annotator, virtualFile)) {
           continue;
         }
         ProgressManager.checkCanceled();
@@ -164,7 +167,7 @@ final class AnnotatorRunner {
   private static void addPatchedInfos(@NotNull HighlightInfo injectedInfo,
                                       @NotNull PsiFile injectedPsi,
                                       @NotNull DocumentWindow documentWindow,
-                                      @NotNull Collection<? super HighlightInfo> outHostInfos) {
+                                      @NotNull Collection<? super @NotNull HighlightInfo> outHostInfos) {
     TextRange infoRange = TextRange.create(injectedInfo);
     InjectedLanguageManager injectedLanguageManager = InjectedLanguageManager.getInstance(injectedPsi.getProject());
     List<TextRange> editables = injectedLanguageManager.intersectWithAllEditableFragments(injectedPsi, infoRange);
@@ -172,11 +175,12 @@ final class AnnotatorRunner {
       TextRange hostRange = documentWindow.injectedToHost(editable);
 
       boolean isAfterEndOfLine = injectedInfo.isAfterEndOfLine();
+      Document hostDocument = documentWindow.getDelegate();
       if (isAfterEndOfLine) {
         // convert injected afterEndOfLine to either host's afterEndOfLine or not-afterEndOfLine highlight of the injected fragment boundary
         int hostEndOffset = hostRange.getEndOffset();
-        int lineNumber = documentWindow.getDelegate().getLineNumber(hostEndOffset);
-        int hostLineEndOffset = documentWindow.getDelegate().getLineEndOffset(lineNumber);
+        int lineNumber = hostDocument.getLineNumber(hostEndOffset);
+        int hostLineEndOffset = hostDocument.getLineEndOffset(lineNumber);
         if (hostEndOffset < hostLineEndOffset) {
           // convert to non-afterEndOfLine
           isAfterEndOfLine = false;
@@ -185,12 +189,11 @@ final class AnnotatorRunner {
       }
 
       // create manually to avoid extra call to HighlightInfoFilter.accept() in HighlightInfo.Builder.create()
-      //noinspection deprecation
-      HighlightInfo patched = new HighlightInfo(injectedInfo.forcedTextAttributes, injectedInfo.forcedTextAttributesKey, injectedInfo.type,
-                                                hostRange.getStartOffset(), hostRange.getEndOffset(),
-                                                injectedInfo.getDescription(), injectedInfo.getToolTip(), injectedInfo.getSeverity(), isAfterEndOfLine, null,
-                                                false, 0, injectedInfo.getProblemGroup(), injectedInfo.toolId, injectedInfo.getGutterIconRenderer(), HighlightInfoUpdaterImpl.MANAGED_HIGHLIGHT_INFO_GROUP,
-                                                injectedInfo.hasHint(), injectedInfo.getLazyQuickFixes());
+      HighlightInfo.Builder builder = injectedInfo.copy(false).range(hostRange);
+      if (isAfterEndOfLine) {
+        builder.endOfLine();
+      }
+      HighlightInfo patched = builder.createUnconditionally();
 
       List<HighlightInfo.IntentionActionDescriptor> quickFixes = new ArrayList<>();
       injectedInfo.findRegisteredQuickFix((descriptor, quickfixTextRange) -> {
@@ -201,13 +204,13 @@ final class AnnotatorRunner {
         }
         return null;
       });
-      patched.registerFixes(quickFixes, documentWindow.getDelegate());
+      patched.registerFixes(quickFixes, hostDocument);
       patched.markFromInjection();
       outHostInfos.add(patched);
     }
   }
 
-  private void addConvertedToHostInfo(@NotNull HighlightInfo info, @NotNull List<? super HighlightInfo> newInfos) {
+  private void addConvertedToHostInfo(@NotNull HighlightInfo info, @NotNull List<? super @NotNull HighlightInfo> newInfos) {
     if (HighlightInfoB.isAcceptedByFilters(info, myPsiFile)) {
       if (info.isFromInjection() && myPsiFile.getFileDocument() instanceof DocumentWindow window) {
         addPatchedInfos(info, myPsiFile, window, newInfos);

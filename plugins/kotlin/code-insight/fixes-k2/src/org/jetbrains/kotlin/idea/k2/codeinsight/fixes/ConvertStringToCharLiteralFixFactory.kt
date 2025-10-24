@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.kotlin.idea.k2.codeinsight.fixes
 
 import com.intellij.modcommand.ActionContext
@@ -6,13 +6,13 @@ import com.intellij.modcommand.ModPsiUpdater
 import com.intellij.modcommand.PsiUpdateModCommandAction
 import com.intellij.psi.PsiElement
 import org.jetbrains.kotlin.analysis.api.KaSession
+import org.jetbrains.kotlin.analysis.api.analyze
 import org.jetbrains.kotlin.analysis.api.fir.diagnostics.KaFirDiagnostic
 import org.jetbrains.kotlin.analysis.api.types.KaType
 import org.jetbrains.kotlin.idea.base.resources.KotlinBundle
 import org.jetbrains.kotlin.idea.codeinsight.api.applicators.fixes.KotlinQuickFixFactory
 import org.jetbrains.kotlin.idea.quickfix.ConvertStringToCharLiteralUtils
 import org.jetbrains.kotlin.psi.KtExpression
-import org.jetbrains.kotlin.psi.KtProperty
 import org.jetbrains.kotlin.psi.KtStringTemplateExpression
 
 internal object ConvertStringToCharLiteralFixFactory {
@@ -22,7 +22,7 @@ internal object ConvertStringToCharLiteralFixFactory {
     }
 
     val assignmentTypeMismatchFactory = KotlinQuickFixFactory.ModCommandBased { diagnostic: KaFirDiagnostic.AssignmentTypeMismatch ->
-        getFixes(diagnostic.psi, diagnostic.expectedType)
+        getFixes(diagnostic.expression, diagnostic.expectedType)
     }
 
     val equalityNotApplicableFactory = KotlinQuickFixFactory.ModCommandBased { diagnostic: KaFirDiagnostic.EqualityNotApplicable ->
@@ -35,7 +35,7 @@ internal object ConvertStringToCharLiteralFixFactory {
     }
 
     val initializerTypeMismatchFactory = KotlinQuickFixFactory.ModCommandBased { diagnostic: KaFirDiagnostic.InitializerTypeMismatch ->
-        getFixes((diagnostic.psi as? KtProperty)?.initializer, diagnostic.expectedType)
+        getFixes(diagnostic.initializer, diagnostic.expectedType)
     }
 
     val returnTypeMismatchFactory = KotlinQuickFixFactory.ModCommandBased { diagnostic: KaFirDiagnostic.ReturnTypeMismatch ->
@@ -47,7 +47,9 @@ internal object ConvertStringToCharLiteralFixFactory {
         if (!expectedType.isCharType) return emptyList()
 
         val charLiteral = ConvertStringToCharLiteralUtils.prepareCharLiteral(element) ?: return emptyList()
-        if (charLiteral.evaluate() == null) return emptyList()
+        analyze(charLiteral) {
+            if (charLiteral.evaluate() == null) return emptyList()
+        }
 
         return listOf(
             ConvertStringToCharLiteralFix(element, charLiteral)

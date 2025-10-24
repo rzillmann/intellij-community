@@ -2,6 +2,7 @@
 package com.jetbrains.python.psi.types;
 
 import com.intellij.openapi.util.Key;
+import com.intellij.openapi.util.NlsSafe;
 import com.intellij.psi.PsiElement;
 import com.intellij.util.ProcessingContext;
 import com.jetbrains.python.psi.AccessDirection;
@@ -35,22 +36,38 @@ public interface PyType {
   /**
    * Resolves an attribute of type.
    *
-   * @param name      attribute name
-   * @param location  the expression of type qualifierType on which the member is being resolved (optional)
+   * @param name     attribute name
+   * @param location the expression of type qualifierType on which the member is being resolved (optional)
    * @return null if name definitely cannot be found (e.g. in a qualified reference),
-   *         or an empty list if name is not found but other contexts are worth looking at,
-   *         or a list of elements that define the name, a la multiResolve().
+   * or an empty list if name is not found but other contexts are worth looking at,
+   * or a list of elements that define the name, a la multiResolve().
    */
   @Nullable
-  List<? extends RatedResolveResult> resolveMember(@NotNull String name, final @Nullable PyExpression location,
-                                                   final @NotNull AccessDirection direction, final @NotNull PyResolveContext resolveContext);
+  List<? extends RatedResolveResult> resolveMember(@NotNull String name,
+                                                   final @Nullable PyExpression location,
+                                                   final @NotNull AccessDirection direction,
+                                                   final @NotNull PyResolveContext resolveContext);
+
+
+  @ApiStatus.Experimental
+  default @NotNull List<@NotNull PyTypeMember> getAllMembers(final @NotNull PyResolveContext resolveContext) {
+    return List.of();
+  }
+
+  /**
+   * Returns a list of members with a given name
+   * There can be several members with the same name (for example, methods with @overload)
+   */
+  @ApiStatus.Experimental
+  default @NotNull List<@NotNull PyTypeMember> findMember(@NotNull String name, final @NotNull PyResolveContext resolveContext) {
+    return List.of();
+  }
 
   /**
    * Proposes completion variants from type's attributes.
    *
-   *
-   * @param location   the reference on which the completion was invoked
-   * @param context    to share state between nested invocations
+   * @param location the reference on which the completion was invoked
+   * @param context  to share state between nested invocations
    * @return completion variants good for {@link com.intellij.psi.PsiReference#getVariants} return value.
    */
   Object[] getCompletionVariants(String completionPrefix, PsiElement location, ProcessingContext context);
@@ -62,9 +79,11 @@ public interface PyType {
 
   /**
    * TODO rename it to something like getPresentableName(), because it's not clear that these names are actually visible to end-user
+   *
    * @return name of the type
    */
   @Nullable
+  @NlsSafe
   String getName();
 
   /**

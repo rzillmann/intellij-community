@@ -2,17 +2,17 @@
 load("@rules_jvm//:jvm.bzl", "jvm_library")
 
 jvm_library(
-  name = "io-storages",
+  name = "storages",
   module_name = "intellij.platform.util.io.storages",
   visibility = ["//visibility:public"],
-  srcs = glob(["src/**/*.kt", "src/**/*.java"], allow_empty = True),
+  srcs = glob(["src/**/*.kt", "src/**/*.java", "src/**/*.form"], allow_empty = True),
   deps = [
     "@lib//:jetbrains-annotations",
     "//platform/util-rt",
     "//platform/util-class-loader:util-classLoader",
     "//platform/util/base",
     "//platform/util",
-    "@lib//:fastutil-min",
+    "//libraries/fastutil",
     "@lib//:kotlin-stdlib",
     "@lib//:kotlinx-coroutines-core",
     "@lib//:opentelemetry",

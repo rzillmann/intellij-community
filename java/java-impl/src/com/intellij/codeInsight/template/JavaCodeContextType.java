@@ -11,8 +11,10 @@ import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.fileTypes.SyntaxHighlighter;
 import com.intellij.openapi.project.DumbService;
 import com.intellij.openapi.project.Project;
+import com.intellij.pom.java.JavaFeature;
 import com.intellij.psi.*;
 import com.intellij.psi.util.PsiTreeUtil;
+import com.intellij.psi.util.PsiUtil;
 import com.intellij.psi.util.PsiUtilCore;
 import com.intellij.util.ObjectUtils;
 import com.intellij.util.ProcessingContext;
@@ -46,7 +48,7 @@ public abstract class JavaCodeContextType extends TemplateContextType {
 
   /**
    * Checks whether the element belongs to this context. Could be called inside the dumb mode!
-   * 
+   *
    * @param element element to check
    * @return true if the given element belongs to this context.
    */
@@ -68,7 +70,7 @@ public abstract class JavaCodeContextType extends TemplateContextType {
     DaemonCodeAnalyzer.getInstance(project).setHighlightingEnabled(fragment, false);
     return PsiDocumentManager.getInstance(project).getDocument(fragment);
   }
-  
+
   public static final class Generic extends JavaCodeContextType {
     public Generic() {
       super(JavaLanguage.INSTANCE.getDisplayName());
@@ -224,7 +226,7 @@ public abstract class JavaCodeContextType extends TemplateContextType {
         return false;
       }
 
-      return isInRecordHeader(element) || 
+      return isInRecordHeader(element) ||
              JavaKeywordCompletion.isSuitableForClass(element) ||
              JavaKeywordCompletion.isInsideParameterList(element) ||
              PsiTreeUtil.getParentOfType(element, PsiReferenceParameterList.class) != null;
@@ -241,6 +243,99 @@ public abstract class JavaCodeContextType extends TemplateContextType {
       }
       PsiElement greatGrandParent = grandParent.getParent();
       return greatGrandParent instanceof PsiRecordHeader || greatGrandParent instanceof PsiRecordComponent;
+    }
+  }
+
+  public static final class ImplicitClassDeclaration extends JavaCodeContextType {
+    public ImplicitClassDeclaration() {
+      super(JavaBundle.message("live.template.context.implicit.class.declaration"));
+    }
+
+    @Override
+    protected boolean isInContext(@NotNull PsiElement element) {
+      if (!PsiUtil.isAvailable(JavaFeature.IMPLICIT_CLASSES, element)) {
+        return false;
+      }
+      PsiFile containingFile = element.getContainingFile();
+      if (!(containingFile instanceof PsiJavaFile javaFile) || javaFile.getPackageStatement() != null) {
+        return false;
+      }
+      //first element is identifier
+      PsiElement parent = element.getParent();
+      return parent instanceof PsiJavaCodeReferenceElement &&
+             parent.getParent() instanceof PsiTypeElement psiTypeElement &&
+             (psiTypeElement.getParent() instanceof PsiJavaFile || psiTypeElement.getParent() instanceof PsiImplicitClass);
+    }
+  }
+
+  public static final class JavaLangIOStatement extends JavaCodeContextType {
+    private final JavaCodeContextType statementContext = new Statement();
+
+    public JavaLangIOStatement() {
+      super(JavaBundle.message("live.template.context.statement.java.lang.io"));
+    }
+
+    @Override
+    protected boolean isInContext(@NotNull PsiElement element) {
+      return statementContext.isInContext(element) && PsiUtil.isAvailable(JavaFeature.JAVA_LANG_IO, element);
+    }
+  }
+
+  public static final class NormalClassDeclarationBeforeShortMainMethod extends JavaCodeContextType {
+    private final JavaCodeContextType declarationContext = new Declaration();
+
+    public NormalClassDeclarationBeforeShortMainMethod() {
+      super(JavaBundle.message("live.template.context.normal.class.before.instance.main.declaration"));
+    }
+
+    @Override
+    protected boolean isInContext(@NotNull PsiElement element) {
+      return declarationContext.isInContext(element) && !PsiUtil.isAvailable(JavaFeature.IMPLICIT_CLASSES, element);
+    }
+  }
+
+  public static final class NormalClassDeclarationAfterShortMainMethod extends JavaCodeContextType {
+    private final JavaCodeContextType declarationContext = new Declaration();
+    private final JavaCodeContextType implicitClassContext = new ImplicitClassDeclaration();
+
+    public NormalClassDeclarationAfterShortMainMethod() {
+      super(JavaBundle.message("live.template.context.normal.class.after.instance.main.declaration"));
+    }
+
+    @Override
+    protected boolean isInContext(@NotNull PsiElement element) {
+      return PsiUtil.isAvailable(JavaFeature.IMPLICIT_CLASSES, element) &&
+             declarationContext.isInContext(element) &&
+             !implicitClassContext.isInContext(element);
+    }
+  }
+
+  public static final class JavaStructuredConcurrencyConstructors extends JavaCodeContextType {
+    private final JavaCodeContextType statementContext = new Statement();
+
+    JavaStructuredConcurrencyConstructors() {
+      super(JavaBundle.message("live.template.context.statement.java.structured.concurrency.constructors"));
+    }
+
+    @Override
+    protected boolean isInContext(@NotNull PsiElement element) {
+      return statementContext.isInContext(element) &&
+             PsiUtil.isAvailable(JavaFeature.STRUCTURED_CONCURRENCY_TASK_SCOPE_CONSTRUCTORS, element);
+    }
+  }
+
+
+  public static final class JavaStructuredConcurrencyStaticFactoryMethods extends JavaCodeContextType {
+    private final JavaCodeContextType statementContext = new Statement();
+
+    JavaStructuredConcurrencyStaticFactoryMethods() {
+      super(JavaBundle.message("live.template.context.statement.java.structured.concurrency.static.factory.methods"));
+    }
+
+    @Override
+    protected boolean isInContext(@NotNull PsiElement element) {
+      return statementContext.isInContext(element) &&
+             PsiUtil.isAvailable(JavaFeature.STRUCTURED_CONCURRENCY_TASK_SCOPE_STATIC_FACTORY_METHODS, element);
     }
   }
 }

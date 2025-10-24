@@ -66,7 +66,9 @@ enum class LanguageLevel {
   JDK_23_PREVIEW(messagePointer("jdk.23.preview.language.level.description"), 23),
   JDK_24(messagePointer("jdk.24.language.level.description"), 24),
   JDK_24_PREVIEW(messagePointer("jdk.24.preview.language.level.description"), 24),
-  JDK_X(messagePointer("jdk.X.language.level.description"), 25),
+  JDK_25(messagePointer("jdk.25.language.level.description"), 25),
+  JDK_25_PREVIEW(messagePointer("jdk.25.preview.language.level.description"), 25),
+  JDK_X(messagePointer("jdk.X.language.level.description"), 26),
   ;
 
   private val myPresentableText: () -> @Nls String
@@ -88,8 +90,8 @@ enum class LanguageLevel {
   constructor(presentableTextSupplier: () -> @Nls String, major: Int) {
     myPresentableText = presentableTextSupplier
     myVersion = compose(major)
-    this.isUnsupported = false
-    this.isPreview = name.endsWith("_PREVIEW") || name.endsWith("_X")
+    isUnsupported = false
+    isPreview = name.endsWith(PREVIEW_SUFFIX) || name.endsWith("_X")
   }
 
   /**
@@ -100,9 +102,9 @@ enum class LanguageLevel {
   constructor(major: Int) {
     myPresentableText = messagePointer("jdk.unsupported.preview.language.level.description", major)
     myVersion = compose(major)
-    this.isUnsupported = true
-    this.isPreview = true
-    require(name.endsWith("_PREVIEW")) { "Only preview versions could be unsupported: " + name }
+    isUnsupported = true
+    isPreview = true
+    require(name.endsWith(PREVIEW_SUFFIX)) { "Only preview versions could be unsupported: $name" }
   }
 
   /**
@@ -110,11 +112,11 @@ enum class LanguageLevel {
    */
   fun getPreviewLevel(): LanguageLevel? {
     if (isPreview) return this
-    try {
-      return valueOf(name + "_PREVIEW")
+    return try {
+      valueOf(name + PREVIEW_SUFFIX)
     }
     catch (_: IllegalArgumentException) {
-      return null
+      null
     }
   }
 
@@ -195,7 +197,7 @@ enum class LanguageLevel {
      * The highest language level supported by the analyzer.
      */
     @JvmField
-    val HIGHEST: LanguageLevel = JDK_24
+    val HIGHEST: LanguageLevel = JDK_25
 
     private val ourStandardVersions: Map<Int, LanguageLevel> = LanguageLevel.entries.asSequence()
       .filterNot { ver -> ver.isPreview }
@@ -204,13 +206,9 @@ enum class LanguageLevel {
     /** See [JavaVersion.parse] for supported formats.  */
     @JvmStatic
     fun parse(compilerComplianceOption: String?): LanguageLevel? {
-      if (compilerComplianceOption != null) {
-        val sdkVersion = JavaSdkVersion.fromVersionString(compilerComplianceOption)
-        if (sdkVersion != null) {
-          return sdkVersion.maxLanguageLevel
-        }
-      }
-      return null
+      if (compilerComplianceOption == null) return null
+      val sdkVersion = JavaSdkVersion.fromVersionString(compilerComplianceOption) ?: return null
+      return sdkVersion.maxLanguageLevel
     }
 
     /**
@@ -223,5 +221,7 @@ enum class LanguageLevel {
     fun forFeature(feature: Int): LanguageLevel? {
       return ourStandardVersions[feature]
     }
+
+    private const val PREVIEW_SUFFIX = "_PREVIEW"
   }
 }

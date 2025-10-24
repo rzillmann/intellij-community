@@ -15,11 +15,15 @@ import com.intellij.openapi.progress.runBlockingMaybeCancellable
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Key
 import com.intellij.platform.project.projectId
+import com.intellij.platform.util.coroutines.childScope
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.future.asCompletableFuture
 import kotlinx.coroutines.launch
 import org.jetbrains.annotations.ApiStatus
 import java.io.OutputStream
+import java.util.concurrent.CompletableFuture
 
 @ApiStatus.Internal
 fun createFrontendProcessHandler(
@@ -42,10 +46,11 @@ open class FrontendSessionProcessHandler(
   private val project: Project,
   protected val processHandlerDto: ProcessHandlerDto,
 ) : ProcessHandler() {
-  // TODO: use better CoroutineScope
-  protected val cs: CoroutineScope = project.service<FrontendSessionProcessHandlerCoroutineScope>().cs
+  protected val cs: CoroutineScope = project.service<FrontendSessionProcessHandlerCoroutineScope>().cs.childScope("FrontendProcessHandler")
 
   protected val handlerId: ProcessHandlerId = processHandlerDto.processHandlerId
+
+  private val nativePidFuture: CompletableFuture<Long?>? by lazy { processHandlerDto.nativePid?.asCompletableFuture() }
 
   init {
     cs.launch(Dispatchers.EDT) {
@@ -110,6 +115,7 @@ open class FrontendSessionProcessHandler(
     cs.launch {
       val exitCode = ProcessHandlerApi.getInstance().destroyProcess(handlerId).await()
       notifyProcessTerminated(exitCode ?: 0)
+      cs.cancel()
     }
   }
 
@@ -117,6 +123,7 @@ open class FrontendSessionProcessHandler(
     cs.launch {
       ProcessHandlerApi.getInstance().detachProcess(handlerId).await()
       notifyProcessDetached()
+      cs.cancel()
     }
   }
 
@@ -127,6 +134,10 @@ open class FrontendSessionProcessHandler(
   override fun getProcessInput(): OutputStream? {
     LOG.error("getProcessInput shouldn't be used on the frontend")
     return null
+  }
+
+  override fun getNativePid(): CompletableFuture<Long?>? {
+    return nativePidFuture
   }
 }
 
@@ -144,6 +155,8 @@ private class FrontendSessionKillableProcessHandler(
     if (canKillProcess()) {
       cs.launch {
         ProcessHandlerApi.getInstance().killProcess(handlerId)
+        notifyProcessTerminated(0)
+        cs.cancel()
       }
     }
   }

@@ -30,6 +30,7 @@ import com.intellij.openapi.roots.ModifiableRootModel;
 import com.intellij.openapi.roots.ProjectModelExternalSource;
 import com.intellij.openapi.roots.SourceFolder;
 import com.intellij.openapi.startup.StartupManager;
+import com.intellij.openapi.util.Computable;
 import com.intellij.openapi.util.SystemInfo;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vfs.VfsUtil;
@@ -42,6 +43,7 @@ import com.intellij.platform.workspace.jps.entities.ExcludeUrlEntity;
 import com.intellij.platform.workspace.storage.MutableEntityStorage;
 import com.intellij.platform.workspace.storage.WorkspaceEntity;
 import com.intellij.platform.workspace.storage.url.VirtualFileUrl;
+import com.intellij.util.SmartList;
 import com.intellij.util.containers.CollectionFactory;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.containers.MultiMap;
@@ -77,6 +79,44 @@ public final class ContentRootDataService extends AbstractProjectDataService<Con
   @Override
   public @NotNull Key<ContentRootData> getTargetDataKey() {
     return ProjectKeys.CONTENT_ROOT;
+  }
+
+  @Override
+  public @NotNull Computable<Collection<ContentEntry>> computeOrphanData(@NotNull Collection<? extends DataNode<ContentRootData>> toImport,
+                                                                         @NotNull ProjectData projectData,
+                                                                         @NotNull Project project,
+                                                                         @NotNull IdeModifiableModelsProvider modelsProvider) {
+    return () -> {
+      List<ContentEntry> orphanIdeModules = new SmartList<>();
+      MultiMap<DataNode<ModuleData>, DataNode<ContentRootData>> byModule = ExternalSystemApiUtil.groupBy(toImport, ModuleData.class);
+      List<Module> modulesWithContentRoots = ContainerUtil.map(byModule.keySet(), moduleData ->  modelsProvider.findIdeModule(moduleData.getData()));
+
+      Module[] modules = modelsProvider.getModules(projectData);
+      Arrays.stream(modules)
+        .filter(module -> !modulesWithContentRoots.contains(module))
+        .forEach(module -> {
+          ModifiableRootModel modifiableRootModel = modelsProvider.getModifiableRootModel(module);
+          orphanIdeModules.addAll(List.of(modifiableRootModel.getContentEntries()));
+        });
+
+      return orphanIdeModules;
+    };
+  }
+
+  @Override
+  public void removeData(Computable<? extends Collection<? extends ContentEntry>> toRemoveComputable,
+                         @NotNull Collection<? extends DataNode<ContentRootData>> toIgnore,
+                         @NotNull ProjectData projectData,
+                         @NotNull Project project,
+                         @NotNull IdeModifiableModelsProvider modelsProvider) {
+    Map<Module, List<ContentEntry>> byModule = toRemoveComputable.compute().stream()
+      .collect(Collectors.groupingBy(contentEntry -> contentEntry.getRootModel().getModule()));
+
+    for (Map.Entry<Module, List<ContentEntry>> entry : byModule.entrySet()) {
+      Collection<ContentEntry> toRemove = entry.getValue();
+      ModifiableRootModel modifiableRootModel = modelsProvider.getModifiableRootModel(entry.getKey());
+      toRemove.forEach(modifiableRootModel::removeContentEntry);
+    }
   }
 
   @Override
@@ -406,6 +446,7 @@ public final class ContentRootDataService extends AbstractProjectDataService<Con
   private static void filterAndReportDuplicatingContentRoots(@NotNull MultiMap<DataNode<ModuleData>, DataNode<ContentRootData>> moduleNodeToRootNodes,
                                                              @NotNull Project project) {
 
+    // TODO IDEA-376062 allow duplicates only for supported build systems
     boolean duplicatesAreAllowed = CodeInsightContexts.isSharedSourceSupportEnabled(project);
 
     Map<String, DuplicateModuleReport> filter = new LinkedHashMap<>();

@@ -4,7 +4,6 @@ package com.intellij.openapi.application.impl;
 import com.intellij.concurrency.ContextAwareRunnable;
 import com.intellij.concurrency.ThreadContext;
 import com.intellij.diagnostic.EventWatcher;
-import com.intellij.openapi.application.AccessToken;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.ModalityState;
 import com.intellij.openapi.diagnostic.Logger;
@@ -28,7 +27,7 @@ final class FlushQueue {
   private final BulkArrayQueue<RunnableInfo> myQueue = new BulkArrayQueue<>();  //guarded by getQueueLock()
 
   private void flushNow() {
-    try (AccessToken ignored = ThreadContext.resetThreadContext()) {
+    ThreadContext.resetThreadContext(() -> {
       ThreadingAssertions.assertEventDispatchThread();
       synchronized (getQueueLock()) {
         FLUSHER_SCHEDULED = false;
@@ -48,7 +47,8 @@ final class FlushQueue {
           break;
         }
       }
-    }
+      return null;
+    });
   }
 
   private Object getQueueLock() {
@@ -84,28 +84,33 @@ final class FlushQueue {
   }
 
   private @Nullable RunnableInfo pollNextEvent() {
-    synchronized (getQueueLock()) {
-      ModalityState currentModality = LaterInvocator.getCurrentModalityState();
+    ModalityState currentModality = LaterInvocator.getCurrentModalityState();
 
-      while (true) {
-        final RunnableInfo info = myQueue.pollFirst();
+    while (true) {
+      final RunnableInfo info;
+      synchronized (getQueueLock()) {
+        info = myQueue.pollFirst();
         if (info == null) {
           return null;
         }
-        if (info.expired.value(null)) {
+
+        if (!currentModality.accepts(info.modalityState)) {
+          //MAYBE RC: probably better to copy 'info' on re-appending the tasks back to the myQueue
+          //          (in .reincludeSkippedItems()) and also reset queueSize/queuedTimeNs fields.
+          //          This way we got queue loading info 'cleared' (kind of) from bypassing influence,
+          //          i.e. re-appended tasks will look as-if they were just added -- which is not strictly true,
+          //          but it will disturb waiting times much less than the current approach there skipped/not skipped
+          //          tasks waiting times stats are merged together.
+          mySkippedItems.add(info.wasSkipped());
           continue;
         }
-        if (currentModality.accepts(info.modalityState)) {
-          requestFlush(); // in case someone wrote "invokeLater { UIUtil.dispatchAllInvocationEvents(); }"
-          return info;
-        }
-        //MAYBE RC: probably better to copy 'info' on re-appending the tasks back to the myQueue
-        //          (in .reincludeSkippedItems()) and also reset queueSize/queuedTimeNs fields.
-        //          This way we got queue loading info 'cleared' (kind of) from bypassing influence,
-        //          i.e. re-appended tasks will look as-if they were just added -- which is not strictly true,
-        //          but it will disturb waiting times much less than the current approach there skipped/not skipped
-        //          tasks waiting times stats are merged together.
-        mySkippedItems.add(info.wasSkipped());
+      }
+      // we need to check `expired` outside of the queue lock,
+      // otherwise we may have a deadlock if `expired` tries to run a read action
+      // see IJPL-190911
+      if (!info.expired.value(null)) {
+        requestFlush(); // in case someone wrote "invokeLater { UIUtil.dispatchAllInvocationEvents(); }"
+        return info;
       }
     }
   }
@@ -151,9 +156,10 @@ final class FlushQueue {
                                      info.queueSize,
                                      executionDurationNs_safe, info.wasInSkippedItems);
 
-        if (waitedInQueueNs < 0 || executionDurationNs<0) {
+        if (waitedInQueueNs < 0 || executionDurationNs < 0) {
           //maybe logs give us some hints about why the values are negative:
-          THROTTLED_LOG.info("waitedInQueueNs(" + waitedInQueueNs + ") | executionDurationNs(" + executionDurationNs + ") is negative -> unexpected state");
+          THROTTLED_LOG.info(
+            "waitedInQueueNs(" + waitedInQueueNs + ") | executionDurationNs(" + executionDurationNs + ") is negative -> unexpected state");
         }
       }
     }
@@ -247,7 +253,7 @@ final class FlushQueue {
     @Override
     public @NonNls String toString() {
       return "[runnable: " + runnable + "; state=" + modalityState + (expired.value(null) ? "; expired" : "") + "]{queued at: " +
-             queuedTimeNs + " ns, " + queueSize + " items were in front of}{wasSkipped: "+wasInSkippedItems+"}";
+             queuedTimeNs + " ns, " + queueSize + " items were in front of}{wasSkipped: " + wasInSkippedItems + "}";
     }
   }
 }

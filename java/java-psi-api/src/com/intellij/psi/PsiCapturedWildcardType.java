@@ -1,6 +1,10 @@
 // Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.psi;
 
+import com.intellij.codeInsight.Nullability;
+import com.intellij.codeInsight.NullabilityAnnotationInfo;
+import com.intellij.codeInsight.NullableNotNullManager;
+import com.intellij.codeInsight.TypeNullability;
 import com.intellij.openapi.util.Comparing;
 import com.intellij.openapi.util.RecursionGuard;
 import com.intellij.openapi.util.RecursionManager;
@@ -13,6 +17,7 @@ public final class PsiCapturedWildcardType extends PsiType.Stub {
   private final @NotNull PsiWildcardType myExistential;
   private final @NotNull PsiElement myContext;
   private final @Nullable PsiTypeParameter myParameter;
+  private @Nullable TypeNullability myNullability;
 
   private PsiType myUpperBound;
 
@@ -23,17 +28,19 @@ public final class PsiCapturedWildcardType extends PsiType.Stub {
   public static @NotNull PsiCapturedWildcardType create(@NotNull PsiWildcardType existential,
                                                         @NotNull PsiElement context,
                                                         @Nullable PsiTypeParameter parameter) {
-    return new PsiCapturedWildcardType(existential, context, parameter);
+    return new PsiCapturedWildcardType(existential, context, parameter, null);
   }
 
   private PsiCapturedWildcardType(@NotNull PsiWildcardType existential,
                                   @NotNull PsiElement context,
-                                  @Nullable PsiTypeParameter parameter) {
+                                  @Nullable PsiTypeParameter parameter, 
+                                  @Nullable TypeNullability nullability) {
     super(TypeAnnotationProvider.EMPTY);
     myExistential = existential;
     myContext = context;
     myParameter = parameter;
-    myUpperBound = PsiType.getJavaLangObject(myContext.getManager(), getResolveScope());
+    myUpperBound = getJavaLangObject(myContext.getManager(), getResolveScope());
+    myNullability = nullability;
   }
 
   private static final RecursionGuard<Object> guard = RecursionManager.createGuard("captureGuard");
@@ -49,7 +56,7 @@ public final class PsiCapturedWildcardType extends PsiType.Stub {
     PsiType originalBound = !wildcardType.isSuper() ? wildcardType.getBound() : null;
     PsiType glb = originalBound;
     for (PsiType boundType : boundTypes) {
-      final PsiType substitutedBoundType = captureSubstitutor.substitute(boundType);
+      final PsiType substitutedBoundType = captureSubstitutor.substituteIgnoringNullability(boundType);
       //glb for array types is not specified yet
       if (originalBound instanceof PsiArrayType &&
           substitutedBoundType instanceof PsiArrayType &&
@@ -83,6 +90,33 @@ public final class PsiCapturedWildcardType extends PsiType.Stub {
 
   private static PsiType getGreatestLowerBound(PsiType glb, PsiType bound, PsiWildcardType guardObject) {
     return guard.doPreventingRecursion(guardObject, true, () -> GenericsUtil.getGreatestLowerBound(glb, bound));
+  }
+
+  @Override
+  public @NotNull TypeNullability getNullability() {
+    if (myNullability == null) {
+      TypeNullability nullability = TypeNullability.UNKNOWN;
+      if (myExistential.isExtends()) {
+        nullability = myExistential.getNullability();
+      } else {
+        NullableNotNullManager manager = NullableNotNullManager.getInstance(myContext.getProject());
+        if (manager != null) {
+          NullabilityAnnotationInfo defaultNullability = manager.findDefaultTypeUseNullability(myContext);
+          if (defaultNullability != null && defaultNullability.getNullability() == Nullability.NOT_NULL) {
+            nullability = getUpperBound().getNullability().inherited();
+          }
+        }
+      }
+      myNullability = nullability;
+    }
+    return myNullability;
+  }
+
+  @Override
+  public @NotNull PsiType withNullability(@NotNull TypeNullability nullability) {
+    PsiCapturedWildcardType type = new PsiCapturedWildcardType(myExistential, myContext, myParameter, nullability);
+    type.setUpperBound(myUpperBound);
+    return type;
   }
 
   @Override

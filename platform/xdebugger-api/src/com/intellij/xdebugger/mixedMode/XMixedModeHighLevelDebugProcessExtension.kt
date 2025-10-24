@@ -17,20 +17,9 @@ import org.jetbrains.annotations.ApiStatus
  */
 @ApiStatus.Internal
 interface XMixedModeHighLevelDebugProcessExtension : XMixedModeDebugProcessExtension {
-  fun pauseMixedModeSession()
-
   suspend fun isStepWillBringIntoLowLevelCode(suspendContext: XSuspendContext): Boolean
 
-  /**
-   * Check that the high-level debugger supports stopping in this suspend context
-   */
-  suspend fun canStopHere(lowSuspendContext: XSuspendContext): Boolean
-
-  suspend fun refreshSuspendContextOnLowLevelStepFinish(suspendContext: XSuspendContext) : XSuspendContext?
-
   fun stoppedInHighLevelSuspendContext(suspendContext: XSuspendContext): Boolean
-
-  suspend fun abortHighLevelStepping()
 
   fun setNextStatement(suspendContext: XSuspendContext, position: XSourcePosition)
 }

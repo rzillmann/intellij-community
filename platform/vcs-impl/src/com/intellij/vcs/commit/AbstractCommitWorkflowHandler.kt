@@ -7,8 +7,8 @@ import com.intellij.openapi.application.WriteIntentReadAction
 import com.intellij.openapi.application.writeIntentReadAction
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.fileEditor.FileDocumentManager
-import com.intellij.openapi.progress.blockingContext
 import com.intellij.openapi.progress.coroutineToIndicator
+import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vcs.*
 import com.intellij.openapi.vcs.changes.*
@@ -161,9 +161,11 @@ abstract class AbstractCommitWorkflowHandler<W : AbstractCommitWorkflow, U : Com
   }
 
   private fun logCommitEvent(sessionInfo: CommitSessionInfo) {
+    val inDumbMode = DumbService.isDumb(project)
     CommitSessionCollector.getInstance(project).logCommit(sessionInfo.executor?.id,
                                                           ui.getIncludedChanges().size,
-                                                          ui.getIncludedUnversionedFiles().size)
+                                                          ui.getIncludedUnversionedFiles().size,
+                                                          inDumbMode)
   }
 
   protected abstract suspend fun updateWorkflow(sessionInfo: CommitSessionInfo): Boolean
@@ -274,10 +276,8 @@ abstract class AbstractCommitWorkflowHandler<W : AbstractCommitWorkflow, U : Com
         FileDocumentManager.getInstance().saveAllDocuments()
       }
       return withContext(Dispatchers.IO) {
-        blockingContext {
-          ScheduleForAdditionAction.Manager.addUnversionedFilesToVcsInSync(project, changeList, unversionedFiles) { newChanges ->
-            inclusionModel.addInclusion(newChanges)
-          }
+        ScheduleForAdditionAction.Manager.addUnversionedFilesToVcsInSync(project, changeList, unversionedFiles) { newChanges ->
+          inclusionModel.addInclusion(newChanges)
         }
       }
     }

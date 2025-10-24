@@ -23,6 +23,9 @@ import org.jetbrains.annotations.Nullable
 import java.lang.ref.SoftReference
 
 
+/**
+ * @see <a href="https://plugins.jetbrains.com/docs/intellij/structure-aware-navbar.html">Structure Aware Navigation Bar (IntelliJ Platform Docs)</a>
+ */
 abstract class StructureAwareNavBarModelExtension : AbstractNavBarModelExtension() {
   protected abstract val language: Language
   private var currentFile: SoftReference<PsiFile>? = null
@@ -39,11 +42,15 @@ abstract class StructureAwareNavBarModelExtension : AbstractNavBarModelExtension
           || !isAcceptableLanguage(psiFile)) {
         return null
       }
+
       val psiElement = psiFile.findElementAt(editor.caretModel.offset)
       if (isAcceptableLanguage(psiElement)) {
         try {
           buildStructureViewModel(psiFile, editor)?.let { model ->
-            return (model.currentEditorElement as? PsiElement)?.originalElement
+            val element = model.currentEditorElement as? PsiElement
+            return element
+              ?.takeIf { it.isValid }
+              ?.originalElement
           }
         }
         catch (_: IndexNotReadyException) {

@@ -22,25 +22,26 @@ interface SyntaxNodeDescriptor {
 
   val children: List<SyntaxNodeDescriptor>
 
-  val injections: List<InjectionNodeDescriptor>
-
-  @Deprecated("node doesn't hold repository anymore")
-  fun findInRepository(ruleId: Int): SyntaxNodeDescriptor
-
-  /**
-   * @return scope name if node is root for language or null otherwise
-   */
-  val scopeName: CharSequence?
-
-  @get:Deprecated("node doesn't hold parent reference anymore")
-  val parentNode: SyntaxNodeDescriptor?
-
   companion object {
     @JvmField
-    val EMPTY_NODE: SyntaxNodeDescriptor = SyntaxNodeDescriptorImpl(null,
-                                                                    emptyList(),
-                                                                    emptyList(),
-                                                                    emptyArray(),
-                                                                    emptyArray())
+    val EMPTY_NODE: SyntaxNodeDescriptor = object : SyntaxNodeDescriptor {
+      override fun getStringAttribute(key: Constants.StringKey): CharSequence? {
+        return null
+      }
+
+      override fun hasBackReference(key: Constants.StringKey): Boolean {
+        return false
+      }
+
+      override fun getCaptureRules(key: Constants.CaptureKey): Array<TextMateCapture?>? {
+        return null
+      }
+
+      override fun hasBackReference(key: Constants.CaptureKey, group: Int): Boolean {
+        return false
+      }
+
+      override val children: List<SyntaxNodeDescriptor> = emptyList()
+    }
   }
 }

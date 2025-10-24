@@ -15,14 +15,13 @@ import fleet.util.singleOrNullOrThrow
 import kotlinx.collections.immutable.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.channels.SendChannel
 import kotlinx.coroutines.channels.consume
-import kotlinx.coroutines.channels.consumeEach
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.selects.whileSelect
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
-import kotlin.coroutines.coroutineContext
 
 sealed interface ReteState {
   data class Db(val db: DB) : ReteState
@@ -48,7 +47,7 @@ data class Rete internal constructor(
     data class AddObserver<T>(
       val dbTimestamp: Long,
       val dependencies: Collection<ObservableMatch<*>>,
-      val query: Query<T>,
+      val query: Query<*, T>,
       val tracingKey: QueryTracingKey?,
       val observerId: ObserverId,
       val observer: QueryObserver<T>,
@@ -58,13 +57,13 @@ data class Rete internal constructor(
   }
 
   companion object : CoroutineContext.Key<Rete> {
-    val logger = logger<Rete>()
+    internal val logger = logger<Rete>()
   }
 
   override val key: CoroutineContext.Key<*> = Rete
 }
 
-class ReteEntity(override val eid: EID) : Entity {
+data class ReteEntity(override val eid: EID) : Entity {
   companion object : EntityType<ReteEntity>(ReteEntity::class, ::ReteEntity) {
     internal val ReteAttr = requiredTransient<Rete>("rete")
     internal val TransactorAttr = requiredTransient<Transactor>("kernel", Indexing.UNIQUE)
@@ -149,7 +148,9 @@ suspend fun <T> withRete(
               it[ReteEntity.TransactorAttr] = kernel
             }
           }
-          withContext(rete) {
+          // if an application has several instances of rete, it might nest their contexts (accidentally or on purpose)
+          // if only the network is overriden, it will at some point receive current context matches as dependencies and be really confused about those coming from another network
+          withContext(rete + ContextMatches(persistentListOf())) {
             body()
           }.also {
             change {
@@ -167,9 +168,11 @@ suspend fun <T> withRete(
  * if [Match] is retracted, [body] is cancelled and [WithMatchResult.Failure] returned to the caller
  * runs [body] on [Rete] [fleet.kernel.DbSource]
  * */
-suspend fun <T, U> Match<T>.withMatch(body: suspend CoroutineScope.(T) -> U): WithMatchResult<U> = let { self ->
-  withObservableMatches((observableSubmatches() as Sequence<ObservableMatch<*>>)) { body(self.value) }
-}
+suspend fun <T, U> Match<T>.withMatch(body: suspend CoroutineScope.(T) -> U): WithMatchResult<U> =
+  let { self ->
+    @Suppress("UNCHECKED_CAST")
+    withObservableMatches((observableSubmatches() as Sequence<ObservableMatch<*>>)) { body(self.value) }
+  }
 
 /**
  * Ensures [Rete] has processed all changes up until the timestamp of the [targetDb] or,
@@ -184,7 +187,7 @@ suspend fun waitForReteToCatchUp(targetDb: Q, cancellable: Boolean = true) {
   }
 
   // now that rete has caught up with targetDb, we can go and check if our context matches are still valid
-  val invalidation = coroutineContext[ContextMatches]?.matches
+  val invalidation = currentCoroutineContext()[ContextMatches]?.matches
     ?.firstOrNull { it.wasInvalidated }
     ?.let { invalidatedMatch ->
       UnsatisfiedMatchException(CancellationReason("match invalidated by rete", invalidatedMatch.match))
@@ -232,8 +235,8 @@ private sealed class ValidationResult {
 
 private val ReteSpinChangeInterceptor: ChangeInterceptor =
   ChangeInterceptor("rete") { changeFn, next ->
-    val matchInfos = coroutineContext[ContextMatches]?.matches ?: emptyList()
-    val rete = coroutineContext.rete
+    val matchInfos = currentCoroutineContext()[ContextMatches]?.matches ?: emptyList()
+    val rete = currentCoroutineContext().rete
     tailrec suspend fun spin(): Change {
       lateinit var validationVar: ValidationResult
       val change = next {
@@ -279,7 +282,7 @@ private val ReteSpinChangeInterceptor: ChangeInterceptor =
  * asynchronously adds [QueryObserver] to the [Query], returns a handle to asynchronously unsubscribe
  * [observer] should be as fast as possible or it will inhibit general throughput of the rete network
  */
-fun <T> Query<T>.observe(
+fun <T> Query<*, T>.observe(
   rete: Rete,
   dbTimestamp: Long,
   contextMatches: ContextMatches?,
@@ -287,15 +290,42 @@ fun <T> Query<T>.observe(
   observer: QueryObserver<T>,
 ): DisposableHandle = let { query ->
   val terminalId = Rete.ObserverId()
-  check(rete.commands.trySend(Rete.Command.AddObserver(dbTimestamp = dbTimestamp,
-                                                       dependencies = contextMatches?.matches ?: emptyList(),
-                                                       query = query,
-                                                       tracingKey = queryTracingKey,
-                                                       observerId = terminalId,
-                                                       observer = observer)).isSuccess) { "Rete is dead" }
+  check(rete.commands.trySend(Rete.Command.AddObserver(
+    dbTimestamp = dbTimestamp,
+    dependencies = contextMatches?.matches ?: emptyList(),
+    query = query,
+    tracingKey = queryTracingKey,
+    observerId = terminalId,
+    observer = observer,
+  )).isSuccess) { "Rete is dead" }
 
   DisposableHandle {
     check(rete.commands.trySend(Rete.Command.RemoveObserver(terminalId)).isSuccess) { "Rete is dead" }
+  }
+}
+
+private suspend fun <T> Query<*, T>.observeSuspend(observer: suspend (ReceiveChannel<TokenSet<T>>) -> Unit) {
+  val rete = currentCoroutineContext().rete
+  val (send, receive) = channels<TokenSet<T>>(Channel.UNLIMITED)
+  observe(
+    rete = rete,
+    dbTimestamp = db().timestamp,
+    queryTracingKey = currentCoroutineContext()[QueryTracingKey],
+    contextMatches = currentCoroutineContext()[ContextMatches],
+    observer = { initial ->
+      // trySends to the send channel may throw cancellation,
+      // but it will also cancel the flow itself,
+      // which will lead to observer removal from the DisposableHandle
+      send.trySend(TokenSet(asserted = initial,
+                            retracted = emptySet()))
+      OnTokens { tokens ->
+        send.trySend(tokens)
+      }
+    }
+  ).useInline {
+    receive.consume {
+      observer(receive)
+    }
   }
 }
 
@@ -303,20 +333,20 @@ fun <T> Query<T>.observe(
  * Runs [body] with [Rete] [DbSource]
  * */
 internal suspend fun <T> withReteDbSource(body: suspend CoroutineScope.() -> T): T =
-  requireNotNull(coroutineContext[Rete]) { "no rete on context" }.let { rete ->
-    if (coroutineContext[DbSource.ContextElement]?.dbSource == rete.dbSource) {
+  requireNotNull(currentCoroutineContext()[Rete]) { "no rete on context" }.let { rete ->
+    val currentDbSource = requireNotNull(currentCoroutineContext()[DbSource.ContextElement]).dbSource
+    if (currentDbSource == rete.dbSource) {
       coroutineScope(body)
     }
     else {
-      waitForReteToCatchUp(coroutineContext.transactor.dbState.value)
-      val dbSourceContextElement = DbSource.ContextElement(rete.dbSource)
-      val (res, dbTimestamp) = withContext(dbSourceContextElement + ReteSpinChangeInterceptor) {
+      waitForReteToCatchUp(currentDbSource.latest)
+      val (res, dbTimestamp) = withContext(DbSource.ContextElement(rete.dbSource) + ReteSpinChangeInterceptor) {
         val res = body()
         res to db().timestamp
       }
       // we're switching db source here:
-      // in general we don't know how this db source is ordered to Rete, 
-      // it might not necessary be a transactor source, 
+      // in general we don't know how this db source is ordered to Rete,
+      // it might not necessary be a transactor source,
       // it might be noria, or other Rete,
       // so let's ensure happens before here by catching up with what we've seen:
       waitForDbSourceToCatchUpWithTimestamp(dbTimestamp)
@@ -347,11 +377,11 @@ private inline fun <T> DisposableHandle.useInline(function: () -> T): T =
  * Whenever Rete coroutine observes the match gone, the coroutine is being proactively cancelled.
  * Cancelled coroutines are being joined, before starting a new ones.
  * */
-suspend fun <T> Query<T>.launchOnEach(body: suspend CoroutineScope.(T) -> Unit) {
-  val rete = currentCoroutineContext().rete
-  suspend fun impl(scope: CoroutineScope) {
+suspend fun <T> Query<Many, T>.launchOnEach(body: suspend CoroutineScope.(T) -> Unit) {
+  suspend fun impl(rete: Rete, scope: CoroutineScope, tokenSets: ReceiveChannel<TokenSet<T>>) {
     val jobs = adaptiveMapOf<Match<*>, Job>()
-    tokenSetsFlow().collect { tokenSet ->
+    for (tokenSet in tokenSets) {
+      waitForDbSourceToCatchUpWithTimestamp(rete.dbSource.latest.timestamp)
       tokenSet.retracted.forEach { m ->
         jobs.remove(m)?.cancelAndJoin()
       }
@@ -363,38 +393,25 @@ suspend fun <T> Query<T>.launchOnEach(body: suspend CoroutineScope.(T) -> Unit) 
       }
     }
   }
-  when {
-    rete.abortOnError -> coroutineScope { impl(this) }
-    else -> supervisorScope { impl(this) }
+
+  val rete = currentCoroutineContext().rete
+  observeSuspend { tokenSets ->
+    when {
+      rete.abortOnError -> coroutineScope { impl(rete, this, tokenSets) }
+      else -> supervisorScope { impl(rete, this, tokenSets) }
+    }
   }
 }
 
 /**
  * Every [TokenSet] produced by this flow corresponds to a single change to the db, if the set of matches has changed for the [Query]
  * */
-fun <T> Query<T>.tokenSetsFlow(): Flow<TokenSet<T>> = let { query ->
+fun <T> Query<*, T>.tokenSetsFlow(): Flow<TokenSet<T>> = let { query ->
   flow {
-    val (send, receive) = channels<TokenSet<T>>(Channel.UNLIMITED)
     val rete = currentCoroutineContext().rete
-    query.observe(rete = rete,
-                  dbTimestamp = db().timestamp,
-                  queryTracingKey = currentCoroutineContext()[QueryTracingKey],
-                  contextMatches = currentCoroutineContext()[ContextMatches]) { initial ->
-      // trySends to the send channel may throw cancellation,
-      // but it will also cancel the flow itself,
-      // which will lead to observer removal from the DisposableHandle
-      send.trySend(TokenSet(asserted = initial,
-                            retracted = emptySet()))
-      OnTokens { tokens ->
-        send.trySend(tokens)
-      }
-    }.useInline {
-      receive.consumeEach { ts ->
-        // collector might not be actually suspended, and thus,
-        // DbSource will not be invoked to update the db on thread local context.
-        // this trick partially mitigates this problem, but it does not always work,
-        // because the real collector might be actually running on a different thread
-        DbContext.threadBound.set(rete.reteState.value.dbOrThrow())
+    query.observeSuspend { tokenSets ->
+      for (ts in tokenSets) {
+        waitForDbSourceToCatchUpWithTimestamp(rete.dbSource.latest.timestamp)
         emit(ts)
       }
     }
@@ -404,25 +421,25 @@ fun <T> Query<T>.tokenSetsFlow(): Flow<TokenSet<T>> = let { query ->
 /**
  * see [tokenSetsFlow]
  * */
-fun <T> Query<T>.tokensFlow(): Flow<Token<T>> =
+fun <T> Query<*, T>.tokensFlow(): Flow<Token<T>> =
   tokenSetsFlow().flatMapConcat { tokenSet -> tokenSet.asFlow() }
 
 /**
  * Provides a flow of matches.
  * Retraction of a match may be handled by [Match.withMatch] function
  * */
-fun <T> Query<T>.matchesFlow(): Flow<Match<T>> =
+fun <T> Query<*, T>.matchesFlow(): Flow<Match<T>> =
   tokensFlow().mapNotNull { t -> t.match.takeIf { t.added } }
 
 /**
  * Transforms a [Query] into a [Flow].
  *
- * A collector of the returned [Flow] will not be cancelled when a match is invalidated, unlike [Query.collect].
+ * Unlike [Query.collect], the collector of the returned [Flow] will not be cancelled when a match is invalidated,
  *
  * For example, if [T] contains references to entities, it is possible that a collector of the returned [Flow] will observe a
  * more recent state of the database where these entities already were deleted.
  * */
-fun <T> Query<T>.asValuesFlow(): Flow<T> =
+fun <T> Query<*, T>.asValuesFlow(): Flow<T> =
   matchesFlow().map { it.value }
 
 /**
@@ -472,36 +489,32 @@ suspend fun <T> Flow<Match<T>>.collectLatestMatch(collector: suspend CoroutineSc
  * invokes [f] sequentially with each value of [Query] [Match]es
  * [f] is run in a presence of each [Match], cancelled if [Match] is retracted, and will be invoked for the subsequent ones
  * */
-suspend fun <T> Query<T>.collect(f: suspend CoroutineScope.(T) -> Unit) {
+suspend fun <T> Query<*, T>.collect(f: suspend CoroutineScope.(T) -> Unit) {
   matchesFlow().collectMatches(f)
 }
 
 /**
+ * DEPRECATED
+ * - for a state-query that never has more than one valid match at the same time ( query { } ) it is equivalent to Query.collect
+ * - for a query that can potentially have many valid matches (Entity.each()) it is almost definitely an error because only one of them will be processed
+ *
+ * If you want this behaviour for some inexplicable reason - use [asValuesFlow]
+ *
  * invokes [f] sequentially with each value of [Query] [Match]es
  * when new match arrives, the previous work is cancelled, see [Flow.collectLatest]
- * */
-suspend fun <T> Query<T>.collectLatest(f: suspend CoroutineScope.(T) -> Unit) {
+ */
+@Deprecated(replaceWith = ReplaceWith("collect(f)", "fleet.kernel.rete.collect"), message = "its usage is either equivalent to .collect() or is a bug")
+suspend fun <T> Query<*, T>.collectLatest(f: suspend CoroutineScope.(T) -> Unit) {
   matchesFlow().collectLatestMatch(f)
 }
-
-/**
- * returns first value of [Query] [Match]es
- * */
-suspend fun <T> Query<T>.first(): T = matchesFlow().first().value
-
-/**
- * returns first value of [Query] [Match]es that satisfies [p] to true,
- * [p] is being read-tracked
- * */
-suspend fun <T> Query<T>.first(p: (T) -> Boolean): T = filter(p).first()
 
 private val CoroutineContext.rete: Rete
   get() = requireNotNull(this[Rete]) { "no Rete on context $this" }
 
 /**
- * Accepts only single-valued queries, runs [body] with which ever value is current, cancels it when it is retracted
+ * Accepts only optional-valued queries, runs [body] if there is a match, fails if there is none, cancels when it is retracted
  * */
-suspend fun <T, U> Query<T>.withCurrentMatch(body: suspend CoroutineScope.(T) -> U): WithMatchResult<U> =
+suspend fun <T, U> Query<Maybe, T>.withCurrentMatchIfAny(body: suspend CoroutineScope.(T) -> U): WithMatchResult<U> =
   tokenSetsFlow().map { ts ->
     when (val currentMatch = ts.asserted.singleOrNullOrThrow()) {
       null -> WithMatchResult.Failure(CancellationReason("condition invalidated", null))
@@ -514,18 +527,4 @@ suspend fun <T, U> Query<T>.withCurrentMatch(body: suspend CoroutineScope.(T) ->
  * if match is retracted before [body] succeeds, [body] is cancelled and [WithMatchResult.Failure] returned to a caller
  * */
 suspend fun <T> PredicateQuery.withPredicate(body: suspend CoroutineScope.() -> T): WithMatchResult<T> =
-  withCurrentMatch { body() }
-
-sealed interface FinalValue<T> {
-  data class Value<T>(val value: T) : FinalValue<T>
-  class Absent<T> : FinalValue<T>
-}
-
-/**
- * Defined for single-valued queries, returns the last asserted value before the query is empty.
- * */
-suspend fun <T : Any> Query<T>.finalValue(): FinalValue<T> =
-  when (val lastSet = tokenSetsFlow().takeWhile { ts -> ts.asserted.isNotEmpty() }.lastOrNull()) {
-    null -> FinalValue.Absent()
-    else -> FinalValue.Value(lastSet.asserted.single().value)
-  }
+  withCurrentMatchIfAny { body() }

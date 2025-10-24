@@ -40,12 +40,12 @@ import org.jetbrains.kotlin.idea.caches.resolve.analyze
 import org.jetbrains.kotlin.idea.caches.resolve.analyzeInContext
 import org.jetbrains.kotlin.idea.caches.resolve.getResolutionFacade
 import org.jetbrains.kotlin.idea.caches.resolve.resolveImportReference
-import org.jetbrains.kotlin.idea.caches.resolve.util.getResolveScope
 import org.jetbrains.kotlin.idea.codeInsight.DescriptorToSourceUtilsIde
 import org.jetbrains.kotlin.idea.codeinsight.api.classic.quickfixes.KotlinImportQuickFixAction
 import org.jetbrains.kotlin.idea.codeinsight.api.classic.quickfixes.UnresolvedReferenceQuickFixFactory
 import org.jetbrains.kotlin.idea.core.KotlinIndicesHelper
 import org.jetbrains.kotlin.idea.core.isVisible
+import org.jetbrains.kotlin.idea.core.util.getResolveScope
 import org.jetbrains.kotlin.idea.imports.canBeReferencedViaImport
 import org.jetbrains.kotlin.idea.imports.getConstructors
 import org.jetbrains.kotlin.idea.imports.importableFqName
@@ -163,20 +163,24 @@ abstract class ImportFixBase<T : KtExpression> protected constructor(
                 descriptor is FunctionDescriptor && descriptor.isExtension -> ImportFixHelper.ImportKind.EXTENSION_FUNCTION
                 descriptor is FunctionDescriptor -> ImportFixHelper.ImportKind.FUNCTION
                 DescriptorUtils.isObject(descriptor) -> ImportFixHelper.ImportKind.OBJECT
+                descriptor is ClassDescriptor && descriptor.kind == ClassKind.ENUM_ENTRY -> ImportFixHelper.ImportKind.ENUM_ENTRY
                 descriptor is ClassDescriptor -> ImportFixHelper.ImportKind.CLASS
                 descriptor is TypeAliasDescriptor -> ImportFixHelper.ImportKind.TYPE_ALIAS
                 else -> null
             } ?: return@mapNotNull null
 
             val name = buildString {
-                descriptor.safeAs<CallableDescriptor>()?.let { callableDescriptor ->
-                    val extensionReceiverParameter = callableDescriptor.extensionReceiverParameter
+                if (
+                    descriptor is CallableDescriptor ||
+                    descriptor is ClassDescriptor && descriptor.kind == ClassKind.ENUM_ENTRY
+                ) {
+                    val extensionReceiverParameter = (descriptor as? CallableDescriptor)?.extensionReceiverParameter
                     if (extensionReceiverParameter != null) {
                         extensionReceiverParameter.type.constructor.declarationDescriptor.safeAs<ClassDescriptor>()?.name?.let {
                             append(it.asString())
                         }
                     } else {
-                        callableDescriptor.containingDeclaration.safeAs<ClassifierDescriptor>()?.name?.let {
+                        descriptor.containingDeclaration.safeAs<ClassifierDescriptor>()?.name?.let {
                             append(it.asString())
                         }
                     }

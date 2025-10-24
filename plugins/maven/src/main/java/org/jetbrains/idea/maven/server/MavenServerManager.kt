@@ -14,7 +14,7 @@ import java.util.function.Predicate
 interface MavenServerManager : Disposable {
   fun getAllConnectors(): Collection<MavenServerConnector>
 
-  fun restartMavenConnectors(project: Project, wait: Boolean, condition: Predicate<MavenServerConnector>)
+  fun shutdownMavenConnectors(project: Project, condition: Predicate<MavenServerConnector>)
 
   @ApiStatus.ScheduledForRemoval
   @Deprecated("use suspend", ReplaceWith("getConnector"))
@@ -31,15 +31,11 @@ interface MavenServerManager : Disposable {
 
   fun getMavenEventListener(): File
 
-  @ApiStatus.ScheduledForRemoval
-  @Deprecated("use createIndexer()")
-  fun createIndexer(project: Project): MavenIndexerWrapper
-
   fun createIndexer(): MavenIndexerWrapper
 
 
   @Deprecated("use {@link MavenGeneralSettings.getMavenHome()} and {@link MavenUtil.getMavenVersion()}",
-                  ReplaceWith("MavenGeneralSettings.getMavenHome() or MavenUtil.getMavenVersion()"))
+              ReplaceWith("MavenGeneralSettings.getMavenHome() or MavenUtil.getMavenVersion()"))
   fun getCurrentMavenVersion(): String? = null
 
   val isUseMaven2: Boolean
@@ -47,22 +43,26 @@ interface MavenServerManager : Disposable {
 
   @ApiStatus.Internal
   interface MavenServerConnectorFactory {
-    fun create(project: Project,
-               jdk: Sdk,
-               vmOptions: String,
-               debugPort: Int?,
-               mavenDistribution: MavenDistribution,
-               multimoduleDirectory: String): MavenServerConnector
+    fun create(
+      project: Project,
+      jdk: Sdk,
+      vmOptions: String,
+      debugPort: Int?,
+      mavenDistribution: MavenDistribution,
+      multimoduleDirectory: String,
+    ): MavenServerConnector
   }
 
   @ApiStatus.Internal
   open class MavenServerConnectorFactoryImpl : MavenServerConnectorFactory {
-    override fun create(project: Project,
-                        jdk: Sdk,
-                        vmOptions: String,
-                        debugPort: Int?,
-                        mavenDistribution: MavenDistribution,
-                        multimoduleDirectory: String): MavenServerConnector {
+    override fun create(
+      project: Project,
+      jdk: Sdk,
+      vmOptions: String,
+      debugPort: Int?,
+      mavenDistribution: MavenDistribution,
+      multimoduleDirectory: String,
+    ): MavenServerConnector {
       return MavenServerConnectorImpl(project, jdk, vmOptions, debugPort, mavenDistribution, multimoduleDirectory)
     }
   }

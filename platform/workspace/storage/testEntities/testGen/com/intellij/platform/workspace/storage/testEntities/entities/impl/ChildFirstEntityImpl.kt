@@ -1,17 +1,14 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.platform.workspace.storage.testEntities.entities.impl
 
-import com.intellij.platform.workspace.storage.*
 import com.intellij.platform.workspace.storage.ConnectionId
 import com.intellij.platform.workspace.storage.EntitySource
-import com.intellij.platform.workspace.storage.EntityType
 import com.intellij.platform.workspace.storage.GeneratedCodeApiVersion
 import com.intellij.platform.workspace.storage.GeneratedCodeImplVersion
+import com.intellij.platform.workspace.storage.WorkspaceEntityBuilder
 import com.intellij.platform.workspace.storage.MutableEntityStorage
 import com.intellij.platform.workspace.storage.WorkspaceEntity
 import com.intellij.platform.workspace.storage.WorkspaceEntityInternalApi
-import com.intellij.platform.workspace.storage.annotations.Abstract
-import com.intellij.platform.workspace.storage.annotations.Child
 import com.intellij.platform.workspace.storage.impl.EntityLink
 import com.intellij.platform.workspace.storage.impl.ModifiableWorkspaceEntityBase
 import com.intellij.platform.workspace.storage.impl.WorkspaceEntityBase
@@ -24,10 +21,12 @@ import com.intellij.platform.workspace.storage.instrumentation.MutableEntityStor
 import com.intellij.platform.workspace.storage.metadata.model.EntityMetadata
 import com.intellij.platform.workspace.storage.testEntities.entities.ChildAbstractBaseEntity
 import com.intellij.platform.workspace.storage.testEntities.entities.ChildFirstEntity
+import com.intellij.platform.workspace.storage.testEntities.entities.ChildFirstEntityBuilder
 import com.intellij.platform.workspace.storage.testEntities.entities.ParentAbEntity
+import com.intellij.platform.workspace.storage.testEntities.entities.ParentAbEntityBuilder
 
 @GeneratedCodeApiVersion(3)
-@GeneratedCodeImplVersion(6)
+@GeneratedCodeImplVersion(7)
 @OptIn(WorkspaceEntityInternalApi::class)
 internal class ChildFirstEntityImpl(private val dataSource: ChildFirstEntityData) : ChildFirstEntity, WorkspaceEntityBase(dataSource) {
 
@@ -69,7 +68,7 @@ internal class ChildFirstEntityImpl(private val dataSource: ChildFirstEntityData
 
 
   internal class Builder(result: ChildFirstEntityData?) : ModifiableWorkspaceEntityBase<ChildFirstEntity, ChildFirstEntityData>(
-    result), ChildFirstEntity.Builder {
+    result), ChildFirstEntityBuilder {
     internal constructor() : this(ChildFirstEntityData())
 
     override fun applyToBuilder(builder: MutableEntityStorage) {
@@ -149,16 +148,16 @@ internal class ChildFirstEntityImpl(private val dataSource: ChildFirstEntityData
         changedProperty.add("commonData")
       }
 
-    override var parentEntity: ParentAbEntity.Builder
+    override var parentEntity: ParentAbEntityBuilder
       get() {
         val _diff = diff
         return if (_diff != null) {
           @OptIn(EntityStorageInstrumentationApi::class)
-          ((_diff as MutableEntityStorageInstrumentation).getParentBuilder(PARENTENTITY_CONNECTION_ID, this) as? ParentAbEntity.Builder)
-          ?: (this.entityLinks[EntityLink(false, PARENTENTITY_CONNECTION_ID)]!! as ParentAbEntity.Builder)
+          ((_diff as MutableEntityStorageInstrumentation).getParentBuilder(PARENTENTITY_CONNECTION_ID, this) as? ParentAbEntityBuilder)
+          ?: (this.entityLinks[EntityLink(false, PARENTENTITY_CONNECTION_ID)]!! as ParentAbEntityBuilder)
         }
         else {
-          this.entityLinks[EntityLink(false, PARENTENTITY_CONNECTION_ID)]!! as ParentAbEntity.Builder
+          this.entityLinks[EntityLink(false, PARENTENTITY_CONNECTION_ID)]!! as ParentAbEntityBuilder
         }
       }
       set(value) {
@@ -209,7 +208,7 @@ internal class ChildFirstEntityData : WorkspaceEntityData<ChildFirstEntity>() {
   internal fun isCommonDataInitialized(): Boolean = ::commonData.isInitialized
   internal fun isFirstDataInitialized(): Boolean = ::firstData.isInitialized
 
-  override fun wrapAsModifiable(diff: MutableEntityStorage): WorkspaceEntity.Builder<ChildFirstEntity> {
+  override fun wrapAsModifiable(diff: MutableEntityStorage): WorkspaceEntityBuilder<ChildFirstEntity> {
     val modifiable = ChildFirstEntityImpl.Builder(null)
     modifiable.diff = diff
     modifiable.id = createEntityId()
@@ -236,9 +235,9 @@ internal class ChildFirstEntityData : WorkspaceEntityData<ChildFirstEntity>() {
     return ChildFirstEntity::class.java
   }
 
-  override fun createDetachedEntity(parents: List<WorkspaceEntity.Builder<*>>): WorkspaceEntity.Builder<*> {
+  override fun createDetachedEntity(parents: List<WorkspaceEntityBuilder<*>>): WorkspaceEntityBuilder<*> {
     return ChildFirstEntity(commonData, firstData, entitySource) {
-      parents.filterIsInstance<ParentAbEntity.Builder>().singleOrNull()?.let { this.parentEntity = it }
+      parents.filterIsInstance<ParentAbEntityBuilder>().singleOrNull()?.let { this.parentEntity = it }
     }
   }
 

@@ -88,7 +88,7 @@ public final class PersistentFSRecordsOverInMemoryStorage implements PersistentF
     }
     this.maxRecords = maxRecords;
     //this.records = new UnsafeBuffer(maxRecords * RECORD_SIZE_IN_BYTES+ HEADER_SIZE);
-    this.records = ByteBuffer.allocate(maxRecords * RecordLayout.RECORD_SIZE_IN_BYTES + HEADER_SIZE)
+    this.records = ByteBuffer.allocateDirect(maxRecords * RecordLayout.RECORD_SIZE_IN_BYTES + HEADER_SIZE)
       .order(nativeOrder());
 
     if (Files.exists(path)) {
@@ -328,6 +328,24 @@ public final class PersistentFSRecordsOverInMemoryStorage implements PersistentF
   @Override
   public int getVersion() throws IOException {
     return getIntHeaderField(HEADER_VERSION_OFFSET);
+  }
+
+  @Override
+  public int getFlags() throws IOException {
+    return getIntHeaderField(HEADER_FLAGS_OFFSET);
+  }
+
+  @Override
+  public boolean updateFlags(int flagsToAdd, int flagsToRemove) throws IOException {
+    int currentFlags = (int)INT_HANDLE.getVolatile(records, HEADER_FLAGS_OFFSET);
+    int newFlags = (currentFlags & ~flagsToRemove) | flagsToAdd;
+    if (newFlags == currentFlags) {
+      return false;
+    }
+    //MAYBE RC: use CAS to make an update atomic?
+    INT_HANDLE.setVolatile(records, HEADER_FLAGS_OFFSET, newFlags);
+    markDirty();
+    return true;
   }
 
   @Override

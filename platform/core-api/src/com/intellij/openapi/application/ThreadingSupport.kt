@@ -2,6 +2,7 @@
 package com.intellij.openapi.application
 
 import com.intellij.util.concurrency.annotations.RequiresBlockingContext
+import com.intellij.util.concurrency.annotations.RequiresWriteLock
 import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.annotations.Contract
 import org.jetbrains.annotations.TestOnly
@@ -21,6 +22,15 @@ interface ThreadingSupport {
    * @return the result returned by the computation.
    */
   fun <T> runWriteIntentReadAction(computation: () -> T): T
+
+  /**
+   * Runs the specified [action] synchronously with a write-intent lock. The action is executed
+   * immediately if no write action is currently running.
+   *
+   * @param action the computation to perform.
+   * @return `true` if the action was executed, `false` if another write-intent lock could not be acquired.
+   */
+  fun tryRunWriteIntentReadAction(action: () -> Unit): Boolean
 
   /**
    * Executes a runnable with a write-intent lock only if locking is permitted on this thread
@@ -50,26 +60,6 @@ interface ThreadingSupport {
   @ApiStatus.Internal
   fun <T> runUnlockingIntendedWrite(action: () -> T): T
 
-  /**
-   * Set a [ReadActionListener].
-   *
-   * Only one listener can be set. It is error to set second listener.
-   *
-   * @param listener the listener to set
-   */
-  @ApiStatus.Internal
-  fun setReadActionListener(listener: ReadActionListener)
-
-  /**
-   * Removes a [ReadActionListener].
-   *
-   * It is error to remove listener which was not set early.
-   *
-   * @param listener the listener to remove
-   */
-  @ApiStatus.Internal
-  fun removeReadActionListener(listener: ReadActionListener)
-
   @RequiresBlockingContext
   fun <T> runReadAction(clazz: Class<*>, action: () -> T): T
 
@@ -97,39 +87,50 @@ interface ThreadingSupport {
   /**
    * Adds a [WriteActionListener].
    *
-   * Only one listener can be set. It is error to set second listener.
-   *
    * @param listener the listener to set
    */
-  fun setWriteActionListener(listener: WriteActionListener)
+  fun addWriteActionListener(listener: WriteActionListener)
+
+  /**
+   * Removes a [WriteActionListener].
+   *
+   * It is error to remove listener which was not added early.
+   *
+   * @param listener the listener to remove
+   */
+  @ApiStatus.Internal
+  fun removeWriteActionListener(listener: WriteActionListener)
 
   /**
    * Adds a [WriteIntentReadActionListener].
    *
-   * Only one listener can be set. It is an error to set the second listener.
-   *
    * @param listener the listener to set
    */
-  fun setWriteIntentReadActionListener(listener: WriteIntentReadActionListener)
+  fun addWriteIntentReadActionListener(listener: WriteIntentReadActionListener)
 
   /**
    * Removes a [WriteIntentReadActionListener].
    *
-   * It is an error to remove the listener which was not set early.
+   * It is an error to remove the listener which was not added early.
    *
    * @param listener the listener to remove
    */
   fun removeWriteIntentReadActionListener(listener: WriteIntentReadActionListener)
 
   /**
-   * Removes a [WriteActionListener].
+   * Set a [ReadActionListener].
    *
-   * It is error to remove listener which was not set early.
+   * @param listener the listener to set
+   */
+  fun addReadActionListener(listener: ReadActionListener)
+
+  /**
+   * Removes a [ReadActionListener].
    *
    * @param listener the listener to remove
    */
   @ApiStatus.Internal
-  fun removeWriteActionListener(listener: WriteActionListener)
+  fun removeReadActionListener(listener: ReadActionListener)
 
   @RequiresBlockingContext
   fun <T> runWriteAction(clazz: Class<*>, action: () -> T): T
@@ -174,48 +175,21 @@ interface ThreadingSupport {
   fun isWriteAccessAllowed(): Boolean
 
   @Deprecated("Use `runReadAction` instead")
-  fun acquireReadActionLock(): AccessToken
+  fun acquireReadActionLock(): CleanupAction
 
   @Deprecated("Use `runWriteAction`, `WriteAction.run`, or `WriteAction.compute` instead")
-  fun acquireWriteActionLock(marker: Class<*>): AccessToken
+  fun acquireWriteActionLock(marker: Class<*>): CleanupAction
 
   /**
    * Disable write actions till token will be released.
    */
-  fun prohibitWriteActionsInside(): AccessToken
-
-  /**
-   * Adds a [LockAcquisitionListener].
-   *
-   * Only one listener can be set. It is an error to set the second listener.
-   *
-   * @param listener the listener to set
-   */
-  @ApiStatus.Internal
-  fun setLockAcquisitionListener(listener: LockAcquisitionListener)
+  fun prohibitWriteActionsInside(): CleanupAction
 
   @ApiStatus.Internal
   fun setWriteLockReacquisitionListener(listener: WriteLockReacquisitionListener)
 
   @ApiStatus.Internal
   fun removeWriteLockReacquisitionListener(listener: WriteLockReacquisitionListener)
-
-  @ApiStatus.Internal
-  fun setLegacyIndicatorProvider(provider: LegacyProgressIndicatorProvider)
-
-  @ApiStatus.Internal
-  fun removeLegacyIndicatorProvider(provider: LegacyProgressIndicatorProvider)
-
-
-  /**
-   * Removes a [LockAcquisitionListener].
-   *
-   * It is error to remove listener which was not set early.
-   *
-   * @param listener the listener to remove
-   */
-  @ApiStatus.Internal
-  fun removeLockAcquisitionListener(listener: LockAcquisitionListener)
 
   /**
    * Prevents any attempt to use R/W locks inside [action].
@@ -245,7 +219,7 @@ interface ThreadingSupport {
   fun isInsideUnlockedWriteIntentLock(): Boolean
 
   @ApiStatus.Internal
-  fun getPermitAsContextElement(baseContext: CoroutineContext, shared: Boolean): Pair<CoroutineContext, AccessToken>
+  fun getPermitAsContextElement(baseContext: CoroutineContext, shared: Boolean): Pair<CoroutineContext, CleanupAction>
 
   @ApiStatus.Internal
   fun isParallelizedReadAction(context: CoroutineContext): Boolean
@@ -279,6 +253,13 @@ interface ThreadingSupport {
   @TestOnly
   fun <T> releaseTheAcquiredWriteIntentLockThenExecuteActionAndTakeWriteIntentLockBack(action: () -> T): T = action()
 
+  /**
+   * Makes [runPreventiveWriteIntentReadAction] no-op inside [action].
+   * This is needed for platform code that is sure that the called action would not abuse locks
+   */
+  @ApiStatus.Internal
+  fun <T> relaxPreventiveLockingActions(action: () -> T) : T
+
   class LockAccessDisallowed(override val message: String) : IllegalStateException(message)
 
   /**
@@ -286,4 +267,53 @@ interface ThreadingSupport {
    * [action] is guaranteed to run. It may run immediately on the current thread or after some time on an unspecified thread.
    */
   fun runWhenWriteActionIsCompleted(action: () -> Unit)
+
+  /**
+   * Executes [action] with [blockingExecutor], and transfers write access to [action].
+   * This function requires the acquired write lock.
+   *
+   * [blockingExecutor] must block the running thread until [action] finishes.
+   * [blockingExecutor] can treat the passed runnable in a special way, so we wrap the runnable with [RunnableWithTransferredWriteAction]
+   *
+   * A typical example of [blockingExecutor] is [javax.swing.SwingUtilities.invokeAndWait]
+   */
+  @RequiresWriteLock
+  fun transferWriteActionAndBlock(blockingExecutor: (RunnableWithTransferredWriteAction) -> Unit, action: Runnable)
+
+  /**
+   * This function allows to conditionally execute [action] under write lock while checking a condition provided by [shouldProceedWithWriteAction].
+   *
+   * The function works in the following steps:
+   * 1. Acquire write-intent lock;
+   * 2. Execute [shouldProceedWithWriteAction];
+   * 3. If true, proceed with [action] under write lock which was atomically upgraded from the previously acquired write-intent;
+   * 4. If false, return without executing [action];
+   * 5. Release all acquired locks.
+   *
+   * Normally, write actions are heavy -- they need to terminate all existing read actions and cancel pending ones.
+   * Sometimes it is possible to avoid the execution of write action, but the decision needs to be taken with a consistent worldview.
+   * This function can be useful when the client is able to take this decision, for example, in `readAndWriteAction` group of functions
+   */
+  @ApiStatus.Internal
+  suspend fun <T : Any> runWriteActionWithCheckInWriteIntent(shouldProceedWithWriteAction: () -> Boolean, action: () -> T): T?
+
+  /**
+   * Executes write action while suspending for lock acquisition.
+   */
+  suspend fun <T> runWriteAction(action: () -> T): T
+
+  /**
+   * A marker class that helps others to identify that the runnable needs to run quickly
+   */
+  abstract class RunnableWithTransferredWriteAction : Runnable {
+    companion object {
+      const val NAME: String = "RunnableWithTransferredWriteAction"
+    }
+
+    override fun toString(): String {
+      return NAME
+    }
+  }
 }
+
+typealias CleanupAction = () -> Unit

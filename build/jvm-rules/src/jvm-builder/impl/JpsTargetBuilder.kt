@@ -12,10 +12,8 @@ import io.opentelemetry.api.trace.Tracer
 import it.unimi.dsi.fastutil.objects.Object2ObjectArrayMap
 import it.unimi.dsi.fastutil.objects.ObjectArraySet
 import it.unimi.dsi.fastutil.objects.ObjectLinkedOpenCustomHashSet
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ensureActive
-import org.jetbrains.bazel.jvm.worker.dependencies.DependencyAnalyzer
-import org.jetbrains.bazel.jvm.worker.state.RemovedFileInfo
-import org.jetbrains.bazel.jvm.worker.state.SourceFileStateResult
 import org.jetbrains.bazel.jvm.span
 import org.jetbrains.bazel.jvm.use
 import org.jetbrains.bazel.jvm.util.slowEqualsAwareHashStrategy
@@ -31,11 +29,13 @@ import org.jetbrains.bazel.jvm.worker.core.cleanOutputsCorrespondingToChangedFil
 import org.jetbrains.bazel.jvm.worker.core.initFsStateForCleanBuild
 import org.jetbrains.bazel.jvm.worker.core.markTargetUpToDate
 import org.jetbrains.bazel.jvm.worker.core.output.OutputSink
+import org.jetbrains.bazel.jvm.worker.dependencies.DependencyAnalyzer
+import org.jetbrains.bazel.jvm.worker.state.RemovedFileInfo
+import org.jetbrains.bazel.jvm.worker.state.SourceFileStateResult
 import org.jetbrains.jps.ModuleChunk
 import org.jetbrains.jps.builders.BuildRootDescriptor
 import org.jetbrains.jps.builders.BuildTarget
 import org.jetbrains.jps.builders.java.JavaBuilderUtil
-import org.jetbrains.jps.builders.java.JavaBuilderUtil.markDirtyDependenciesForInitialRound
 import org.jetbrains.jps.builders.storage.BuildDataCorruptedException
 import org.jetbrains.jps.incremental.BuildListener
 import org.jetbrains.jps.incremental.Builder
@@ -59,8 +59,6 @@ import java.nio.file.Path
 import java.util.Map
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
-import kotlin.collections.map
-import kotlin.collections.mapTo
 import kotlin.coroutines.coroutineContext
 import kotlin.time.DurationUnit
 import kotlin.time.toDuration
@@ -98,7 +96,7 @@ internal class JpsTargetBuilder(
           target = moduleTarget,
           builders = builders,
           outputSink = outputSink,
-          buildState = buildState,
+          sourceFileState = buildState,
           dependencyAnalyzer = dependencyAnalyzer,
         )
       }
@@ -145,7 +143,7 @@ internal class JpsTargetBuilder(
         throw RebuildRequestedException(cause)
       }
       else {
-        // should stop the build with error
+        // should stop the build with an error
         throw e
       }
     }
@@ -159,26 +157,26 @@ internal class JpsTargetBuilder(
     builders: Array<out ModuleLevelBuilder>,
     outputSink: OutputSink,
     dependencyAnalyzer: DependencyAnalyzer?,
+    asyncTaskScope: CoroutineScope,
     parentSpan: Span,
   ): Boolean {
-    val chunk = ModuleChunk(java.util.Set.of<ModuleBuildTarget>(target))
-
     if (context.scope.isIncrementalCompilation && dependencyAnalyzer != null) {
       // before the first compilation round starts: find and mark dirty all classes that depend on removed or moved classes so
       // that all such files are compiled in the first round.
-      tracer.span("markDirtyDependenciesForInitialRound") { span ->
+      tracer.span("markDirtyDependenciesForInitialRound") {
         markDirtyDependenciesForInitialRound(
           context = context,
           target = target,
-          dirtyFilesHolder = BazelDirtyFileHolder(context, context.projectDescriptor.fsState, chunk.targets.single() as BazelModuleBuildTarget),
-          chunk = chunk,
+          dirtyFilesHolder = BazelDirtyFileHolder(context, context.projectDescriptor.fsState, target),
           tracer = tracer,
           dependencyAnalyzer = dependencyAnalyzer,
           dataProvider = dataManager!!,
+          asyncTaskScope = asyncTaskScope,
         )
       }
     }
 
+    val chunk = ModuleChunk(java.util.Set.of<ModuleBuildTarget>(target))
     for (builder in builders) {
       builder.chunkBuildStarted(context, chunk)
     }
@@ -218,7 +216,7 @@ internal class JpsTargetBuilder(
 
             val start = System.nanoTime()
             val processedSourcesBefore = outputConsumer.getNumberOfProcessedSources()
-            val buildResult = tracer.span("runBuilder") { span ->
+            val buildResult = tracer.span("runBuilder") {
               if (builder is BazelTargetBuilder) {
                 builder.build(
                   context = context,
@@ -254,7 +252,7 @@ internal class JpsTargetBuilder(
             }
             else if (buildResult == ModuleLevelBuilder.ExitCode.CHUNK_REBUILD_REQUIRED) {
               if (!rebuildFromScratchRequested && !context.scope.isRebuild) {
-                var infoMessage = "Builder \"${builder.presentableName}\" requested rebuild of module chunk \"${chunk.name}\""
+                var infoMessage = "Builder \"${builder.presentableName}\" requested rebuild of module chunk \"${target.targetLabel}\""
                 infoMessage += ".\n"
                 infoMessage += "Consider building whole project or rebuilding the module."
                 context.compilerMessage(kind = Kind.INFO, message = infoMessage)
@@ -265,12 +263,11 @@ internal class JpsTargetBuilder(
                 FSOperations.markDirty(context, CompilationRound.NEXT, chunk, null)
                 // reverting to the beginning
                 nextPassRequired = true
-                outputConsumer.clear()
                 break
               }
               else {
                 parentSpan.addEvent("builder requested second chunk rebuild", Attributes.of(
-                  AttributeKey.stringKey("builder"), builder.presentableName,
+                  AttributeKey.stringKey("builder"), target.targetLabel,
                 ))
               }
             }
@@ -288,13 +285,11 @@ internal class JpsTargetBuilder(
       } while (nextPassRequired)
     }
     finally {
-      outputConsumer.fireFileGeneratedEvents()
-      outputConsumer.clear()
       for (builder in builders) {
         builder.chunkBuildFinished(context, chunk)
       }
       if (Utils.errorsDetected(context)) {
-        context.compilerMessage(kind = Kind.JPS_INFO, message = "Errors occurred while compiling module ${chunk.presentableShortName}")
+        context.compilerMessage(kind = Kind.JPS_INFO, message = "Errors occurred while compiling ${target.targetLabel}")
       }
     }
 
@@ -305,7 +300,7 @@ internal class JpsTargetBuilder(
     context: BazelCompileContext,
     target: BazelModuleBuildTarget,
     builders: Array<out ModuleLevelBuilder>,
-    buildState: SourceFileStateResult?,
+    sourceFileState: SourceFileStateResult?,
     outputSink: OutputSink,
     dependencyAnalyzer: DependencyAnalyzer?,
   ) {
@@ -321,7 +316,7 @@ internal class JpsTargetBuilder(
       tracer.spanBuilder("fs state init")
         .setAttribute("isRebuild", context.scope.isRebuild)
         .use { span ->
-          if (context.scope.isRebuild || buildState == null) {
+          if (context.scope.isRebuild || sourceFileState == null) {
             initFsStateForCleanBuild(context = context, target = target)
           }
           else {
@@ -329,7 +324,7 @@ internal class JpsTargetBuilder(
             require(context.getUserData(CURRENT_ROUND_DELTA_KEY) == null)
             require(context.getUserData(NEXT_ROUND_DELTA_KEY) == null)
             val buildRootIndex = projectDescriptor.buildRootIndex as BazelBuildRootIndex
-            val changedOrAddedFiles = buildState.changedOrAddedFiles
+            val changedOrAddedFiles = sourceFileState.changedOrAddedFiles
             if (changedOrAddedFiles.isEmpty()) {
               fsState.getDelta(target).initRecompile(Map.of())
             }
@@ -344,7 +339,7 @@ internal class JpsTargetBuilder(
             }
             fsState.markInitialScanPerformed(target)
 
-            val deletedFiles = buildState.deletedFiles
+            val deletedFiles = sourceFileState.deletedFiles
             if (!deletedFiles.isEmpty()) {
               doneSomething = deleteOutputsAssociatedWithDeletedPaths(
                 context = context,
@@ -366,6 +361,7 @@ internal class JpsTargetBuilder(
             builders = builders,
             outputSink = outputSink,
             dependencyAnalyzer = dependencyAnalyzer,
+            asyncTaskScope = this@span,
             parentSpan = span,
           )) {
           doneSomething = true

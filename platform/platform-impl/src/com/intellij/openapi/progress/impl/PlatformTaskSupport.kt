@@ -11,19 +11,20 @@ import com.intellij.openapi.application.asContextElement
 import com.intellij.openapi.application.contextModality
 import com.intellij.openapi.application.ex.ApplicationManagerEx
 import com.intellij.openapi.application.impl.JobProvider
-import com.intellij.openapi.application.impl.RawSwingDispatcher
 import com.intellij.openapi.application.impl.inModalContext
 import com.intellij.openapi.application.isModalAwareContext
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.diagnostic.trace
 import com.intellij.openapi.progress.*
-import com.intellij.openapi.progress.util.*
-import com.intellij.openapi.progress.util.ProgressIndicatorWithDelayedPresentation.DEFAULT_PROGRESS_DIALOG_POSTPONE_TIME_MILLIS
+import com.intellij.openapi.progress.util.ProgressDialogUI
+import com.intellij.openapi.progress.util.ProgressWindow
+import com.intellij.openapi.progress.util.createDialogWrapper
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.openapi.ui.impl.DialogWrapperPeerImpl.isHeadlessEnv
 import com.intellij.openapi.util.EmptyRunnable
 import com.intellij.openapi.util.IntellijInternalApi
+import com.intellij.openapi.util.NlsContexts.ModalProgressTitle
 import com.intellij.openapi.util.NlsContexts.ProgressTitle
 import com.intellij.openapi.util.registry.Registry
 import com.intellij.openapi.wm.ex.IdeFrameEx
@@ -38,14 +39,18 @@ import com.intellij.platform.util.coroutines.flow.throttle
 import com.intellij.platform.util.progress.ProgressPipe
 import com.intellij.platform.util.progress.ProgressState
 import com.intellij.platform.util.progress.createProgressPipe
+import com.intellij.ui.progress.ProgressUIUtil
 import com.intellij.util.AwaitCancellationAndInvoke
+import com.intellij.util.application
 import com.intellij.util.awaitCancellationAndInvoke
+import com.intellij.util.ui.RawSwingDispatcher
 import fleet.kernel.rete.collect
 import fleet.kernel.rete.filter
 import fleet.kernel.tryWithEntities
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import org.jetbrains.annotations.ApiStatus.Internal
+import org.jetbrains.annotations.Nls
 import java.awt.*
 import javax.swing.JFrame
 import javax.swing.SwingUtilities
@@ -64,7 +69,7 @@ private val LOG = logger<PlatformTaskSupport>()
 @Internal
 class PlatformTaskSupport(private val cs: CoroutineScope) : TaskSupport {
   data class ProgressStartedEvent(
-    val title: @ProgressTitle String,
+    val title: @Nls String,
     val cancellation: TaskCancellation,
     val context: CoroutineContext,
     val updates: Flow<ProgressState>, // finite
@@ -74,7 +79,7 @@ class PlatformTaskSupport(private val cs: CoroutineScope) : TaskSupport {
 
   val progressStarted: SharedFlow<ProgressStartedEvent> = _progressStarted.asSharedFlow()
 
-  private suspend fun progressStarted(title: @ProgressTitle String, cancellation: TaskCancellation, updates: Flow<ProgressState>) {
+  private suspend fun progressStarted(title: @Nls String, cancellation: TaskCancellation, updates: Flow<ProgressState>) {
     val context = coroutineContext
     _progressStarted.emit(ProgressStartedEvent(title, cancellation, context, updates.finishWhenJobCompletes(context.job)))
   }
@@ -93,10 +98,12 @@ class PlatformTaskSupport(private val cs: CoroutineScope) : TaskSupport {
     title: @ProgressTitle String,
     cancellation: TaskCancellation,
     suspender: TaskSuspender?,
+    visibleInStatusBar: Boolean,
     action: suspend CoroutineScope.() -> T,
   ): T = coroutineScope {
     if (!isRhizomeProgressEnabled) {
-      return@coroutineScope withBackgroundProgressInternalOld(project, title, cancellation, suspender, action)
+      return@coroutineScope withBackgroundProgressInternalOld(project, title, cancellation, suspender,
+                                                              visibleInStatusBar = visibleInStatusBar, action)
     }
 
     LOG.trace { "Task received: title=$title, project=$project" }
@@ -105,7 +112,7 @@ class PlatformTaskSupport(private val cs: CoroutineScope) : TaskSupport {
     val pipe = cs.createProgressPipe()
 
     val taskContext = currentCoroutineContext()
-    val taskInfoEntityJob = cs.createTaskInfoEntity(project, title, cancellation, taskSuspender, taskContext, pipe)
+    val taskInfoEntityJob = cs.createTaskInfoEntity(project, title, cancellation, taskSuspender, visibleInStatusBar, taskContext, pipe)
 
     try {
       taskSuspender?.attachTask()
@@ -133,12 +140,13 @@ class PlatformTaskSupport(private val cs: CoroutineScope) : TaskSupport {
     title: String,
     cancellation: TaskCancellation,
     suspender: TaskSuspender?,
+    visibleInStatusBar: Boolean,
     taskContext: CoroutineContext,
     pipe: ProgressPipe,
   ): Job = launch {
     val taskStorage = TaskStorage.getInstance()
 
-    val taskInfoEntity = taskStorage.addTask(project, title, cancellation, suspender.getSuspendableInfo()) ?: return@launch
+    val taskInfoEntity = taskStorage.addTask(project, title, cancellation, suspender.getSuspendableInfo(), visibleInStatusBar) ?: return@launch
     val entityId = taskInfoEntity.eid
     LOG.trace { "Task added to storage: entityId=$entityId, title=$title" }
 
@@ -272,11 +280,14 @@ class PlatformTaskSupport(private val cs: CoroutineScope) : TaskSupport {
     title: @ProgressTitle String,
     cancellation: TaskCancellation,
     providedSuspender: TaskSuspender?,
+    visibleInStatusBar: Boolean,
     action: suspend CoroutineScope.() -> T,
   ): T = coroutineScope {
     val taskJob = coroutineContext.job
     val pipe = cs.createProgressPipe()
-    val progressModel = ProgressIndicatorModel(title, cancellation, onCancel =  {taskJob.cancel()})
+    val progressModel = ProgressIndicatorModel(title, cancellation,
+                                               visibleInStatusBar = visibleInStatusBar,
+                                               onCancel =  {taskJob.cancel()})
 
     val taskSuspender = retrieveSuspender(providedSuspender)
     taskSuspender?.attachTask()
@@ -326,7 +337,7 @@ class PlatformTaskSupport(private val cs: CoroutineScope) : TaskSupport {
 
   override suspend fun <T> withModalProgressInternal(
     owner: ModalTaskOwner,
-    title: @ProgressTitle String,
+    title: @ModalProgressTitle String,
     cancellation: TaskCancellation,
     action: suspend CoroutineScope.() -> T,
   ): T {
@@ -344,20 +355,32 @@ class PlatformTaskSupport(private val cs: CoroutineScope) : TaskSupport {
 
   override fun <T> runWithModalProgressBlockingInternal(
     owner: ModalTaskOwner,
-    title: @ProgressTitle String,
+    title: @ModalProgressTitle String,
     cancellation: TaskCancellation,
     action: suspend CoroutineScope.() -> T,
-  ): T = prepareThreadContext { ctx ->
-    val descriptor = ModalIndicatorDescriptor(owner, title, cancellation)
-    val scope = CoroutineScope(ctx + ClientId.coroutineContext())
-    try {
-      scope.runWithModalProgressBlockingInternal(dispatcher = null, descriptor, action)
+  ): T {
+    if (application.holdsReadLock()) {
+      error("This thread holds a read lock while trying to invoke a modal progress." +
+            "Modal progresses are allowed only under write-intent lock because they need to prevent background write actions." +
+            "Consider moving this modal progress out of `readAction`")
     }
-    catch (pce: ProcessCanceledException) {
-      throw pce
+    if (application.isWriteAccessAllowed) {
+      logger<PlatformTaskSupport>().error("This thread holds write lock while trying to invoke a modal progress." +
+                                          "Write actions should be fast so they do not stall the progress in the IDE." +
+                                          "Consider moving your modal computation outside write action and apply the result of the computation in a different EDT event.")
     }
-    catch (ce: CancellationException) {
-      throw CeProcessCanceledException(ce)
+    return prepareThreadContext { ctx ->
+      val descriptor = ModalIndicatorDescriptor(owner, title, cancellation)
+      val scope = CoroutineScope(ctx + ClientId.coroutineContext())
+      try {
+        scope.runWithModalProgressBlockingInternal(dispatcher = null, descriptor, action)
+      }
+      catch (pce: ProcessCanceledException) {
+        throw pce
+      }
+      catch (ce: CancellationException) {
+        throw CeProcessCanceledException(ce)
+      }
     }
   }
 
@@ -378,7 +401,7 @@ class PlatformTaskSupport(private val cs: CoroutineScope) : TaskSupport {
         // an unhandled exception in `async` can kill the entire computation tree
         // we need to propagate the exception to the caller, since they may have some way to handle it.
         runCatching {
-          pipe.collectProgressUpdates(action)
+          handleCurrentThreadScopeCoroutines { pipe.collectProgressUpdates(action) }
         }
       }
       val modalJob = cs.launch(modalityContext) {
@@ -394,10 +417,12 @@ class PlatformTaskSupport(private val cs: CoroutineScope) : TaskSupport {
         // Unblock `getNextEvent()` in case it's blocked.
         SwingUtilities.invokeLater(EmptyRunnable.INSTANCE)
       }
-      IdeEventQueue.getInstance().pumpEventsForHierarchy(
-        exitCondition = modalJob::isCompleted,
-        modalComponent = deferredDialog::modalComponent,
-      )
+      resetThreadLocalEventLoop {
+        IdeEventQueue.getInstance().pumpEventsForHierarchy(
+          exitCondition = modalJob::isCompleted,
+          modalComponent = deferredDialog::modalComponent,
+        )
+      }
       try {
         @OptIn(ExperimentalCoroutinesApi::class)
         taskJob.getCompleted().getOrThrow()
@@ -405,6 +430,24 @@ class PlatformTaskSupport(private val cs: CoroutineScope) : TaskSupport {
       finally {
         cleanup.finish()
       }
+    }
+  }
+}
+
+/**
+ * We are installing a nested _modal_ event loop, so the EDT coroutines launched in immediate dispatcher must go to the modal loop,
+ * and not to the unconfined loop as they do now.
+ */
+@Suppress("INVISIBLE_REFERENCE")
+private inline fun <T> resetThreadLocalEventLoop(action: () -> T): T {
+  val existingEventLoop = ThreadLocalEventLoop.currentOrNull()
+  ThreadLocalEventLoop.resetEventLoop()
+  try {
+    return action()
+  }
+  finally {
+    if (existingEventLoop != null) {
+      ThreadLocalEventLoop.setEventLoop(existingEventLoop)
     }
   }
 }
@@ -421,6 +464,18 @@ private class JobProviderWithOwnerContext(val modalJob: Job, val owner: ModalTas
   override fun getJob(): Job = modalJob
 }
 
+@OptIn(InternalCoroutinesApi::class)
+private suspend fun <T> handleCurrentThreadScopeCoroutines(action: suspend () -> T): T {
+  val (result, coroutinesResult) = withCurrentThreadCoroutineScope {
+    action()
+  }
+  coroutinesResult.apply {
+    join()
+    getCancellationException().cause?.let { throw it }
+  }
+  return result
+}
+
 private val progressManagerTracer by lazy {
   TelemetryManager.getInstance().getSimpleTracer(ProgressManagerScope)
 }
@@ -431,7 +486,7 @@ internal fun CoroutineScope.showIndicator(
   stateFlow: Flow<ProgressState>,
 ): Job {
   return launch(Dispatchers.Default) {
-    delay(DEFAULT_PROGRESS_DIALOG_POSTPONE_TIME_MILLIS.toLong())
+    delay(ProgressUIUtil.DEFAULT_PROGRESS_DELAY_MILLIS)
     withContext(progressManagerTracer.span("Progress: ${progressModel.title}")) {
       withContext(Dispatchers.EDT) {
         val taskInfo = taskInfo(progressModel.title, progressModel.cancellation)
@@ -515,7 +570,7 @@ internal fun taskInfo(title: @ProgressTitle String, cancellation: TaskCancellati
 
 private class ModalIndicatorDescriptor(
   val owner: ModalTaskOwner,
-  val title: @ProgressTitle String,
+  val title: @ModalProgressTitle String,
   val cancellation: TaskCancellation,
 )
 
@@ -530,7 +585,7 @@ private fun CoroutineScope.showModalIndicator(
       if (isHeadlessEnv()) {
         return@supervisorScope
       }
-      delay(DEFAULT_PROGRESS_DIALOG_POSTPONE_TIME_MILLIS.toLong())
+      delay(ProgressUIUtil.DEFAULT_PROGRESS_DELAY_MILLIS)
       doShowModalIndicator(taskJob, descriptor, stateFlow, deferredDialog)
     }
   }
@@ -666,7 +721,7 @@ private fun IdeEventQueue.pumpEventsForHierarchy(
 
 @Internal
 fun IdeEventQueue.pumpEventsForHierarchy(exitCondition: () -> Boolean) {
-  resetThreadContext().use {
+  resetThreadContext {
     pumpEventsForHierarchy(
       exitCondition = exitCondition,
       modalComponent = { null },

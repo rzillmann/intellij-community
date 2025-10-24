@@ -15,6 +15,7 @@ import com.intellij.openapi.options.advanced.AdvancedSettings
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.projectRoots.Sdk
 import com.intellij.openapi.util.Pair
+import com.intellij.openapi.util.registry.Registry
 import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.util.execution.ParametersListUtil
 import com.jetbrains.python.PyBundle
@@ -22,7 +23,6 @@ import com.jetbrains.python.PythonHelper
 import com.jetbrains.python.run.target.HelpersAwareTargetEnvironmentRequest
 import com.jetbrains.python.run.targetBasedConfiguration.PyRunTargetVariant
 import com.jetbrains.python.testing.PyTestSharedForm.create
-import com.intellij.openapi.util.registry.Registry
 
 /**
  * Pytest runner
@@ -131,8 +131,6 @@ class PyTestConfiguration(project: Project, factory: PyTestFactory)
 }
 
 class PyTestFactory(type: PythonTestConfigurationType) : PyAbstractTestFactory<PyTestConfiguration>(type) {
-  @Deprecated("Obtain instance from PythonTestConfigurationType")
-  constructor() : this(PythonTestConfigurationType.getInstance())
 
   companion object {
     const val id = "py.test"  //Do not rename: used as ID for run configurations
@@ -144,7 +142,7 @@ class PyTestFactory(type: PythonTestConfigurationType) : PyAbstractTestFactory<P
 
   override fun getName(): String = PyBundle.message("runcfg.pytest.display_name")
 
-  override fun onlyClassesAreSupported(sdk: Sdk): Boolean = false
+  override fun onlyClassesAreSupported(project: Project, sdk: Sdk): Boolean = false
 
   override val packageRequired: String = "pytest"
 }

@@ -6,7 +6,7 @@ import com.intellij.ide.ProjectWindowCustomizerService
 import com.intellij.ide.RecentProjectIconHelper
 import com.intellij.ide.RecentProjectsManagerBase
 import com.intellij.openapi.actionSystem.*
-import com.intellij.openapi.actionSystem.ex.MainMenuPresentationAware
+import com.intellij.openapi.actionSystem.ex.ActionUtil
 import com.intellij.openapi.actionSystem.remoting.ActionRemoteBehaviorSpecification
 import com.intellij.openapi.project.DumbAware
 import com.intellij.openapi.project.Project
@@ -17,8 +17,9 @@ import com.intellij.openapi.wm.WindowManager
 import com.intellij.ui.ColorChooserService
 import com.intellij.ui.awt.RelativePoint
 import com.intellij.util.ui.JBPoint
+import java.nio.file.Path
 
-class ChangeProjectColorActionGroup: DefaultActionGroup(), DumbAware, MainMenuPresentationAware, ActionRemoteBehaviorSpecification.Frontend {
+class ChangeProjectColorActionGroup: DefaultActionGroup(), DumbAware, ActionRemoteBehaviorSpecification.Frontend {
   override fun getChildren(e: AnActionEvent?): Array<AnAction> {
     val project = e?.project ?: return emptyArray()
     val projectPath = ProjectWindowCustomizerService.projectPath(project) ?: return emptyArray()
@@ -45,17 +46,21 @@ class ChangeProjectColorActionGroup: DefaultActionGroup(), DumbAware, MainMenuPr
     e.presentation.isEnabled = project != null
     e.presentation.icon = project?.let {
       val projectPath = ProjectWindowCustomizerService.projectPath(project) ?: return@let null
-      RecentProjectIconHelper.generateProjectIcon(projectPath, true, size = 14, projectName = "", colorIndex = null)
+      RecentProjectIconHelper.generateNewProjectIcon(projectPath, true, projectName = "", colorIndex = null, size = 14)
     }
+    e.presentation.putClientProperty(ActionUtil.SHOW_ICON_IN_MAIN_MENU, true)
   }
-
-  override fun alwaysShowIconInMainMenu(): Boolean = true
 }
 
-class ChangeProjectColorAction(val projectPath: String, val name: @NlsSafe String, val index: Int, val projectName: String?) : AnAction(
+private class ChangeProjectColorAction(
+  projectPath: Path,
+  val name: @NlsSafe String,
+  val index: Int,
+  projectName: String?,
+) : AnAction(
   name,
   "",
-  RecentProjectIconHelper.generateProjectIcon(projectPath, true, size = 16, colorIndex = index, projectName = projectName)
+  RecentProjectIconHelper.generateNewProjectIcon(projectPath, true, projectName = projectName, colorIndex = index, size = 16)
 ), DumbAware
 {
   override fun getActionUpdateThread() = ActionUpdateThread.EDT
@@ -79,11 +84,11 @@ class ChangeProjectColorAction(val projectPath: String, val name: @NlsSafe Strin
     val customizer = ProjectWindowCustomizerService.getInstance()
     customizer.clearToolbarColorsAndInMemoryCache(project)
     customizer.setAssociatedColorsIndex(project, index)
-    project.repaintFrame()
+    repaintFrame(project)
   }
 }
 
-class ChooseCustomProjectColorAction: AnAction(IdeBundle.message("action.ChooseCustomProjectColorAction.title")), DumbAware {
+private class ChooseCustomProjectColorAction: AnAction(IdeBundle.message("action.ChooseCustomProjectColorAction.title")), DumbAware {
   override fun actionPerformed(e: AnActionEvent) {
     val project = e.project!!
     val ideFrame = IdeFocusManager.getInstance(project).lastFocusedFrame
@@ -92,13 +97,15 @@ class ChooseCustomProjectColorAction: AnAction(IdeBundle.message("action.ChooseC
       relativePoint = RelativePoint(ideFrame.component, JBPoint(200, 30))
     }
 
-    ColorChooserService.instance.showPopup(project = project,
-                                           currentColor = ProjectWindowCustomizerService.getInstance().getProjectColorToCustomize(project),
-                                           listener = { color, _ ->
-                                             ProjectWindowCustomizerService.getInstance().setCustomProjectColor(project, color)
-                                             e.project?.repaintFrame()
-                                           },
-                                           location = relativePoint)
+    ColorChooserService.getInstance().showPopup(
+      project = project,
+      currentColor = ProjectWindowCustomizerService.getInstance().getProjectColorToCustomize(project),
+      listener = { color, _ ->
+        ProjectWindowCustomizerService.getInstance().setCustomProjectColor(project, color)
+        e.project?.let { repaintFrame(it) }
+      },
+      location = relativePoint,
+    )
   }
 
   override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
@@ -108,6 +115,6 @@ class ChooseCustomProjectColorAction: AnAction(IdeBundle.message("action.ChooseC
   }
 }
 
-private fun Project.repaintFrame() {
-  WindowManager.getInstance().getIdeFrame(this)?.component?.repaint()
+private fun repaintFrame(project: Project) {
+  WindowManager.getInstance().getIdeFrame(project)?.component?.repaint()
 }

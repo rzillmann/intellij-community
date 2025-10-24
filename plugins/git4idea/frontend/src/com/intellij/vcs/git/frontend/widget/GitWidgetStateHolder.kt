@@ -4,49 +4,29 @@ package com.intellij.vcs.git.frontend.widget
 import com.intellij.ide.vfs.rpcId
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
-import com.intellij.openapi.fileEditor.FileEditorManagerEvent
-import com.intellij.openapi.fileEditor.FileEditorManagerListener
+import com.intellij.openapi.components.serviceAsync
+import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.util.registry.Registry
-import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.platform.project.projectId
-import com.intellij.vcs.git.shared.isRdBranchWidgetEnabled
-import com.intellij.vcs.git.shared.rpc.GitWidgetApi
-import com.intellij.vcs.git.shared.rpc.GitWidgetState
+import com.intellij.platform.project.projectIdOrNull
+import com.intellij.vcs.git.rpc.GitWidgetApi
+import com.intellij.vcs.git.rpc.GitWidgetState
+import fleet.rpc.client.durable
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.*
 
 @Service(Service.Level.PROJECT)
-internal class GitWidgetStateHolder(private val project: Project, private val cs: CoroutineScope) {
-  // TODO - keep do not show state until repo info is loaded
-  var currentState: GitWidgetState = GitWidgetState.DoNotShow
-    private set
-
-  @Volatile
-  private var stateUpdateJob: Job? = null
-
-  init {
-    if (Registry.isRdBranchWidgetEnabled()) {
-      project.messageBus.connect(cs)
-        .subscribe(FileEditorManagerListener.FILE_EDITOR_MANAGER, object : FileEditorManagerListener {
-          override fun selectionChanged(event: FileEditorManagerEvent) {
-            initStateUpdate(event.newFile)
-          }
-        })
+internal class GitWidgetStateHolder(private val project: Project, cs: CoroutineScope) {
+  @OptIn(ExperimentalCoroutinesApi::class)
+  val state: StateFlow<GitWidgetState> = flow {
+    val manager = project.serviceAsync<FileEditorManager>()
+    emitAll(manager.selectedEditorFlow)
+  }.flatMapLatest { selectedEditor ->
+    val projectId = project.projectIdOrNull() ?: return@flatMapLatest flowOf(GitWidgetState.DoNotShow)
+    durable {
+      GitWidgetApi.getInstance().getWidgetState(projectId, selectedEditor?.file?.rpcId())
     }
-  }
-
-  internal fun initStateUpdate(selectedFile: VirtualFile?) {
-    synchronized(this) {
-      stateUpdateJob?.cancel()
-      stateUpdateJob = cs.launch {
-        GitWidgetApi.getInstance().getWidgetState(project.projectId(), selectedFile?.rpcId()).collect {
-          currentState = it
-        }
-      }
-    }
-  }
+  }.stateIn(cs, SharingStarted.Eagerly, GitWidgetState.DoNotShow)
 
   companion object {
     fun getInstance(project: Project): GitWidgetStateHolder = project.service()

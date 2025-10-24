@@ -35,7 +35,7 @@ public final class ConsoleTokenUtil {
   static final Key<Boolean> MANUAL_HYPERLINK = Key.create("MANUAL_HYPERLINK");
 
   // convert all "a\bc" sequences to "c", not crossing the line boundaries in the process
-  private static void normalizeBackspaceCharacters(@NotNull StringBuilder text) {
+  public static void normalizeBackspaceCharacters(@NotNull StringBuilder text) {
     int ind = StringUtil.indexOf(text, BACKSPACE);
     if (ind < 0) {
       return;
@@ -116,7 +116,9 @@ public final class ConsoleTokenUtil {
     RangeMarker[] marker = new RangeMarker[1];
     MarkupModelEx model = (MarkupModelEx)DocumentMarkupModel.forDocument(editor.getDocument(), project, true);
     model.processRangeHighlightersOverlappingWith(offset, offset, m->{
-      if (getTokenType(m) == null || m.getStartOffset() > offset || offset + 1 > m.getEndOffset()) return true;
+      if (getTokenType(m) == null || !m.getTextRange().contains(offset)) {
+        return true;
+      }
       marker[0] = m;
       return false;
     });

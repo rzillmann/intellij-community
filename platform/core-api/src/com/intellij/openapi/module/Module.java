@@ -1,7 +1,8 @@
-// Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.openapi.module;
 
 import com.intellij.openapi.Disposable;
+import com.intellij.openapi.application.Application;
 import com.intellij.openapi.components.ComponentManager;
 import com.intellij.openapi.extensions.AreaInstance;
 import com.intellij.openapi.project.Project;
@@ -29,9 +30,11 @@ public interface Module extends ComponentManager, AreaInstance, Disposable {
   @NonNls String ELEMENT_TYPE = "type";
 
   /**
-   * @deprecated Module level message bus is deprecated. Please use application- or project- level.
+   * @deprecated Module level message bus is deprecated. Use application-level ({@link Application#getMessageBus()} or project-level
+   * ({@link Project#getMessageBus()}) message bus instead.
    */
   @Override
+  @ApiStatus.ScheduledForRemoval
   @Deprecated
   @NotNull MessageBus getMessageBus();
 
@@ -192,5 +195,22 @@ public interface Module extends ComponentManager, AreaInstance, Disposable {
   @ApiStatus.Internal
   default void setModuleType(@NotNull @NonNls String name) {
     setOption(ELEMENT_TYPE, name);
+  }
+
+  /**
+   * @return true if this module can store settings in its IComponentStore
+   */
+  @ApiStatus.Internal
+  default boolean canStoreSettings() {
+    return false;
+  }
+
+  // not called for module on loading, only if module created after project opening
+  @ApiStatus.Internal
+  default void initNewlyAddedModule() {
+  }
+
+  @ApiStatus.Internal
+  default void clearScopesCache() {
   }
 }

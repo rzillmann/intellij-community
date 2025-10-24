@@ -28,7 +28,6 @@ import com.intellij.psi.util.PsiTreeUtil;
 import com.siyeh.InspectionGadgetsBundle;
 import com.siyeh.ig.BaseInspection;
 import com.siyeh.ig.BaseInspectionVisitor;
-import com.siyeh.ig.InspectionGadgetsFix;
 import com.siyeh.ig.fixes.SuppressForTestsScopeFix;
 import com.siyeh.ig.psiutils.ExceptionUtils;
 import com.siyeh.ig.psiutils.TypeUtils;
@@ -63,7 +62,7 @@ public final class TooBroadCatchInspection extends BaseInspection {
         fixes.add(new AddCatchSectionFix(pointerManager.createSmartTypePointer(thrown), typeText));
       }
     }
-    final InspectionGadgetsFix fix = SuppressForTestsScopeFix.build(this, context);
+    final LocalQuickFix fix = SuppressForTestsScopeFix.build(this, context);
     if (fix != null) {
       fixes.add(fix);
     }
@@ -102,7 +101,7 @@ public final class TooBroadCatchInspection extends BaseInspection {
   }
 
   @Override
-  public BaseInspectionVisitor buildVisitor() {
+  public @NotNull BaseInspectionVisitor buildVisitor() {
     return new TooBroadCatchVisitor();
   }
 

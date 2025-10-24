@@ -7,6 +7,7 @@ import com.intellij.openapi.progress.ProcessCanceledException;
 import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.util.io.NioFiles;
 import com.intellij.util.ArrayUtil;
+import com.intellij.util.ConcurrencyUtil;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.io.ZipUtil;
 import org.jetbrains.annotations.ApiStatus;
@@ -48,7 +49,7 @@ public final class JpsCompilationOutputLoader implements JpsOutputLoader<List<Ou
   private List<File> myOldModulesPaths;
   private JpsLoaderContext myContext;
 
-  JpsCompilationOutputLoader(@NotNull JpsServerClient client, @NotNull String buildDirPath) {
+  public JpsCompilationOutputLoader(@NotNull JpsServerClient client, @NotNull String buildDirPath) {
     myClient = client;
     myBuildDirPath = buildDirPath;
   }
@@ -91,9 +92,7 @@ public final class JpsCompilationOutputLoader implements JpsOutputLoader<List<Ou
       myContext.sendDescriptionStatusMessage(JpsBuildBundle.message("progress.text.extracting.downloaded.results"));
       List<Future<?>> futureList = ContainerUtil.map(outputLoadResults, loadResult ->
         EXECUTOR_SERVICE.submit(new UnzipOutputTask(result, loadResult, myContext)));
-      for (Future<?> future : futureList) {
-        future.get();
-      }
+      ConcurrencyUtil.getAll(futureList);
       myTmpFolderToModuleName = result;
       LOG.info("Unzip compilation output took: " + (System.currentTimeMillis() - start));
       return LoaderStatus.COMPLETE;
@@ -305,13 +304,14 @@ public final class JpsCompilationOutputLoader implements JpsOutputLoader<List<Ou
   }
 
   @TestOnly
-  List<File> getOldModulesPaths() {
+  public List<File> getOldModulesPaths() {
     return myOldModulesPaths;
   }
 
   @TestOnly
-  List<AffectedModule> getAffectedModules(@Nullable Map<String, Map<String, BuildTargetState>> currentModulesState,
-                                          @NotNull Map<String, Map<String, BuildTargetState>> commitModulesState, boolean checkExistence) {
+  public List<AffectedModule> getAffectedModules(@Nullable Map<String, Map<String, BuildTargetState>> currentModulesState,
+                                                 @NotNull Map<String, Map<String, BuildTargetState>> commitModulesState,
+                                                 boolean checkExistence) {
     return calculateAffectedModules(currentModulesState, commitModulesState, checkExistence);
   }
 

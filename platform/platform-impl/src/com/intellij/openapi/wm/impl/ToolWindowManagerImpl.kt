@@ -24,10 +24,7 @@ import com.intellij.openapi.MnemonicHelper
 import com.intellij.openapi.actionSystem.*
 import com.intellij.openapi.actionSystem.ex.AnActionListener
 import com.intellij.openapi.application.*
-import com.intellij.openapi.components.Service
-import com.intellij.openapi.components.service
-import com.intellij.openapi.components.serviceAsync
-import com.intellij.openapi.components.serviceIfCreated
+import com.intellij.openapi.components.*
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.diagnostic.debug
 import com.intellij.openapi.diagnostic.logger
@@ -188,6 +185,18 @@ open class ToolWindowManagerImpl @NonInjectable @TestOnly internal constructor(
       ratio += (((partSize.toFloat() + direction) / totalSize) - ratio) / 2
       return ratio
     }
+
+    @ApiStatus.Internal
+    fun applyAltColors() {
+      for (frameHelper in WindowManager.getInstance().allProjectFrames) {
+        val manager = getInstance(frameHelper.project ?: continue) as ToolWindowManagerEx
+        for (toolwindow in manager.toolWindows) {
+          if (toolwindow is ToolWindowImpl) {
+            toolwindow.updateContentBackgroundColors()
+          }
+        }
+      }
+    }
   }
 
   fun isToolWindowRegistered(id: String): Boolean = idToEntry.containsKey(id)
@@ -208,7 +217,12 @@ open class ToolWindowManagerImpl @NonInjectable @TestOnly internal constructor(
     companion object {
       private fun handleFocusEvent(event: FocusEvent) {
         if (event.id == FocusEvent.FOCUS_LOST) {
-          if (event.oppositeComponent == null || event.isTemporary) {
+          // We're interested in the case when some other component gained focus permanently.
+          // Therefore, we're not interested if:
+          // 1. some component lost focus, but no other component gained it, or
+          // 2. the other (opposite) component gained focus only temporarily,
+          // 3. the component that gained focus is no longer showing (possible, because events arrive asynchronously).
+          if (event.oppositeComponent == null || event.isTemporary || !event.oppositeComponent.isShowing) {
             return
           }
 
@@ -391,23 +405,26 @@ open class ToolWindowManagerImpl @NonInjectable @TestOnly internal constructor(
         }
       })
 
-      IdeEventQueue.getInstance().addDispatcher({ event ->
-                                                  if (event is KeyEvent) {
-                                                    process { manager ->
-                                                      manager.dispatchKeyEvent(event)
-                                                    }
-                                                  }
+      IdeEventQueue.getInstance().addDispatcher(
+        object : IdeEventQueue.NonLockedEventDispatcher {
+          override fun dispatch(e: AWTEvent): Boolean {
+            if (e is KeyEvent) {
+              process { manager ->
+                manager.dispatchKeyEvent(e)
+              }
+            }
 
-                                                  false
-                                                }, coroutineScope)
+            return false
+          }
+        }, coroutineScope)
     }
   }
 
   private fun getDefaultToolWindowPane() = toolWindowPanes.get(WINDOW_INFO_DEFAULT_TOOL_WINDOW_PANE_ID)!!
 
-  internal fun getToolWindowPane(paneId: String): ToolWindowPane = toolWindowPanes.get(paneId) ?: getDefaultToolWindowPane()
+  @ApiStatus.Internal fun getToolWindowPane(paneId: String): ToolWindowPane = toolWindowPanes.get(paneId) ?: getDefaultToolWindowPane()
 
-  internal fun getToolWindowPane(toolWindow: ToolWindow): ToolWindowPane {
+  fun getToolWindowPane(toolWindow: ToolWindow): ToolWindowPane {
     val paneId = if (toolWindow is ToolWindowImpl) {
       toolWindow.windowInfo.safeToolWindowPaneId
     }
@@ -555,7 +572,7 @@ open class ToolWindowManagerImpl @NonInjectable @TestOnly internal constructor(
     taskListDeferred: Deferred<List<RegisterToolWindowTaskData>>?,
   ) {
     withContext(ModalityState.any().asContextElement()) {
-      launch(Dispatchers.EDT) {
+      val defaultPaneInitialization = launch(Dispatchers.EDT) {
         this@ToolWindowManagerImpl.projectFrame = pane.frame
 
         // Make sure we haven't already created the root tool window pane.
@@ -569,6 +586,7 @@ open class ToolWindowManagerImpl @NonInjectable @TestOnly internal constructor(
         toolWindowPanes.put(pane.paneId, pane)
       }
       connection.subscribe(ToolWindowManagerListener.TOPIC, dispatcher.multicaster)
+      defaultPaneInitialization.join()
       toolWindowSetInitializer.initUi(reopeningEditorJob, taskListDeferred)
     }
 
@@ -1189,7 +1207,7 @@ open class ToolWindowManagerImpl @NonInjectable @TestOnly internal constructor(
         toolWindow.windowInfoDuringInit = null
       }
 
-      coroutineScope.launch {
+      (task.pluginDescriptor?.pluginClassLoader?.let { (project as ComponentManagerEx).pluginCoroutineScope(it) } ?: coroutineScope).launch {
         factory.manage(toolWindow = toolWindow, toolWindowManager = this@ToolWindowManagerImpl)
       }.cancelOnDispose(toolWindow.disposable)
     }
@@ -1597,7 +1615,7 @@ open class ToolWindowManagerImpl @NonInjectable @TestOnly internal constructor(
 
   override fun invokeLater(runnable: Runnable) {
     if (!toolWindowSetInitializer.addToPendingTasksIfNotInitialized(runnable)) {
-      coroutineScope.launch(Dispatchers.EDT + ModalityState.nonModal().asContextElement()) {
+      coroutineScope.launch(Dispatchers.UiWithModelAccess + ModalityState.nonModal().asContextElement()) {
         runnable.run()
       }
     }

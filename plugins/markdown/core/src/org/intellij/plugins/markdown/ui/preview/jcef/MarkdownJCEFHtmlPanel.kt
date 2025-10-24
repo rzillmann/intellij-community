@@ -1,7 +1,6 @@
-// Copyright 2000-2021 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license that can be found in the LICENSE file.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.intellij.plugins.markdown.ui.preview.jcef
 
-import com.intellij.ide.ui.UISettingsListener
 import com.intellij.openapi.application.readAction
 import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.logger
@@ -22,6 +21,7 @@ import com.intellij.ui.jcef.JBCefApp
 import com.intellij.ui.jcef.JBCefClient
 import com.intellij.ui.jcef.JCEFHtmlPanel
 import com.intellij.util.application
+import com.intellij.util.io.DigestUtil
 import com.intellij.util.net.NetUtils
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collectLatest
@@ -52,24 +52,26 @@ import javax.swing.JComponent
 import javax.swing.JPanel
 import kotlin.math.round
 
-class MarkdownJCEFHtmlPanel(
-  private val project: Project?,
-  private val virtualFile: VirtualFile?
-) : JCEFHtmlPanel(isOffScreenRendering(), null, null), MarkdownHtmlPanelEx, UserDataHolder by UserDataHolderBase() {
-  constructor() : this(null, null)
+class MarkdownJCEFHtmlPanel(private val project: Project?, private val virtualFile: VirtualFile?)
+  : JCEFHtmlPanel(
+  isOffScreenRendering = isOffScreenRendering(),
+  client = null,
+  url = null,
+), MarkdownHtmlPanelEx, UserDataHolder by UserDataHolderBase()
+{
+  constructor() : this(project = null, virtualFile = null)
 
-  private val pageBaseName = "markdown-preview-index-${hashCode()}.html"
-
+  private val pageBaseName = "markdown-preview-index-${DigestUtil.randomToken()}.html"
   private val resourceProvider = MyAggregatingResourceProvider()
-  private val browserPipe: BrowserPipe = JcefBrowserPipeImpl(
-    this,
-    injectionAllowedUrls = listOf(PreviewStaticServer.getStaticUrl(resourceProvider, pageBaseName))
-  )
+  private val pageUrl = PreviewStaticServer.getStaticUrl(resourceProvider, pageBaseName)
+  private val browserPipe: BrowserPipe = JcefBrowserPipeImpl(browser = this, injectionAllowedUrls = listOf(pageUrl))
 
   private val scrollListeners = ArrayList<MarkdownHtmlPanel.ScrollListener>()
 
+  @Suppress("UsagesOfObsoleteApi")
   private var currentExtensions = emptyList<MarkdownBrowserPreviewExtension>()
 
+  @Suppress("UsagesOfObsoleteApi")
   private fun reloadExtensions() {
     currentExtensions.forEach(Disposer::dispose)
     currentExtensions = MarkdownBrowserPreviewExtension.Provider.all
@@ -78,40 +80,21 @@ class MarkdownJCEFHtmlPanel(
       .sorted()
   }
 
-  private val scripts
-    get() = baseScripts + currentExtensions.flatMap { it.scripts }
-
-  private val styles
-    get() = currentExtensions.flatMap { it.styles }
-
-  private val scriptingLines
-    get() = scripts.joinToString("\n") {
-      "<script src=\"${PreviewStaticServer.getStaticUrl(resourceProvider, it)}\"></script>"
-    }
-
-  private val stylesLines
-    get() = styles.joinToString("\n") {
-      "<link rel=\"stylesheet\" href=\"${PreviewStaticServer.getStaticUrl(resourceProvider, it)}\"/>"
-    }
-
-  private val contentSecurityPolicy get() = PreviewStaticServer.createCSP(
-    scripts.map { PreviewStaticServer.getStaticUrl(resourceProvider, it) },
-    styles.map { PreviewStaticServer.getStaticUrl(resourceProvider, it) }
-  )
-
   private val updateHandler = MarkdownUpdateHandler.Debounced()
 
   private fun buildIndexContent(): String {
+    val scripts = (baseScripts + currentExtensions.flatMap { it.scripts }).map { PreviewStaticServer.getStaticUrl(resourceProvider, it) }
+    val styles = currentExtensions.flatMap { it.styles }.map { PreviewStaticServer.getStaticUrl(resourceProvider, it) }
     // language=HTML
     return """
       <!DOCTYPE html>
       <html>
         <head>
           <title>IntelliJ Markdown Preview</title>
-          <meta http-equiv="Content-Security-Policy" content="$contentSecurityPolicy"/>
+          <meta http-equiv="Content-Security-Policy" content="${PreviewStaticServer.createCSP(scripts, styles)}"/>
           <meta name="markdown-position-attribute-name" content="${HtmlGenerator.SRC_ATTRIBUTE_NAME}"/>
-          $scriptingLines
-          $stylesLines
+          ${scripts.joinToString("\n") { "<script src=\"${it}\"></script>" }}
+          ${styles.joinToString("\n") { "<link rel=\"stylesheet\" href=\"${it}\"/>" }}
         </head>
       </html>
     """
@@ -119,7 +102,7 @@ class MarkdownJCEFHtmlPanel(
 
   private suspend fun loadIndexContent() {
     reloadExtensions()
-    waitForPageLoad(PreviewStaticServer.getStaticUrl(resourceProvider, pageBaseName))
+    waitForPageLoad(pageUrl)
   }
 
   private var previousRenderClosure: String = ""
@@ -139,9 +122,7 @@ class MarkdownJCEFHtmlPanel(
 
   internal fun showSearchBar() = searchSession?.showSearchBar()
 
-  override fun getComponent(): JComponent {
-    return panelComponent
-  }
+  override fun getComponent(): JComponent = panelComponent
 
   init {
     Disposer.register(browserPipe) { currentExtensions.forEach(Disposer::dispose) }
@@ -160,17 +141,6 @@ class MarkdownJCEFHtmlPanel(
     val connection = application.messageBus.connect(this)
     connection.subscribe(MarkdownPreviewSettings.ChangeListener.TOPIC, MarkdownPreviewSettings.ChangeListener { settings ->
       changeFontSize(settings.state.fontSize)
-    })
-    connection.subscribe(UISettingsListener.TOPIC, UISettingsListener { settings ->
-      val scale = settings.currentIdeScale
-      // language=JavaScript
-      val code = """
-      |(function() {
-      |  const styles = document.querySelector(":root").style;
-      |  styles.setProperty("${PreviewLAFThemeStyles.Variables.Scale}", "${scale}");
-      |})();
-      """.trimMargin()
-      executeJavaScript(code)
     })
 
     coroutineScope.launch {
@@ -275,14 +245,15 @@ class MarkdownJCEFHtmlPanel(
     scrollListeners.remove(listener)
   }
 
+  @Suppress("OVERRIDE_DEPRECATION")
   override fun scrollToMarkdownSrcOffset(offset: Int, smooth: Boolean) {
-    executeJavaScript("window.scrollController?.scrollTo($offset, $smooth)")
+    runJavaScript("window.scrollController?.scrollTo($offset, $smooth)")
   }
 
   override fun scrollBy(horizontalUnits: Int, verticalUnits: Int) {
     val horizontal = JBCefApp.normalizeScaledSize(horizontalUnits)
     val vertical = JBCefApp.normalizeScaledSize(verticalUnits)
-    executeJavaScript("window.scrollController?.scrollBy($horizontal, $vertical)")
+    runJavaScript("window.scrollController?.scrollBy($horizontal, $vertical)")
   }
 
   private val previewInnerComponent by lazy { super.getComponent() }
@@ -345,7 +316,7 @@ class MarkdownJCEFHtmlPanel(
     return panel
   }
 
-  fun getTemporaryFontSize() = getUserData(TEMPORARY_FONT_SIZE)
+  fun getTemporaryFontSize(): Int? = getUserData(TEMPORARY_FONT_SIZE)
 
   /**
    * @param size Unscaled font size.
@@ -367,7 +338,7 @@ class MarkdownJCEFHtmlPanel(
     |  styles.setProperty("${PreviewLAFThemeStyles.Variables.FontSize}", "${scaled}px");
     |})();
     """.trimMargin()
-    executeJavaScript(code)
+    runJavaScript(code)
   }
 
   private fun createFileSchemeResourcesProcessor(projectRoot: VirtualFile?): ResourceProvider? {
@@ -381,18 +352,15 @@ class MarkdownJCEFHtmlPanel(
   private inner class MyAggregatingResourceProvider : ResourceProvider {
     private val internalResources = baseScripts + baseStyles
 
-    override fun canProvide(resourceName: String): Boolean {
-      return resourceName in internalResources ||
-             resourceName == pageBaseName ||
-             currentExtensions.any { it.resourceProvider.canProvide(resourceName) }
-    }
+    override fun canProvide(resourceName: String): Boolean =
+      resourceName in internalResources ||
+      resourceName == pageBaseName ||
+      currentExtensions.any { it.resourceProvider.canProvide(resourceName) }
 
-    override fun loadResource(resourceName: String): ResourceProvider.Resource? {
-      return when (resourceName) {
-        pageBaseName -> ResourceProvider.Resource(buildIndexContent().toByteArray(), "text/html")
-        in internalResources -> ResourceProvider.loadInternalResource<MarkdownJCEFHtmlPanel>(resourceName)
-        else -> currentExtensions.map { it.resourceProvider }.firstOrNull { it.canProvide(resourceName) }?.loadResource(resourceName)
-      }
+    override fun loadResource(resourceName: String): ResourceProvider.Resource? = when (resourceName) {
+      pageBaseName -> ResourceProvider.Resource(buildIndexContent().toByteArray(), "text/html")
+      in internalResources -> ResourceProvider.loadInternalResource<MarkdownJCEFHtmlPanel>(resourceName)
+      else -> currentExtensions.map { it.resourceProvider }.firstOrNull { it.canProvide(resourceName) }?.loadResource(resourceName)
     }
   }
 
@@ -420,13 +388,11 @@ class MarkdownJCEFHtmlPanel(
         """.trimIndent())
         return true
       }
-      val targetPageUrl = PreviewStaticServer.getStaticUrl(resourceProvider, pageBaseName)
-      val requestedUrl = request.url
-      if (requestedUrl != targetPageUrl) {
+      if (request.url != pageUrl) {
         logger.warn("""
-          Canceling request for an external page with url: $requestedUrl.
+          Canceling request for an external page with url: ${request.url}.
           Current page url: ${browser.url}
-          Target safe url: $targetPageUrl
+          Target safe url: ${pageUrl}
         """.trimIndent())
         return true
       }
@@ -456,9 +422,7 @@ class MarkdownJCEFHtmlPanel(
     private fun isOffScreenRendering(): Boolean = Registry.`is`("ide.browser.jcef.markdownView.osr.enabled")
 
     private object ProhibitingResourceRequestHandler : CefResourceRequestHandlerAdapter() {
-      override fun onBeforeResourceLoad(browser: CefBrowser?, frame: CefFrame?, request: CefRequest): Boolean {
-        return true
-      }
+      override fun onBeforeResourceLoad(browser: CefBrowser?, frame: CefFrame?, request: CefRequest): Boolean = true
     }
   }
 }

@@ -1,9 +1,9 @@
 ### auto-generated section `build intellij.uiDesigner` start
-load("@rules_jvm//:jvm.bzl", "jvm_library", "jvm_resources")
+load("@rules_jvm//:jvm.bzl", "jvm_library", "resourcegroup")
 
-jvm_resources(
+resourcegroup(
   name = "uiDesigner_resources",
-  files = glob(["resources/**/*"]),
+  srcs = glob(["resources/**/*"]),
   strip_prefix = "resources"
 )
 
@@ -11,20 +11,25 @@ jvm_library(
   name = "uiDesigner",
   module_name = "intellij.uiDesigner",
   visibility = ["//visibility:public"],
-  srcs = glob(["src/**/*.kt", "src/**/*.java"], allow_empty = True),
+  srcs = glob(["src/**/*.kt", "src/**/*.java", "src/**/*.form", "gen/**/*.kt", "gen/**/*.java"], allow_empty = True),
+  resources = [":uiDesigner_resources"],
   deps = [
+    "//platform/analysis-api:analysis",
+    "//platform/core-api:core",
+    "//platform/editor-ui-api:editor-ui",
+    "//platform/projectModel-api:projectModel",
     "//xml/xml-psi-api:psi",
     "//platform/util",
     "//platform/icons",
     "//platform/platform-api:ide",
     "//platform/platform-impl:ide-impl",
-    "//spellchecker",
     "//platform/lang-impl",
-    "@lib//:fastutil-min",
+    "//libraries/fastutil",
+    "//platform/platform-impl/concurrency",
     "//platform/core-ui",
     "//platform/util/jdom",
-    "//platform/platform-impl/designer:ide-designer",
-  ],
-  runtime_deps = [":uiDesigner_resources"]
+    "//platform/platform-impl/designer",
+    "//platform/core-impl",
+  ]
 )
 ### auto-generated section `build intellij.uiDesigner` end

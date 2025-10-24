@@ -12,4 +12,3 @@ public final class TypeModifiers public constructor() {
 
     public final val suspendFunction: suspend () -> kotlin.Unit /* compiled code */
 }
-

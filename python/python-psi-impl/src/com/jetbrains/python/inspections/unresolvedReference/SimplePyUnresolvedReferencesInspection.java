@@ -2,10 +2,10 @@ package com.jetbrains.python.inspections.unresolvedReference;
 
 import com.intellij.codeInspection.LocalInspectionToolSession;
 import com.intellij.codeInspection.ProblemsHolder;
+import com.jetbrains.python.PyLanguageFacadeKt;
 import com.jetbrains.python.inspections.PyInspection;
 import com.jetbrains.python.inspections.PyInspectionVisitor;
 import com.jetbrains.python.psi.LanguageLevel;
-import com.jetbrains.python.psi.impl.PythonLanguageLevelPusher;
 import com.jetbrains.python.psi.types.TypeEvalContext;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -17,7 +17,7 @@ public class SimplePyUnresolvedReferencesInspection extends PyUnresolvedReferenc
   protected PyUnresolvedReferencesVisitor createVisitor(@NotNull ProblemsHolder holder,
                                                         @NotNull LocalInspectionToolSession session) {
     return new Visitor(holder, this, PyInspectionVisitor.getContext(session),
-                       PythonLanguageLevelPusher.getLanguageLevelForFile(session.getFile()));
+                       PyLanguageFacadeKt.getEffectiveLanguageLevel(session.getFile()));
   }
 
   @Override
@@ -30,7 +30,7 @@ public class SimplePyUnresolvedReferencesInspection extends PyUnresolvedReferenc
                    @NotNull PyInspection inspection,
                    @NotNull TypeEvalContext context,
                    @NotNull LanguageLevel languageLevel) {
-      super(holder, Collections.emptyList(), inspection, context, languageLevel);
+      super(holder, Collections.emptyList(), context, languageLevel);
     }
   }
 }

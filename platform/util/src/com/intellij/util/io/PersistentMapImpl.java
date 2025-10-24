@@ -144,17 +144,17 @@ public final class PersistentMapImpl<Key, Value> implements PersistentMapBase<Ke
   public PersistentMapImpl(@NotNull PersistentMapBuilder<Key, Value> builder, @NotNull CreationTimeOptions options) throws IOException {
     this.myBuilder = builder.copy();
 
-    final Path file = myBuilder.getFile();
-    final KeyDescriptor<Key> keyDescriptor = myBuilder.getKeyDescriptor();
-    final DataExternalizer<Value> valueExternalizer = myBuilder.getValueExternalizer();
+    Path file = myBuilder.getFile();
+    KeyDescriptor<Key> keyDescriptor = myBuilder.getKeyDescriptor();
+    DataExternalizer<Value> valueExternalizer = myBuilder.getValueExternalizer();
 
     int initialSize = myBuilder.getInitialSize(DEFAULT_INDEX_INITIAL_SIZE);
-    int version = myBuilder.getVersion(0);
+    int version = myBuilder.getVersion(/*default: */0);
     @Nullable StorageLockContext lockContext = myBuilder.getLockContext();
-    myCompactOnClose = myBuilder.getCompactOnClose(false);
+    myCompactOnClose = myBuilder.getCompactOnClose(/*default: */false);
 
     // it's important to initialize it as early as possible
-    myIsReadOnly = myBuilder.getReadOnly(false);
+    myIsReadOnly = myBuilder.getReadOnly(/*default: */false);
 
     if (myIsReadOnly) {
       //FIXME RC: the only use of options.isReadOnly() is in this ctor, below: if(!options.isReadOnly... -> compact()
@@ -163,43 +163,48 @@ public final class PersistentMapImpl<Key, Value> implements PersistentMapBase<Ke
     }
     this.myOptions = options;
 
-    myEnumerator = PersistentEnumerator.createDefaultEnumerator(checkDataFiles(file),
-                                                                keyDescriptor,
-                                                                initialSize,
-                                                                lockContext,
-                                                                modifyVersionDependingOnOptions(version, options),
-                                                                false);
-
     myStorageFile = file;
     myKeyDescriptor = keyDescriptor;
+    myValueExternalizer = valueExternalizer;
 
-    if (myBuilder.isEnableWal()) {
-      Path walFile = myStorageFile.resolveSibling(myStorageFile.getFileName().toString() + ".wal");
-      myWal = new PersistentMapWal<>(keyDescriptor, valueExternalizer, options.useCompression(), walFile,
-                                     myBuilder.getWalExecutor(), true);
-    }
-    else {
-      myWal = null;
-    }
+    myEnumerator = PersistentEnumerator.createDefaultEnumerator(
+      checkDataFiles(file),
+      keyDescriptor,
+      initialSize,
+      lockContext,
+      modifyVersionDependingOnOptions(version, options),
+      /*registerForStatistics: */false
+    );
 
-    PersistentEnumeratorBase.RecordBufferHandler<PersistentEnumeratorBase<?>> recordHandler = myEnumerator.getRecordHandler();
-    myParentValueRefOffset = recordHandler.getRecordBuffer(myEnumerator).length;
-
-    boolean inlineValues = myBuilder.getInlineValues(false);
-    myIntMapping = valueExternalizer instanceof IntInlineKeyDescriptor && inlineValues;
-    myDirectlyStoreLongFileOffsetMode = keyDescriptor instanceof InlineKeyDescriptor && myEnumerator instanceof PersistentBTreeEnumerator;
-
-    myEnumerator.setRecordHandler(new MyEnumeratorRecordHandler(recordHandler));
-    myEnumerator.setMarkCleanCallback(() -> {
-      myEnumerator.putMetaData(myLiveAndGarbageKeysCounter);
-      myEnumerator.putMetaData2(myLargeIndexWatermarkId | ((long)myReadCompactionGarbageSize << 32));
-    });
-
-    if (myDoTrace) LOG.info("Opened " + myStorageFile);
-    StorageStatsRegistrar.INSTANCE.registerMap(myStorageFile, this);
 
     try {
-      myValueExternalizer = valueExternalizer;
+      if (myBuilder.isEnableWal()) {
+        Path walFile = myStorageFile.resolveSibling(myStorageFile.getFileName().toString() + ".wal");
+        myWal = new PersistentMapWal<>(keyDescriptor, valueExternalizer, options.useCompression(), walFile,
+                                       myBuilder.getWalExecutor(), true);
+      }
+      else {
+        myWal = null;
+      }
+
+      PersistentEnumeratorBase.RecordBufferHandler<PersistentEnumeratorBase<?>> recordHandler = myEnumerator.getRecordHandler();
+      myParentValueRefOffset = recordHandler.getRecordBuffer(myEnumerator).length;
+
+      boolean inlineValues = myBuilder.getInlineValues(/*default: */false);
+      myIntMapping = inlineValues && (valueExternalizer instanceof IntInlineKeyDescriptor);
+      myDirectlyStoreLongFileOffsetMode = (keyDescriptor instanceof InlineKeyDescriptor)
+                                          && (myEnumerator instanceof PersistentBTreeEnumerator);
+
+      myEnumerator.setRecordHandler(new MyEnumeratorRecordHandler(recordHandler));
+      myEnumerator.setMarkCleanCallback(() -> {
+        myEnumerator.putMetaData(myLiveAndGarbageKeysCounter);
+        myEnumerator.putMetaData2(myLargeIndexWatermarkId | ((long)myReadCompactionGarbageSize << 32));
+      });
+
+      if (myDoTrace) LOG.info("Opened " + myStorageFile);
+      StorageStatsRegistrar.INSTANCE.registerMap(myStorageFile, this);
+
+
       myValueStorage = myIntMapping ? null : new PersistentHashMapValueStorage(getDataFile(myStorageFile), options);
       myAppendCache = myIntMapping ? null : createAppendCache(keyDescriptor);
       myAppendCacheFlusher = myIntMapping ? null : LowMemoryWatcher.register(() -> {
@@ -223,9 +228,10 @@ public final class PersistentMapImpl<Key, Value> implements PersistentMapBase<Ke
     catch (IOException e) {
       try {
         // attempt to close already opened resources
-        close(true);
+        close(/*skipCompaction: */true);
       }
-      catch (Throwable ignored) {
+      catch (Throwable closeEx) {
+        e.addSuppressed(closeEx);
       }
       throw e; // rethrow
     }
@@ -233,11 +239,12 @@ public final class PersistentMapImpl<Key, Value> implements PersistentMapBase<Ke
       LOG.error(t);
       try {
         // attempt to close already opened resources
-        close(true);
+        close(/*skipCompaction: */true);
       }
-      catch (Throwable ignored) {
+      catch (Throwable closeEx) {
+        t.addSuppressed(closeEx);
       }
-      throw new CorruptedException(myStorageFile);
+      throw new CorruptedException(myStorageFile, t);
     }
   }
 
@@ -253,11 +260,11 @@ public final class PersistentMapImpl<Key, Value> implements PersistentMapBase<Ke
     return myValueExternalizer;
   }
 
-  public @NotNull KeyDescriptor<Key> getKeyDescriptor(){
+  public @NotNull KeyDescriptor<Key> getKeyDescriptor() {
     return myKeyDescriptor;
   }
 
-  public @NotNull PersistentMapBuilder<Key, Value> builder(){
+  public @NotNull PersistentMapBuilder<Key, Value> builder() {
     //builder is mutable, so return a copy of it:
     return myBuilder.copy();
   }
@@ -357,7 +364,7 @@ public final class PersistentMapImpl<Key, Value> implements PersistentMapBase<Ke
   public void closeAndDelete() {
     Path baseFile = getBaseFile();
     try {
-      this.close(true);
+      this.close(/*skipCompaction: */true);
     }
     catch (IOException ignored) {
     }
@@ -409,7 +416,8 @@ public final class PersistentMapImpl<Key, Value> implements PersistentMapBase<Ke
     return file;
   }
 
-  static @NotNull Path getDataFile(@NotNull Path file) { // made public for testing
+  @VisibleForTesting
+  public static @NotNull Path getDataFile(@NotNull Path file) { // made public for testing
     return file.resolveSibling(file.getFileName() + DATA_FILE_EXTENSION);
   }
 
@@ -719,22 +727,22 @@ public final class PersistentMapImpl<Key, Value> implements PersistentMapBase<Ke
   private boolean doContainsMapping(Key key) throws IOException {
     flushAppendCache(key);
 
-    myEnumerator.lockStorageRead();
-    try {
-      if (myDirectlyStoreLongFileOffsetMode) {
-        return ((PersistentBTreeEnumerator<Key>)myEnumerator).getNonNegativeValue(key) != NULL_ADDR;
-      }
-      else {
-        final int id = myEnumerator.tryEnumerate(key);
+    if (myDirectlyStoreLongFileOffsetMode) {
+      return ((PersistentBTreeEnumerator<Key>)myEnumerator).getNonNegativeValue(key) != NULL_ADDR;
+    }
+    else {
+      myEnumerator.lockStorageRead();
+      try {
+        int id = myEnumerator.tryEnumerate(key);
         if (id == DataEnumerator.NULL_ID) {
           return false;
         }
         if (myIntMapping) return true;
         return readValueId(id) != NULL_ADDR;
       }
-    }
-    finally {
-      myEnumerator.unlockStorageRead();
+      finally {
+        myEnumerator.unlockStorageRead();
+      }
     }
   }
 
@@ -826,10 +834,10 @@ public final class PersistentMapImpl<Key, Value> implements PersistentMapBase<Ke
 
   @Override
   public void close() throws IOException {
-    close(false);
+    close(/*skipCompaction*/false);
   }
 
-  private void close(boolean emergency) throws IOException {
+  private void close(boolean skipCompaction) throws IOException {
     if (myDoTrace) {
       LOG.info("Closed " + myStorageFile + "." + (myAppendCache == null ? "" : ("Append cache stats: " + myAppendCache.dumpStats())));
     }
@@ -844,7 +852,7 @@ public final class PersistentMapImpl<Key, Value> implements PersistentMapBase<Ke
       }
 
       try {
-        if (!emergency && myCompactOnClose && isCompactionSupported()) {
+        if (!skipCompaction && myCompactOnClose && isCompactionSupported()) {
           compact();
         }
       }
@@ -874,7 +882,7 @@ public final class PersistentMapImpl<Key, Value> implements PersistentMapBase<Ke
         }
       }
       finally {
-        final PersistentHashMapValueStorage valueStorage = myValueStorage;
+        PersistentHashMapValueStorage valueStorage = myValueStorage;
         try {
           if (valueStorage != null) {
             valueStorage.dispose();

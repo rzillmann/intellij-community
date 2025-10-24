@@ -33,7 +33,15 @@ object DummyJBAccountInfoService : JBAccountInfoService {
     }
   }
 
+  override fun performLogout(): CompletableFuture<JBAccountInfoService.LogoutResult?> {
+    TODO("Not yet implemented")
+  }
+
   override fun getAvailableLicenses(productCode: String): CompletableFuture<JBAccountInfoService.LicenseListResult> {
+    TODO("Not yet implemented")
+  }
+
+  override fun getLicenses(productCode: String, expiredLicenseDays: Int): CompletableFuture<JBAccountInfoService.LicenseListResult> {
     TODO("Not yet implemented")
   }
 

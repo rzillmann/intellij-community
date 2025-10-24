@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.openapi.vfs.impl;
 
 import com.intellij.openapi.Disposable;
@@ -26,6 +26,7 @@ import com.intellij.util.io.URLUtil;
 import com.intellij.util.messages.MessageBus;
 import com.intellij.util.xmlb.annotations.Attribute;
 import kotlin.Unit;
+import kotlinx.coroutines.CoroutineScope;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -34,13 +35,15 @@ import org.jetbrains.annotations.Unmodifiable;
 import java.nio.file.FileSystems;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 
+import static java.util.Collections.singletonList;
+
+@ApiStatus.Internal
 public class VirtualFileManagerImpl extends VirtualFileManager implements Disposable {
   protected static final Logger LOG = Logger.getInstance(VirtualFileManagerImpl.class);
 
-  // do not use extension point name to avoid map lookup on each event publishing
+  // do not use an extension point name to avoid map lookup on each event publishing
   private static final ExtensionPointImpl<VirtualFileManagerListener> MANAGER_LISTENER_EP =
     ((ExtensionsAreaImpl)ApplicationManager.getApplication().getExtensionArea()).getExtensionPoint("com.intellij.virtualFileManagerListener");
 
@@ -55,6 +58,7 @@ public class VirtualFileManagerImpl extends VirtualFileManager implements Dispos
   private final EventDispatcher<VirtualFileListener> myVirtualFileListenerMulticaster = EventDispatcher.create(VirtualFileListener.class);
   private final List<VirtualFileManagerListener> virtualFileManagerListeners = ContainerUtil.createLockFreeCopyOnWriteList();
   private final List<AsyncFileListener> asyncFileListeners = ContainerUtil.createLockFreeCopyOnWriteList();
+  private final List<AsyncFileListener> asyncFileListenersBackgroundable = ContainerUtil.createLockFreeCopyOnWriteList();
   private int refreshCount;
 
   public VirtualFileManagerImpl(@NotNull List<? extends VirtualFileSystem> preCreatedFileSystems) {
@@ -115,7 +119,7 @@ public class VirtualFileManagerImpl extends VirtualFileManager implements Dispos
     return candidates.get(0);
   }
 
-  protected @NotNull List<? extends VirtualFileSystem> getFileSystemsForProtocol(@NotNull String protocol) {
+  protected @NotNull @Unmodifiable List<? extends VirtualFileSystem> getFileSystemsForProtocol(@NotNull String protocol) {
     return myCollector.forKey(protocol);
   }
 
@@ -191,12 +195,33 @@ public class VirtualFileManagerImpl extends VirtualFileManager implements Dispos
     asyncFileListeners.add(listener);
   }
 
+  @Override
+  public void addAsyncFileListenerBackgroundable(@NotNull AsyncFileListener listener, @NotNull Disposable parentDisposable) {
+    Disposer.register(parentDisposable, () -> asyncFileListenersBackgroundable.remove(listener));
+    asyncFileListenersBackgroundable.add(listener);
+  }
+
+  @Override
+  public void addAsyncFileListener(@NotNull CoroutineScope coroutineScope, @NotNull AsyncFileListener listener) {
+    asyncFileListeners.add(listener);
+    HelperKt.removeOnCompletion(asyncFileListeners, listener, coroutineScope);
+  }
+
   @ApiStatus.Internal
   public @NotNull @Unmodifiable List<AsyncFileListener> withAsyncFileListeners(@NotNull @Unmodifiable List<? extends AsyncFileListener> listeners) {
     // copy to avoid modification during iteration later
     List<AsyncFileListener> result = new ArrayList<>(listeners.size() + asyncFileListeners.size());
     result.addAll(listeners);
     result.addAll(asyncFileListeners);
+    return result;
+  }
+
+  @ApiStatus.Internal
+  public @NotNull @Unmodifiable List<AsyncFileListener> withAsyncFileListenersBackgroundable(@NotNull @Unmodifiable List<? extends AsyncFileListener> listeners) {
+    // copy to avoid modification during iteration later
+    List<AsyncFileListener> result = new ArrayList<>(listeners.size() + asyncFileListenersBackgroundable.size());
+    result.addAll(listeners);
+    result.addAll(asyncFileListenersBackgroundable);
     return result;
   }
 
@@ -209,11 +234,12 @@ public class VirtualFileManagerImpl extends VirtualFileManager implements Dispos
     ApplicationManager.getApplication().invokeLater(() -> {
       if (virtualFile.isValid()) {
         ApplicationManager.getApplication().runWriteAction(() -> {
-          List<VFileEvent> events =
-            Collections.singletonList(new VFilePropertyChangeEvent(this, virtualFile, property, oldValue, newValue));
-          BulkFileListener listener = app.getMessageBus().syncPublisher(VFS_CHANGES);
-          listener.before(events);
-          listener.after(events);
+          if (virtualFile.isValid()) {//re-check isValid under WA
+            List<VFileEvent> events = singletonList(new VFilePropertyChangeEvent(this, virtualFile, property, oldValue, newValue));
+            BulkFileListener listener = app.getMessageBus().syncPublisher(VFS_CHANGES);
+            listener.before(events);
+            listener.after(events);
+          }
         });
       }
     }, ModalityState.nonModal());

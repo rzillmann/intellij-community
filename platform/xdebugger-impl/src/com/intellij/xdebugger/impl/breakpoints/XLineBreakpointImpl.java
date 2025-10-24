@@ -5,12 +5,12 @@ import com.intellij.openapi.editor.RangeMarker;
 import com.intellij.openapi.editor.markup.GutterDraggableObject;
 import com.intellij.openapi.editor.markup.RangeHighlighter;
 import com.intellij.openapi.project.ProjectUtil;
-import com.intellij.openapi.util.TextRange;
 import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.vfs.LocalFileSystem;
 import com.intellij.openapi.vfs.VfsUtilCore;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.openapi.vfs.VirtualFileManager;
+import com.intellij.xdebugger.SplitDebuggerMode;
 import com.intellij.xdebugger.XDebuggerUtil;
 import com.intellij.xdebugger.XSourcePosition;
 import com.intellij.xdebugger.breakpoints.XBreakpointProperties;
@@ -21,30 +21,32 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
-import java.util.Objects;
-
-import static com.intellij.xdebugger.impl.breakpoints.XBreakpointProxyKt.asProxy;
-import static com.intellij.xdebugger.impl.frame.XDebugSessionProxy.useFeLineBreakpointProxy;
 
 @ApiStatus.Internal
 public final class XLineBreakpointImpl<P extends XBreakpointProperties> extends XBreakpointBase<XLineBreakpoint<P>, P, LineBreakpointState>
   implements XLineBreakpoint<P> {
 
-  // TODO IJPL-185322 move to some external manager
+  // for monolith compatibility only
   private final XBreakpointVisualRepresentation myVisualRepresentation;
 
   private final XLineBreakpointType<P> myType;
-  private XSourcePosition mySourcePosition;
+  private volatile XSourcePosition mySourcePosition;
 
   public XLineBreakpointImpl(final XLineBreakpointType<P> type,
                              XBreakpointManagerImpl breakpointManager,
                              final @Nullable P properties, LineBreakpointState state) {
     super(type, breakpointManager, properties, state);
     myType = type;
-    myVisualRepresentation = new XBreakpointVisualRepresentation(asProxy(this), !useFeLineBreakpointProxy(), new XBreakpointManagerProxy.Monolith(breakpointManager));
+    myVisualRepresentation = new XBreakpointVisualRepresentation(getCoroutineScope(),
+                                                                 XBreakpointProxyKt.asProxy(this),
+                                                                 !SplitDebuggerMode.isSplitDebugger(),
+                                                                 XBreakpointManagerProxyKt.asProxy(breakpointManager));
   }
 
-  // TODO IJPL-185322 migrate to backend -> frontend rpc flow notification
+  /**
+   * @deprecated The platform handles Breakpoint UI update on the frontend
+   */
+  @Deprecated
   public void updateUI() {
     myVisualRepresentation.updateUI();
   }
@@ -66,10 +68,6 @@ public final class XLineBreakpointImpl<P extends XBreakpointProperties> extends 
   @Override
   public String getFileUrl() {
     return myState.getFileUrl();
-  }
-
-  TextRange getHighlightRange() {
-    return myType.getHighlightRange(this);
   }
 
   @Override
@@ -118,45 +116,59 @@ public final class XLineBreakpointImpl<P extends XBreakpointProperties> extends 
     return super.isValid();
   }
 
-  @Override
-  protected void doDispose() {
-    myVisualRepresentation.removeHighlighter();
-    myVisualRepresentation.redrawInlineInlays(getFile(), getLine());
-  }
-
   public void updatePosition() {
     RangeMarker highlighter = myVisualRepresentation.getRangeMarker();
     if (highlighter != null && highlighter.isValid()) {
-      mySourcePosition = null; // reset the source position even if the line number has not changed, as the offset may be cached inside
-      setLine(highlighter.getDocument().getLineNumber(highlighter.getStartOffset()), false);
+      resetSourcePosition(); // reset the source position even if the line number has not changed, as the offset may be cached inside
+      setLine(-1, highlighter.getDocument().getLineNumber(highlighter.getStartOffset()), false);
     }
   }
 
-  public void setFileUrl(final String newUrl) {
-    if (!Objects.equals(getFileUrl(), newUrl)) {
-      var oldFile = getFile();
-      myState.setFileUrl(newUrl);
-      mySourcePosition = null;
-      myVisualRepresentation.removeHighlighter();
-      myVisualRepresentation.redrawInlineInlays(oldFile, getLine());
-      myVisualRepresentation.redrawInlineInlays(getFile(), getLine());
+
+  void resetSourcePosition() {
+    resetSourcePosition(-1);
+  }
+
+  public void resetSourcePosition(long requestId) {
+    mySourcePosition = null;
+    if (getBreakpointManager().getRequestCounter().setRequestCompleted(requestId)) {
       fireBreakpointChanged();
     }
   }
 
-  @ApiStatus.Internal
-  public void setLine(final int line) {
-    setLine(line, true);
+  public void setFileUrl(final String newUrl) {
+    setFileUrl(-1, newUrl);
   }
 
-  private void setLine(final int line, boolean visualLineMightBeChanged) {
-    if (getLine() != line) {
-      if (visualLineMightBeChanged && !myType.lineShouldBeChanged(this, line, getProject())) {
-        return;
-      }
+  public void setFileUrl(long requestId, String newUrl) {
+    updateStateIfNeededAndNotify(requestId, newUrl, this::getFileUrl, (url) -> {
+      var oldFile = getFile();
+      myState.setFileUrl(url);
+      resetSourcePosition();
+      myVisualRepresentation.removeHighlighter();
+      myVisualRepresentation.redrawInlineInlays(oldFile, getLine());
+      myVisualRepresentation.redrawInlineInlays(getFile(), getLine());
+    });
+  }
+
+  @ApiStatus.Internal
+  public void setLine(final int line) {
+    setLine(-1, line, true);
+  }
+
+  public void setLine(long requestId, int line) {
+    setLine(requestId, line, true);
+  }
+
+  private void setLine(long requestId, final int line, boolean visualLineMightBeChanged) {
+    if (getLine() != line && visualLineMightBeChanged && !myType.lineShouldBeChanged(this, line, getProject())) {
+      return;
+    }
+
+    updateStateIfNeededAndNotify(requestId, line, this::getLine, (l) -> {
       var oldLine = getLine();
       myState.setLine(line);
-      mySourcePosition = null;
+      resetSourcePosition();
 
       if (visualLineMightBeChanged) {
         myVisualRepresentation.removeHighlighter();
@@ -166,9 +178,7 @@ public final class XLineBreakpointImpl<P extends XBreakpointProperties> extends 
       // due to lack of synchronization between inlay redrawing and breakpoint changes.
       myVisualRepresentation.redrawInlineInlays(getFile(), oldLine);
       myVisualRepresentation.redrawInlineInlays(getFile(), line);
-
-      fireBreakpointChanged();
-    }
+    });
   }
 
   public void doUpdateUI(Runnable callOnUpdate) {
@@ -186,14 +196,15 @@ public final class XLineBreakpointImpl<P extends XBreakpointProperties> extends 
 
   @Override
   public void setTemporary(boolean temporary) {
-    if (isTemporary() != temporary) {
-      myState.setTemporary(temporary);
-      fireBreakpointChanged();
-    }
+    setTemporary(-1, temporary);
+  }
+
+  public void setTemporary(long requestId, boolean temporary) {
+    updateStateIfNeededAndNotify(requestId, temporary, this::isTemporary, myState::setTemporary);
   }
 
   @Override
   public String toString() {
-    return "XLineBreakpointImpl(" + myType.getId() + " at " + getShortFilePath() + ":" + getLine() + ")";
+    return "XLineBreakpointImpl(id = " + getBreakpointId() + ", " + myType.getId() + " at " + getShortFilePath() + ":" + getLine() + ")";
   }
 }

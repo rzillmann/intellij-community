@@ -9,11 +9,12 @@ import com.intellij.psi.search.ActualCodeInsightContextInfo;
 import com.intellij.psi.search.CodeInsightContextFileInfo;
 import com.intellij.psi.search.CodeInsightContextInfo;
 import com.intellij.psi.search.DelegatingGlobalSearchScope;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 
 // Tests only (module plus dependencies) scope
 // Delegates to ModuleWithDependentsScope with extra flag testOnly to reduce memory for holding modules and CPU for traversing dependencies.
-class ModuleWithDependentsTestScope extends DelegatingGlobalSearchScope implements ActualCodeInsightContextInfo {
+final class ModuleWithDependentsTestScope extends DelegatingGlobalSearchScope implements ActualCodeInsightContextInfo {
   ModuleWithDependentsTestScope(@NotNull Module module) {
     // the additional equality argument allows to distinguish ModuleWithDependentsTestScope from ModuleWithDependentsScope
     super(new ModuleWithDependentsScope(module), true);
@@ -25,6 +26,7 @@ class ModuleWithDependentsTestScope extends DelegatingGlobalSearchScope implemen
     return scope.contains(file, CodeInsightContexts.anyContext(), true);
   }
 
+  @ApiStatus.Experimental
   @Override
   public @NotNull CodeInsightContextInfo getCodeInsightContextInfo() {
     return this;

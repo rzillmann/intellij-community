@@ -1,4 +1,4 @@
-// Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.plugins.gradle.execution.test.producer
 
 import com.intellij.execution.RunManager
@@ -69,6 +69,16 @@ abstract class GradleTestRunConfigurationProducerTestCase : GradleRunConfigurati
     noinline testTasksFilter: (TestName) -> Boolean = { true }
   ) {
     verifyRunConfigurationProducer<P>(expectedSettings, *elements) {
+      setTestTasksChooser(testTasksFilter)
+    }
+  }
+
+  protected inline fun <reified P : GradleTestRunConfigurationProducer> assertConfigurationFromContext(
+    expectedSettings: String,
+    noinline context: () -> ConfigurationContext,
+    noinline testTasksFilter: (TestName) -> Boolean = { true }
+  ) {
+    verifyRunConfigurationProducer<P>(expectedSettings, context) {
       setTestTasksChooser(testTasksFilter)
     }
   }
@@ -221,10 +231,10 @@ abstract class GradleTestRunConfigurationProducerTestCase : GradleRunConfigurati
       }
       withTask("testJar", "Jar") {
         code("dependsOn testClasses")
-        if (isGradleOlderThan("8.0")) {
-          assign("baseName", "test-${'$'}{project.archivesBaseName}")
-        } else {
-          assign("archiveBaseName", "test-${'$'}{project.archivesBaseName}")
+        when {
+          isGradleAtLeast("9.0") -> assign("archiveBaseName", "test-${'$'}{project.base.archivesName}")
+          isGradleAtLeast("8.0") -> assign("archiveBaseName", "test-${'$'}{project.archivesBaseName}")
+          else -> assign("baseName", "test-${'$'}{project.archivesBaseName}")
         }
         code("from sourceSets.test.output")
       }
@@ -236,7 +246,11 @@ abstract class GradleTestRunConfigurationProducerTestCase : GradleRunConfigurati
           code("tests testJar")
         }
         call("idea.module") {
-          code("testSourceDirs += file('automation')")
+          if (isGradleAtLeast("9.0")) {
+            code("testSources.from(files('automation'))")
+          } else {
+            code("testSourceDirs += file('automation')")
+          }
         }
       }
     }

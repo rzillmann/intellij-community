@@ -15,13 +15,14 @@ import com.intellij.openapi.util.Key;
 import com.intellij.openapi.util.NlsContexts;
 import com.intellij.openapi.util.NlsSafe;
 import com.intellij.openapi.util.SystemInfo;
+import com.intellij.openapi.util.registry.Registry;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.util.text.Strings;
 import com.intellij.openapi.vfs.local.FileWatcherNotificationSink;
 import com.intellij.openapi.vfs.local.PluggableFileWatcher;
-import com.intellij.openapi.vfs.newvfs.ManagingFS;
 import com.intellij.util.io.BaseDataReader;
 import com.intellij.util.io.BaseOutputReader;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -38,6 +39,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
+@ApiStatus.Internal
 public final class WslFileWatcher extends PluggableFileWatcher {
   private static Logger logger(@Nullable String vm) {
     return vm == null ? Logger.getInstance(WslFileWatcher.class) : Logger.getInstance('#' + WslFileWatcher.class.getName() + '.' + vm);
@@ -57,7 +59,12 @@ public final class WslFileWatcher extends PluggableFileWatcher {
   private volatile boolean myTestStarted = false;
 
   @Override
-  public void initialize(@NotNull ManagingFS managingFS, @NotNull FileWatcherNotificationSink notificationSink) {
+  public void initialize(@NotNull FileWatcherNotificationSink notificationSink) {
+    if (Registry.is("use.eel.file.watcher", false)) {
+      myExecutable = null;
+      return;
+    }
+
     myNotificationSink = notificationSink;
     if (SystemInfo.isWin10OrNewer && PathEnvironmentVariableUtil.findInPath("wsl.exe") != null) {
       myExecutable = PathManager.findBinFile(FSNOTIFIER_WSL);
@@ -81,7 +88,7 @@ public final class WslFileWatcher extends PluggableFileWatcher {
 
   @Override
   public boolean isOperational() {
-    if (myExecutable == null) return false;
+    if (myExecutable == null || Registry.is("use.eel.file.watcher", false)) return false;
     var app = ApplicationManager.getApplication();
     return !(app.isCommandLine() || app.isUnitTestMode()) || myTestStarted;
   }
@@ -315,7 +322,7 @@ public final class WslFileWatcher extends PluggableFileWatcher {
         }
       }
       else if (myLastOp == WatcherOp.MESSAGE) {
-        String localized = Objects.requireNonNullElse(IdeCoreBundle.INSTANCE.messageOrNull(line), line); //NON-NLS
+        String localized = Objects.requireNonNullElse(IdeCoreBundle.messageOrNull(line), line); //NON-NLS
         myVm.logger.warn(localized);
         notifyOnFailure(myVm.name, localized, NotificationListener.URL_OPENING_LISTENER);
         myLastOp = null;

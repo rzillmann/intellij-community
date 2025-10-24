@@ -53,14 +53,6 @@ public final class CommonBundle {
     return BundleBase.messageOrDefault(bundle, key, null, params);
   }
 
-  /**
-   * @deprecated use {@link AbstractBundle#messageOrNull(ResourceBundle, String, Object...)}
-   */
-  @Deprecated(forRemoval = true)
-  public static @Nullable @Nls String messageOfNull(@NotNull ResourceBundle bundle, @NotNull String key, Object @NotNull ... params) {
-    return AbstractBundle.messageOrNull(bundle, key, params);
-  }
-
   public static @NotNull @Button String getCancelButtonText() {
     return message("button.cancel");
   }
@@ -76,6 +68,7 @@ public final class CommonBundle {
   /**
    * @deprecated Use more informative title instead
    */
+  @ApiStatus.Internal
   @Deprecated(forRemoval = true)
   public static @DialogTitle String getWarningTitle() {
     return message("title.warning");

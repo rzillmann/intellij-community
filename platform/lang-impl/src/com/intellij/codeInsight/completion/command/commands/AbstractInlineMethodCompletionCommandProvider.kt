@@ -8,21 +8,22 @@ import com.intellij.psi.PsiFile
 
 abstract class AbstractInlineMethodCompletionCommandProvider :
   ActionCommandProvider(actionId = "Inline",
-                        name = "Inline method",
-                        i18nName = ActionsBundle.message("action.Inline.text"),
+                        synonyms = listOf("Inline"),
+                        presentableName = ActionsBundle.message("action.Inline.text"),
                         icon = null,
                         priority = -150,
-                        previewText = null) {
+                        previewText = ActionsBundle.message("action.Inline.description")) {
   override fun isApplicable(offset: Int, psiFile: PsiFile, editor: Editor?): Boolean {
+    val offsetToCall = findOffsetToCall(offset, psiFile)
+    if (offsetToCall != null && offsetToCall != offset) return true
     if (!super.isApplicable(offset, psiFile, editor)) return false
-    return findOffsetToCall(offset, psiFile) != null
+    return offsetToCall != null
   }
-
 
   override fun createCommand(context: CommandCompletionProviderContext): ActionCompletionCommand? {
     return object : ActionCompletionCommand(actionId = super.actionId,
-                                            name = super.name,
-                                            i18nName = super.i18nName,
+                                            synonyms = super.synonyms,
+                                            presentableActionName = super.presentableName,
                                             icon = super.icon,
                                             priority = super.priority,
                                             previewText = super.previewText) {

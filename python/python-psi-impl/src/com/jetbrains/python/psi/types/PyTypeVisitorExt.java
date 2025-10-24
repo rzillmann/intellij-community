@@ -19,10 +19,6 @@ public abstract class PyTypeVisitorExt<T> extends PyTypeVisitor<T> {
     return visitPyTypeParameterType(paramSpecType);
   }
 
-  public T visitPyNoneType(@NotNull PyNoneType noneType) {
-    return visitPyType(noneType);
-  }
-
   public T visitPyGenericType(@NotNull PyCollectionType genericType) {
     return visitPyClassType(genericType);
   }
@@ -47,8 +43,12 @@ public abstract class PyTypeVisitorExt<T> extends PyTypeVisitor<T> {
     return visitPyType(unionType);
   }
 
+  public T visitPyUnsafeUnionType(@NotNull PyUnsafeUnionType unsafeUnionType) {
+    return visitPyType(unsafeUnionType);
+  }
+
   public T visitPyTypingNewType(@NotNull PyTypingNewType typingNewType) {
-    return visitPyType(typingNewType);
+    return visitPyClassType(typingNewType);
   }
 
   public T visitPyNarrowedType(@NotNull PyNarrowedType narrowedType) {

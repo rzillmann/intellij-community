@@ -2,15 +2,10 @@
 package com.intellij.psi.codeStyle;
 
 import com.intellij.application.options.CodeStyle;
-import com.intellij.ide.actions.ShowSettingsUtilImpl;
 import com.intellij.ide.scratch.ScratchUtil;
-import com.intellij.lang.LangBundle;
 import com.intellij.lang.Language;
 import com.intellij.lang.LanguageFormatting;
-import com.intellij.notification.Notification;
-import com.intellij.notification.NotificationType;
 import com.intellij.openapi.actionSystem.AnAction;
-import com.intellij.openapi.actionSystem.AnActionEvent;
 import com.intellij.openapi.actionSystem.Separator;
 import com.intellij.openapi.application.ApplicationBundle;
 import com.intellij.openapi.application.ApplicationManager;
@@ -23,19 +18,18 @@ import com.intellij.openapi.fileTypes.FileType;
 import com.intellij.openapi.fileTypes.LanguageFileType;
 import com.intellij.openapi.project.DumbAwareAction;
 import com.intellij.openapi.project.Project;
-import com.intellij.openapi.util.NlsActions;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vfs.VirtualFile;
+import com.intellij.platform.lang.impl.icons.PlatformLangImplIcons;
 import com.intellij.psi.PsiDocumentManager;
 import com.intellij.psi.PsiFile;
+import com.intellij.psi.codeStyle.modifier.CodeStyleStatusBarUIContributor;
 import com.intellij.testFramework.LightVirtualFile;
 import com.intellij.ui.ColorUtil;
 import com.intellij.ui.JBColor;
-import org.jetbrains.annotations.ApiStatus;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
-import org.jetbrains.annotations.TestOnly;
+import org.jetbrains.annotations.*;
 
+import javax.swing.*;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -54,7 +48,7 @@ public class DetectableIndentOptionsProvider extends FileIndentOptionsProvider {
 
   @Override
   public @Nullable IndentOptions getIndentOptions(@NotNull Project project, @NotNull CodeStyleSettings settings, @NotNull VirtualFile file) {
-    if (!isEnabled(settings, file)) {
+    if (!isApplicableForFile(file) || !settings.AUTODETECT_INDENTS) {
       return null;
     }
 
@@ -64,28 +58,28 @@ public class DetectableIndentOptionsProvider extends FileIndentOptionsProvider {
     }
 
     TimeStampedIndentOptions options;
-    //noinspection SynchronizationOnLocalVariableOrMethodParameter
     synchronized (document) {
-      options = getValidCachedIndentOptions(project, file, document);
+      options = getValidCachedIndentOptions(project, file, document, settings);
 
       if (options != null) {
         return options;
       }
 
-      options = getDefaultIndentOptions(project, file, document);
+      options = getDefaultIndentOptions(project, file, document, settings);
       options.associateWithDocument(document);
     }
 
-    scheduleDetectionInBackground(project, document, options);
+    scheduleDetectionInBackground(project, document, options, settings);
 
     return options;
   }
 
   protected void scheduleDetectionInBackground(@NotNull Project project,
                                                @NotNull Document document,
-                                               @NotNull TimeStampedIndentOptions options)
+                                               @NotNull TimeStampedIndentOptions options,
+                                               @NotNull CodeStyleSettings settings)
   {
-    new DetectAndAdjustIndentOptionsTask(project, document, options).scheduleInBackgroundForCommittedDocument();
+    new DetectAndAdjustIndentOptionsTask(project, document, options, settings).scheduleInBackgroundForCommittedDocument();
   }
 
   @Override
@@ -98,7 +92,7 @@ public class DetectableIndentOptionsProvider extends FileIndentOptionsProvider {
     myIsEnabledInTest = isEnabledInTest;
   }
 
-  private boolean isEnabled(@NotNull CodeStyleSettings settings, @NotNull VirtualFile file) {
+  boolean isApplicableForFile(@NotNull VirtualFile file) {
     if (!file.isValid() ||
         !file.isWritable() ||
         ScratchUtil.isScratch(file)) {
@@ -110,10 +104,10 @@ public class DetectableIndentOptionsProvider extends FileIndentOptionsProvider {
     if (file instanceof LightVirtualFile || myDiscardedOptions.containsKey(file)) {
       return false;
     }
-    return hasFormattingModelBuilder(file) && settings.AUTODETECT_INDENTS;
+    return hasFormattingModelBuilder(file);
   }
 
-  private static boolean hasFormattingModelBuilder(@NotNull VirtualFile file) {
+  public static boolean hasFormattingModelBuilder(@NotNull VirtualFile file) {
     FileType fileType = file.getFileType();
     if (fileType instanceof LanguageFileType) {
       Language language = ((LanguageFileType)fileType).getLanguage();
@@ -122,69 +116,26 @@ public class DetectableIndentOptionsProvider extends FileIndentOptionsProvider {
     return false;
   }
 
-  @TestOnly
   public static @Nullable DetectableIndentOptionsProvider getInstance() {
-    return FileIndentOptionsProvider.EP_NAME.findExtension(DetectableIndentOptionsProvider.class);
+    return EP_NAME.findExtension(DetectableIndentOptionsProvider.class);
   }
-
 
   private void disableForFile(@NotNull VirtualFile file, @NotNull IndentOptions indentOptions) {
     myDiscardedOptions.put(file, indentOptions);
   }
 
-  public TimeStampedIndentOptions getValidCachedIndentOptions(@NotNull Project project, @NotNull VirtualFile virtualFile, Document document) {
+  public TimeStampedIndentOptions getValidCachedIndentOptions(@NotNull Project project,
+                                                              @NotNull VirtualFile virtualFile,
+                                                              Document document,
+                                                              @NotNull CodeStyleSettings settings) {
     IndentOptions options = IndentOptions.retrieveFromAssociatedDocument(document);
     if (options instanceof TimeStampedIndentOptions cachedInDocument) {
-      final IndentOptions defaultIndentOptions = getDefaultIndentOptions(project, virtualFile, document);
+      final IndentOptions defaultIndentOptions = getDefaultIndentOptions(project, virtualFile, document, settings);
       if (!cachedInDocument.isOutdated(document, defaultIndentOptions)) {
         return cachedInDocument;
       }
     }
     return null;
-  }
-
-  private static void showDisabledDetectionNotification(@NotNull Project project) {
-    DetectionDisabledNotification notification = new DetectionDisabledNotification(project);
-    notification.notify(project);
-  }
-
-  private static final class DetectionDisabledNotification extends Notification {
-    private DetectionDisabledNotification(Project project) {
-      super("Automatic indent detection",
-            ApplicationBundle.message("code.style.indent.detector.notification.content"), "",
-            NotificationType.INFORMATION);
-      addAction(new ReEnableDetection(project, this));
-      addAction(new ShowIndentDetectionOptionAction(ApplicationBundle.message("code.style.indent.provider.notification.settings")));
-    }
-  }
-
-  private static final class ShowIndentDetectionOptionAction extends DumbAwareAction {
-    private ShowIndentDetectionOptionAction(@Nullable @NlsActions.ActionText String text) {
-      super(text);
-    }
-
-    @Override
-    public void actionPerformed(@NotNull AnActionEvent e) {
-      ShowSettingsUtilImpl.showSettingsDialog(e.getProject(), "preferences.sourceCode", "detect indent");
-    }
-  }
-
-  private static final class ReEnableDetection extends DumbAwareAction {
-    private final Project myProject;
-    private final Notification myNotification;
-
-    private ReEnableDetection(@NotNull Project project, Notification notification) {
-      super(ApplicationBundle.message("code.style.indent.provider.notification.re.enable"));
-      myProject = project;
-      myNotification = notification;
-    }
-
-    @Override
-    public void actionPerformed(@NotNull AnActionEvent e) {
-      CodeStyle.getSettings(myProject).AUTODETECT_INDENTS = true;
-      CodeStyleSettingsManager.getInstance(myProject).fireCodeStyleSettingsChanged();
-      myNotification.expire();
-    }
   }
 
   private static boolean areDetected(@NotNull IndentOptions indentOptions) {
@@ -209,7 +160,7 @@ public class DetectableIndentOptionsProvider extends FileIndentOptionsProvider {
       final VirtualFile virtualFile = file.getVirtualFile();
       final Project project = file.getProject();
       final IndentOptions projectOptions = CodeStyle.getSettings(project).getIndentOptions(file.getFileType());
-      final String projectOptionsTip = StringUtil.capitalizeWords(IndentStatusBarUIContributor.getIndentInfo(projectOptions), true);
+      final String projectOptionsTip = StringUtil.capitalizeWords(getIndentInfo(projectOptions), true);
       if (indentOptions instanceof TimeStampedIndentOptions) {
         if (((TimeStampedIndentOptions)indentOptions).isDetected()) {
           actions.add(
@@ -232,7 +183,6 @@ public class DetectableIndentOptionsProvider extends FileIndentOptionsProvider {
                                          .getIndentOptionsByFile(project, virtualFile, null, true, null);
                                        indentOptsWithoutDetected.associateWithDocument(document);
                                      }
-                                     CodeStyleSettingsManager.getInstance(project).fireCodeStyleSettingsChanged(virtualFile);
                                      CommandProcessor.getInstance().executeCommand(
                                        project,
                                        () -> ApplicationManager.getApplication().runWriteAction(
@@ -254,6 +204,7 @@ public class DetectableIndentOptionsProvider extends FileIndentOptionsProvider {
                                        null
                                      );
                                      myDiscardedOptions.remove(virtualFile);
+                                     CodeStyleSettingsManager.getInstance(project).fireCodeStyleSettingsChanged(virtualFile);
                                    }));
           actions.add(Separator.getInstance());
         }
@@ -262,10 +213,11 @@ public class DetectableIndentOptionsProvider extends FileIndentOptionsProvider {
         final IndentOptions discardedOptions = myDiscardedOptions.get(virtualFile);
         final Document document = PsiDocumentManager.getInstance(project).getDocument(file);
         if (document != null) {
+          //noinspection DialogTitleCapitalization
           actions.add(
             DumbAwareAction.create(
               ApplicationBundle
-                .message("code.style.indent.detector.apply", IndentStatusBarUIContributor.getIndentInfo(discardedOptions),
+                .message("code.style.indent.detector.apply", getIndentInfo(discardedOptions),
                          ColorUtil.toHex(JBColor.GRAY)),
               e -> {
                 myDiscardedOptions.remove(virtualFile);
@@ -283,19 +235,28 @@ public class DetectableIndentOptionsProvider extends FileIndentOptionsProvider {
       return DumbAwareAction.create(
         ApplicationBundle.message("code.style.indent.detector.disable"),
         e -> {
-          CodeStyle.getSettings(project).AUTODETECT_INDENTS = false;
           myDiscardedOptions.clear();
-          CodeStyleSettingsManager.getInstance(project).fireCodeStyleSettingsChanged();
-          showDisabledDetectionNotification(project);
+          setIndentDetectionEnabled(project, false);
         });
     }
 
+    @Contract(pure = true)
     @Override
-    public String getHint() {
+    public @NotNull Icon getIcon() {
+      return getIndentDetectionIcon();
+    }
+
+    @Override
+    public @Nullable String getHint() {
       if (areDetected(getIndentOptions())) {
-        return LangBundle.message("indent.option.detected");
+        return ApplicationBundle.message("code.style.indent.option.detected");
       }
       return null;
+    }
+
+    @Override
+    public @NotNull String getActionGroupTitle() {
+      return ApplicationBundle.message("code.style.indent.detector.title");
     }
 
     @Override
@@ -304,5 +265,46 @@ public class DetectableIndentOptionsProvider extends FileIndentOptionsProvider {
         areDetected(getIndentOptions()) ||
         myDiscardedOptions.containsKey(file);
     }
+  }
+
+  @Override
+  public @Nullable AnAction getActivatingAction(@Nullable CodeStyleStatusBarUIContributor activeUiContributor, @NotNull PsiFile file) {
+    if (isApplicableForFile(file.getVirtualFile()) && activeUiContributor == null) {
+      // show the indent detection activator ONLY for native formatter
+      return getActivatingIndentDetectionAction(activeUiContributor, file);
+    }
+    return null;
+  }
+
+  public static @NotNull Icon getIndentDetectionIcon() {
+    return PlatformLangImplIcons.IndentDetection;
+  }
+
+  @SuppressWarnings("unused")
+  public static @Nullable AnAction getActivatingIndentDetectionAction(@Nullable CodeStyleStatusBarUIContributor activeUiContributor,
+                                                                      @NotNull PsiFile file) {
+    Project project = file.getProject();
+    CodeStyleSettings settings = CodeStyle.getSettings(project);
+    if (settings.AUTODETECT_INDENTS) {
+      return null;
+    }
+    return DumbAwareAction.create(
+      ApplicationBundle.message("code.style.indent.detector.enable"),
+      e -> setIndentDetectionEnabled(project, true));
+  }
+
+  public static void setIndentDetectionEnabled(@NotNull Project project, boolean detectionEnabled) {
+    CodeStyleSettings settings = CodeStyle.getSettings(project);
+    if (settings.AUTODETECT_INDENTS == detectionEnabled) return;
+    settings.AUTODETECT_INDENTS = detectionEnabled;
+    CodeStyleSettingsManager.getInstance(project).notifyCodeStyleSettingsChanged();
+  }
+
+  public static boolean isIndentDetectionContributor(CodeStyleStatusBarUIContributor codeStyleStatusBarUIContributor) {
+    if (codeStyleStatusBarUIContributor instanceof IndentStatusBarUIContributor indentStatusBarUIContributor) {
+      String hint = indentStatusBarUIContributor.getHint();
+      return hint == null || hint.equals(ApplicationBundle.message("code.style.indent.option.detected"));
+    }
+    return false;
   }
 }

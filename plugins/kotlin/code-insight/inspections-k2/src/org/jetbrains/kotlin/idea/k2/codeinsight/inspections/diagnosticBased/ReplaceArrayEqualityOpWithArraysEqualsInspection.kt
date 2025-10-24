@@ -7,6 +7,7 @@ import com.intellij.codeInspection.util.IntentionFamilyName
 import com.intellij.modcommand.ModPsiUpdater
 import com.intellij.openapi.project.Project
 import org.jetbrains.kotlin.analysis.api.KaSession
+import org.jetbrains.kotlin.analysis.api.components.KaDiagnosticCheckerFilter
 import org.jetbrains.kotlin.analysis.api.fir.diagnostics.KaFirDiagnostic
 import org.jetbrains.kotlin.idea.base.resources.KotlinBundle
 import org.jetbrains.kotlin.idea.codeinsight.api.applicable.inspections.KotlinKtDiagnosticBasedInspectionBase
@@ -17,16 +18,18 @@ import org.jetbrains.kotlin.psi.*
 import kotlin.reflect.KClass
 
 internal class ReplaceArrayEqualityOpWithArraysEqualsInspection :
-    KotlinKtDiagnosticBasedInspectionBase<KtExpression, KaFirDiagnostic.ArrayEqualityOperatorCanBeReplacedWithEquals, Context>() {
+    KotlinKtDiagnosticBasedInspectionBase<KtExpression, KaFirDiagnostic.ArrayEqualityOperatorCanBeReplacedWithContentEquals, Context>() {
 
-    override val diagnosticType: KClass<KaFirDiagnostic.ArrayEqualityOperatorCanBeReplacedWithEquals>
-        get() = KaFirDiagnostic.ArrayEqualityOperatorCanBeReplacedWithEquals::class
+    override val diagnosticFilter: KaDiagnosticCheckerFilter = KaDiagnosticCheckerFilter.ONLY_COMMON_CHECKERS
+
+    override val diagnosticType: KClass<KaFirDiagnostic.ArrayEqualityOperatorCanBeReplacedWithContentEquals>
+        get() = KaFirDiagnostic.ArrayEqualityOperatorCanBeReplacedWithContentEquals::class
 
     data class Context(val isNotEqualOperator: Boolean)
 
     override fun KaSession.prepareContextByDiagnostic(
         element: KtExpression,
-        diagnostic: KaFirDiagnostic.ArrayEqualityOperatorCanBeReplacedWithEquals,
+        diagnostic: KaFirDiagnostic.ArrayEqualityOperatorCanBeReplacedWithContentEquals,
     ): Context? {
         return (element as? KtBinaryExpression)?.operationToken?.let {
             when (it) {

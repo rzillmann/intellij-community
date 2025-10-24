@@ -1,13 +1,14 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.util.indexing
 
 import com.google.common.util.concurrent.SettableFuture
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.edtWriteAction
+import com.intellij.openapi.application.runReadAction
 import com.intellij.openapi.components.service
+import com.intellij.openapi.components.serviceAsync
 import com.intellij.openapi.diagnostic.ControlFlowException
 import com.intellij.openapi.diagnostic.Logger
-import com.intellij.openapi.progress.blockingContext
 import com.intellij.openapi.progress.checkCanceled
 import com.intellij.openapi.progress.util.PingProgress
 import com.intellij.openapi.project.DumbService
@@ -133,23 +134,24 @@ class UnindexedFilesScannerExecutorImpl(private val project: Project, cs: Corout
             runningTask?.cancel() // We expect that running task is null. But it's better to be on the safe side
             val scanningParameters = task.task.getScanningParameters()
             if (scanningParameters is ScanningIterators) {
-              val deferred = async(CoroutineName("Scanning")) {
-                try {
-                  runScanningTask(task.task, scanningParameters)
-                }
-                finally {
-                  // Scanning may throw exception (or error).
-                  // In this case, we should either clear or flush the indexing queue; otherwise, dumb mode will not end in the project.
-                  // TODO: we should flush the queue before setting the future, otherwise we have a race in UnindexedFilesScannerTest:
-                  //  it clears "allowFlushing" after future is set, expecting that if flush might be called, it had already been called
-                  val indexingScheduled = project.service<PerProjectIndexingQueue>().flushNow(scanningParameters.indexingReason)
-                  if (!indexingScheduled) {
-                    modCount.incrementAndGet()
+              val history = supervisorScope {
+                runningTask = coroutineContext.job
+                withContext(CoroutineName("Scanning")) {
+                  try {
+                    runScanningTask(task.task, scanningParameters)
+                  }
+                  finally {
+                    // Scanning may throw exception (or error).
+                    // In this case, we should either clear or flush the indexing queue; otherwise, dumb mode will not end in the project.
+                    // TODO: we should flush the queue before setting the future, otherwise we have a race in UnindexedFilesScannerTest:
+                    //  it clears "allowFlushing" after future is set, expecting that if flush might be called, it had already been called
+                    val indexingScheduled = project.service<PerProjectIndexingQueue>().flushNow(scanningParameters.indexingReason)
+                    if (!indexingScheduled) {
+                      modCount.incrementAndGet()
+                    }
                   }
                 }
               }
-              runningTask = deferred
-              val history = deferred.await()
               task.futureHistory.set(history)
               logInfo("Task finished (scanning id=${history.scanningSessionId}): $task")
             }
@@ -278,9 +280,7 @@ class UnindexedFilesScannerExecutorImpl(private val project: Project, cs: Corout
       (GistManager.getInstance() as GistManagerImpl).mergeDependentCacheInvalidations().use {
         task.applyDelayedPushOperations(scanningHistory)
       }
-      blockingContext {
-        task.perform(taskIndicator, progressReporter, scanningHistory, scanningParameters)
-      }
+      task.perform(taskIndicator, progressReporter, scanningHistory, scanningParameters)
 
       progressScope.cancel()
       return@coroutineScope scanningHistory
@@ -288,13 +288,14 @@ class UnindexedFilesScannerExecutorImpl(private val project: Project, cs: Corout
   }
 
   private fun cancelAllTasks(debugReason: String) {
-    scanningEnabled.value = false
+    val wasEnabled = scanningEnabled.value
+    if (wasEnabled) scanningEnabled.value = false
     try {
       scanningTask.getAndUpdate { null }?.close()
       runningTask?.cancel(debugReason)
     }
     finally {
-      scanningEnabled.value = true
+      if (wasEnabled) scanningEnabled.value = true
     }
   }
 
@@ -325,15 +326,29 @@ class UnindexedFilesScannerExecutorImpl(private val project: Project, cs: Corout
     if (application.isWriteIntentLockAcquired) {
       // make this executor "running" immediately: clients immediately invoking "runWhenSmart" expect that this scanning is processed first.
       application.runWriteAction {
-        if (hasQueuedTasks) {
-          isRunning.value = true
-        } // else: the task is already picked by the executor. Don't touch isRunning in this case.
-        // There is no problem if the task is not only picked by the executor, but also completed, and isRunning is
-        // already set to false - there will be one "empty" cycle performed by the executor, and nothing bad.
+        markAsRunning()
+      }
+    }
+    else if (DumbService.isDumb(project)) {
+      // here we want to immediately "start" executor without EDT in the case when scanning is started under a dumb task.
+      // Acquire RA to make sure that dumb mode won't change to smart, otherwise we risk changing smart mode to not-smart outside WA.
+      runReadAction {
+        if (DumbService.isDumb(project)) {
+          markAsRunning()
+        }
       }
     }
 
     return res
+  }
+
+  // should be invoked under RA + dumb mode or WA
+  private fun markAsRunning() {
+    if (hasQueuedTasks) {
+      isRunning.value = true
+    } // else: the task is already picked by the executor. Don't touch isRunning in this case.
+    // There is no problem if the task is not only picked by the executor, but also completed, and isRunning is
+    // already set to false - there will be one "empty" cycle performed by the executor, and nothing bad.
   }
 
   private fun startTaskInSmartMode(task: UnindexedFilesScanner): Future<ProjectScanningHistory> {
@@ -381,10 +396,24 @@ class UnindexedFilesScannerExecutorImpl(private val project: Project, cs: Corout
    * This method does not have "happens before" semantics. It requests GUI suspender to suspend and executes runnable without waiting for
    * all the running tasks to pause.
    */
+  @Suppress("OVERRIDE_DEPRECATION")
   override fun suspendScanningAndIndexingThenRun(activityName: @ProgressText String, runnable: Runnable) {
     pauseReason.update { it.add(activityName) }
     try {
       DumbService.getInstance(project).suspendIndexingAndRun(activityName, runnable)
+    }
+    finally {
+      pauseReason.update { it.remove(activityName) }
+    }
+  }
+
+  override suspend fun suspendScanningAndIndexingThenExecute(
+    activityName: @ProgressText String,
+    activity: suspend CoroutineScope.() -> Unit,
+  ) {
+    pauseReason.update { it.add(activityName) }
+    try {
+      project.serviceAsync<DumbService>().suspendIndexingAndRun(activityName, activity)
     }
     finally {
       pauseReason.update { it.remove(activityName) }

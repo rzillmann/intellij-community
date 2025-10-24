@@ -20,6 +20,7 @@ import org.jetbrains.bazel.jvm.mvStore.ModernStringDataType
 import org.jetbrains.bazel.jvm.mvStore.MvStoreMapFactory
 import org.jetbrains.bazel.jvm.mvStore.StringEnumerator
 import org.jetbrains.bazel.jvm.mvStore.VarIntDataType
+import org.jetbrains.bazel.jvm.worker.state.TargetConfigurationDigestContainer
 import org.jetbrains.jps.dependency.ExternalizableGraphElement
 import org.jetbrains.jps.dependency.Externalizer
 import org.jetbrains.jps.dependency.Maplet
@@ -75,6 +76,14 @@ private val dictStringToInt = createImmutableStringMap()
 private val dictIntToString = createImmutableIndexToStringMap()
 private val stringEnumeratorOffset = dictStringToInt.size
 
+private val stringHashToIndexMapBuilder = MVMap.Builder<HashValue128, Int>()
+  .keyType(HashValue128KeyDataType)
+  .valueType(VarIntDataType)
+
+private val stringIndexToStringMapBuilder = MVMap.Builder<Int, String>()
+  .keyType(VarIntDataType)
+  .valueType(ModernStringDataType)
+
 internal class BazelPersistentMapletFactory private constructor(
   private val store: MVStore,
   stringHashToIndexMap: MVMap<HashValue128, Int>,
@@ -82,21 +91,18 @@ internal class BazelPersistentMapletFactory private constructor(
   private val pathRelativizer: PathTypeAwareRelativizer,
 ) : MapletFactory, Closeable, MvStoreContainerFactory {
   companion object {
-    internal fun open(dbFile: Path, pathRelativizer: PathTypeAwareRelativizer, span: Span): BazelPersistentMapletFactory {
-      val store = tryOpenMvStore(dbFile = dbFile, span = span)
+    internal fun openStore(dbFile: Path, span: Span): MVStore {
+      return tryOpenMvStore(dbFile = dbFile, span = span)
+    }
+
+    internal fun createFactory(store: MVStore, pathRelativizer: PathTypeAwareRelativizer): BazelPersistentMapletFactory {
       val storageCloser = AutoCloseable(store::closeImmediately)
 
-      val valueType = MVMap.Builder<HashValue128, Int>()
-        .keyType(HashValue128KeyDataType)
-        .valueType(VarIntDataType)
       val stringHashToIndexMap = executeOrCloseStorage(storageCloser) {
-        store.openMap("string-hash-to-index", valueType)
+        store.openMap("string-hash-to-index", stringHashToIndexMapBuilder)
       }
       val indexToStringMap = executeOrCloseStorage(storageCloser) {
-        store.openMap("string-index-to-string", MVMap.Builder<Int, String>()
-          .keyType(VarIntDataType)
-          .valueType(ModernStringDataType)
-        )
+        store.openMap("string-index-to-string", stringIndexToStringMapBuilder)
       }
 
       executeOrCloseStorage(storageCloser) {
@@ -201,8 +207,15 @@ internal class BazelPersistentMapletFactory private constructor(
   override fun close() {
     // during save, we enumerate strings, so we cannot save as a part of close,
     // as in this case string enumerator maps maybe not saved (as being closed)
-    store.commit()
-    store.close()
+    if (store.hasUnsavedChanges()) {
+      store.commit()
+      store.close()
+    }
+    else {
+      // even if no changes, MvStore update file header -
+      // we want to avoid unnecessary disk writes and file on disk with an updated "modified timestamp"
+      store.closeImmediately()
+    }
   }
 
   fun forceClose() {

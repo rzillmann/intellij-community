@@ -4,11 +4,14 @@ package com.intellij.platform.debugger.impl.frontend
 import com.intellij.ide.ui.icons.icon
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
+import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.TextEditor
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
+import com.intellij.platform.debugger.impl.rpc.*
 import com.intellij.platform.project.projectId
+import com.intellij.util.ThreeState
 import com.intellij.xdebugger.breakpoints.SuspendPolicy
 import com.intellij.xdebugger.breakpoints.XBreakpoint
 import com.intellij.xdebugger.breakpoints.XBreakpointType.StandardPanels
@@ -17,11 +20,7 @@ import com.intellij.xdebugger.impl.breakpoints.XBreakpointProxy
 import com.intellij.xdebugger.impl.breakpoints.XBreakpointTypeProxy
 import com.intellij.xdebugger.impl.breakpoints.XLineBreakpointTypeProxy
 import com.intellij.xdebugger.impl.frame.XDebugManagerProxy
-import com.intellij.xdebugger.impl.rpc.XBreakpointApi
-import com.intellij.xdebugger.impl.rpc.XBreakpointTypeApi
-import com.intellij.xdebugger.impl.rpc.XBreakpointTypeDto
-import com.intellij.xdebugger.impl.rpc.XLineBreakpointTypeInfo
-import com.intellij.xdebugger.impl.rpc.standardPanel
+import com.intellij.xdebugger.impl.util.XDebugMonolithUtils
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import javax.swing.Icon
@@ -48,13 +47,37 @@ private class FrontendXLineBreakpointType(
 
   override val priority: Int = lineTypeInfo.priority
 
-  override fun canPutAt(file: VirtualFile, line: Int, project: Project): Boolean {
-    // TODO IJPL-185322 What if called for other editors?
-    val editor = FileEditorManager.getInstance(project).getEditors(file).firstNotNullOfOrNull {
-      if (it is TextEditor) it.editor else null
-    } ?: return false
-    val availableTypes = FrontendEditorLinesBreakpointTypesManager.getInstance(project).getTypesForLineFast(editor, line)
+  override suspend fun canPutAt(editor: Editor, line: Int, project: Project): Boolean {
+    val availableTypes = FrontendEditorLinesBreakpointsInfoManager.getInstance(project).getBreakpointsInfoForLine(editor, line).types
     return availableTypes.any { it.id == this@FrontendXLineBreakpointType.id }
+  }
+
+  override fun canPutAtFast(editor: Editor, line: Int, project: Project): ThreeState {
+    val availableTypes = FrontendEditorLinesBreakpointsInfoManager.getInstance(project).getBreakpointsInfoForLineFast(editor, line)?.types
+    if (availableTypes == null) {
+      return ThreeState.UNSURE
+    }
+    return ThreeState.fromBoolean(availableTypes.any { it.id == this@FrontendXLineBreakpointType.id })
+  }
+
+  override suspend fun canPutAt(file: VirtualFile, line: Int, project: Project): Boolean {
+    // TODO IJPL-185322 What if called for other editors?
+    val editor = file.getOpenedEditor(project) ?: return false
+
+    return canPutAt(editor, line, project)
+  }
+
+  override fun canPutAtFast(file: VirtualFile, line: Int, project: Project): ThreeState {
+    // TODO IJPL-185322 What if called for other editors?
+    val editor = file.getOpenedEditor(project) ?: return ThreeState.NO
+
+    return canPutAtFast(editor, line, project)
+  }
+
+  private fun VirtualFile.getOpenedEditor(project: Project): Editor? {
+    return FileEditorManager.getInstance(project).getEditors(this).firstNotNullOfOrNull {
+      if (it is TextEditor) it.editor else null
+    }
   }
 }
 
@@ -96,20 +119,32 @@ private open class FrontendXBreakpointType(
     return visibleStandardPanels
   }
 
+  @Suppress("UNCHECKED_CAST")
   override fun createCustomPropertiesPanel(project: Project): XBreakpointCustomPropertiesPanel<XBreakpoint<*>>? {
-    return null
+    // TODO Custom panels are only supported in monolith
+    val monolithType = XDebugMonolithUtils.findBreakpointTypeById(id) ?: return null
+    return monolithType.createCustomPropertiesPanel(project) as XBreakpointCustomPropertiesPanel<XBreakpoint<*>>?
   }
 
+  @Suppress("UNCHECKED_CAST")
   override fun createCustomConditionsPanel(): XBreakpointCustomPropertiesPanel<XBreakpoint<*>>? {
-    return null
+    // TODO Custom panels are only supported in monolith
+    val monolithType = XDebugMonolithUtils.findBreakpointTypeById(id) ?: return null
+    return monolithType.createCustomConditionsPanel() as XBreakpointCustomPropertiesPanel<XBreakpoint<*>>?
   }
 
+  @Suppress("UNCHECKED_CAST")
   override fun createCustomRightPropertiesPanel(project: Project): XBreakpointCustomPropertiesPanel<XBreakpoint<*>>? {
-    return null
+    // TODO Custom panels are only supported in monolith
+    val monolithType = XDebugMonolithUtils.findBreakpointTypeById(id) ?: return null
+    return monolithType.createCustomRightPropertiesPanel(project) as XBreakpointCustomPropertiesPanel<XBreakpoint<*>>?
   }
 
+  @Suppress("UNCHECKED_CAST")
   override fun createCustomTopPropertiesPanel(project: Project): XBreakpointCustomPropertiesPanel<XBreakpoint<*>>? {
-    return null
+    // TODO Custom panels are only supported in monolith
+    val monolithType = XDebugMonolithUtils.findBreakpointTypeById(id) ?: return null
+    return monolithType.createCustomTopPropertiesPanel(project) as XBreakpointCustomPropertiesPanel<XBreakpoint<*>>?
   }
 
   override fun isAddBreakpointButtonVisible(): Boolean {
@@ -118,7 +153,7 @@ private open class FrontendXBreakpointType(
 
   override suspend fun addBreakpoint(project: Project): XBreakpointProxy? {
     val breakpointDto = XBreakpointTypeApi.getInstance().addBreakpointThroughLux(project.projectId(), dto.id).await() ?: return null
-    return XDebugManagerProxy.getInstance().getBreakpointManagerProxy(project).addBreakpoint(breakpointDto)
+    return XDebugManagerProxy.getInstance().getBreakpointManagerProxy(project).awaitBreakpointCreation(breakpointDto.id)
   }
 
   override fun equals(other: Any?): Boolean {
@@ -134,7 +169,9 @@ private open class FrontendXBreakpointType(
     return id.hashCode()
   }
 
-
+  override fun toString(): String {
+    return "FrontendXBreakpointType(type=$id)"
+  }
 }
 
 @Service(Service.Level.PROJECT)

@@ -1,31 +1,21 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.platform.workspace.storage.testEntities.entities.impl
 
 import com.intellij.platform.workspace.storage.*
-import com.intellij.platform.workspace.storage.ConnectionId
-import com.intellij.platform.workspace.storage.EntitySource
-import com.intellij.platform.workspace.storage.EntityType
-import com.intellij.platform.workspace.storage.GeneratedCodeApiVersion
-import com.intellij.platform.workspace.storage.GeneratedCodeImplVersion
-import com.intellij.platform.workspace.storage.MutableEntityStorage
-import com.intellij.platform.workspace.storage.SymbolicEntityId
-import com.intellij.platform.workspace.storage.WorkspaceEntity
-import com.intellij.platform.workspace.storage.WorkspaceEntityInternalApi
-import com.intellij.platform.workspace.storage.annotations.Child
 import com.intellij.platform.workspace.storage.impl.ModifiableWorkspaceEntityBase
 import com.intellij.platform.workspace.storage.impl.SoftLinkable
 import com.intellij.platform.workspace.storage.impl.WorkspaceEntityBase
 import com.intellij.platform.workspace.storage.impl.WorkspaceEntityData
-import com.intellij.platform.workspace.storage.impl.containers.toMutableWorkspaceList
 import com.intellij.platform.workspace.storage.impl.indices.WorkspaceMutableIndex
 import com.intellij.platform.workspace.storage.instrumentation.EntityStorageInstrumentation
 import com.intellij.platform.workspace.storage.instrumentation.EntityStorageInstrumentationApi
 import com.intellij.platform.workspace.storage.metadata.model.EntityMetadata
 import com.intellij.platform.workspace.storage.testEntities.entities.ComposedId
 import com.intellij.platform.workspace.storage.testEntities.entities.ComposedLinkEntity
+import com.intellij.platform.workspace.storage.testEntities.entities.ComposedLinkEntityBuilder
 
 @GeneratedCodeApiVersion(3)
-@GeneratedCodeImplVersion(6)
+@GeneratedCodeImplVersion(7)
 @OptIn(WorkspaceEntityInternalApi::class)
 internal class ComposedLinkEntityImpl(private val dataSource: ComposedLinkEntityData) : ComposedLinkEntity, WorkspaceEntityBase(
   dataSource) {
@@ -56,7 +46,7 @@ internal class ComposedLinkEntityImpl(private val dataSource: ComposedLinkEntity
 
 
   internal class Builder(result: ComposedLinkEntityData?) : ModifiableWorkspaceEntityBase<ComposedLinkEntity, ComposedLinkEntityData>(
-    result), ComposedLinkEntity.Builder {
+    result), ComposedLinkEntityBuilder {
     internal constructor() : this(ComposedLinkEntityData())
 
     override fun applyToBuilder(builder: MutableEntityStorage) {
@@ -170,7 +160,7 @@ internal class ComposedLinkEntityData : WorkspaceEntityData<ComposedLinkEntity>(
     return changed
   }
 
-  override fun wrapAsModifiable(diff: MutableEntityStorage): WorkspaceEntity.Builder<ComposedLinkEntity> {
+  override fun wrapAsModifiable(diff: MutableEntityStorage): WorkspaceEntityBuilder<ComposedLinkEntity> {
     val modifiable = ComposedLinkEntityImpl.Builder(null)
     modifiable.diff = diff
     modifiable.id = createEntityId()
@@ -197,7 +187,7 @@ internal class ComposedLinkEntityData : WorkspaceEntityData<ComposedLinkEntity>(
     return ComposedLinkEntity::class.java
   }
 
-  override fun createDetachedEntity(parents: List<WorkspaceEntity.Builder<*>>): WorkspaceEntity.Builder<*> {
+  override fun createDetachedEntity(parents: List<WorkspaceEntityBuilder<*>>): WorkspaceEntityBuilder<*> {
     return ComposedLinkEntity(link, entitySource) {
     }
   }

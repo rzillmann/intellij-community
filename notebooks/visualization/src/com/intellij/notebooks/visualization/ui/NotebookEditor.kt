@@ -10,12 +10,13 @@ interface NotebookEditor {
   val editorPositionKeeper: NotebookPositionKeeper
 
   val hoveredCell: AtomicProperty<EditorCell?>
+  val singleFileDiffMode: AtomicProperty<Boolean>
 }
 
-internal val notebookEditorKey = Key.create<NotebookEditor>(NotebookEditor::class.java.name)
+internal val NOTEBOOK_EDITOR_KEY = Key.create<NotebookEditor>(NotebookEditor::class.java.name)
 
 val Editor.notebookEditor: NotebookEditor
   get() = notebookEditorOrNull!!
 
 val Editor.notebookEditorOrNull: NotebookEditor?
-  get() = notebookEditorKey.get(this)
+  get() = NOTEBOOK_EDITOR_KEY.get(this)

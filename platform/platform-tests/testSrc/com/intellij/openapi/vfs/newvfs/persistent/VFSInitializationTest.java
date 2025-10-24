@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.openapi.vfs.newvfs.persistent;
 
 import com.intellij.openapi.util.io.FileUtil;
@@ -20,6 +20,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
+import static com.intellij.openapi.vfs.newvfs.persistent.VFSInitException.ErrorCategory.DEFRAGMENTATION_REQUESTED;
 import static com.intellij.openapi.vfs.newvfs.persistent.VFSInitException.ErrorCategory.IMPL_VERSION_MISMATCH;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.junit.Assert.*;
@@ -325,7 +326,9 @@ public class VFSInitializationTest {
     final PersistentFSConnection reopenedConnection = tryInit(cachesDir, version, PersistentFSConnector.RECOVERERS);
     try {
       assertTrue("records must report 'closedProperly' since connection was properly disconnect()-ed",
-                   reopenedConnection.records().wasClosedProperly());
+                 reopenedConnection.records().wasClosedProperly());
+      assertTrue("records must report 'alwaysClosedProperly' since connection was properly disconnect()-ed",
+                 reopenedConnection.records().wasAlwaysClosedProperly());
     }
     finally {
       reopenedConnection.close();
@@ -369,6 +372,43 @@ public class VFSInitializationTest {
         //  NOT_CLOSED_PROPERLY,
         //  requestToRebuild.category()
         //);
+      }
+    }
+    finally {
+      connection.close();
+    }
+  }
+
+  @Test
+  public void VFS_Must_FailOnReopen_RequestingRebuild_if_DefragmentationRequested() throws IOException {
+    Path cachesDir = temporaryDirectory.createDir();
+    int version = 1;
+
+    PersistentFSConnection connection = tryInit(cachesDir, version, PersistentFSConnector.RECOVERERS);
+    try {
+      connection.scheduleDefragmentation();
+    }
+    finally {
+      connection.close();
+    }
+
+    try {
+      try {
+        PersistentFSConnection conn = tryInit(cachesDir, version, PersistentFSConnector.RECOVERERS);
+        try {
+          fail("VFS init must fail (with error ~ DEFRAGMENTATION_REQUESTED)");
+        }
+        finally {
+          conn.close();
+        }
+      }
+      catch (VFSInitException requestToDefragmentation) {
+        //OK, this is what we expect:
+        assertEquals(
+          "rebuildCategory must be DEFRAGMENTATION_REQUESTED",
+          DEFRAGMENTATION_REQUESTED,
+          requestToDefragmentation.category()
+        );
       }
     }
     finally {

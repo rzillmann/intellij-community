@@ -9,7 +9,6 @@ import com.intellij.openapi.components.serviceAsync
 import com.intellij.openapi.diagnostic.debug
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.extensions.ExtensionPointName
-import com.intellij.openapi.progress.blockingContext
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.ex.ProjectEx
 import com.intellij.openapi.startup.ProjectActivity
@@ -30,6 +29,7 @@ private val EP_NAME = ExtensionPointName<VcsStartupActivity>("com.intellij.vcsSt
  * An ordered pipeline for initialization of VCS-related services. Typically, it should not be needed by plugins.
  *
  * @see ProjectLevelVcsManager.runAfterInitialization
+ * @see ProjectLevelVcsManager.awaitInitialization
  * @see ProjectActivity
  */
 @Suppress("DeprecatedCallableAddReplaceWith")
@@ -67,8 +67,10 @@ class VcsInitialization(private val project: Project, private val coroutineScope
   private val initActivities = ArrayList<VcsStartupActivity>()
   private val postActivities = ArrayList<VcsStartupActivity>()
 
-  @Volatile
-  private var future: Job? = null
+  private val future: Job = coroutineScope.launch(CoroutineName("VcsInitialization"), CoroutineStart.LAZY) {
+    if (project.isDefault) throw CancellationException("VCS is not initialized for default project")
+    execute()
+  }
 
   init {
     if (ApplicationManager.getApplication().isUnitTestMode) {
@@ -82,11 +84,6 @@ class VcsInitialization(private val project: Project, private val coroutineScope
     fun getInstance(project: Project): VcsInitialization = project.service()
   }
 
-  private fun startInitializationJob(job: Job) {
-    future = job
-    job.start()
-  }
-
   fun add(vcsInitObject: VcsInitObject, runnable: Runnable) {
     if (project.isDefault) {
       LOG.warn("ignoring initialization activity for default project", Throwable())
@@ -96,9 +93,7 @@ class VcsInitialization(private val project: Project, private val coroutineScope
     val wasScheduled = scheduleActivity(vcsInitObject, runnable)
     if (!wasScheduled) {
       coroutineScope.launch {
-        blockingContext {
-          runnable.run()
-        }
+        runnable.run()
       }
     }
   }
@@ -129,7 +124,7 @@ class VcsInitialization(private val project: Project, private val coroutineScope
     }
   }
 
-  internal suspend fun execute() {
+  private suspend fun execute() {
     LOG.assertTrue(!project.isDefault)
     try {
       runInitStep(current = Status.PENDING,
@@ -194,7 +189,6 @@ class VcsInitialization(private val project: Project, private val coroutineScope
   }
 
   private fun cancelBackgroundInitialization() {
-    val future = future ?: return
     future.cancel()
 
     // do not leave VCS initialization run in the background when the project is closed
@@ -217,6 +211,10 @@ class VcsInitialization(private val project: Project, private val coroutineScope
     if (!success) {
       LOG.warn("Failed to wait for VCS initialization cancellation for project $project", Throwable())
     }
+  }
+
+  suspend fun await() {
+    future.join()
   }
 
   @TestOnly
@@ -244,13 +242,7 @@ class VcsInitialization(private val project: Project, private val coroutineScope
 
   internal class StartUpActivity : ProjectActivity {
     override suspend fun execute(project: Project) {
-      val vcsInitialization = project.serviceAsync<VcsInitialization>()
-      coroutineScope {
-        val task = launch(context = CoroutineName("VcsInitialization"), start = CoroutineStart.LAZY) {
-          vcsInitialization.execute()
-        }
-        vcsInitialization.startInitializationJob(task)
-      }
+      project.serviceAsync<VcsInitialization>().await()
     }
   }
 

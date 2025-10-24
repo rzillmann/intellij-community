@@ -49,20 +49,21 @@ public class XmlTagTreeHighlightingPass extends TextEditorHighlightingPass {
   private static final Key<List<RangeHighlighter>> TAG_TREE_HIGHLIGHTERS_IN_EDITOR_KEY = Key.create("TAG_TREE_HIGHLIGHTERS_IN_EDITOR_KEY");
 
   public static final TextAttributesKey TAG_TREE_HIGHLIGHTING_KEY = TextAttributesKey.createTextAttributesKey("TAG_TREE_HIGHLIGHTING_KEY");
-  private static final HighlightInfoType TYPE = new HighlightInfoType.HighlightInfoTypeImpl(HighlightSeverity.INFORMATION,
-                                                                                            TAG_TREE_HIGHLIGHTING_KEY);
+  private static class Holder {
+    private static final HighlightInfoType TYPE = new HighlightInfoType.HighlightInfoTypeImpl(HighlightSeverity.INFORMATION, TAG_TREE_HIGHLIGHTING_KEY);
+  }
 
-  private final PsiFile myFile;
+  private final PsiFile myPsiFile;
   private final EditorEx myEditor;
   private final BreadcrumbsProvider myInfoProvider;
 
   private final List<Pair<TextRange, TextRange>> myPairsToHighlight = new ArrayList<>();
 
-  XmlTagTreeHighlightingPass(@NotNull PsiFile file, @NotNull EditorEx editor) {
-    super(file.getProject(), editor.getDocument(), true);
-    myFile = file;
+  XmlTagTreeHighlightingPass(@NotNull PsiFile psiFile, @NotNull EditorEx editor) {
+    super(psiFile.getProject(), editor.getDocument(), true);
+    myPsiFile = psiFile;
     myEditor = editor;
-    FileViewProvider viewProvider = file.getManager().findViewProvider(file.getVirtualFile());
+    FileViewProvider viewProvider = psiFile.getManager().findViewProvider(psiFile.getVirtualFile());
     myInfoProvider = BreadcrumbsUtilEx.findProvider(false, viewProvider);
   }
 
@@ -78,11 +79,11 @@ public class XmlTagTreeHighlightingPass extends TextEditorHighlightingPass {
 
     int offset = myEditor.getCaretModel().getOffset();
     PsiElement[] elements =
-      PsiFileBreadcrumbsCollector.getLinePsiElements(myEditor.getDocument(), offset, myFile.getVirtualFile(), myProject, myInfoProvider);
+      PsiFileBreadcrumbsCollector.getLinePsiElements(myEditor.getDocument(), offset, myPsiFile.getVirtualFile(), myProject, myInfoProvider);
 
     if (elements == null || elements.length == 0 || !XmlTagTreeHighlightingUtil.containsTagsWithSameName(elements)) {
       elements = PsiElement.EMPTY_ARRAY;
-      FileViewProvider provider = myFile.getViewProvider();
+      FileViewProvider provider = myPsiFile.getViewProvider();
       for (Language language : provider.getLanguages()) {
         PsiElement element = provider.findElementAt(offset, language);
         if (!isTagStartOrEnd(element)) {
@@ -159,7 +160,7 @@ public class XmlTagTreeHighlightingPass extends TextEditorHighlightingPass {
   @Override
   public void doApplyInformationToEditor() {
     List<HighlightInfo> infos = getHighlights();
-    UpdateHighlightersUtil.setHighlightersToSingleEditor(myProject, myEditor, 0, myFile.getTextLength(), infos, getColorsScheme(), getId());
+    UpdateHighlightersUtil.setHighlightersToSingleEditor(myProject, myEditor, 0, myPsiFile.getTextLength(), infos, getColorsScheme(), getId());
   }
 
   public List<HighlightInfo> getHighlights() {
@@ -231,7 +232,7 @@ public class XmlTagTreeHighlightingPass extends TextEditorHighlightingPass {
 
   private static @NotNull HighlightInfo createHighlightInfo(Color color, @NotNull TextRange range) {
     TextAttributes attributes = new TextAttributes(null, color, null, null, Font.PLAIN);
-    return HighlightInfo.newHighlightInfo(TYPE).range(range).textAttributes(attributes)
+    return HighlightInfo.newHighlightInfo(Holder.TYPE).range(range).textAttributes(attributes)
       .severity(HighlightInfoType.ELEMENT_UNDER_CARET_SEVERITY).createUnconditionally();
   }
 
@@ -292,7 +293,7 @@ public class XmlTagTreeHighlightingPass extends TextEditorHighlightingPass {
     for (RangeHighlighter highlighter : markupModel.getAllHighlighters()) {
       HighlightInfo info = HighlightInfo.fromRangeHighlighter(highlighter);
       if (info == null) continue;
-      if (info.type == TYPE) {
+      if (info.type == Holder.TYPE) {
         highlighter.dispose();
       }
     }

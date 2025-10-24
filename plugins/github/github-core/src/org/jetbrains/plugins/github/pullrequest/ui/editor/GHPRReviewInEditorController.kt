@@ -4,11 +4,13 @@ package org.jetbrains.plugins.github.pullrequest.ui.editor
 import com.intellij.collaboration.async.collectScoped
 import com.intellij.collaboration.async.launchNow
 import com.intellij.collaboration.async.mapScoped
-import com.intellij.collaboration.async.nestedDisposable
+import com.intellij.collaboration.async.mapStatefulToStateful
 import com.intellij.collaboration.ui.codereview.diff.DiscussionsViewOption
 import com.intellij.collaboration.ui.codereview.editor.*
 import com.intellij.collaboration.util.HashingUtil
 import com.intellij.collaboration.util.getOrNull
+import com.intellij.diff.util.Side
+import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.openapi.components.serviceAsync
@@ -18,12 +20,15 @@ import com.intellij.openapi.editor.event.EditorFactoryEvent
 import com.intellij.openapi.editor.event.EditorFactoryListener
 import com.intellij.openapi.editor.ex.EditorEx
 import com.intellij.openapi.editor.ex.util.EditorUtil
+import com.intellij.openapi.fileEditor.FileEditorManager
+import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.intellij.util.cancelOnDispose
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import org.jetbrains.plugins.github.pullrequest.config.GithubPullRequestsProjectUISettings
+import org.jetbrains.plugins.github.pullrequest.ui.GHPRInlayUtils
 import org.jetbrains.plugins.github.pullrequest.ui.GHPRProjectViewModel
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -41,6 +46,8 @@ internal class GHPRReviewInEditorController(private val project: Project, privat
     if (!isPotentialEditor(editor)) return
     val file = editor.virtualFile ?: return
 
+    val actionManager = ActionManager.getInstance()
+
     val editorDisposable = Disposer.newDisposable().also {
       EditorUtil.disposeWithEditor(editor, it)
     }
@@ -51,19 +58,34 @@ internal class GHPRReviewInEditorController(private val project: Project, privat
         .flatMapLatest { projectVm ->
           projectVm?.prOnCurrentBranch?.mapScoped {
             val id = it?.getOrNull() ?: return@mapScoped null
-            projectVm.acquireEditorReviewViewModel(id, nestedDisposable())
+            projectVm.acquireEditorReviewViewModel(id, this)
           } ?: flowOf(null)
         }.collectLatest { reviewVm ->
           reviewVm?.getViewModelFor(file)?.collectScoped { fileVm ->
             if (fileVm != null) supervisorScope {
               launchNow {
-                ReviewInEditorUtil.showReviewToolbar(reviewVm, editor)
+                ReviewInEditorUtil.showReviewToolbarWithActions(
+                  reviewVm, editor,
+                  actionManager.getAction("CodeReview.PreviousComment"),
+                  actionManager.getAction("CodeReview.NextComment"),
+                )
+              }
+
+              launchNow {
+                try {
+                  editor.putUserData(GHPRReviewFileEditorViewModel.KEY, fileVm)
+                  awaitCancellation()
+                }
+                finally {
+                  editor.putUserData(GHPRReviewFileEditorViewModel.KEY, null)
+                }
               }
 
               val enabledFlow = reviewVm.discussionsViewOption.map { it != DiscussionsViewOption.DONT_SHOW }
               val syncedFlow = reviewVm.updateRequired.map { !it }
+
               combine(enabledFlow, syncedFlow) { enabled, synced -> enabled && synced }.distinctUntilChanged().collectLatest { enabled ->
-                if (enabled) showReview(settings, fileVm, editor)
+                if (enabled) showReview(project, settings, fileVm, editor)
               }
             }
           }
@@ -76,11 +98,16 @@ internal class GHPRReviewInEditorController(private val project: Project, privat
   }
 }
 
-private suspend fun showReview(settings: GithubPullRequestsProjectUISettings, fileVm: GHPRReviewFileEditorViewModel, editor: EditorEx): Nothing {
+private suspend fun showReview(project: Project, settings: GithubPullRequestsProjectUISettings, fileVm: GHPRReviewFileEditorViewModel, editor: EditorEx): Nothing {
   withContext(Dispatchers.Main.immediate) {
     val reviewHeadContent = fileVm.originalContent.mapNotNull { it?.result?.getOrThrow() }.first()
 
-    val model = GHPRReviewFileEditorModel(this, settings, fileVm)
+    val model = GHPRReviewFileEditorModel(this, settings, fileVm) showEditor@{ changeToShow, lineIdx ->
+      val file = changeToShow.filePathAfter?.virtualFile ?: return@showEditor
+      val fileOpenDescriptor = OpenFileDescriptor(project, file, lineIdx, 0)
+      FileEditorManager.getInstance(project).openFileEditor(fileOpenDescriptor, true)
+    }
+
     launchNow {
       ReviewInEditorUtil.trackDocumentDiffSync(reviewHeadContent, editor.document, model::setPostReviewChanges)
     }
@@ -93,14 +120,28 @@ private suspend fun showReview(settings: GithubPullRequestsProjectUISettings, fi
     }
     launchNow {
       val userIcon = fileVm.iconProvider.getIcon(fileVm.currentUser.url, 16)
-      editor.renderInlays(model.inlays, HashingUtil.mappingStrategy(GHPREditorMappedComponentModel::key)) { createRenderer(it, userIcon) }
+      editor.renderInlays(model.inlays, HashingUtil.mappingStrategy(GHPREditorMappedComponentModel::key)) {
+        GHPRInlayUtils.installInlaysDimming(this, model, null)
+        editor.project?.let { project ->
+          GHPRInlayUtils.installInlaysFocusTracker(this, model, project)
+        }
+        launchNow {
+          model.inlays
+            .mapStatefulToStateful { inlayModel -> GHPRInlayUtils.installInlayHoverOutline(this, editor, Side.RIGHT, null, inlayModel) }
+            .collect()
+        }
+        createRenderer(it, userIcon)
+      }
     }
-    editor.putUserData(CodeReviewCommentableEditorModel.KEY, model)
+
     try {
+      editor.putUserData(CodeReviewCommentableEditorModel.KEY, model)
+      editor.putUserData(CodeReviewNavigableEditorViewModel.KEY, model)
       awaitCancellation()
     }
     finally {
       editor.putUserData(CodeReviewCommentableEditorModel.KEY, null)
+      editor.putUserData(CodeReviewNavigableEditorViewModel.KEY, null)
     }
   }
 }

@@ -5,6 +5,7 @@ import com.intellij.icons.AllIcons
 import com.intellij.ide.GeneralLocalSettings
 import com.intellij.ide.IdeBundle
 import com.intellij.ide.highlighter.ProjectFileType
+import com.intellij.ide.impl.MultipleFileOpener
 import com.intellij.ide.impl.OpenProjectTask
 import com.intellij.ide.impl.ProjectUtil
 import com.intellij.ide.lightEdit.*
@@ -33,8 +34,10 @@ import com.intellij.openapi.vfs.VfsUtil
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.wm.impl.welcomeScreen.FlatWelcomeFrame
 import com.intellij.openapi.wm.impl.welcomeScreen.NewWelcomeScreen
+import com.intellij.openapi.wm.impl.welcomeScreen.WelcomeScreenActionsUtil
 import com.intellij.platform.PlatformProjectOpenProcessor
 import com.intellij.platform.ide.CoreUiCoroutineScopeHolder
+import com.intellij.project.ProjectStoreOwner
 import com.intellij.projectImport.ProjectOpenProcessor.Companion.getImportProvider
 import com.intellij.util.SlowOperations
 import kotlinx.coroutines.Dispatchers
@@ -42,6 +45,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.nio.file.Files
+import java.nio.file.Path
 
 open class OpenFileAction : AnAction(), DumbAware, LightEditCompatible, ActionRemoteBehaviorSpecification.BackendOnly {
   companion object {
@@ -87,8 +91,10 @@ open class OpenFileAction : AnAction(), DumbAware, LightEditCompatible, ActionRe
         }
       }
       service<CoreUiCoroutineScopeHolder>().coroutineScope.launch {
-        for (file in files) {
-          doOpenFile(project, file)
+        if (!MultipleFileOpener.openFiles(files, project)) {
+          for (file in files) {
+            doOpenFile(project, file)
+          }
         }
       }
     }
@@ -116,7 +122,11 @@ open class OpenFileAction : AnAction(), DumbAware, LightEditCompatible, ActionRe
         return
       }
 
-      if (FlatWelcomeFrame.USE_TABBED_WELCOME_SCREEN) {
+      if (e.getData(WelcomeScreenActionsUtil.NON_MODAL_WELCOME_SCREEN) == true) {
+        presentation.icon = AllIcons.Nodes.Folder
+        presentation.text = ActionsBundle.message("action.Tabbed.WelcomeScreen.NonModal.OpenProject.text")
+      }
+      else if (FlatWelcomeFrame.USE_TABBED_WELCOME_SCREEN) {
         presentation.icon = AllIcons.Welcome.Open
         presentation.selectedIcon = AllIcons.Welcome.OpenSelected
         presentation.text = ActionsBundle.message("action.Tabbed.WelcomeScreen.OpenProject.text")
@@ -161,12 +171,12 @@ open class OpenFileAction : AnAction(), DumbAware, LightEditCompatible, ActionRe
     val file = virtualFile.toNioPath()
     if (Files.isDirectory(file)) {
       @Suppress("TestOnlyProblems")
-      ProjectUtil.openExistingDir(file, project)
+      ProjectUtil.openExistingDir(file, ProjectUtil.FolderOpeningMode.AS_PROJECT, project)
       return
     }
 
     // try to open as a project - unless the file is an .ipr of the current one
-    if ((project == null || virtualFile != project.projectFile) && OpenProjectFileChooserDescriptor.isProjectFile(virtualFile)) {
+    if ((project == null || !isFileEqualToProjectFile(file, project)) && OpenProjectFileChooserDescriptor.isProjectFile(virtualFile)) {
       val answer = shouldOpenNewProject(project, virtualFile)
       if (answer == Messages.CANCEL) {
         return
@@ -181,6 +191,7 @@ open class OpenFileAction : AnAction(), DumbAware, LightEditCompatible, ActionRe
     }
 
     LightEditUtil.markUnknownFileTypeAsPlainTextIfNeeded(project, virtualFile)
+
     readAction { virtualFile.fileType }.takeIf { it != FileTypes.UNKNOWN }
     ?: withContext(Dispatchers.EDT) {
       FileTypeChooser.associateFileType(virtualFile.name)
@@ -204,11 +215,22 @@ open class OpenFileAction : AnAction(), DumbAware, LightEditCompatible, ActionRe
       }
     }
   }
+}
 
-  @Messages.YesNoCancelResult
-  private suspend fun shouldOpenNewProject(project: Project?, file: VirtualFile): Int {
-    if (file.fileType is ProjectFileType) return Messages.YES
-    val provider = getImportProvider(file) ?: return Messages.CANCEL
-    return withContext(Dispatchers.EDT) { provider.askConfirmationForOpeningProject(file, project) }
+private fun isFileEqualToProjectFile(file: Path, project: Project): Boolean {
+  if (project !is ProjectStoreOwner) {
+    return false
   }
+  val storeDescriptor = project.componentStore.storeDescriptor
+  return file == storeDescriptor.presentableUrl
+}
+
+@Messages.YesNoCancelResult
+private suspend fun shouldOpenNewProject(project: Project?, file: VirtualFile): Int {
+  if (file.fileType is ProjectFileType) {
+    return Messages.YES
+  }
+
+  val provider = getImportProvider(file) ?: return Messages.CANCEL
+  return withContext(Dispatchers.EDT) { provider.askConfirmationForOpeningProject(file, project) }
 }

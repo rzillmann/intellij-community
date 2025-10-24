@@ -2,6 +2,8 @@ package com.intellij.cce.evaluation.data
 
 import com.intellij.cce.evaluable.*
 import com.intellij.cce.metric.*
+import com.intellij.cce.metric.ExternalApiRecall.Companion.AIA_GROUND_TRUTH_EXTERNAL_API_CALLS
+import com.intellij.cce.metric.ExternalApiRecall.Companion.AIA_PREDICTED_EXTERNAL_API_CALLS
 import com.intellij.cce.metric.context.MeanContextLines
 import com.intellij.cce.metric.context.MeanContextSize
 
@@ -40,6 +42,18 @@ object Result {
       ignoreMissingData = true
     )
   )
+
+  val COLORED_INSIGHTS: EvalDataDescription<List<ColoredInsightsData>, ColoredInsightsData> = EvalDataDescription(
+    name = "Colored insights",
+    description = "Bind with colored insights (model, positive, negative)",
+    DataPlacement.ColoredInsightsPlacement("colored_insights"),
+    presentation = EvalDataPresentation(
+      PresentationCategory.RESULT,
+      DataRenderer.ColoredInsights,
+      DynamicName.ColoredInsightsFileName,
+      ignoreMissingData = true
+    )
+  )
 }
 
 object Execution {
@@ -59,7 +73,7 @@ object Execution {
     DataPlacement.AdditionalText(AIA_USER_PROMPT),
     presentation = EvalDataPresentation(
       PresentationCategory.EXECUTION,
-      DataRenderer.Text()
+      DataRenderer.Text(wrapping = true),
     )
   )
 
@@ -70,6 +84,26 @@ object Execution {
     presentation = EvalDataPresentation(
       PresentationCategory.EXECUTION,
       DataRenderer.Text()
+    )
+  )
+
+  val LLM_JUDGE_RESPONSE: TrivialEvalData<String> = EvalDataDescription(
+    name = "LLM judge response",
+    description = "Raw response of the llm as a judge",
+    placement = DataPlacement.AdditionalText(AIA_LLM_JUDGE_RESPONSE_KEY),
+    presentation = EvalDataPresentation(
+      PresentationCategory.EXECUTION,
+      DataRenderer.Text()
+    )
+  )
+
+  val LLM_JUDGE_SCORE: TrivialEvalData<Double> = EvalDataDescription(
+    name = "LLM judge score",
+    description = "The LLM Judge score, parsed from the raw LLM judge response",
+    placement = DataPlacement.AdditionalDouble(AIA_LLM_JUDGE_SCORE_KEY),
+    presentation = EvalDataPresentation(
+      PresentationCategory.METRIC,
+      DataRenderer.InlineDouble
     )
   )
 
@@ -93,6 +127,16 @@ object Execution {
     )
   )
 
+  val EXTRACTED_SNIPPETS_FROM_LLM_RESPONSE: TrivialEvalData<List<String>> = EvalDataDescription(
+    name = "Code snippets from LLM response",
+    description = "Bind with code snippets extracted LLM response",
+    DataPlacement.AdditionalJsonSerializedStrings(AIA_EXTRACTED_CODE_SNIPPETS),
+    presentation = EvalDataPresentation(
+      PresentationCategory.EXECUTION,
+      DataRenderer.Snippets
+    )
+  )
+
   val LLM_CHAT_DUMP: TrivialEvalData<String> = EvalDataDescription(
     name = "LLM chat dump",
     description = "Full dump of the chat session including system context, messages, and metadata",
@@ -100,6 +144,16 @@ object Execution {
     presentation = EvalDataPresentation(
       PresentationCategory.EXECUTION,
       DataRenderer.Text()
+    )
+  )
+
+  val REFERENCE: TrivialEvalData<String> = EvalDataDescription(
+    name = "Reference",
+    description = null,
+    DataPlacement.AdditionalText(REFERENCE_PROPERTY),
+    presentation = EvalDataPresentation(
+      PresentationCategory.EXECUTION,
+      DataRenderer.Text(wrapping = true),
     )
   )
 
@@ -113,6 +167,16 @@ object Execution {
     name = "Preview",
     description = "Some description of an evaluation case",
     DataPlacement.AdditionalText(AIA_DESCRIPTION),
+  )
+
+  val ACTUAL_SMART_CHAT_ENDPOINTS: TrivialEvalData<List<String>> = EvalDataDescription(
+    name = "Actual smart chat function calls",
+    description = "List of names of smart-chat endpoints, called in chat-session",
+    placement = DataPlacement.AdditionalConcatenatedLines(AIA_ACTUAL_SMART_CHAT_ENDPOINTS),
+    presentation = EvalDataPresentation(
+      PresentationCategory.EXECUTION,
+      renderer = DataRenderer.Lines,
+    ),
   )
 
   val LLMC_LOG: TrivialEvalData<String> = EvalDataDescription(
@@ -136,6 +200,26 @@ object Execution {
       ignoreMissingData = true,
     )
   )
+
+  val REFERENCE_CODE_COMMENT_RANGES: TrivialEvalData<List<CodeCommentRange>> = EvalDataDescription(
+    name = "Reference code comment ranges",
+    description = "Ground truth code comment ranges",
+    DataPlacement.AdditionalCodeCommentRanges(REFERENCE_CODE_COMMENT_RANGE_PROPERTY),
+    presentation = EvalDataPresentation(
+      PresentationCategory.EXECUTION,
+      DataRenderer.CodeCommentRanges
+    )
+  )
+
+  val PREDICTED_CODE_COMMENT_RANGES: TrivialEvalData<List<CodeCommentRange>> = EvalDataDescription(
+    name = "Predicted code comment ranges",
+    description = "Predicted code comment ranges",
+    DataPlacement.AdditionalCodeCommentRanges(PREDICTED_CODE_COMMENT_RANGE_PROPERTY),
+    presentation = EvalDataPresentation(
+      PresentationCategory.EXECUTION,
+      DataRenderer.CodeCommentRanges
+    )
+  )
 }
 
 object Analysis {
@@ -152,6 +236,19 @@ object Analysis {
     )
   )
 
+  val CODE_IS_COMPILABLE: TrivialEvalData<Boolean> = EvalDataDescription(
+    name = "Code Is Compilable",
+    description = "Generated code is compiling successfully",
+    DataPlacement.AdditionalBoolean(AIA_CODE_IS_COMPILABLE),
+    presentation = EvalDataPresentation(
+      PresentationCategory.ANALYSIS,
+      DataRenderer.InlineBoolean,
+    ),
+    problemIndicators = listOf(
+      ProblemIndicator.FromValue { !it }
+    )
+  )
+
   val HIGHLIGHT_ERRORS: TrivialEvalData<List<String>> = EvalDataDescription(
     name = "Highlight errors and warnings",
     description = "Bind with the list of appeared highlights in format `[ERROR] error_description` or `[WARNING] warning_description]`",
@@ -162,6 +259,19 @@ object Analysis {
     ),
     problemIndicators = listOf(
       ProblemIndicator.FromMetric { Metrics.WITHOUT_HIGHLIGHT_ERRORS }
+    )
+  )
+
+  val EXECUTION_EXIT_CODE: TrivialEvalData<Int> = EvalDataDescription(
+    name = "Execution exit code",
+    description = "Bind with the exit code of the execution-based tests",
+    DataPlacement.AdditionalInt("performance_exit_code"),
+    presentation = EvalDataPresentation(
+      PresentationCategory.ANALYSIS,
+      renderer = DataRenderer.InlineInt,
+    ),
+    problemIndicators = listOf(
+      ProblemIndicator.FromValue { it != 0 }
     )
   )
 
@@ -178,6 +288,16 @@ object Analysis {
     )
   )
 
+  val CONTEXT_COLLECTION_DURATION: TrivialEvalData<Double> = EvalDataDescription(
+    name = "Context collection duration",
+    description = "Bind with the sum of durations of all context collection components",
+    DataPlacement.AdditionalDouble(AIA_CONTEXT_COLLECTION_DURATION_MS),
+    presentation = EvalDataPresentation(
+      PresentationCategory.ANALYSIS,
+      DataRenderer.InlineDouble,
+    ),
+  )
+
   val GROUND_TRUTH_API_CALLS: TrivialEvalData<List<String>> = EvalDataDescription(
     name = "Ground truth internal API calls",
     description = "Bind with the list of initial internal API calls",
@@ -188,6 +308,16 @@ object Analysis {
     ),
   )
 
+  val GROUND_TRUTH_EXTERNAL_API_CALLS: TrivialEvalData<List<String>> = EvalDataDescription(
+    name = "Ground truth external API calls",
+    description = "Bind with the list of initial external API calls",
+    DataPlacement.AdditionalConcatenatedLines(AIA_GROUND_TRUTH_EXTERNAL_API_CALLS),
+    presentation = EvalDataPresentation(
+      PresentationCategory.ANALYSIS,
+      renderer = DataRenderer.Lines,
+    )
+  )
+
   val PREDICTED_API_CALLS: TrivialEvalData<List<String>> = EvalDataDescription(
     name = "Predicted internal API calls",
     description = "Bind with the list of predicted internal API calls",
@@ -196,6 +326,46 @@ object Analysis {
       PresentationCategory.ANALYSIS,
       renderer = DataRenderer.Lines,
     ),
+  )
+
+  val PREDICTED_EXTERNAL_API_CALLS: TrivialEvalData<List<String>> = EvalDataDescription(
+    name = "Predicted external API calls",
+    description = "Bind with the list of predicted external API calls",
+    DataPlacement.AdditionalConcatenatedLines(AIA_PREDICTED_EXTERNAL_API_CALLS),
+    presentation = EvalDataPresentation(
+      PresentationCategory.ANALYSIS,
+      renderer = DataRenderer.Lines,
+    )
+  )
+
+  val CORRECT_ATTACHMENT: TrivialEvalData<String> = EvalDataDescription(
+    name = "Correct attachment that should be retrieved",
+    description = "Bind with correct attachment",
+    DataPlacement.AdditionalText(AIA_CORRECT_ATTACHMENT),
+    presentation = EvalDataPresentation(
+      PresentationCategory.ANALYSIS,
+      renderer = DataRenderer.Text(wrapping = true, showEmpty = true),
+    )
+  )
+
+  val RETRIEVED_ATTACHMENTS: TrivialEvalData<List<String>> = EvalDataDescription(
+    name = "Retrieved attachments",
+    description = "Bind with the list of retrieved chat attachments",
+    DataPlacement.AdditionalConcatenatedLines(AIA_RETRIEVED_ATTACHMENTS),
+    presentation = EvalDataPresentation(
+      PresentationCategory.ANALYSIS,
+      renderer = DataRenderer.Lines,
+    )
+  )
+
+  val IS_CORRECT_ATTACHMENT_AMONG_RETRIEVED: TrivialEvalData<Boolean> = EvalDataDescription(
+    name = "Is correct attachment among retrieved",
+    description = "Bind with a flag indicating whether correct attachment was retrieved",
+    DataPlacement.AdditionalBoolean(AIA_IS_CORRECT_ATTACHMENT_AMONG_RETRIEVED),
+    presentation = EvalDataPresentation(
+      PresentationCategory.ANALYSIS,
+      renderer = DataRenderer.InlineBoolean,
+    )
   )
 
   val FAILED_FILE_VALIDATIONS: TrivialEvalData<List<String>> = EvalDataDescription(
@@ -236,6 +406,7 @@ object Analysis {
       ProblemIndicator.FromMetric { Metrics.FUNCTION_CALLING }
     )
   )
+
 
   val ACTUAL_FUNCTION_CALLS: TrivialEvalData<List<String>> = EvalDataDescription(
     name = "Actual function calls",
@@ -324,14 +495,23 @@ object Metrics {
     dependencies = MetricDependencies(Analysis.ERASED_APIS)
   ) { PreservedApi() }
 
-  val API_RECALL: EvalMetric = EvalMetric(
+  val INTERNAL_API_RECALL: EvalMetric = EvalMetric(
     threshold = 1.0,
     dependencies = MetricDependencies(
       Analysis.GROUND_TRUTH_API_CALLS,
       Analysis.PREDICTED_API_CALLS,
       DataRenderer.TextDiff
     ) { initial, result -> TextUpdate(initial.sorted().joinToString("\n"), result.sorted().joinToString("\n")) }
-  ) { ApiRecall() }
+  ) { InternalApiRecall() }
+
+  val EXTERNAL_API_RECALL: EvalMetric = EvalMetric(
+    threshold = 1.0,
+    dependencies = MetricDependencies(
+      Analysis.GROUND_TRUTH_EXTERNAL_API_CALLS,
+      Analysis.PREDICTED_EXTERNAL_API_CALLS,
+      DataRenderer.TextDiff
+    ) { initial, result -> TextUpdate(initial.sorted().joinToString("\n"), result.sorted().joinToString("\n")) }
+  ) { ExternalApiRecall() }
 
   val FILE_VALIDATIONS_SUCCESS: EvalMetric = EvalMetric(
     threshold = 1.0,
@@ -342,6 +522,11 @@ object Metrics {
     threshold = 1.0,
     dependencies = MetricDependencies(Analysis.FAILED_RELATED_FILE_VALIDATIONS)
   ) { RelatedFileValidationSuccess() }
+
+  val WAS_ASK_AI_CALLED: EvalMetric = EvalMetric(
+    threshold = 1.0,
+    dependencies = MetricDependencies(Execution.ACTUAL_SMART_CHAT_ENDPOINTS)
+  ) { WasAskAICalledMetric() }
 
   val FUNCTION_CALLING: EvalMetric = EvalMetric(
     threshold = 1.0,

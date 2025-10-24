@@ -1,11 +1,13 @@
 // Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.plugins.terminal.block.ui
 
+import com.intellij.configurationStore.saveSettingsForRemoteDevelopment
 import com.intellij.execution.filters.HyperlinkInfo
 import com.intellij.execution.filters.HyperlinkWithPopupMenuInfo
 import com.intellij.execution.impl.EditorHyperlinkSupport
 import com.intellij.ide.ui.AntialiasingType
 import com.intellij.ide.ui.UISettings
+import com.intellij.idea.AppMode
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.actionSystem.*
 import com.intellij.openapi.application.ApplicationManager
@@ -13,14 +15,14 @@ import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.command.undo.UndoUtil
 import com.intellij.openapi.diagnostic.logger
-import com.intellij.openapi.editor.Document
-import com.intellij.openapi.editor.Editor
-import com.intellij.openapi.editor.EditorFactory
-import com.intellij.openapi.editor.EditorKind
+import com.intellij.openapi.editor.*
+import com.intellij.openapi.editor.colors.EditorColorsListener
+import com.intellij.openapi.editor.colors.EditorColorsManager
 import com.intellij.openapi.editor.colors.EditorFontType
 import com.intellij.openapi.editor.event.EditorMouseEvent
 import com.intellij.openapi.editor.ex.EditorEx
 import com.intellij.openapi.editor.ex.EditorGutterFreePainterAreaState
+import com.intellij.openapi.editor.ex.util.EditorUtil
 import com.intellij.openapi.editor.impl.ContextMenuPopupHandler
 import com.intellij.openapi.editor.impl.EditorImpl
 import com.intellij.openapi.editor.impl.FontInfo
@@ -28,25 +30,28 @@ import com.intellij.openapi.editor.impl.view.DoubleWidthCharacterStrategy
 import com.intellij.openapi.editor.impl.view.FontLayoutService
 import com.intellij.openapi.editor.markup.EffectType
 import com.intellij.openapi.editor.markup.TextAttributes
+import com.intellij.openapi.fileEditor.impl.zoomIndicator.ZoomIndicatorManager
 import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.options.advanced.AdvancedSettings
+import com.intellij.openapi.progress.withCurrentThreadCoroutineScope
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.Key
 import com.intellij.openapi.util.SystemInfoRt
 import com.intellij.terminal.JBTerminalSystemSettingsProviderBase
 import com.intellij.terminal.TerminalColorPalette
+import com.intellij.ui.ColorUtil
 import com.intellij.ui.components.JBLayeredPane
 import com.intellij.ui.scale.JBUIScale
 import com.intellij.util.Alarm
 import com.intellij.util.DocumentUtil
+import com.intellij.util.application
 import com.intellij.util.asSafely
 import com.intellij.util.concurrency.ThreadingAssertions
 import com.intellij.util.concurrency.annotations.RequiresBlockingContext
 import com.intellij.util.concurrency.annotations.RequiresEdt
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
-import com.jediterm.core.util.TermSize
 import com.jediterm.terminal.TerminalColor
 import com.jediterm.terminal.TextStyle
 import com.jediterm.terminal.model.CharBuffer
@@ -54,11 +59,14 @@ import com.jediterm.terminal.model.TerminalLine
 import com.jediterm.terminal.model.TerminalTextBuffer
 import com.jediterm.terminal.ui.AwtTransformers
 import com.jediterm.terminal.util.CharUtils
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 import org.intellij.lang.annotations.MagicConstant
 import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.plugins.terminal.block.output.TextAttributesProvider
 import org.jetbrains.plugins.terminal.block.output.TextStyleAdapter
 import org.jetbrains.plugins.terminal.block.session.TerminalModel
+import org.jetbrains.plugins.terminal.session.TerminalGridSize
 import java.awt.Color
 import java.awt.Component
 import java.awt.Dimension
@@ -78,6 +86,7 @@ import javax.swing.JScrollPane
 import javax.swing.KeyStroke
 import javax.swing.event.ChangeEvent
 import javax.swing.event.ChangeListener
+import kotlin.math.ceil
 import kotlin.math.max
 
 @ApiStatus.Internal
@@ -95,10 +104,31 @@ object TerminalUiUtils {
     val editor = EditorFactory.getInstance().createEditor(document, project, EditorKind.CONSOLE) as EditorImpl
     editor.isScrollToCaret = false
     editor.isRendererMode = true
+    EditorModificationUtil.setShowReadOnlyHint(editor, false)
+
     editor.scrollPane.border = JBUI.Borders.empty()
     editor.scrollPane.horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_NEVER
     editor.gutterComponentEx.isPaintBackground = false
     editor.gutterComponentEx.setRightFreePaintersAreaState(EditorGutterFreePainterAreaState.HIDE)
+
+    // Editor installs its own drop target during `javax.swing.JComponent.setTransferHandler` call.
+    // But it blocks the DnD installed in the terminal tool window: `org.jetbrains.plugins.terminal.TerminalToolWindowPanel.installDnD`.
+    // So, let's remove it to enable the terminal DnD implementation.
+    editor.contentComponent.dropTarget = null
+
+    val terminalColorScheme = TerminalColorScheme()
+    editor.colorsScheme = terminalColorScheme
+    editor.putUserData(TerminalColorScheme.KEY, terminalColorScheme)
+    val editorDisposable = Disposer.newDisposable()
+    EditorUtil.disposeWithEditor(editor, editorDisposable)
+    ApplicationManager.getApplication().messageBus.connect(editorDisposable).run {
+      subscribe(EditorColorsManager.TOPIC, EditorColorsListener {
+        // Get the new scheme from the manager rather than taking the one provided by the listener.
+        // Because the one from the listener might be a read-only bundled scheme,
+        // but we need an editable scheme that contains all user changes.
+        terminalColorScheme.globalScheme = EditorColorsManager.getInstance().globalScheme
+      })
+    }
 
     editor.settings.apply {
       isShowingSpecialChars = false
@@ -160,10 +190,10 @@ object TerminalUiUtils {
     return CustomShortcutSet(keyStroke)
   }
 
-  fun calculateTerminalSize(componentSize: Dimension, charSize: Dimension2D): TermSize {
+  fun calculateTerminalSize(componentSize: Dimension, charSize: Dimension2D): TerminalGridSize {
     val width = componentSize.width / charSize.width
     val height = componentSize.height / charSize.height
-    return ensureTermMinimumSize(TermSize(width.toInt(), height.toInt()))
+    return ensureTermMinimumSize(TerminalGridSize(width.toInt(), height.toInt()))
   }
 
   @RequiresEdt
@@ -209,13 +239,14 @@ object TerminalUiUtils {
 
   fun toFloatAndScale(value: Int): Float = JBUIScale.scale(value.toFloat())
 
-  internal fun TextStyle.toTextAttributes(palette: TerminalColorPalette): TextAttributes {
+  @ApiStatus.Internal
+  fun TextStyle.toTextAttributes(palette: TerminalColorPalette, requiredContrast: TerminalContrastRatio): TextAttributes {
     return TextAttributes().also { attr ->
       // [TerminalColorPalette.getDefaultBackground] is not applied to [TextAttributes].
       // It's passed to [EditorEx.setBackgroundColor] / [JComponent.setBackground] to
       // paint the background uniformly.
       attr.backgroundColor = getEffectiveBackgroundNoDefault(this, palette)
-      attr.foregroundColor = getResultForeground(this, palette)
+      attr.foregroundColor = getResultForeground(this, palette, requiredContrast)
       if (hasOption(TextStyle.Option.BOLD)) {
         attr.fontType = attr.fontType or Font.BOLD
       }
@@ -236,17 +267,40 @@ object TerminalUiUtils {
     return AwtTransformers.toAwtColor(color)!!
   }
 
-  private fun getResultForeground(style: TextStyle, palette: TerminalColorPalette): Color {
-    val foreground = getEffectiveForegroundOrDefault(style, palette)
-    return if (style.hasOption(TextStyle.Option.DIM)) {
-      val background = getEffectiveBackgroundOrDefault(style, palette)
+  private fun getResultForeground(style: TextStyle, palette: TerminalColorPalette, requiredContrast: TerminalContrastRatio): Color {
+    val bg = getEffectiveBackgroundOrDefault(style, palette)
+    val fg = getEffectiveForegroundOrDefault(style, palette)
+    val dimmedFg = if (style.hasOption(TextStyle.Option.DIM)) {
       @Suppress("UseJBColor")
-      Color((foreground.red + background.red) / 2,
-            (foreground.green + background.green) / 2,
-            (foreground.blue + background.blue) / 2,
-            foreground.alpha)
+      Color((fg.red + bg.red) / 2,
+            (fg.green + bg.green) / 2,
+            (fg.blue + bg.blue) / 2,
+            fg.alpha)
     }
-    else foreground
+    else fg
+
+    val contrast = style.getEffectiveContrastRatio(requiredContrast)
+    return if (contrast == TerminalContrastRatio.MIN_VALUE) {
+      return dimmedFg
+    }
+    else ensureContrastRatio(bg, dimmedFg, contrast.value)
+  }
+
+  private fun TextStyle.getEffectiveContrastRatio(base: TerminalContrastRatio): TerminalContrastRatio {
+    val effectiveFg = if (hasOption(TextStyle.Option.INVERSE)) background else foreground
+    val effectiveBg = if (hasOption(TextStyle.Option.INVERSE)) foreground else background
+    return when {
+      effectiveFg?.isIndexed == false && effectiveBg?.isIndexed == false -> {
+        // Do not adjust the foreground color if both foreground and background are specified in RGB format.
+        // Assume that if colors are specified absolutely, their contrast ratio is enough.
+        TerminalContrastRatio.MIN_VALUE
+      }
+      hasOption(TextStyle.Option.DIM) -> {
+        // Allow dimmed foreground to be less contrast, otherwise, it might be indistinguishable from the non-dimmed foreground.
+        TerminalContrastRatio.ofFloat(base.value / 2)
+      }
+      else -> base
+    }
   }
 
   private fun getEffectiveForegroundOrDefault(style: TextStyle, palette: TerminalColorPalette): Color {
@@ -280,6 +334,88 @@ object TerminalUiUtils {
     return TextStyleAdapter(TextStyle(TerminalColor(foregroundColorIndex), null), palette)
   }
 
+  /**
+   * Tries to find a foreground color that has the [requiredContrast] with the provided [bgColor].
+   * If provided [fgColor] is already enough contrast, it is just returned.
+   *
+   * Similar to https://github.com/xtermjs/xterm.js/blob/47409f39f684c417717d885b2cba56dd918d591a/src/common/Color.ts#L288
+   */
+  fun ensureContrastRatio(bgColor: Color, fgColor: Color, requiredContrast: Float): Color {
+    val current = ColorUtil.getContrast(fgColor, bgColor)
+    if (current >= requiredContrast) return fgColor
+
+    val bgLuminance = ColorUtil.getLuminance(bgColor)
+    val fgLuminance = ColorUtil.getLuminance(fgColor)
+    return if (fgLuminance < bgLuminance) {
+      val reducedColor = reduceLuminance(bgColor, fgColor, requiredContrast)
+      val reducedColorRatio = ColorUtil.getContrast(reducedColor, bgColor)
+      if (reducedColorRatio < requiredContrast) {
+        val increasedColor = increaseLuminance(bgColor, fgColor, requiredContrast)
+        val increasedColorRatio = ColorUtil.getContrast(increasedColor, bgColor)
+        if (reducedColorRatio > increasedColorRatio) reducedColor else increasedColor
+      }
+      else reducedColor
+    }
+    else {
+      val increasedColor = increaseLuminance(bgColor, fgColor, requiredContrast)
+      val increasedColorRatio = ColorUtil.getContrast(increasedColor, bgColor)
+      if (increasedColorRatio < requiredContrast) {
+        val reducedColor = reduceLuminance(bgColor, fgColor, requiredContrast)
+        val reducedColorRatio = ColorUtil.getContrast(reducedColor, bgColor)
+        if (increasedColorRatio > reducedColorRatio) increasedColor else reducedColor
+      }
+      else increasedColor
+    }
+  }
+
+  /**
+   * Tries to find less luminous foreground color than [fgColor] that has the required contrast with the provided [bgColor].
+   * Note that the alpha channel is ignored.
+   */
+  @Suppress("UseJBColor")
+  fun reduceLuminance(bgColor: Color, fgColor: Color, requiredContrast: Float): Color {
+    var contrast = ColorUtil.getContrast(fgColor, bgColor)
+    var fgRed = fgColor.red
+    var fgGreen = fgColor.green
+    var fgBlue = fgColor.blue
+    while (contrast < requiredContrast && (fgRed > 0 || fgGreen > 0 || fgBlue > 0)) {
+      fgRed -= ceil(fgRed * 0.1).toInt()
+      fgGreen -= ceil(fgGreen * 0.1).toInt()
+      fgBlue -= ceil(fgBlue * 0.1).toInt()
+      val color = Color(fgRed, fgGreen, fgBlue)
+      contrast = ColorUtil.getContrast(color, bgColor)
+    }
+    return Color(fgRed, fgGreen, fgBlue)
+  }
+
+  /**
+   * Tries to find more luminous foreground color than [fgColor] that has the required contrast with the provided [bgColor].
+   * Note that the alpha channel is ignored.
+   */
+  @Suppress("UseJBColor")
+  fun increaseLuminance(bgColor: Color, fgColor: Color, requiredContrast: Float): Color {
+    var contrast = ColorUtil.getContrast(fgColor, bgColor)
+    var fgRed = fgColor.red
+    var fgGreen = fgColor.green
+    var fgBlue = fgColor.blue
+    while (contrast < requiredContrast && (fgRed < 255 || fgGreen < 255 || fgBlue < 255)) {
+      fgRed += ceil((255 - fgRed) * 0.1).toInt()
+      fgGreen += ceil((255 - fgGreen) * 0.1).toInt()
+      fgBlue += ceil((255 - fgBlue) * 0.1).toInt()
+      val color = Color(fgRed, fgGreen, fgBlue)
+      contrast = ColorUtil.getContrast(color, bgColor)
+    }
+    return Color(fgRed, fgGreen, fgBlue)
+  }
+
+  fun shouldIgnoreContrastAdjustment(char: Char): Boolean {
+    return when (char.code) {
+      in 0xE0A4..0xE0D6 -> true   // Powerline symbols for those we shouldn't change foreground
+      in 0x2500..0x259F -> true   // Box or block glyphs
+      else -> false
+    }
+  }
+
   const val NEW_TERMINAL_OUTPUT_CAPACITY_KB: String = "new.terminal.output.capacity.kb"
 
   fun getDefaultMaxOutputLength(): Int {
@@ -293,14 +429,33 @@ object TerminalUiUtils {
 }
 
 fun EditorImpl.applyFontSettings(newSettings: JBTerminalSystemSettingsProviderBase) {
-  colorsScheme.apply {
-    editorFontName = newSettings.terminalFont.fontName
-    setEditorFontSize(newSettings.terminalFont.size2D)
-    lineSpacing = newSettings.lineSpacing
-  }
+  val colorScheme = checkNotNull(getUserData(TerminalColorScheme.KEY)) { "Should've been set on creation" }
+  colorScheme.fontPreferences = newSettings.fontPreferences
+  // for some reason, even though fontPreferences contains lineSpacing, the editor doesn't take it from there
+  colorScheme.lineSpacing = newSettings.lineSpacing
   settings.apply {
     characterGridWidthMultiplier = newSettings.columnSpacing
   }
+  // The font size in the preferences is not scaled.
+  // Global user scaling will be applied by the editor itself,
+  // but if the _terminal_ font size was changed temporarily (Ctrl/Cmd+wheel, pinch zoom, etc.),
+  // it needs to be applied explicitly to the new editor.
+  setTerminalFontSize(newSettings.terminalFontSize, showZoomIndicator = false)
+}
+
+@ApiStatus.Internal
+fun EditorImpl.setTerminalFontSize(
+  fontSize: Float,
+  showZoomIndicator: Boolean,
+) {
+  if (!showZoomIndicator) {
+    putUserData(ZoomIndicatorManager.SUPPRESS_ZOOM_INDICATOR_ONCE, true)
+  }
+  setFontSize(
+    fontSize,
+    ChangeTerminalFontSizeStrategy.preferredZoomPointRelative(this),
+    true
+  )
 }
 
 internal fun Editor.getCharSize(): Dimension2D {
@@ -318,17 +473,17 @@ internal fun Editor.getCharSize(): Dimension2D {
   return Dimension2DDouble(width.toDouble() * columnSpacing, lineHeight.toDouble())
 }
 
-fun Editor.calculateTerminalSize(): TermSize? {
+fun Editor.calculateTerminalSize(): TerminalGridSize? {
   val grid = (this as? EditorImpl)?.characterGrid ?: return null
   return if (grid.rows > 0 && grid.columns > 0) {
-    ensureTermMinimumSize(TermSize(grid.columns, grid.rows))
+    ensureTermMinimumSize(TerminalGridSize(grid.columns, grid.rows))
   } else {
     null
   }
 }
 
-private fun ensureTermMinimumSize(size: TermSize): TermSize {
-  return TermSize(max(TerminalModel.MIN_WIDTH, size.columns), max(TerminalModel.MIN_HEIGHT, size.rows))
+private fun ensureTermMinimumSize(size: TerminalGridSize): TerminalGridSize {
+  return TerminalGridSize(max(TerminalModel.MIN_WIDTH, size.columns), max(TerminalModel.MIN_HEIGHT, size.rows))
 }
 
 private class Dimension2DDouble(private var width: Double, private var height: Double) : Dimension2D() {
@@ -543,4 +698,27 @@ fun sanitizeLineSeparators(text: String): String {
   }
   // Now convert this into what the terminal typically expects.
   return t.replace("\n", "\r")
+}
+
+/**
+ * Should be used when you need to change the frontend terminal settings that are synced with the backend.
+ * See [org.jetbrains.plugins.terminal.TerminalRemoteSettingsInfoProvider].
+ * It prohibits simultaneous update of the setting on both frontend and backend by executing it only on the frontend.
+ * And then launches sending the updates to the backend in the provided [coroutineScope].
+ */
+internal fun updateFrontendSettingsAndSync(coroutineScope: CoroutineScope, doUpdate: () -> Unit) {
+  // Update the settings only on the IDE Frontend (or monolith).
+  if (AppMode.isRemoteDevHost()) return
+
+  try {
+    doUpdate()
+  }
+  finally {
+    // Trigger sending the updated values to the backend
+    coroutineScope.launch {
+      withCurrentThreadCoroutineScope {
+        saveSettingsForRemoteDevelopment(application)
+      }
+    }
+  }
 }

@@ -5,11 +5,11 @@ import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.ex.EditorGutterComponentEx
 import com.intellij.openapi.project.Project
-import com.intellij.platform.debugger.impl.frontend.FrontendEditorLinesBreakpointTypesManager
+import com.intellij.platform.debugger.impl.frontend.FrontendEditorLinesBreakpointsInfoManager
 import com.intellij.platform.debugger.impl.frontend.getAvailableBreakpointTypesFromServer
+import com.intellij.xdebugger.SplitDebuggerMode
 import com.intellij.xdebugger.impl.XSourcePositionImpl
 import com.intellij.xdebugger.impl.breakpoints.XBreakpointTypeProxy
-import com.intellij.xdebugger.impl.frame.XDebugSessionProxy.Companion.useFeProxy
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -57,11 +57,11 @@ internal class XDebuggerLineChangeHandler(
   }
 
   private suspend fun getBreakpointTypeForLine(project: Project, editor: Editor, line: Int): XBreakpointTypeProxy? {
-    val types: List<XBreakpointTypeProxy> = if (useFeProxy()) {
-      FrontendEditorLinesBreakpointTypesManager.getInstance(project).getTypesForLine(editor, line)
+    val types: List<XBreakpointTypeProxy> = if (SplitDebuggerMode.isSplitDebugger()) {
+      FrontendEditorLinesBreakpointsInfoManager.getInstance(project).getBreakpointsInfoForLine(editor, line).types
     }
     else {
-      getAvailableBreakpointTypesFromServer(project, editor, line)
+      getAvailableBreakpointTypesFromServer(project, editor, line).types
     }
     return types.firstOrNull()
   }

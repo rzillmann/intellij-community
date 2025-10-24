@@ -4,9 +4,7 @@ package com.intellij.platform.searchEverywhere.providers.mocks
 import com.intellij.openapi.util.NlsSafe
 import com.intellij.platform.searchEverywhere.*
 import com.intellij.platform.searchEverywhere.providers.SeLog
-import com.intellij.platform.searchEverywhere.providers.SeLog.ITEM_EMIT
-import com.intellij.platform.searchEverywhere.providers.SeLog.LIFE_CYCLE
-import com.intellij.platform.searchEverywhere.providers.SeLog.USER_ACTION
+import com.intellij.platform.searchEverywhere.providers.SeLog.*
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -22,6 +20,7 @@ class SeItemsProviderMock(
   private val size: Int = 100,
   private val delayMillis: Long = 0,
   private val delayStep: Int = 0,
+  private val shouldCloseOnSelect: Boolean = true,
 ) : SeItemsProvider {
 
   override suspend fun collectItems(params: SeParams, collector: SeItemsProvider.Collector) {
@@ -30,7 +29,7 @@ class SeItemsProviderMock(
         delay(delayMillis)
 
         repeat(size) { index ->
-          val item = SeItemMock("$resultPrefix $index")
+          val item = SeItemMock("$resultPrefix $index - ${params.inputQuery}")
 
           if (params.inputQuery.isEmpty() || item.text.contains(params.inputQuery, ignoreCase = true)) {
             SeLog.log(ITEM_EMIT) { "Provider ${id} emitting: ${item.text}" }
@@ -52,7 +51,11 @@ class SeItemsProviderMock(
 
   override suspend fun itemSelected(item: SeItem, modifiers: Int, searchText: String): Boolean {
     SeLog.logSuspendable(USER_ACTION) { "Provider ${id} item selected: ${item.presentation().text}" }
-    return true
+    return shouldCloseOnSelect
+  }
+
+  override suspend fun canBeShownInFindResults(): Boolean {
+    return false
   }
 
   override fun dispose() {
@@ -62,6 +65,14 @@ class SeItemsProviderMock(
 
 @ApiStatus.Internal
 class SeItemMock(val text: @NlsSafe String) : SeItem {
+  private var presentationUpdateCounter = -1
+
+  override val rawObject: Any get() = text
   override fun weight(): Int = 0
-  override suspend fun presentation(): SeItemPresentation = SeSimpleItemPresentation(text = text)
+  override suspend fun presentation(): SeItemPresentation {
+    presentationUpdateCounter++
+
+    return SeSimpleItemPresentation(text = if (presentationUpdateCounter > 0) "$text - $presentationUpdateCounter" else text,
+                                    isMultiSelectionSupported = false)
+  }
 }

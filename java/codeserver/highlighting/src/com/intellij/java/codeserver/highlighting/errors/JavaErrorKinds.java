@@ -26,6 +26,7 @@ import com.intellij.psi.infos.MethodCandidateInfo;
 import com.intellij.psi.tree.TokenSet;
 import com.intellij.psi.util.*;
 import com.intellij.refactoring.util.RefactoringChangeUtil;
+import com.intellij.util.JavaPsiConstructorUtil;
 import com.intellij.util.VisibilityUtil;
 import org.jetbrains.annotations.*;
 
@@ -493,6 +494,9 @@ public final class JavaErrorKinds {
   public static final Parameterized<PsiExpression, PsiClass> INSTANTIATION_ABSTRACT = 
     parameterized(PsiExpression.class, PsiClass.class, "instantiation.abstract")
       .withDescription((expr, aClass) -> message("instantiation.abstract", aClass.getName()));
+  public static final Parameterized<PsiElement, PsiClass> INSTANTIATION_LOCAL_CLASS_WRONG_STATIC_CONTEXT =
+    parameterized(PsiElement.class, PsiClass.class, "instantiation.local.class.wrong.static.context")
+      .withDescription((psi, ctx) -> message("instantiation.local.class.wrong.static.context", ctx.getName()));
   
   public static final Simple<PsiClass> RECORD_NO_HEADER = error(PsiClass.class, "record.no.header")
     .withAnchor(PsiClass::getNameIdentifier);
@@ -631,15 +635,16 @@ public final class JavaErrorKinds {
       .withDescription((list, method) -> message("type.parameter.absent.method", formatMethod(method)));
   public static final Parameterized<PsiReferenceParameterList, PsiTypeParameterListOwner> TYPE_PARAMETER_COUNT_MISMATCH =
     parameterized(PsiReferenceParameterList.class, PsiTypeParameterListOwner.class, "type.parameter.count.mismatch")
+      .withNavigationShift(1)
       .withDescription((list, owner) -> message("type.parameter.count.mismatch", list.getTypeArgumentCount(),
                                                 owner.getTypeParameters().length));
   public static final Simple<PsiTypeElement> TYPE_PARAMETER_ACTUAL_INFERRED_MISMATCH = error("type.parameter.actual.inferred.mismatch");
 
-  public static final Simple<PsiMethod> METHOD_DUPLICATE =
-    error(PsiMethod.class, "method.duplicate")
-      .withRange(JavaErrorFormatUtil::getMethodDeclarationTextRange)
+  public static final Parameterized<PsiMethod, DuplicateMethodsContext> METHOD_DUPLICATE =
+    parameterized(PsiMethod.class, DuplicateMethodsContext.class, "method.duplicate")
+      .withRange((method, duplicates) -> getMethodDeclarationTextRange(method))
       .withDescription(
-        method -> message("method.duplicate", formatMethod(method), formatClass(requireNonNull(method.getContainingClass()))));
+        (method, duplicates) -> message("method.duplicate", formatMethod(method), formatClass(requireNonNull(method.getContainingClass()))));
   public static final Simple<PsiMethod> METHOD_NO_PARAMETER_LIST =
     error(PsiMethod.class, "method.no.parameter.list").withAnchor(PsiMethod::getNameIdentifier);
   public static final Simple<PsiJavaCodeReferenceElement> METHOD_THROWS_CLASS_NAME_EXPECTED =
@@ -760,8 +765,11 @@ public final class JavaErrorKinds {
       .withDescription((cls, ctx) -> message("method.inheritance.clash.does.not.throw",
                                              formatClashMethodMessage(ctx.method(), ctx.superMethod()),
                                              formatType(ctx.exceptionType())));
-  public static final Parameterized<PsiMethod, String> METHOD_MISSING_RETURN_TYPE =
+  public static final Parameterized<PsiMethod, @NotNull String> METHOD_MISSING_RETURN_TYPE =
     parameterized(PsiMethod.class, String.class, "method.missing.return.type")
+      .withAnchor(method -> requireNonNullElse(method.getNameIdentifier(), method));
+  public static final Simple<PsiMethod> METHOD_MISSING_RETURN_TYPE_NOT_CONSTRUCTOR =
+    error(PsiMethod.class, "method.missing.return.type.not.constructor")
       .withAnchor(method -> requireNonNullElse(method.getNameIdentifier(), method));
 
   public static final Parameterized<PsiMember, AmbiguousImplicitConstructorCallContext> CONSTRUCTOR_AMBIGUOUS_IMPLICIT_CALL =
@@ -915,6 +923,7 @@ public final class JavaErrorKinds {
         }
         return null;
       })
+      .withNavigationShift((list, ctx) -> ctx.recordComponents().length < ctx.patternComponents().length && !ctx.hasMismatch() ? 0 : 1)
       .withDescription((list, ctx) -> message("pattern.deconstruction.count.mismatch",
                                               ctx.recordComponents().length, ctx.patternComponents().length));
   public static final Parameterized<PsiTypeTestPattern, JavaIncompatibleTypeErrorContext> PATTERN_INSTANCEOF_SUPERTYPE =
@@ -1120,12 +1129,10 @@ public final class JavaErrorKinds {
     parameterized(PsiReferenceParameterList.class, PsiDiamondType.DiamondInferenceResult.class, "new.expression.diamond.inference.failure")
       .withDescription(
         (list, inferenceResult) -> message("new.expression.diamond.inference.failure", inferenceResult.getErrorMessage()));
-  public static final Simple<PsiConstructorCall> NEW_EXPRESSION_ARGUMENTS_TO_DEFAULT_CONSTRUCTOR_CALL =
-    error(PsiConstructorCall.class, "new.expression.arguments.to.default.constructor.call")
-      .withAnchor(call -> call.getArgumentList());
   public static final Parameterized<PsiConstructorCall, UnresolvedConstructorContext> NEW_EXPRESSION_UNRESOLVED_CONSTRUCTOR =
     parameterized(PsiConstructorCall.class, UnresolvedConstructorContext.class, "new.expression.unresolved.constructor")
       .withAnchor(PsiCall::getArgumentList)
+      .withNavigationShift(1)
       .withDescription((call, ctx) -> message("new.expression.unresolved.constructor", 
                                           ctx.psiClass().getName() + formatArgumentTypes(call.getArgumentList(), true)));
   public static final Parameterized<PsiJavaCodeReferenceElement, PsiTypeParameter> NEW_EXPRESSION_TYPE_PARAMETER =
@@ -1303,10 +1310,12 @@ public final class JavaErrorKinds {
   public static final Parameterized<PsiElement, JavaMismatchedCallContext> CALL_WRONG_ARGUMENTS =
     parameterized(PsiElement.class, JavaMismatchedCallContext.class, "call.wrong.arguments")
       .withTooltip((psi, ctx) -> ctx.createTooltip())
+      .withNavigationShift((psi, ctx) -> psi instanceof PsiExpressionList ? 1 : 0)
       .withDescription((psi, ctx) -> ctx.createDescription());
   public static final Parameterized<PsiMethodCallExpression, JavaResolveResult[]> CALL_UNRESOLVED =
     parameterized(PsiMethodCallExpression.class, JavaResolveResult[].class, "call.unresolved")
       .withAnchor(PsiMethodCallExpression::getArgumentList)
+      .withNavigationShift(1)
       .withDescription((call, results) -> message(
         "call.unresolved", call.getMethodExpression().getReferenceName() + formatArgumentTypes(call.getArgumentList(), true)));
   public static final Parameterized<PsiMethodCallExpression, JavaResolveResult[]> CALL_UNRESOLVED_NAME =
@@ -1318,6 +1327,7 @@ public final class JavaErrorKinds {
   public static final Parameterized<PsiMethodCallExpression, JavaAmbiguousCallContext> CALL_AMBIGUOUS =
     parameterized(PsiMethodCallExpression.class, JavaAmbiguousCallContext.class, "call.ambiguous")
       .withAnchor(PsiMethodCallExpression::getArgumentList)
+      .withNavigationShift((psi, ctx) -> 1)
       .withDescription((call, ctx) -> ctx.description())
       .withTooltip((call, ctx) -> ctx.tooltip());
   public static final Parameterized<PsiMethodCallExpression, JavaResolveResult[]> CALL_AMBIGUOUS_NO_MATCH =
@@ -1482,7 +1492,14 @@ public final class JavaErrorKinds {
       .withDescription((ref, var) -> message("variable.already.assigned", var.getName()));
   public static final Parameterized<PsiReferenceExpression, PsiVariable> VARIABLE_ALREADY_ASSIGNED_CONSTRUCTOR =
     parameterized(PsiReferenceExpression.class, PsiVariable.class, "variable.already.assigned.constructor")
-      .withDescription((ref, var) -> message("variable.already.assigned.constructor", var.getName()));
+      .withDescription((ref, var) -> {
+        PsiMethod constructor = PsiTreeUtil.getParentOfType(ref, PsiMethod.class);
+        assert constructor != null;
+        PsiMethodCallExpression thisCall = JavaPsiConstructorUtil.findThisOrSuperCallInConstructor(constructor);
+        assert thisCall != null;
+        return message("variable.already.assigned.constructor", var.getName(),
+                       thisCall.getTextOffset() + thisCall.getTextLength() > ref.getTextOffset() ? 1 : 2);
+      });
   public static final Parameterized<PsiReferenceExpression, PsiVariable> VARIABLE_ALREADY_ASSIGNED_FIELD =
     parameterized(PsiReferenceExpression.class, PsiVariable.class, "variable.already.assigned.field")
       .withDescription((ref, var) -> message("variable.already.assigned.field", var.getName()));
@@ -1681,7 +1698,7 @@ public final class JavaErrorKinds {
   }
 
   public record ClassStaticReferenceErrorContext(@NotNull PsiClass outerClass,
-                                                 @Nullable PsiClass innerClass, 
+                                                 @Nullable PsiClass innerClass,
                                                  @NotNull PsiElement place) {
     public @Nullable PsiModifierListOwner enclosingStaticElement() {
       return PsiUtil.getEnclosingStaticElement(place, outerClass);
@@ -1696,7 +1713,7 @@ public final class JavaErrorKinds {
    */
   public record AmbiguousImplicitConstructorCallContext(@NotNull PsiClass psiClass,
                                                         @NotNull PsiMethod candidate1,
-                                                        @NotNull PsiMethod candidate2) { 
+                                                        @NotNull PsiMethod candidate2) {
     @Nls String description() {
       String m1 = PsiFormatUtil.formatMethod(candidate1, PsiSubstitutor.EMPTY,
                                              PsiFormatUtilBase.SHOW_CONTAINING_CLASS |
@@ -1757,4 +1774,6 @@ public final class JavaErrorKinds {
   public record DeconstructionCountMismatchContext(@NotNull PsiPattern @NotNull [] patternComponents,
                                                    @NotNull PsiRecordComponent @NotNull [] recordComponents,
                                                    boolean hasMismatch) {}
+
+  public record DuplicateMethodsContext(@NotNull List<@NotNull PsiMethod> methods) {}
 }

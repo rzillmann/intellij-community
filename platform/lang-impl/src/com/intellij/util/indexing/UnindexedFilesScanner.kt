@@ -2,8 +2,7 @@
 package com.intellij.util.indexing
 
 import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.application.ReadAction
-import com.intellij.openapi.application.readAction
+import com.intellij.openapi.application.readActionUndispatched
 import com.intellij.openapi.diagnostic.ControlFlowException
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.progress.*
@@ -16,14 +15,17 @@ import com.intellij.openapi.project.UnindexedFilesScannerExecutor
 import com.intellij.openapi.roots.ContentIterator
 import com.intellij.openapi.roots.impl.PushedFilePropertiesUpdater
 import com.intellij.openapi.roots.impl.PushedFilePropertiesUpdaterImpl
+import com.intellij.openapi.util.IntellijInternalApi
 import com.intellij.openapi.util.Ref
 import com.intellij.openapi.util.UserDataHolderEx
 import com.intellij.openapi.util.registry.Registry
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.vfs.VirtualFileWithId
+import com.intellij.platform.diagnostic.telemetry.IJTracer
 import com.intellij.platform.diagnostic.telemetry.Indexes
 import com.intellij.platform.diagnostic.telemetry.TelemetryManager.Companion.getInstance
 import com.intellij.platform.diagnostic.telemetry.helpers.use
+import com.intellij.platform.diagnostic.telemetry.helpers.useWithScope
 import com.intellij.platform.util.coroutines.forEachConcurrent
 import com.intellij.util.gist.GistManager
 import com.intellij.util.gist.GistManagerImpl
@@ -44,6 +46,7 @@ import com.intellij.util.indexing.roots.IndexableFilesIterator
 import com.intellij.util.indexing.roots.kind.IndexableSetOrigin
 import com.intellij.util.indexing.roots.kind.SdkOrigin
 import com.intellij.util.indexing.roots.origin.GenericContentEntityOrigin
+import io.opentelemetry.api.trace.Span
 import kotlinx.coroutines.*
 import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.annotations.TestOnly
@@ -84,7 +87,7 @@ class UnindexedFilesScanner (
   private val startCondition: Future<*>?,
   private val shouldHideProgressInSmartMode: Boolean? = null,
   private val forceReindexingTrigger: BiPredicate<IndexedFile, FileIndexingStamp>? = null,
-  private val allowCheckingForOutdatedIndexesUsingFileModCount: Boolean = false,
+  private val forceCheckingForOutdatedIndexesUsingFileModCount: Boolean = false,
   val scanningParameters: Deferred<ScanningParameters>,
 ) : FilesScanningTask, Closeable {
 
@@ -212,9 +215,14 @@ class UnindexedFilesScanner (
 
     val triggerA = forceReindexingTrigger
     val triggerB = oldTask.forceReindexingTrigger
-    val mergedPredicate = BiPredicate { f: IndexedFile, stamp: FileIndexingStamp ->
-      (triggerA != null && triggerA.test(f, stamp)) ||
-      (triggerB != null && triggerB.test(f, stamp))
+
+    val mergedPredicate = if (triggerA == null && triggerB == null) {
+      null
+    } else {
+      BiPredicate { f: IndexedFile, stamp: FileIndexingStamp ->
+        (triggerA != null && triggerA.test(f, stamp)) ||
+        (triggerB != null && triggerB.test(f, stamp))
+      }
     }
     return UnindexedFilesScanner(
       myProject,
@@ -223,7 +231,7 @@ class UnindexedFilesScanner (
       startCondition ?: oldTask.startCondition,
       mergedHideProgress,
       mergedPredicate,
-      allowCheckingForOutdatedIndexesUsingFileModCount || oldTask.allowCheckingForOutdatedIndexesUsingFileModCount,
+      forceCheckingForOutdatedIndexesUsingFileModCount || oldTask.forceCheckingForOutdatedIndexesUsingFileModCount,
       mergedParameters,
     )
   }
@@ -238,7 +246,7 @@ class UnindexedFilesScanner (
 
     markStage(ProjectScanningHistoryImpl.Stage.CollectingIndexableFiles) {
       val projectIndexingDependenciesService = myProject.getService(ProjectIndexingDependenciesService::class.java)
-      val scanningRequest = if (myOnProjectOpen) projectIndexingDependenciesService.newScanningTokenOnProjectOpen(allowCheckingForOutdatedIndexesUsingFileModCount)
+      val scanningRequest = if (myOnProjectOpen) projectIndexingDependenciesService.newScanningTokenOnProjectOpen(forceCheckingForOutdatedIndexesUsingFileModCount)
       else projectIndexingDependenciesService.newScanningToken()
 
       try {
@@ -246,11 +254,8 @@ class UnindexedFilesScanner (
           .collectIndexableFilesConcurrently(orderedProviders)
       }
       finally {
-        ReadAction.run<Throwable> {
-          // read action ensures that service won't be disposed and storage inside won't be closed
-          myProject.getServiceIfCreated(ProjectIndexingDependenciesService::class.java)
-            ?.completeToken(scanningRequest, scanningIterators.isFullIndexUpdate())
-        }
+        myProject.getServiceIfCreated(ProjectIndexingDependenciesService::class.java)
+          ?.completeToken(scanningRequest, scanningIterators.isFullIndexUpdate())
       }
     }
 
@@ -273,7 +278,7 @@ class UnindexedFilesScanner (
   internal suspend fun applyDelayedPushOperations(scanningHistory: ProjectScanningHistoryImpl) {
     this.scanningHistory = scanningHistory
     markStageSus(ProjectScanningHistoryImpl.Stage.DelayedPushProperties) {
-      val pusher = blockingContext { PushedFilePropertiesUpdater.getInstance(myProject) }
+      val pusher = PushedFilePropertiesUpdater.getInstance(myProject)
       if (pusher is PushedFilePropertiesUpdaterImpl) {
         pusher.performDelayedPushTasks()
       }
@@ -434,10 +439,12 @@ class UnindexedFilesScanner (
       sharedExplanationLogger: IndexingReasonExplanationLogger,
     ) {
       runBlockingCancellable {
-        withContext(SCANNING_DISPATCHER) {
+        tracer.spanBuilder("runBlocking in scanning").useWithScope(context = SCANNING_DISPATCHER) {
           providers.forEachConcurrent(SCANNING_PARALLELISM)  { provider ->
             try {
-              scanSingleProvider(provider, sessions, indexableFilesDeduplicateFilter, sharedExplanationLogger)
+              tracer.spanBuilder("Scanning of ${provider.debugName}").use {
+                scanSingleProvider(provider, sessions, indexableFilesDeduplicateFilter, sharedExplanationLogger)
+              }
             }
             catch (t: Throwable) {
               if (t is CancellationException) throw t
@@ -463,7 +470,7 @@ class UnindexedFilesScanner (
       scanningStatistics.setProviderRoots(provider, project)
       val origin = provider.origin
 
-      val fileScannerVisitors = blockingContext { sessions.mapNotNull { s: ScanSession -> s.createVisitor(origin) } }
+      val fileScannerVisitors = sessions.mapNotNull { s: ScanSession -> s.createVisitor(origin) }
       val thisProviderDeduplicateFilter =
         IndexableFilesDeduplicateFilter.createDelegatingTo(indexableFilesDeduplicateFilter)
 
@@ -471,9 +478,13 @@ class UnindexedFilesScanner (
       try {
         progressReporter.getSubTaskReporter().use { subTaskReporter ->
           subTaskReporter.setText(provider.rootsScanningProgressText)
-          val files: ArrayDeque<VirtualFile> = getFilesToScan(fileScannerVisitors, scanningStatistics, provider, thisProviderDeduplicateFilter)
+          val files: ArrayDeque<VirtualFile> = tracer.spanBuilder("Getting files to scan").use {
+            getFilesToScan(fileScannerVisitors, scanningStatistics, provider, thisProviderDeduplicateFilter)
+          }
           PushedFilePropertiesUpdaterImpl.finishVisitors(fileScannerVisitors)
-          scanFiles(provider, scanningStatistics, sharedExplanationLogger, files)
+          tracer.spanBuilder("Scanning gathered files").use { span ->
+            scanFiles(provider, scanningStatistics, sharedExplanationLogger, files, span)
+          }
         }
       }
       catch (e: Exception) {
@@ -498,48 +509,61 @@ class UnindexedFilesScanner (
       }
     }
 
+    @OptIn(IntellijInternalApi::class)
     private suspend fun scanFiles(
       provider: IndexableFilesIterator,
       scanningStatistics: ScanningStatistics,
       sharedExplanationLogger: IndexingReasonExplanationLogger,
       files: ArrayDeque<VirtualFile>,
+      span: Span,
     ) {
       val indexingQueue = project.getService(PerProjectIndexingQueue::class.java)
       scanningStatistics.startFileChecking()
       try {
-        readAction {
-          val finder =
-            if (ourTestMode == TestMode.PUSHING) null
-            else UnindexedFilesFinder(project, sharedExplanationLogger, forceReindexingTrigger, scanningRequest)
-          val pushingUtil = PushingUtil(project, provider)
-          if (!pushingUtil.mayBeUsed()) {
-            LOG.warn("Iterator based on $provider can't be used.")
-            return@readAction
-          }
-          while (files.isNotEmpty()) {
-            val file = files.removeFirst()
-            try {
-              if (file.isValid) {
-                if (file is VirtualFileWithId) {
-                  filterHandler.addFileId(project, file.id)
-                }
-                pushingUtil.applyPushers(file)
-                val status = finder?.getFileStatus(file)
-                if (status != null) {
-                  if (status.shouldIndex && ourTestMode == null) {
-                    indexingQueue.addFile(file, scanningHistory.scanningSessionId)
+        outerWhile@ while (files.isNotEmpty()) {
+          indicator.suspendIfPaused()
+          var counter = 0
+          readActionUndispatched {
+            val currentCounter = counter++
+            if (currentCounter != 0) {
+              // report only restarts of scanning read action
+              span.addEvent("Read action restart #${currentCounter} (${files.size} files remain to scan)")
+            }
+            val finder =
+              if (ourTestMode == TestMode.PUSHING) null
+              else UnindexedFilesFinder(project, sharedExplanationLogger, forceReindexingTrigger, scanningRequest)
+            val pushingUtil = PushingUtil(project, provider)
+            if (!pushingUtil.mayBeUsed()) {
+              LOG.warn("Iterator based on $provider can't be used.")
+              return@readActionUndispatched
+            }
+
+            innerWhile@ while (files.isNotEmpty()) {
+              if (indicator.isPaused()) break@innerWhile
+              val file = files.removeFirst()
+              try {
+                if (file.isValid) {
+                  if (file is VirtualFileWithId) {
+                    filterHandler.addFileId(project, file.id)
                   }
-                  scanningStatistics.addStatus(file, status, project)
+                  pushingUtil.applyPushers(file)
+                  val status = finder?.getFileStatus(file)
+                  if (status != null) {
+                    if (status.shouldIndex && ourTestMode == null) {
+                      indexingQueue.addFile(file, scanningHistory.scanningSessionId)
+                    }
+                    scanningStatistics.addStatus(file, status, project)
+                  }
                 }
               }
-            }
-            catch (e: ProcessCanceledException) {
-              files.addFirst(file)
-              throw e
-            }
-            catch (e: Exception) {
-              LOG.error("Error while scanning ${file.presentableUrl}\n" +
-                        "To reindex this file IDE has to be restarted", e);
+              catch (e: ProcessCanceledException) {
+                files.addFirst(file)
+                throw e
+              }
+              catch (e: Exception) {
+                LOG.error("Error while scanning ${file.presentableUrl}\n" +
+                          "To reindex this file IDE has to be restarted", e)
+              }
             }
           }
         }
@@ -549,7 +573,7 @@ class UnindexedFilesScanner (
       }
     }
 
-    private suspend fun getFilesToScan(
+    private fun getFilesToScan(
       fileScannerVisitors: List<IndexableFileScanner.IndexableFileVisitor>,
       scanningStatistics: ScanningStatistics,
       provider: IndexableFilesIterator,
@@ -565,9 +589,7 @@ class UnindexedFilesScanner (
 
       scanningStatistics.startVfsIterationAndScanningApplication()
       try {
-        blockingContext {
-          provider.iterateFiles(project, singleProviderIteratorFactory, thisProviderDeduplicateFilter)
-        }
+        provider.iterateFiles(project, singleProviderIteratorFactory, thisProviderDeduplicateFilter)
       }
       finally {
         scanningStatistics.tryFinishVfsIterationAndScanningApplication()
@@ -778,3 +800,6 @@ private fun <T> Deferred<T>.getCompletedSafe(): T? {
     null
   }
 }
+
+
+private val tracer: IJTracer get() = getInstance().getTracer(Indexes)

@@ -9,7 +9,9 @@ import com.intellij.debugger.engine.SuspendContextImpl
 import com.intellij.debugger.impl.DebuggerUtilsEx
 import com.intellij.debugger.jdi.StackFrameProxyImpl
 import com.intellij.debugger.jdi.ThreadReferenceProxyImpl
+import com.intellij.debugger.jdi.VirtualMachineProxyImpl
 import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.xdebugger.XSourcePosition
 import com.sun.jdi.*
 import org.jetbrains.kotlin.idea.debugger.base.util.*
@@ -19,6 +21,7 @@ import org.jetbrains.kotlin.idea.util.application.isUnitTestMode
 
 const val CREATION_STACK_TRACE_SEPARATOR = "\b\b\b" // the "\b\b\b" is used as creation stacktrace separator in kotlinx.coroutines
 const val CREATION_CLASS_NAME = "_COROUTINE._CREATION"
+private const val DEBUG_PROBES_IMPL_CLASS_FQNAME = "kotlinx.coroutines.debug.internal.DebugProbesImpl"
 
 fun Method.isInvokeSuspend(): Boolean =
     name() == KotlinDebuggerConstants.INVOKE_SUSPEND_METHOD_NAME && signature() == "(Ljava/lang/Object;)Ljava/lang/Object;"
@@ -32,19 +35,39 @@ fun Method.isSuspendLambda() =
 fun Method.hasContinuationParameter() =
     signature().contains("Lkotlin/coroutines/Continuation;)")
 
-fun StackFrameProxyImpl.getSuspendExitMode(): SuspendExitMode {
-    return safeLocation()?.getSuspendExitMode() ?: return SuspendExitMode.NONE
-}
+fun StackFrameProxyImpl.getSuspendExitMode(): SuspendExitMode =
+    safeLocation()?.getSuspendExitMode() ?: SuspendExitMode.NONE
 
 fun Location.getSuspendExitMode(): SuspendExitMode {
     val method = safeMethod() ?: return SuspendExitMode.NONE
-    if (method.isSuspendLambda())
-        return SuspendExitMode.SUSPEND_LAMBDA
-    else if (method.hasContinuationParameter())
-        return SuspendExitMode.SUSPEND_METHOD_PARAMETER
-    else if ((method.isInvokeSuspend() || method.isInvoke()) && safeCoroutineExitPointLineNumber())
-        return SuspendExitMode.SUSPEND_METHOD
-    return SuspendExitMode.NONE
+    return when {
+        method.isSuspendLambda() -> SuspendExitMode.SUSPEND_LAMBDA
+        method.hasContinuationParameter() -> SuspendExitMode.SUSPEND_METHOD_PARAMETER
+        (method.isInvokeSuspend() || method.isInvoke()) && safeCoroutineExitPointLineNumber() -> SuspendExitMode.SUSPEND_METHOD
+        else -> return SuspendExitMode.NONE
+    }
+}
+
+internal fun extractContinuation(frameProxy: StackFrameProxyImpl): ObjectReference? {
+    val suspendExitMode = frameProxy.location().getSuspendExitMode()
+    return when (suspendExitMode) {
+        SuspendExitMode.SUSPEND_LAMBDA -> {
+            frameProxy.thisVariableValue()?.let { return it }
+            // Extract the previous stack frame at BaseContinuationImpl#resumeWith where invokeSuspend is invoked
+            // and extract `this` reference to the current SuspendLambda there.
+            // This is a WA for this problem: IDEA-349851, KT-67136.
+            val prevStackFrame = frameProxy.threadProxy().frames().getOrNull(frameProxy.frameIndex + 1)
+            if (prevStackFrame == null) {
+                logger.thisLogger().error("[coroutine filtering]: Could not extract the previous stack frame for the frame ${frameProxy.stackFrame}:\n" +
+                                           "thread = ${frameProxy.threadProxy().name()} \n" +
+                                           "frames = ${frameProxy.threadProxy().frames()}")
+                return null
+            }
+            prevStackFrame.thisObject()
+        }
+        SuspendExitMode.SUSPEND_METHOD_PARAMETER -> frameProxy.continuationVariableValue()
+        else -> null
+    }
 }
 
 fun Location.safeCoroutineExitPointLineNumber() =
@@ -100,7 +123,7 @@ fun SourcePosition?.toXSourcePosition(): XSourcePosition? = ReadAction.nonBlocki
     DebuggerUtilsEx.toXSourcePosition(this@toXSourcePosition)
 }.executeSynchronously()
 
-fun SuspendContextImpl.executionContext(): DefaultExecutionContext? {
+fun SuspendContextImpl.executionContext(): DefaultExecutionContext {
     DebuggerManagerThreadImpl.assertIsManagerThread()
     return DefaultExecutionContext(this, this.frameProxy)
 }
@@ -124,3 +147,6 @@ fun Location.isFilterFromTop(location: Location?): Boolean =
 
 fun Location.isFilterFromBottom(location: Location?): Boolean =
     sameLineAndMethod(location)
+
+internal fun VirtualMachineProxyImpl.findDebugProbesImplClass(): ClassObjectReference? =
+    classesByName(DEBUG_PROBES_IMPL_CLASS_FQNAME).firstOrNull()?.classObject()

@@ -17,13 +17,13 @@ com.intellij.codeInspection.uncheckedWarnings.UncheckedWarningLocalInspection
 com.intellij.codeInspection.unusedSymbol.UnusedSymbolLocalInspection
 com.intellij.codeInspection.varScopeCanBeNarrowed.FieldCanBeLocalInspection
 com.intellij.codeInspection.visibility.VisibilityInspection
+com.intellij.grazie.spellcheck.GrazieSpellCheckingInspection
 com.intellij.lang.javascript.inspections.JSMismatchedCollectionQueryUpdateInspection
 com.intellij.lang.javascript.inspections.JSPotentiallyInvalidConstructorUsageInspection
 com.intellij.lang.javascript.inspections.JSSuspiciousNameCombinationInspection
 com.intellij.lang.javascript.inspections.UnterminatedStatementJSInspection
 com.intellij.psi.css.inspections.CssUnknownPropertyInspection
 com.intellij.restructuredtext.python.inspections.RestRoleInspection
-com.intellij.spellchecker.inspections.SpellCheckingInspection
 com.jetbrains.php.lang.inspections.PhpUndefinedClassInspection
 com.jetbrains.php.lang.inspections.PhpUndefinedVariableInspection
 com.jetbrains.php.lang.inspections.PhpUnusedParameterInspection
@@ -68,8 +68,6 @@ com.siyeh.ig.classlayout.InnerClassOnInterfaceInspection
 com.siyeh.ig.classlayout.ListenerMayUseAdapterInspection
 com.siyeh.ig.classlayout.UtilityClassInspection
 com.siyeh.ig.classlayout.UtilityClassWithoutPrivateConstructorInspection
-com.siyeh.ig.classmetrics.AnonymousClassComplexityInspection
-com.siyeh.ig.classmetrics.AnonymousClassMethodCountInspection
 com.siyeh.ig.classmetrics.ClassComplexityInspection
 com.siyeh.ig.classmetrics.ClassCouplingInspection
 com.siyeh.ig.classmetrics.ClassInheritanceDepthInspection
@@ -77,6 +75,8 @@ com.siyeh.ig.classmetrics.ClassNestingDepthInspection
 com.siyeh.ig.classmetrics.ConstructorCountInspection
 com.siyeh.ig.classmetrics.FieldCountInspection
 com.siyeh.ig.classmetrics.MethodCountInspection
+com.siyeh.ig.classmetrics.impl.AnonymousClassComplexityInspection
+com.siyeh.ig.classmetrics.impl.AnonymousClassMethodCountInspection
 com.siyeh.ig.cloneable.CloneableImplementsCloneInspection
 com.siyeh.ig.controlflow.ConfusingElseInspection
 com.siyeh.ig.controlflow.DuplicateConditionInspection

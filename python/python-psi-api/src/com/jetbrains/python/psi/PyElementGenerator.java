@@ -50,7 +50,9 @@ public abstract class PyElementGenerator extends PyAstElementGenerator {
 
   public abstract ASTNode createDot();
 
-  public abstract PyBinaryExpression createBinaryExpression(String s, PyExpression expr, PyExpression listLiteral);
+  public abstract PyBinaryExpression createBinaryExpression(@NotNull String operator,
+                                                            @NotNull PyExpression leftOperand,
+                                                            @NotNull PyExpression rightOperand);
 
   @Override
   public @NotNull PyExpression createExpressionFromText(@NotNull LanguageLevel languageLevel, @NotNull String text) throws IncorrectOperationException {
@@ -107,7 +109,10 @@ public abstract class PyElementGenerator extends PyAstElementGenerator {
     return (PyExpressionStatement)super.createDocstring(content);
   }
 
-  public abstract PyPassStatement createPassStatement();
+  @Override
+  public PyPassStatement createPassStatement() {
+    return (PyPassStatement)super.createPassStatement();
+  }
 
   public abstract @NotNull PyDecoratorList createDecoratorList(final String @NotNull ... decoratorTexts);
 
@@ -142,7 +147,7 @@ public abstract class PyElementGenerator extends PyAstElementGenerator {
                                                           @NotNull String name,
                                                           @Nullable String alias);
 
-  public abstract @NotNull PyNoneLiteralExpression createEllipsis();
+  public abstract @NotNull PyEllipsisLiteralExpression createEllipsis();
 
   public abstract @NotNull PySingleStarParameter createSingleStarParameter();
 

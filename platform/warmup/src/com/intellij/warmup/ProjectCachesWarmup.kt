@@ -7,7 +7,6 @@ import com.intellij.idea.AppExitCodes
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.application.ModernApplicationStarter
-import com.intellij.openapi.progress.blockingContext
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.ex.ProjectManagerEx
 import com.intellij.openapi.util.text.Formats
@@ -186,7 +185,7 @@ private suspend fun waitForBuilders(project: Project, rebuild: BuildMode, builde
 
 private suspend fun waitForRefreshQueue() {
   runTaskAndLogTime("RefreshQueue") {
-    while (RefreshQueueImpl.isRefreshInProgress()) {
+    while (RefreshQueueImpl.isRefreshInProgress) {
       WarmupLogger.logInfo("RefreshQueue is in progress...")
       delay(500)
     }
@@ -257,9 +256,7 @@ private fun installStatisticsCollector(): AtomicInteger {
 
 private suspend fun exitApplication() {
   withContext(Dispatchers.EDT) {
-    blockingContext {
-      ApplicationManager.getApplication().exit(false, true, false)
-    }
+    ApplicationManager.getApplication().exit(false, true, false)
   }
 }
 

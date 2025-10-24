@@ -12,8 +12,13 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Key
 import com.intellij.psi.PsiDocumentManager
 import com.intellij.psi.PsiFile
+import org.jetbrains.kotlin.analysis.api.KaContextParameterApi
+import org.jetbrains.kotlin.analysis.api.KaExperimentalApi
 import org.jetbrains.kotlin.analysis.api.KaSession
 import org.jetbrains.kotlin.analysis.api.analyze
+import org.jetbrains.kotlin.analysis.api.components.containingDeclaration
+import org.jetbrains.kotlin.analysis.api.components.declaredMemberScope
+import org.jetbrains.kotlin.analysis.api.components.resolveToSymbols
 import org.jetbrains.kotlin.analysis.api.permissions.KaAllowAnalysisFromWriteAction
 import org.jetbrains.kotlin.analysis.api.permissions.KaAllowAnalysisOnEdt
 import org.jetbrains.kotlin.analysis.api.permissions.allowAnalysisFromWriteAction
@@ -52,7 +57,8 @@ internal class AnonymousTemplateEditingListener(private val psiFile: PsiFile, pr
         }
     }
 
-    context(KaSession)
+    @OptIn(KaContextParameterApi::class, KaExperimentalApi::class)
+    context(_: KaSession)
     private fun resolveSubtypeInfo(referenceExpression: KtReferenceExpression): SubtypeInfo? {
         val referencedClasses = sequence {
             for (symbol in referenceExpression.mainReference.resolveToSymbols()) {
@@ -74,7 +80,7 @@ internal class AnonymousTemplateEditingListener(private val psiFile: PsiFile, pr
             .constructors
             .any { ctor ->
                 val parameters = ctor.valueParameters
-                parameters.isEmpty() || parameters.all { it.hasDefaultValue }
+                parameters.isEmpty() || parameters.all { it.hasDeclaredDefaultValue }
             }
 
         return SubtypeInfo(referenceExpression, referencedClass.classKind, hasZeroParameterConstructors)

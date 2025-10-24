@@ -11,18 +11,22 @@ import com.intellij.platform.eel.EelDescriptor
 import com.intellij.platform.eel.provider.getEelDescriptor
 import com.intellij.platform.eel.provider.localEel
 import com.intellij.python.community.impl.installer.PySdkToInstallManager
-import com.intellij.python.community.services.internal.impl.PythonWithLanguageLevelImpl
+import com.intellij.python.community.services.internal.impl.VanillaPythonWithPythonInfoImpl
 import com.intellij.python.community.services.systemPython.SystemPythonServiceImpl.MyServiceState
 import com.intellij.python.community.services.systemPython.impl.Cache
-import com.intellij.python.community.services.systemPython.impl.CoreSystemPythonProvider
+import com.intellij.python.community.services.systemPython.impl.PySystemPythonBundle
+import com.jetbrains.python.NON_INTERACTIVE_ROOT_TRACE_CONTEXT
+import com.jetbrains.python.PyToolUIInfo
 import com.jetbrains.python.PythonBinary
 import com.jetbrains.python.Result
+import com.jetbrains.python.errorProcessing.PyResult
+import com.jetbrains.python.errorProcessing.getOr
+import com.jetbrains.python.getOrNull
 import com.jetbrains.python.sdk.installer.installBinary
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.jetbrains.annotations.ApiStatus.Internal
-import org.jetbrains.annotations.Nls
 import java.nio.file.InvalidPathException
 import java.nio.file.Path
 import kotlin.io.path.pathString
@@ -53,14 +57,17 @@ internal class SystemPythonServiceImpl(scope: CoroutineScope) : SystemPythonServ
     scope.launch {
       _cacheImpl.complete(getCacheTimeout()?.let { interval ->
         Cache<EelDescriptor, SystemPython>(scope, interval) { eelDescriptor ->
-          searchPythonsPhysicallyNoCache(eelDescriptor.upgrade())
+          withContext(NON_INTERACTIVE_ROOT_TRACE_CONTEXT) {
+            searchPythonsPhysicallyNoCache(eelDescriptor.toEelApi())
+          }
         }
       })
     }
   }
 
-  override suspend fun registerSystemPython(pythonPath: PythonBinary): Result<SystemPython, @Nls String> {
-    val pythonWithLangLevel = PythonWithLanguageLevelImpl.createByPythonBinary(pythonPath).getOr { return it }
+  override suspend fun registerSystemPython(pythonPath: PythonBinary): PyResult<SystemPython> {
+    val pythonWithLangLevel = VanillaPythonWithPythonInfoImpl.createByPythonBinary(pythonPath)
+      .getOr(PySystemPythonBundle.message("py.system.python.service.python.is.broken", pythonPath)) { return it }
     val systemPython = SystemPython(pythonWithLangLevel, null)
     state.userProvidedPythons.add(pythonPath.pathString)
     cache()?.get(pythonPath.getEelDescriptor())?.add(systemPython)
@@ -81,14 +88,14 @@ internal class SystemPythonServiceImpl(scope: CoroutineScope) : SystemPythonServ
       else {
         cache.get(eelApi.descriptor)
       }.sorted()
-    } ?: searchPythonsPhysicallyNoCache(eelApi)
+    } ?: searchPythonsPhysicallyNoCache(eelApi).sorted()
 
 
   class MyServiceState : BaseState() {
     // Only strings are supported by serializer
     var userProvidedPythons by list<String>()
     val userProvidedPythonsAsPath: Collection<Path>
-      get() = userProvidedPythons.filterNotNull().mapNotNull {
+      get() = userProvidedPythons.mapNotNull {
         try {
           Path.of(it)
         }
@@ -102,10 +109,9 @@ internal class SystemPythonServiceImpl(scope: CoroutineScope) : SystemPythonServ
 
   private suspend fun searchPythonsPhysicallyNoCache(eelApi: EelApi): List<SystemPython> = withContext(Dispatchers.IO) {
     findPythonsMutex.withLock {
-      val pythonsUi = mutableMapOf<PythonBinary, UICustomization>()
+      val pythonsUi = mutableMapOf<PythonBinary, PyToolUIInfo>()
 
-      val pythonsFromExtensions = (SystemPythonProvider.EP
-                                     .extensionList + listOf(CoreSystemPythonProvider))
+      val pythonsFromExtensions = SystemPythonProvider.EP.extensionList
         .flatMap { provider ->
           val pythons = provider.findSystemPythons(eelApi).getOrNull() ?: emptyList()
           val ui = provider.uiCustomization
@@ -118,7 +124,7 @@ internal class SystemPythonServiceImpl(scope: CoroutineScope) : SystemPythonServ
       val badPythons = mutableSetOf<PythonBinary>()
       val pythons = pythonsFromExtensions + state.userProvidedPythonsAsPath.filter { it.getEelDescriptor() == eelApi.descriptor }
 
-      val result = PythonWithLanguageLevelImpl.createByPythonBinaries(pythons.toSet())
+      val result = VanillaPythonWithPythonInfoImpl.createByPythonBinaries(pythons.toSet())
         .mapNotNull { (python, r) ->
           when (r) {
             is Result.Success -> SystemPython(r.result, pythonsUi[r.result.pythonBinary])

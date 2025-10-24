@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 
 package com.intellij.openapi.progress.impl;
 
@@ -14,10 +14,8 @@ import com.intellij.openapi.wm.ex.StatusBarEx;
 import com.intellij.openapi.wm.ex.WindowManagerEx;
 import com.intellij.util.concurrency.annotations.RequiresEdt;
 import com.intellij.util.ui.EdtInvocationManager;
+import org.jetbrains.annotations.*;
 import org.jetbrains.annotations.ApiStatus.Obsolete;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
-import org.jetbrains.annotations.VisibleForTesting;
 
 /**
  * <h3>Obsolescence notice</h3>
@@ -57,9 +55,10 @@ public class BackgroundableProcessIndicator extends ProgressWindow {
   }
 
   @VisibleForTesting
-  BackgroundableProcessIndicator(@Nullable Project project,
-                                 @NotNull TaskInfo info,
-                                 @Nullable StatusBarEx statusBarOverride) {
+  @ApiStatus.Internal
+  public BackgroundableProcessIndicator(@Nullable Project project,
+                                        @NotNull TaskInfo info,
+                                        @Nullable StatusBarEx statusBarOverride) {
     super(info.isCancellable(), true, project, null, info.getCancelText());
     setOwnerTask(info);
     myInfo = info;
@@ -147,7 +146,13 @@ public class BackgroundableProcessIndicator extends ProgressWindow {
 
     super.showDialog();
   }
-
+  
+  @TestOnly
+  @ApiStatus.Internal
+  public void showDialogTestAccessor() {
+    showDialog();
+  }
+  
   @Override
   public void background() {
     if (myDisposed) return;

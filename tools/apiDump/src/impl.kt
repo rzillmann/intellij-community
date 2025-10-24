@@ -11,10 +11,7 @@ import org.objectweb.asm.Opcodes
 import org.objectweb.asm.Type
 import org.objectweb.asm.tree.AnnotationNode
 import java.nio.file.Path
-import kotlin.io.path.ExperimentalPathApi
-import kotlin.io.path.inputStream
-import kotlin.io.path.name
-import kotlin.io.path.walk
+import kotlin.io.path.*
 import kotlin.metadata.jvm.JvmFieldSignature
 import kotlin.metadata.jvm.JvmMethodSignature
 
@@ -119,6 +116,7 @@ fun api(index: ApiIndex, root: Path): API {
   val signatures: List<ClassBinarySignature> = classFilePaths
     .map { it.inputStream() }
     .loadApiFromJvmClasses()
+    .filter { !it.isComposableSingleton() }
     .map { it.removeSyntheticBridges() }
     .map { it.removeToString() }
     .map { signature ->
@@ -183,10 +181,7 @@ private fun companionAnnotations(
     return null
   }
   // this is a `static final ContainingClassType Companion` field
-  return ApiAnnotations(
-    isInternal = companionSignature.annotations.isInternal(),
-    isExperimental = companionSignature.annotations.isExperimental(),
-  )
+  return companionSignature.annotations.apiAnnotations()
 }
 
 /**
@@ -313,7 +308,7 @@ private fun classFilePaths(classRoot: Path): Sequence<Path> {
   return classRoot
     .walk()
     .filter { path ->
-      path.name.endsWith(".class") &&
+      path.extension == "class" &&
       !classRoot.relativize(path).startsWith("META-INF/")
     }
 }
@@ -339,14 +334,11 @@ private val unannotated = ApiAnnotations(false, false)
 private fun Sequence<Path>.packages(): Map<String, ApiAnnotations> {
   val packages = HashMap<String, ApiAnnotations>()
   for (path in this) {
-    if (!path.endsWith("package-info.class")) {
+    if (path.name != "package-info.class") {
       continue
     }
     val node = readClass(path)
-    packages[node.name.packageName()] = ApiAnnotations(
-      isInternal = node.invisibleAnnotations.isInternal(),
-      isExperimental = node.invisibleAnnotations.isExperimental(),
-    )
+    packages[node.name.packageName()] = node.invisibleAnnotations.apiAnnotations()
   }
   return packages
 }
@@ -355,7 +347,8 @@ private const val API_STATUS_INTERNAL_DESCRIPTOR = "Lorg/jetbrains/annotations/A
 private const val API_STATUS_EXPERIMENTAL_DESCRIPTOR = "Lorg/jetbrains/annotations/ApiStatus\$Experimental;"
 private const val API_STATUS_NON_EXTENDABLE = "Lorg/jetbrains/annotations/ApiStatus\$NonExtendable;"
 
-private fun List<AnnotationNode>.apiAnnotations(): ApiAnnotations {
+private fun List<AnnotationNode>?.apiAnnotations(): ApiAnnotations {
+  if (this == null) return unannotated
   var isInternal = false
   var isExperimental = false
   for (node in this) {
@@ -391,6 +384,19 @@ private fun List<AnnotationNode>?.isNonExtendable(): Boolean {
 }
 
 private typealias ClassResolver = (String) -> ClassBinarySignature?
+
+/**
+ * Due to the issues in Kotlin's BCV and the Compose compiler plugin, the generated classes by Compose leak to API dumps
+ * Such classes are not really a part of the API, so we filter them here.
+ * This should be removed once CMP-7715 is fixed
+ */
+private fun ClassBinarySignature.isComposableSingleton(): Boolean {
+  return access.isFinal &&
+         // see `androidx.compose.compiler.plugins.kotlin.lower.ComposerLambdaMemoization#getOrCreateComposableSingletonsClass`
+         name.contains("ComposableSingletons$") &&
+         // check if it is really a kotlin object singleton
+         memberSignatures.any { it.name == "INSTANCE" && it.access.isFinal && it.access.isStatic }
+}
 
 private fun ClassBinarySignature.removeSyntheticBridges(): ClassBinarySignature {
   val withoutBridges = memberSignatures.filterNot {

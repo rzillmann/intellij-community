@@ -1,24 +1,28 @@
-### auto-generated section `build kotlin.j2k.k2.tests` start
+### auto-generated section `build intellij.kotlin.j2k.tests` start
 load("//build:compiler-options.bzl", "create_kotlinc_options")
-load("@rules_java//java:defs.bzl", "java_library")
-load("@rules_jvm//:jvm.bzl", "jvm_library", "jvm_test")
+load("@rules_jvm//:jvm.bzl", "jvm_library")
 
 create_kotlinc_options(
-  name = "custom",
-  context_receivers = True,
-  opt_in = ["org.jetbrains.kotlin.utils.addToStdlib.UnsafeCastFunction"]
-)
-
-java_library(
-  name = "kotlin-j2k-k2-tests",
-  visibility = ["//visibility:public"]
+  name = "custom_tests",
+  opt_in = [
+    "com.intellij.openapi.util.IntellijInternalApi",
+    "org.jetbrains.kotlin.utils.addToStdlib.UnsafeCastFunction",
+  ],
+  x_context_parameters = True
 )
 
 jvm_library(
-  name = "kotlin-j2k-k2-tests_test_lib",
+  name = "tests",
   visibility = ["//visibility:public"],
-  srcs = glob(["test/**/*.kt", "test/**/*.java"], allow_empty = True),
-  kotlinc_opts = ":custom",
+  srcs = glob([], allow_empty = True)
+)
+
+jvm_library(
+  name = "tests_test_lib",
+  module_name = "intellij.kotlin.j2k.tests",
+  visibility = ["//visibility:public"],
+  srcs = glob(["test/**/*.kt", "test/**/*.java", "test/**/*.form"], allow_empty = True),
+  kotlinc_opts = ":custom_tests",
   deps = [
     "//java/testFramework",
     "@lib//:kotlin-stdlib",
@@ -26,28 +30,33 @@ jvm_library(
     "@lib//:kotlinc-kotlin-compiler-common",
     "@lib//:kotlinc-kotlin-compiler-fir",
     "@lib//:kotlinc-kotlin-compiler-tests",
-    "//plugins/kotlin/plugin/k2:kotlin-plugin-k2",
-    "//plugins/kotlin/base/test:kotlin-base-test_test_lib",
+    "//platform/core-api:core",
+    "//plugins/kotlin/plugin/k2",
+    "//plugins/kotlin/base/test:test_test_lib",
     "//java/java-psi-api:psi",
-    "//plugins/kotlin/base/analysis:kotlin-base-analysis",
-    "//plugins/kotlin/base/plugin:kotlin-base-plugin",
-    "//plugins/kotlin/base/plugin:kotlin-base-plugin_test_lib",
-    "//plugins/kotlin/base/util:kotlin-base-util",
-    "//plugins/kotlin/base/util:kotlin-base-util_test_lib",
-    "//plugins/kotlin/code-insight/utils:kotlin-code-insight-utils",
-    "//plugins/kotlin/fir/tests:kotlin-fir-tests_test_lib",
+    "//plugins/kotlin/base/analysis",
+    "//plugins/kotlin/base/plugin",
+    "//plugins/kotlin/base/plugin:plugin_test_lib",
+    "//plugins/kotlin/base/util",
+    "//plugins/kotlin/base/util:util_test_lib",
+    "//plugins/kotlin/code-insight/utils",
+    "//plugins/kotlin/fir/tests:tests_test_lib",
     "//platform/testFramework",
     "//platform/testFramework:testFramework_test_lib",
-    "//plugins/kotlin/idea/tests:kotlin-idea-tests_test_lib",
-    "//plugins/kotlin/j2k/shared:kotlin-j2k-shared",
-    "//plugins/kotlin/j2k/shared/tests:kotlin-j2k-shared-tests_test_lib",
+    "//plugins/kotlin/idea/tests:tests_test_lib",
+    "//plugins/kotlin/j2k/shared",
+    "//plugins/kotlin/j2k/shared/tests:tests_test_lib",
     "//plugins/kotlin/test-framework:test-framework_test_lib",
     "//plugins/kotlin/tests-common:tests-common_test_lib",
   ]
 )
+### auto-generated section `build intellij.kotlin.j2k.tests` end
 
-jvm_test(
-  name = "kotlin-j2k-k2-tests_test",
-  runtime_deps = [":kotlin-j2k-k2-tests_test_lib"]
+### auto-generated section `test intellij.kotlin.j2k.tests` start
+load("@community//build:tests-options.bzl", "jps_test")
+
+jps_test(
+  name = "tests_test",
+  runtime_deps = [":tests_test_lib"]
 )
-### auto-generated section `build kotlin.j2k.k2.tests` end
+### auto-generated section `test intellij.kotlin.j2k.tests` end

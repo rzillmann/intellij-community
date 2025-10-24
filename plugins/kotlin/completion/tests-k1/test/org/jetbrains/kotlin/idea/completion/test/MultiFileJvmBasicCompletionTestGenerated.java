@@ -50,6 +50,11 @@ public class MultiFileJvmBasicCompletionTestGenerated extends AbstractMultiFileJ
         runTest("../testData/basic/multifile/CallablesInExcludedPackage/");
     }
 
+    @TestMetadata("ChainCompletionDontDuplicate")
+    public void testChainCompletionDontDuplicate() throws Exception {
+        runTest("../testData/basic/multifile/ChainCompletionDontDuplicate/");
+    }
+
     @TestMetadata("ClassInExcludedPackage")
     public void testClassInExcludedPackage() throws Exception {
         runTest("../testData/basic/multifile/ClassInExcludedPackage/");
@@ -215,6 +220,11 @@ public class MultiFileJvmBasicCompletionTestGenerated extends AbstractMultiFileJ
         runTest("../testData/basic/multifile/HiddenDeclarationsInWhenCondition/");
     }
 
+    @TestMetadata("ImplicitReceiverExposedSuperInterface")
+    public void testImplicitReceiverExposedSuperInterface() throws Exception {
+        runTest("../testData/basic/multifile/ImplicitReceiverExposedSuperInterface/");
+    }
+
     @TestMetadata("InImportClassifiers")
     public void testInImportClassifiers() throws Exception {
         runTest("../testData/basic/multifile/InImportClassifiers/");
@@ -295,6 +305,11 @@ public class MultiFileJvmBasicCompletionTestGenerated extends AbstractMultiFileJ
         runTest("../testData/basic/multifile/JavaClassQualifierWithTypeArguments/");
     }
 
+    @TestMetadata("JavaConstructor")
+    public void testJavaConstructor() throws Exception {
+        runTest("../testData/basic/multifile/JavaConstructor/");
+    }
+
     @TestMetadata("JavaEnum")
     public void testJavaEnum() throws Exception {
         runTest("../testData/basic/multifile/JavaEnum/");
@@ -328,11 +343,6 @@ public class MultiFileJvmBasicCompletionTestGenerated extends AbstractMultiFileJ
     @TestMetadata("KTIJ_32792")
     public void testKTIJ_32792() throws Exception {
         runTest("../testData/basic/multifile/KTIJ_32792/");
-    }
-
-    @TestMetadata("KTIJ_32930")
-    public void testKTIJ_32930() throws Exception {
-        runTest("../testData/basic/multifile/KTIJ_32930/");
     }
 
     @TestMetadata("MoreSpecificExtensionGeneric")
@@ -378,6 +388,11 @@ public class MultiFileJvmBasicCompletionTestGenerated extends AbstractMultiFileJ
     @TestMetadata("NotImportedClass")
     public void testNotImportedClass() throws Exception {
         runTest("../testData/basic/multifile/NotImportedClass/");
+    }
+
+    @TestMetadata("NotImportedExtensionForDefinitelyNotNullableType")
+    public void testNotImportedExtensionForDefinitelyNotNullableType() throws Exception {
+        runTest("../testData/basic/multifile/NotImportedExtensionForDefinitelyNotNullableType/");
     }
 
     @TestMetadata("NotImportedExtensionForFlexibleType")
@@ -580,9 +595,19 @@ public class MultiFileJvmBasicCompletionTestGenerated extends AbstractMultiFileJ
         runTest("../testData/basic/multifile/SyntheticPrimitiveJavaProperty/");
     }
 
+    @TestMetadata("SyntheticPropertyWithoutJavaOrigin")
+    public void testSyntheticPropertyWithoutJavaOrigin() throws Exception {
+        runTest("../testData/basic/multifile/SyntheticPropertyWithoutJavaOrigin/");
+    }
+
     @TestMetadata("TopLevelFunction")
     public void testTopLevelFunction() throws Exception {
         runTest("../testData/basic/multifile/TopLevelFunction/");
+    }
+
+    @TestMetadata("TopLevelPropertyNameCollision")
+    public void testTopLevelPropertyNameCollision() throws Exception {
+        runTest("../testData/basic/multifile/TopLevelPropertyNameCollision/");
     }
 
     @TestMetadata("TypeAliases")

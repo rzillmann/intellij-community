@@ -10,8 +10,8 @@ import com.intellij.psi.PsiFile
 
 abstract class AbstractGoToImplementationCompletionCommandProvider :
   ActionCommandProvider(actionId = "GotoImplementation",
-                        name = "Go to implementation",
-                        i18nName = ActionsBundle.message("action.GotoImplementation.text"),
+                        synonyms = listOf("Go to implementation"),
+                        presentableName = ActionsBundle.message("action.GotoImplementation.text"),
                         icon = null,
                         priority = -100,
                         previewText = ActionsBundle.message("action.GotoImplementation.description")){
@@ -34,6 +34,6 @@ abstract class AbstractGoToImplementationCompletionCommandProvider :
 
 
   override fun createCommand(context: CommandCompletionProviderContext): ActionCompletionCommand? {
-    return createCommandWithNameIdentifier(context)
+    return createCommandWithNameIdentifierAndLastAdjusted(context)
   }
 }

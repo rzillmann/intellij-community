@@ -1,9 +1,9 @@
 ### auto-generated section `build intellij.markdown.compose.preview` start
-load("@rules_jvm//:jvm.bzl", "jvm_library", "jvm_resources")
+load("@rules_jvm//:jvm.bzl", "jvm_library", "resourcegroup")
 
-jvm_resources(
+resourcegroup(
   name = "compose-preview_resources",
-  files = glob(["src/main/resources/**/*"]),
+  srcs = glob(["src/main/resources/**/*"]),
   strip_prefix = "src/main/resources"
 )
 
@@ -11,22 +11,20 @@ jvm_library(
   name = "compose-preview",
   module_name = "intellij.markdown.compose.preview",
   visibility = ["//visibility:public"],
-  srcs = glob(["src/main/kotlin/**/*.kt", "src/main/kotlin/**/*.java"], allow_empty = True),
+  srcs = glob(["src/main/kotlin/**/*.kt", "src/main/kotlin/**/*.java", "src/main/kotlin/**/*.form"], allow_empty = True),
+  resources = [":compose-preview_resources"],
   deps = [
     "@lib//:kotlin-stdlib",
-    "//platform/jewel/foundation",
+    "//platform/editor-ui-api:editor-ui",
     "//plugins/markdown/core:markdown",
-    "//platform/compose",
     "//libraries/compose-foundation-desktop",
     "//platform/core-api:core",
     "//platform/util:util-ui",
     "//platform/platform-api:ide",
-    "//platform/jewel/markdown/ide-laf-bridge-styling:jewel-markdown-ideLafBridgeStyling",
-    "//platform/jewel/markdown/extensions/gfm-tables:jewel-markdown-extensions-gfmTables",
-    "//platform/jewel/markdown/extensions/gfm-strikethrough:jewel-markdown-extensions-gfmStrikethrough",
-    "//platform/jewel/markdown/extensions/autolink:jewel-markdown-extensions-autolink",
+    "//libraries/coil",
+    "//platform/compose",
+    "//platform/compose/markdown",
   ],
-  runtime_deps = [":compose-preview_resources"],
   plugins = ["@lib//:compose-plugin"]
 )
 ### auto-generated section `build intellij.markdown.compose.preview` end

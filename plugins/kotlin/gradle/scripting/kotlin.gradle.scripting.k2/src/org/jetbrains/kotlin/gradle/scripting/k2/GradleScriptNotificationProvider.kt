@@ -16,21 +16,18 @@ import com.intellij.ui.EditorNotificationPanel
 import com.intellij.ui.EditorNotificationPanel.Status
 import com.intellij.ui.EditorNotificationProvider
 import org.jetbrains.annotations.Nls
+import org.jetbrains.kotlin.gradle.scripting.shared.GradleStandaloneScriptActionsManager
 import org.jetbrains.kotlin.gradle.scripting.shared.isGradleKotlinScript
-import org.jetbrains.kotlin.gradle.scripting.shared.legacy.GradleStandaloneScriptActionsManager
 import org.jetbrains.kotlin.gradle.scripting.shared.roots.GradleBuildRootsLocator
 import org.jetbrains.kotlin.gradle.scripting.shared.roots.GradleBuildRootsLocator.NotificationKind.*
-import org.jetbrains.kotlin.gradle.scripting.shared.roots.GradleBuildRootsManager
 import org.jetbrains.kotlin.gradle.scripting.shared.roots.Imported
 import org.jetbrains.kotlin.gradle.scripting.shared.runPartialGradleImport
-import org.jetbrains.kotlin.idea.base.scripting.KotlinBaseScriptingBundle
-import org.jetbrains.kotlin.idea.core.script.k2.ScriptConfigurationsProviderImpl
+import org.jetbrains.kotlin.idea.core.script.shared.KotlinBaseScriptingBundle
 import org.jetbrains.kotlin.idea.util.isKotlinFileType
 import org.jetbrains.plugins.gradle.util.GradleConstants
 import java.io.File
 import java.util.function.Function
 import javax.swing.JComponent
-import kotlin.script.experimental.api.valueOrNull
 
 //TODO: KTIJ-30408
 internal class GradleScriptNotificationProvider : EditorNotificationProvider {
@@ -43,8 +40,8 @@ internal class GradleScriptNotificationProvider : EditorNotificationProvider {
         }
 
         val standaloneScriptActions = GradleStandaloneScriptActionsManager.getInstance(project)
-        val rootsManager = GradleBuildRootsManager.getInstance(project)
-        val scriptUnderRoot = rootsManager?.findScriptBuildRoot(file) ?: return null
+        val rootsManager = GradleBuildRootsLocator.getInstance(project)
+        val scriptUnderRoot = rootsManager.findScriptBuildRoot(file) ?: return null
 
         // todo: this actions will be usefull only when gradle fix https://github.com/gradle/gradle/issues/12640
         fun EditorNotificationPanel.showActionsToFixNotEvaluated() {
@@ -160,10 +157,8 @@ internal class GradleScriptNotificationProvider : EditorNotificationProvider {
         }
     }
 
-    private fun isImported(virtualFile: VirtualFile, project: Project): Boolean {
-        return ScriptConfigurationsProviderImpl.getInstanceIfCreated(project)
-            ?.getConfigurationWithSdk(virtualFile)?.scriptConfiguration?.valueOrNull() != null
-    }
+    private fun isImported(virtualFile: VirtualFile, project: Project): Boolean =
+        GradleKotlinScriptService.getInstance(project).get(virtualFile) != null
 
     private fun linkProject(
         project: Project,

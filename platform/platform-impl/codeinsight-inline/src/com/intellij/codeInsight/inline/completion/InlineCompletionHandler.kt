@@ -4,7 +4,7 @@ package com.intellij.codeInsight.inline.completion
 import com.intellij.codeInsight.inline.completion.editor.InlineCompletionEditorType
 import com.intellij.codeInsight.inline.completion.elements.InlineCompletionElement
 import com.intellij.codeInsight.inline.completion.listeners.InlineSessionWiseCaretListener
-import com.intellij.codeInsight.inline.completion.listeners.typing.InlineCompletionDocumentChangesTrackerImpl
+import com.intellij.codeInsight.inline.completion.listeners.typing.InlineCompletionTypingSessionTracker
 import com.intellij.codeInsight.inline.completion.logs.InlineCompletionLogsListener
 import com.intellij.codeInsight.inline.completion.logs.InlineCompletionUsageTracker
 import com.intellij.codeInsight.inline.completion.logs.InlineCompletionUsageTracker.ShownEvents.FinishType
@@ -17,7 +17,7 @@ import com.intellij.codeInsight.inline.completion.session.InlineCompletionSessio
 import com.intellij.codeInsight.inline.completion.suggestion.InlineCompletionSuggestion
 import com.intellij.codeInsight.inline.completion.suggestion.InlineCompletionVariant
 import com.intellij.codeInsight.inline.completion.suggestion.InlineCompletionVariantsComputer
-import com.intellij.codeInsight.inline.completion.utils.SafeInlineCompletionExecutor
+import com.intellij.codeInsight.inline.edit.InlineEditRequestExecutor
 import com.intellij.codeInsight.lookup.LookupManager
 import com.intellij.inlinePrompt.isInlinePromptShown
 import com.intellij.openapi.Disposable
@@ -39,20 +39,10 @@ import com.intellij.util.application
 import com.intellij.util.concurrency.ThreadingAssertions
 import com.intellij.util.concurrency.annotations.RequiresEdt
 import com.intellij.util.concurrency.annotations.RequiresWriteLock
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.onEmpty
 import kotlinx.coroutines.flow.withIndex
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.coroutines.withContext
 import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.annotations.ApiStatus.ScheduledForRemoval
 import org.jetbrains.annotations.TestOnly
@@ -75,7 +65,7 @@ abstract class InlineCompletionHandler @ApiStatus.Internal constructor(
   @ApiStatus.Internal
   protected val parentDisposable: Disposable,
 ) {
-  private val executor = SafeInlineCompletionExecutor(scope)
+  private val executor = InlineEditRequestExecutor.create(scope)
   private val eventListeners = EventDispatcher.create(InlineCompletionEventListener::class.java)
   private val completionState: InlineCompletionState = InlineCompletionState()
 
@@ -93,6 +83,8 @@ abstract class InlineCompletionHandler @ApiStatus.Internal constructor(
     addEventListener(logsListener)
     invalidationListeners.addListener(logsListener)
     addEventListener(UserFactorsListener())
+
+    Disposer.register(parentDisposable, /* child = */ executor)
   }
 
   /**
@@ -125,22 +117,6 @@ abstract class InlineCompletionHandler @ApiStatus.Internal constructor(
   fun removeEventListener(listener: InlineCompletionEventListener) {
     eventListeners.removeListener(listener)
   }
-
-  @Deprecated(
-    message = "Use general invokeEvent.",
-    level = DeprecationLevel.WARNING,
-    replaceWith = ReplaceWith("invokeEvent(event)"),
-  )
-  @ScheduledForRemoval
-  fun invoke(event: InlineCompletionEvent.LookupChange): Unit = invokeEvent(event)
-
-  @Deprecated(
-    message = "Use general invokeEvent.",
-    level = DeprecationLevel.WARNING,
-    replaceWith = ReplaceWith("invokeEvent(event)"),
-  )
-  @ScheduledForRemoval
-  fun invoke(event: InlineCompletionEvent.LookupCancelled): Unit = invokeEvent(event)
 
   @Deprecated(
     message = "Use general invokeEvent.",
@@ -184,9 +160,7 @@ abstract class InlineCompletionHandler @ApiStatus.Internal constructor(
       val newSession = startSessionOrNull(request, provider) ?: return
       newSession.guardCaretModifications()
 
-      executor.switchJobSafely(newSession::assignJob) {
-        invokeRequest(request, newSession)
-      }
+      switchAndInvokeRequest(request, newSession)
     }
     finally {
       completionState.isInvokingEvent = false
@@ -218,9 +192,14 @@ abstract class InlineCompletionHandler @ApiStatus.Internal constructor(
     context.copyUserDataTo(insertEnvironment)
     hide(context, FinishType.SELECTED)
 
-    editor.document.insertString(offset, textToInsert)
-    editor.caretModel.moveToOffset(insertEnvironment.insertedRange.endOffset)
-    PsiDocumentManager.getInstance(session.request.file.project).commitDocument(editor.document)
+    val insertingHandler = InlineCompletionEditorInsertHandler.EP_NAME.extensionList.firstOrNull { it.isApplicable(editor) }
+    if (insertingHandler == null) {
+      LOG.error("[Inline Completion] Cannot insert completion due to missing InlineCompletionEditorInsertHandler.")
+      return
+    }
+
+    insertingHandler.insert(editor = editor, textToInsert = textToInsert, offset = offset, file = session.request.file)
+
     session.provider.insertHandler.afterInsertion(insertEnvironment, elements)
     editor.scrollingModel.scrollToCaret(ScrollType.RELATIVE)
     traceBlocking(InlineCompletionEventType.AfterInsert)
@@ -247,7 +226,6 @@ abstract class InlineCompletionHandler @ApiStatus.Internal constructor(
   }
 
   fun cancel(finishType: FinishType = FinishType.OTHER) {
-    executor.cancel()
     application.invokeAndWait {
       InlineCompletionContext.getOrNull(editor)?.let {
         hide(it, finishType)
@@ -255,8 +233,8 @@ abstract class InlineCompletionHandler @ApiStatus.Internal constructor(
     }
   }
 
-  internal val documentChangesTracker = InlineCompletionDocumentChangesTrackerImpl(
-    parentDisposable,
+  @ApiStatus.Internal
+  val typingSessionTracker: InlineCompletionTypingSessionTracker = InlineCompletionTypingSessionTracker(
     sendEvent = ::invokeEvent,
     invalidateOnUnknownChange = { sessionManager.invalidate(UpdateSessionResult.Invalidated.Reason.UnclassifiedDocumentChange) }
   )
@@ -345,14 +323,14 @@ abstract class InlineCompletionHandler @ApiStatus.Internal constructor(
   @ApiStatus.Experimental
   @RequiresEdt
   fun <T> withIgnoringDocumentChanges(block: () -> T): T {
-    return documentChangesTracker.withIgnoringDocumentChanges(block)
+    return typingSessionTracker.withIgnoringDocumentChanges(block)
   }
 
   @ApiStatus.Experimental
   @ApiStatus.Internal
   @RequiresEdt
   fun setIgnoringDocumentChanges(value: Boolean) {
-    documentChangesTracker.ignoreDocumentChanges = value
+    typingSessionTracker.ignoreDocumentChanges = value
   }
 
   /**
@@ -366,7 +344,7 @@ abstract class InlineCompletionHandler @ApiStatus.Internal constructor(
   @ApiStatus.Experimental
   @RequiresEdt
   internal fun <T> withIgnoringCaretMovement(block: () -> T): T {
-    return documentChangesTracker.withIgnoringCaretMovement(block)
+    return typingSessionTracker.withIgnoringCaretMovement(block)
   }
 
   private suspend fun request(
@@ -542,7 +520,10 @@ abstract class InlineCompletionHandler @ApiStatus.Internal constructor(
         }
 
       override val mode: Mode
-        get() = if (documentChangesTracker.ignoreCaretMovements) Mode.ADAPTIVE else Mode.PROHIBIT_MOVEMENT
+        get() = if (typingSessionTracker.ignoreCaretMovements) Mode.ADAPTIVE else Mode.PROHIBIT_MOVEMENT
+
+      override val isTypingSessionInProgress: Boolean
+        get() = typingSessionTracker.isTypingInProgress(editor)
 
       override fun cancel() {
         if (!context.isDisposed) hide(context, FinishType.CARET_CHANGED)
@@ -571,7 +552,7 @@ abstract class InlineCompletionHandler @ApiStatus.Internal constructor(
   @ApiStatus.Internal
   protected fun switchAndInvokeRequest(request: InlineCompletionRequest, newSession: InlineCompletionSession) {
     ThreadingAssertions.assertEventDispatchThread()
-    executor.switchJobSafely(newSession::assignJob) {
+    executor.switchRequest(onJobCreated = newSession::assignJob) {
       invokeRequest(request, newSession)
     }
   }
@@ -612,7 +593,7 @@ abstract class InlineCompletionHandler @ApiStatus.Internal constructor(
   @TestOnly
   suspend fun awaitExecution() {
     ThreadingAssertions.assertEventDispatchThread()
-    executor.awaitAll()
+    executor.awaitActiveRequest()
   }
 
   @ApiStatus.Internal // TODO (remove?)

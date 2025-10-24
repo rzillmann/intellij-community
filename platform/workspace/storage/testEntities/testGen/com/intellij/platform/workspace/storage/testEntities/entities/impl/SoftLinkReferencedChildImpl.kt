@@ -1,22 +1,11 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.platform.workspace.storage.testEntities.entities.impl
 
 import com.intellij.platform.workspace.storage.*
-import com.intellij.platform.workspace.storage.ConnectionId
-import com.intellij.platform.workspace.storage.EntitySource
-import com.intellij.platform.workspace.storage.EntityType
-import com.intellij.platform.workspace.storage.GeneratedCodeApiVersion
-import com.intellij.platform.workspace.storage.GeneratedCodeImplVersion
-import com.intellij.platform.workspace.storage.MutableEntityStorage
-import com.intellij.platform.workspace.storage.WorkspaceEntity
-import com.intellij.platform.workspace.storage.WorkspaceEntityInternalApi
-import com.intellij.platform.workspace.storage.annotations.Child
-import com.intellij.platform.workspace.storage.annotations.Open
 import com.intellij.platform.workspace.storage.impl.EntityLink
 import com.intellij.platform.workspace.storage.impl.ModifiableWorkspaceEntityBase
 import com.intellij.platform.workspace.storage.impl.WorkspaceEntityBase
 import com.intellij.platform.workspace.storage.impl.WorkspaceEntityData
-import com.intellij.platform.workspace.storage.impl.containers.toMutableWorkspaceList
 import com.intellij.platform.workspace.storage.impl.extractOneToManyParent
 import com.intellij.platform.workspace.storage.impl.updateOneToManyParentOfChild
 import com.intellij.platform.workspace.storage.instrumentation.EntityStorageInstrumentation
@@ -24,10 +13,12 @@ import com.intellij.platform.workspace.storage.instrumentation.EntityStorageInst
 import com.intellij.platform.workspace.storage.instrumentation.MutableEntityStorageInstrumentation
 import com.intellij.platform.workspace.storage.metadata.model.EntityMetadata
 import com.intellij.platform.workspace.storage.testEntities.entities.EntityWithSoftLinks
+import com.intellij.platform.workspace.storage.testEntities.entities.EntityWithSoftLinksBuilder
 import com.intellij.platform.workspace.storage.testEntities.entities.SoftLinkReferencedChild
+import com.intellij.platform.workspace.storage.testEntities.entities.SoftLinkReferencedChildBuilder
 
 @GeneratedCodeApiVersion(3)
-@GeneratedCodeImplVersion(6)
+@GeneratedCodeImplVersion(7)
 @OptIn(WorkspaceEntityInternalApi::class)
 internal class SoftLinkReferencedChildImpl(private val dataSource: SoftLinkReferencedChildData) : SoftLinkReferencedChild, WorkspaceEntityBase(
   dataSource) {
@@ -58,7 +49,7 @@ internal class SoftLinkReferencedChildImpl(private val dataSource: SoftLinkRefer
 
 
   internal class Builder(result: SoftLinkReferencedChildData?) : ModifiableWorkspaceEntityBase<SoftLinkReferencedChild, SoftLinkReferencedChildData>(
-    result), SoftLinkReferencedChild.Builder {
+    result), SoftLinkReferencedChildBuilder {
     internal constructor() : this(SoftLinkReferencedChildData())
 
     override fun applyToBuilder(builder: MutableEntityStorage) {
@@ -122,17 +113,16 @@ internal class SoftLinkReferencedChildImpl(private val dataSource: SoftLinkRefer
 
       }
 
-    override var parentEntity: EntityWithSoftLinks.Builder
+    override var parentEntity: EntityWithSoftLinksBuilder
       get() {
         val _diff = diff
         return if (_diff != null) {
           @OptIn(EntityStorageInstrumentationApi::class)
-          ((_diff as MutableEntityStorageInstrumentation).getParentBuilder(PARENTENTITY_CONNECTION_ID,
-                                                                           this) as? EntityWithSoftLinks.Builder)
-          ?: (this.entityLinks[EntityLink(false, PARENTENTITY_CONNECTION_ID)]!! as EntityWithSoftLinks.Builder)
+          ((_diff as MutableEntityStorageInstrumentation).getParentBuilder(PARENTENTITY_CONNECTION_ID, this) as? EntityWithSoftLinksBuilder)
+          ?: (this.entityLinks[EntityLink(false, PARENTENTITY_CONNECTION_ID)]!! as EntityWithSoftLinksBuilder)
         }
         else {
-          this.entityLinks[EntityLink(false, PARENTENTITY_CONNECTION_ID)]!! as EntityWithSoftLinks.Builder
+          this.entityLinks[EntityLink(false, PARENTENTITY_CONNECTION_ID)]!! as EntityWithSoftLinksBuilder
         }
       }
       set(value) {
@@ -171,7 +161,7 @@ internal class SoftLinkReferencedChildImpl(private val dataSource: SoftLinkRefer
 internal class SoftLinkReferencedChildData : WorkspaceEntityData<SoftLinkReferencedChild>() {
 
 
-  override fun wrapAsModifiable(diff: MutableEntityStorage): WorkspaceEntity.Builder<SoftLinkReferencedChild> {
+  override fun wrapAsModifiable(diff: MutableEntityStorage): WorkspaceEntityBuilder<SoftLinkReferencedChild> {
     val modifiable = SoftLinkReferencedChildImpl.Builder(null)
     modifiable.diff = diff
     modifiable.id = createEntityId()
@@ -198,9 +188,9 @@ internal class SoftLinkReferencedChildData : WorkspaceEntityData<SoftLinkReferen
     return SoftLinkReferencedChild::class.java
   }
 
-  override fun createDetachedEntity(parents: List<WorkspaceEntity.Builder<*>>): WorkspaceEntity.Builder<*> {
+  override fun createDetachedEntity(parents: List<WorkspaceEntityBuilder<*>>): WorkspaceEntityBuilder<*> {
     return SoftLinkReferencedChild(entitySource) {
-      parents.filterIsInstance<EntityWithSoftLinks.Builder>().singleOrNull()?.let { this.parentEntity = it }
+      parents.filterIsInstance<EntityWithSoftLinksBuilder>().singleOrNull()?.let { this.parentEntity = it }
     }
   }
 

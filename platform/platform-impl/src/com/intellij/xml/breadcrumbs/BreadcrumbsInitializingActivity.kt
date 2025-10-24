@@ -20,7 +20,6 @@ import com.intellij.openapi.fileEditor.TextEditor
 import com.intellij.openapi.fileTypes.FileTypeEvent
 import com.intellij.openapi.fileTypes.FileTypeListener
 import com.intellij.openapi.fileTypes.FileTypeManager
-import com.intellij.openapi.progress.blockingContext
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.startup.ProjectActivity
 import com.intellij.openapi.util.Disposer
@@ -53,6 +52,7 @@ private class BreadcrumbsInitializingActivity : ProjectActivity {
     FileBreadcrumbsCollector.EP_NAME.getPoint(project).addChangeListener({ reinitBreadcrumbsInAllEditors(project, true) }, project)
     VirtualFileManager.getInstance().addVirtualFileListener(MyVirtualFileListener(project), project)
     connection.subscribe(UISettingsListener.TOPIC, UISettingsListener { reinitBreadcrumbsInAllEditors(project, true) })
+    connection.subscribe(BreadcrumbsXmlWrapper.FORCE_RELOAD_BREADCRUMBS, Runnable { reinitBreadcrumbsInAllEditors(project, true) })
 
     val fileEditorManager = project.serviceAsync<FileEditorManager>()
     val above = isAbove()
@@ -60,9 +60,7 @@ private class BreadcrumbsInitializingActivity : ProjectActivity {
       for (fileEditor in fileEditorManager.getAllEditorList(virtualFile)) {
         if (fileEditor is TextEditor) {
           withContext(Dispatchers.EDT) {
-            blockingContext {
-              reinitBreadcrumbComponent(fileEditor = fileEditor, fileEditorManager = fileEditorManager, file = virtualFile, above = above)
-            }
+            reinitBreadcrumbComponent(fileEditor = fileEditor, fileEditorManager = fileEditorManager, file = virtualFile, above = above)
           }
         }
       }

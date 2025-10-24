@@ -2,19 +2,19 @@
 package com.intellij.platform.searchEverywhere.frontend
 
 import com.intellij.openapi.Disposable
-import com.intellij.platform.searchEverywhere.SeItemData
-import com.intellij.platform.searchEverywhere.SeParams
-import com.intellij.platform.searchEverywhere.SeResultEvent
+import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.actionSystem.DataContext
+import com.intellij.platform.searchEverywhere.*
 import kotlinx.coroutines.flow.Flow
 import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.annotations.Nls
 
 @ApiStatus.Experimental
 @ApiStatus.Internal
-interface SeTab: Disposable {
+interface SeTab : Disposable {
   val name: @Nls String
-  val shortName: @Nls String
   val id: String
+  val isIndexingDependent: Boolean get() = false
 
   /**
    * Retrieves a flow of search result events based on the provided parameters.
@@ -28,4 +28,25 @@ interface SeTab: Disposable {
   suspend fun getFilterEditor(): SeFilterEditor?
 
   suspend fun itemSelected(item: SeItemData, modifiers: Int, searchText: String): Boolean
+
+  suspend fun getEmptyResultInfo(context: DataContext): SeEmptyResultInfo? = null
+
+  suspend fun canBeShownInFindResults(): Boolean
+
+  suspend fun openInFindToolWindow(session: SeSession, params: SeParams, initEvent: AnActionEvent): Boolean = false
+
+  /**
+   * @return true if the popup should be closed, false otherwise
+   */
+  suspend fun performExtendedAction(item: SeItemData): Boolean
+
+  suspend fun essentialProviderIds(): Set<SeProviderId> = emptySet()
+
+  suspend fun getUpdatedPresentation(item: SeItemData): SeItemPresentation? = null
+
+  suspend fun isPreviewEnabled(): Boolean
+
+  suspend fun getPreviewInfo(itemData: SeItemData): SePreviewInfo?
+
+  suspend fun isExtendedInfoEnabled(): Boolean
 }

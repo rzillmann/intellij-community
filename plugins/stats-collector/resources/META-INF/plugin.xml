@@ -2,7 +2,7 @@
   <id>com.intellij.stats.completion</id>
   <name>Completion Stats Collector</name>
   <vendor>JetBrains</vendor>
-  <category>Other Tools</category>
+  <category>Platform Development</category>
 
   <description><![CDATA[
       <p>The plugin collects anonymous statistics about code completion usage.
@@ -43,10 +43,10 @@
     <applicationService serviceInterface="com.intellij.stats.completion.tracker.InstallationIdProvider"
                         serviceImplementation="com.intellij.stats.completion.tracker.PermanentInstallationIdProvider"/>
 
-    <registryKey key="completion.stats.analytics.platform.send" defaultValue="true"
+    <registryKey key="completion.stats.analytics.platform.send" defaultValue="true" restartRequired="true"
                  description="Send completion logs to Analytics Platform"/>
 
-    <registryKey key="completion.stats.analytics.platform.url" defaultValue="default"
+    <registryKey key="completion.stats.analytics.platform.url" defaultValue="default" restartRequired="true"
                  description="URL to status page with endpoints for sending completion logs to Analytics Platform"/>
 
     <applicationActivity implementation="com.intellij.stats.completion.sender.SenderPreloadingActivity"/>

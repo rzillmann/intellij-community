@@ -13,6 +13,7 @@ import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.openapi.progress.Task;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.util.NlsContexts;
 import com.intellij.openapi.util.NlsSafe;
 import com.intellij.openapi.util.text.HtmlBuilder;
@@ -60,12 +61,13 @@ public final class GitPushResultNotification extends Notification {
   }
 
   @RequiresEdt
-  static @NotNull GitPushResultNotification create(@NotNull Project project,
-                                                   @NotNull GitPushResult pushResult,
-                                                   @Nullable GitPushOperation pushOperation,
-                                                   boolean multiRepoProject,
-                                                   @Nullable GitUpdateInfoAsLog.NotificationData notificationData,
-                                                   @NotNull Map<String, VcsPushOptionValue> customParams) {
+  @VisibleForTesting
+  public static @NotNull GitPushResultNotification create(@NotNull Project project,
+                                                          @NotNull GitPushResult pushResult,
+                                                          @Nullable GitPushOperation pushOperation,
+                                                          boolean multiRepoProject,
+                                                          @Nullable GitUpdateInfoAsLog.NotificationData notificationData,
+                                                          @NotNull Map<String, VcsPushOptionValue> customParams) {
     GroupedPushResult grouped = GroupedPushResult.group(pushResult.getResults());
 
     String title;
@@ -149,9 +151,11 @@ public final class GitPushResultNotification extends Notification {
           notification.addAction(new ViewUpdateInfoNotification(
             project,
             tree,
-            GitBundle.message("push.notification.view.files.action"),
-            notification
+            GitBundle.message("push.notification.view.files.action")
           ));
+          Disposer.register(tree, () -> {
+            notification.expire();
+          });
         }
       }
     }

@@ -11,6 +11,8 @@ import com.intellij.ui.IconManager
 import com.intellij.ui.icons.getClassNameByIconPath
 import com.intellij.ui.icons.isReflectivePath
 import com.intellij.ui.scale.JBUIScale
+import com.intellij.ui.svg.AdaptiveImageView
+import com.intellij.ui.svg.FitToWidthAdaptiveImageView
 import com.intellij.util.asSafely
 import com.intellij.util.text.nullize
 import com.intellij.util.ui.ExtendableHTMLViewFactory.Extension
@@ -30,6 +32,9 @@ import javax.swing.text.Position.Bias
 import javax.swing.text.html.*
 import javax.swing.text.html.HTMLEditorKit.HTMLFactory
 import javax.swing.text.html.ParagraphView
+import javax.swing.text.html.parser.ContentModel
+import javax.swing.text.html.parser.DTD
+import javax.swing.text.html.parser.ParserDelegator
 import kotlin.math.max
 
 /**
@@ -113,6 +118,7 @@ class ExtendableHTMLViewFactory internal constructor(
      *
      * Syntax is `<img src='data:image/png;base64,ENCODED_IMAGE_HERE'>`
      */
+    @ApiStatus.ScheduledForRemoval
     @Deprecated(message = "Use HIDPI_IMAGES or FIT_TO_WIDTH_IMAGES, which support base64 as well.")
     @JvmField
     val BASE64_IMAGES: Extension = Base64ImagesExtension()
@@ -170,6 +176,12 @@ class ExtendableHTMLViewFactory internal constructor(
     @JvmField
     val FIT_TO_WIDTH_IMAGES: Extension = FitToWidthImageViewExtension()
 
+    @JvmField
+    val ADAPTIVE_IMAGE_EXTENSION: Extension = AdaptiveImageViewExtension()
+
+    @JvmField
+    val FIT_TO_WIDTH_ADAPTIVE_IMAGE_EXTENSION: Extension = FitToWidthAdaptiveImageViewExtension()
+
     /**
      * Adds support for `<wbr>` tags
      */
@@ -181,6 +193,12 @@ class ExtendableHTMLViewFactory internal constructor(
      */
     @JvmField
     val BLOCK_HR_SUPPORT: Extension = BlockHrSupportExtension()
+
+    /**
+     * Adds support for `<details>`/`<summary>` tags
+     */
+    @JvmField
+    val DETAILS_SUMMARY_SUPPORT: Extension = DetailsSummarySupportExtension()
   }
 
   @ApiStatus.Internal
@@ -353,16 +371,7 @@ private class Base64ImagesExtension : Extension {
     }
 
     private fun getIntAttr(name: HTML.Attribute, defaultValue: Int): Int {
-      val attr = element.attributes
-      if (!attr.isDefined(name)) return defaultValue
-
-      val value = attr.getAttribute(name) as? String ?: return defaultValue
-      return try {
-        max(0, value.toInt())
-      }
-      catch (x: NumberFormatException) {
-        defaultValue
-      }
+      return element.getIntAttr(name, defaultValue)
     }
 
     override fun getPreferredSpan(axis: Int): Float {
@@ -498,6 +507,17 @@ private class FitToWidthImageViewExtension : Extension {
   override fun invoke(element: Element, view: View): View? = if (view is ImageView) FitToWidthImageView(element) else null
 }
 
+private class AdaptiveImageViewExtension : Extension {
+  override fun invoke(element: Element, view: View): View? = when (view) {
+    is ImageView -> AdaptiveImageView(element)
+    else -> null
+  }
+}
+
+private class FitToWidthAdaptiveImageViewExtension : Extension {
+  override fun invoke(element: Element, view: View): View? = if (view is ImageView) FitToWidthAdaptiveImageView(element) else null
+}
+
 private class WbrSupportExtension : Extension {
   override fun invoke(elem: Element, defaultView: View): View? = if (elem.name.equals("wbr", true)) WbrView(elem) else null
 }
@@ -518,6 +538,56 @@ private class BlockHrSupportExtension : Extension {
       return null
     }
   }
+}
+
+private class DetailsSummarySupportExtension : Extension {
+
+  companion object {
+    init {
+      (ParserDelegator::class.java.getDeclaredMethod("getDefaultDTD")
+        .also { it.isAccessible = true }
+        .invoke(null) as DTD).let { dtd ->
+
+        // register new tags and make details available under div tag
+
+        val div = dtd.getElement("div")
+        val divContentModelExpr = (div.content.content as ContentModel)
+        val origDivElements = divContentModelExpr.content as ContentModel
+
+        val summary = dtd.defineElement(
+          "summary", DTD.MODEL, false, false, div.content,
+          BitSet(), BitSet(), div.attributes)
+
+        val details = dtd.defineElement(
+          "details", DTD.MODEL, false, false,
+          ContentModel(42, ContentModel(124, ContentModel(0, summary, origDivElements))),
+          BitSet(), BitSet(), div.attributes)
+
+        divContentModelExpr.content = ContentModel(0, details, origDivElements)
+      }
+
+    }
+  }
+
+  override fun invoke(element: Element, defaultView: View): View? =
+    if (element.name.equals("details", true)) {
+      if (element.attributes.getAttribute(HTML_Tag_DETAILS) == null) {
+        (element.document as JBHtmlEditorKit.JBHtmlDocument).tryRunUnderWriteLock {
+          (element as AbstractDocument.AbstractElement).addAttribute(HTML_Tag_DETAILS, SimpleAttributeSet())
+        }
+      }
+      DetailsView(element, View.Y_AXIS)
+    }
+    else if (element.name.equals("summary", true)) {
+      if (element.attributes.getAttribute(HTML_Tag_SUMMARY) == null) {
+        (element.document as JBHtmlEditorKit.JBHtmlDocument).tryRunUnderWriteLock {
+          (element as AbstractDocument.AbstractElement).addAttribute(HTML_Tag_SUMMARY, SimpleAttributeSet())
+        }
+      }
+      SummaryView(element, View.Y_AXIS)
+    }
+    else
+      null
 }
 
 private class HiDpiImagesExtension : Extension {

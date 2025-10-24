@@ -41,17 +41,24 @@ __jetbrains_intellij_command_preexec() {
 }
 
 __jetbrains_intellij_command_precmd() {
+  # Should be always the first line in the function!
+  builtin local LAST_EXIT_CODE="$?"
+
   if [[ -z "${__jetbrains_intellij_initialized-}" ]]; then
     # As `precmd` is executed before each prompt, for the first time it is called after
     # all rc files have been processed and before the first prompt is displayed.
     # So, here it finishes the initialization block, not a user command.
     __jetbrains_intellij_initialized=1
     builtin printf '\e]1341;initialized\a'
+    __jetbrains_intellij_get_aliases
     __jetbrains_intellij_update_prompt
     builtin return
   fi
-  builtin local LAST_EXIT_CODE="$?"
-  builtin printf '\e]1341;command_finished;exit_code=%s\a' "$LAST_EXIT_CODE"
+
+  builtin local current_directory="$PWD"
+  builtin printf '\e]1341;command_finished;exit_code=%s;current_directory=%s\a' \
+    "$LAST_EXIT_CODE" \
+    "$(__jetbrains_intellij_encode "$current_directory")"
 
   if [ -n "$__jetbrains_intellij_command_running" ]; then
     __jetbrains_intellij_update_prompt
@@ -71,6 +78,17 @@ __jetbrains_intellij_prompt_started() {
 
 __jetbrains_intellij_prompt_finished() {
   builtin printf '\e]1341;prompt_finished\a'
+}
+
+__jetbrains_intellij_get_aliases() {
+  builtin local aliases_mapping="$(__jetbrains_intellij_escape_json "$(alias)")"
+  builtin printf '\e]1341;aliases_received;%s\a' "$aliases_mapping"
+}
+
+__jetbrains_intellij_escape_json() {
+  builtin command sed -e 's/\\/\\\\/g'\
+      -e 's/"/\\"/g'\
+      <<< "$1"
 }
 
 builtin autoload -Uz add-zsh-hook

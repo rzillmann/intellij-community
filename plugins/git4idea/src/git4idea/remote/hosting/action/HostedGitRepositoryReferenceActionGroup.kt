@@ -2,11 +2,10 @@
 package git4idea.remote.hosting.action
 
 import com.intellij.openapi.actionSystem.*
-import com.intellij.openapi.actionSystem.impl.ActionButton
+import com.intellij.openapi.actionSystem.ex.ActionUtil
 import com.intellij.openapi.project.DumbAware
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.util.NlsActions
-import org.jetbrains.annotations.ApiStatus
 import java.util.function.Supplier
 import javax.swing.Icon
 
@@ -19,19 +18,12 @@ abstract class HostedGitRepositoryReferenceActionGroup : ActionGroup, DumbAware 
               icon: Supplier<Icon?>?)
     : super(dynamicText, dynamicDescription, icon)
 
-  @ApiStatus.ScheduledForRemoval
-  @Deprecated(level = DeprecationLevel.ERROR, message = "Use icon supplier")
-  constructor(dynamicText: Supplier<@NlsActions.ActionText String>,
-              dynamicDescription: Supplier<@NlsActions.ActionDescription String>,
-              icon: Icon?)
-    : super(dynamicText, dynamicDescription, icon)
-
   override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
   override fun update(e: AnActionEvent) {
     val references = findReferences(e.dataContext).distinct()
     e.presentation.isEnabledAndVisible = references.isNotEmpty()
     e.presentation.isPerformGroup = references.size == 1
-    e.presentation.putClientProperty(ActionButton.HIDE_DROPDOWN_ICON, e.presentation.isPerformGroup);
+    e.presentation.putClientProperty(ActionUtil.HIDE_DROPDOWN_ICON, e.presentation.isPerformGroup);
     e.presentation.isPopupGroup = true
     e.presentation.isDisableGroupIfEmpty = false
   }

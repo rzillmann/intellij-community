@@ -1,6 +1,7 @@
 // Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.ide.projectView.impl.nodes;
 
+import com.intellij.codeInsight.multiverse.CodeInsightContexts;
 import com.intellij.ide.projectView.NodeSortOrder;
 import com.intellij.ide.projectView.NodeSortSettings;
 import com.intellij.ide.projectView.PresentationData;
@@ -47,6 +48,8 @@ import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
 import java.util.Collection;
+import java.util.Collections;
+import java.util.List;
 import java.util.Set;
 
 public class PsiDirectoryNode extends BasePsiNode<PsiDirectory> implements NavigatableWithText, PathElementIdProvider {
@@ -90,6 +93,7 @@ public class PsiDirectoryNode extends BasePsiNode<PsiDirectory> implements Navig
     assert psiDirectory != null : this;
     VirtualFile directoryFile = psiDirectory.getVirtualFile();
     Object parentValue = getParentValue();
+    data.setTooltip(null);
     synchronized (chain) {
       if (chain.isEmpty()) {
         VirtualFile ancestor = getVirtualFile(parentValue);
@@ -104,38 +108,45 @@ public class PsiDirectoryNode extends BasePsiNode<PsiDirectory> implements Navig
 
     if (ProjectRootsUtil.isModuleContentRoot(directoryFile, project)) {
       ProjectFileIndex fi = ProjectRootManager.getInstance(project).getFileIndex();
-      Set<Module> modules = fi.getModulesForFile(directoryFile, true);
+      List<Module> modules;
+      if (CodeInsightContexts.isSharedSourceSupportEnabled(project)) {
+        modules = ContainerUtil.filter(fi.getModulesForFile(directoryFile, true), module -> !ModuleType.isInternal(module));
+      }
+      else {
+        modules = Collections.singletonList(fi.getModuleForFile(directoryFile));
+      }
 
-      data.setPresentableText(directoryFile.getName());
+      var directoryName = getPossiblyCompactedDirectoryName();
+      data.setPresentableText(directoryName);
       if (!modules.isEmpty()) {
         if (!(parentValue instanceof Module)) {
           if (modules.size() == 1) {
             Module module = modules.iterator().next();
-            if (ModuleType.isInternal(module) || !shouldShowModuleName()) {
-              data.addText(directoryFile.getName() + " ", SimpleTextAttributes.REGULAR_ATTRIBUTES);
+            if (!shouldShowModuleName()) {
+              data.addText(directoryName + " ", SimpleTextAttributes.REGULAR_ATTRIBUTES);
             }
             else if (moduleNameMatchesDirectoryName(module, directoryFile, fi)) {
-              data.addText(directoryFile.getName(), SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES);
+              data.addText(directoryName, SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES);
             }
             else {
-              data.addText(directoryFile.getName() + " ", SimpleTextAttributes.REGULAR_ATTRIBUTES);
+              data.addText(directoryName + " ", SimpleTextAttributes.REGULAR_ATTRIBUTES);
               data.addText("[" + module.getName() + "]", SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES);
             }
           }
           else {
             // todo IJPL-339 implement this logic carefully, add support for internal module, support more nodes
             if (shouldShowModuleName()) {
-              data.addText(directoryFile.getName() + " ", SimpleTextAttributes.REGULAR_ATTRIBUTES);
+              data.addText(directoryName + " ", SimpleTextAttributes.REGULAR_ATTRIBUTES);
               String moduleNames = "[" + StringUtil.join(modules, module -> module.getName(), ", ") + "]";
               data.addText(moduleNames, SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES);
             }
             else {
-              data.addText(directoryFile.getName(), SimpleTextAttributes.REGULAR_ATTRIBUTES);
+              data.addText(directoryName, SimpleTextAttributes.REGULAR_ATTRIBUTES);
             }
           }
         }
         else {
-          data.addText(directoryFile.getName(), SimpleTextAttributes.REGULAR_ATTRIBUTES);
+          data.addText(directoryName, SimpleTextAttributes.REGULAR_ATTRIBUTES);
         }
 
         boolean shouldShowUrl = getSettings().isShowURL() && (parentValue instanceof Module || parentValue instanceof Project);
@@ -148,18 +159,21 @@ public class PsiDirectoryNode extends BasePsiNode<PsiDirectory> implements Navig
       }
     }
 
-    String name = parentValue instanceof Project
-                  ? psiDirectory.getVirtualFile().getPresentableUrl()
-                  : ProjectViewDirectoryHelper.getInstance(psiDirectory.getProject()).getNodeName(getSettings(), parentValue, psiDirectory);
-    if (name == null) {
-      setValue(null);
-      return;
-    }
-
+    String name = ProjectViewDirectoryHelper.getInstance(psiDirectory.getProject()).getNodeName(getSettings(), parentValue, psiDirectory);
     data.setPresentableText(name);
-    data.setLocationString(ProjectViewDirectoryHelper.getInstance(project).getLocationString(psiDirectory, false, false));
+    data.setLocationString(ProjectViewDirectoryHelper.getInstance(project).getLocationString(psiDirectory, parentValue instanceof Project, false));
 
     setupIcon(data, psiDirectory);
+  }
+
+  private @NotNull String getPossiblyCompactedDirectoryName() {
+    if (chain.isEmpty()) throw new IllegalStateException("The chain of compacted parent directories should be computed first");
+    // Normally it's just one element, but when the Compact/Hide Empty/Middle Packages option is on,
+    // there may be compacted directories in the chain.
+    // Usually it's handled by the ProjectViewDirectoryHelper.getNodeName call above, but that only works for Java packages.
+    // In exotic cases directories may be compacted even if they're content roots.
+    // See BAZEL-1879 for example.
+    return StringUtil.join(chain, VirtualFile::getName, ".");
   }
 
   @Override

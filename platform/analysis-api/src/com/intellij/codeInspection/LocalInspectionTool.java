@@ -59,8 +59,8 @@ public abstract class LocalInspectionTool extends InspectionProfileEntry impleme
    */
   public @NonNls @NotNull String getID() {
     DefaultNameProvider nameProvider = getNameProvider();
-    if (nameProvider instanceof LocalDefaultNameProvider) {
-      String id = ((LocalDefaultNameProvider)nameProvider).getDefaultID();
+    if (nameProvider instanceof LocalDefaultNameProvider local) {
+      String id = local.getDefaultID();
       if (id != null) {
         return id;
       }
@@ -76,8 +76,8 @@ public abstract class LocalInspectionTool extends InspectionProfileEntry impleme
   @Override
   public @NonNls @Nullable String getAlternativeID() {
     DefaultNameProvider nameProvider = getNameProvider();
-    if (nameProvider instanceof LocalDefaultNameProvider) {
-      return ((LocalDefaultNameProvider)nameProvider).getDefaultAlternativeID();
+    if (nameProvider instanceof LocalDefaultNameProvider local) {
+      return local.getDefaultAlternativeID();
     }
     return null;
   }
@@ -166,8 +166,8 @@ public abstract class LocalInspectionTool extends InspectionProfileEntry impleme
     }
 
     @Override
-    public void visitFile(@NotNull PsiFile file) {
-      addDescriptors(checkFile(file, myHolder.getManager(), myIsOnTheFly));
+    public void visitFile(@NotNull PsiFile psiFile) {
+      addDescriptors(checkFile(psiFile, myHolder.getManager(), myIsOnTheFly));
     }
 
     private void addDescriptors(ProblemDescriptor @Nullable [] descriptors) {

@@ -1,50 +1,125 @@
 // Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.platform.debugger.impl.frontend
 
+import com.intellij.ide.rpc.DocumentPatchVersion
+import com.intellij.ide.rpc.util.TextRangeId
+import com.intellij.ide.rpc.util.textRange
 import com.intellij.ide.vfs.virtualFile
-import com.intellij.openapi.components.service
+import com.intellij.openapi.application.readAction
+import com.intellij.openapi.editor.Document
 import com.intellij.openapi.editor.RangeMarker
 import com.intellij.openapi.editor.markup.GutterDraggableObject
+import com.intellij.openapi.editor.markup.GutterIconRenderer
 import com.intellij.openapi.editor.markup.RangeHighlighter
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.util.TextRange
 import com.intellij.openapi.vfs.VirtualFile
+import com.intellij.openapi.vfs.findDocument
+import com.intellij.platform.debugger.impl.rpc.XBreakpointApi
+import com.intellij.platform.debugger.impl.rpc.XBreakpointDto
+import com.intellij.platform.debugger.impl.rpc.XLineBreakpointInfo
+import com.intellij.xdebugger.SplitDebuggerMode
 import com.intellij.xdebugger.XDebuggerUtil
 import com.intellij.xdebugger.XSourcePosition
-import com.intellij.xdebugger.impl.breakpoints.*
-import com.intellij.xdebugger.impl.frame.XDebugSessionProxy.Companion.useFeLineBreakpointProxy
-import com.intellij.xdebugger.impl.rpc.XBreakpointApi
-import com.intellij.xdebugger.impl.rpc.XBreakpointDto
-import com.intellij.xdebugger.impl.rpc.XLineBreakpointInfo
-import com.intellij.xdebugger.impl.rpc.toTextRange
+import com.intellij.xdebugger.impl.breakpoints.XBreakpointVisualRepresentation
+import com.intellij.xdebugger.impl.breakpoints.XLineBreakpointHighlighterRange
+import com.intellij.xdebugger.impl.breakpoints.XLineBreakpointProxy
+import com.intellij.xdebugger.impl.breakpoints.XLineBreakpointTypeProxy
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.consumeAsFlow
 import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicReference
+
+internal enum class RegistrationStatus {
+  NOT_STARTED, IN_PROGRESS, REGISTERED, DEREGISTERED
+}
+
+private suspend fun XLineBreakpointProxy.document(): Document? {
+  return readAction { getFile()?.findDocument() }
+}
+
+private suspend fun retryUntilVersionMatchBool(project: Project, document: Document?, request: suspend (DocumentPatchVersion?) -> Boolean) {
+  retryUntilVersionMatch(project, document) { if (request(it)) true else null }
+}
+
+private sealed interface BreakpointRequest {
+  val requestId: Long
+  suspend fun sendRequest(breakpoint: XLineBreakpointProxy, requestId: Long)
+
+  class SetLine(override val requestId: Long, val line: Int, private val redraw: () -> Unit) : BreakpointRequest {
+    override suspend fun sendRequest(breakpoint: XLineBreakpointProxy, requestId: Long) {
+      retryUntilVersionMatchBool(breakpoint.project, breakpoint.document()) { version ->
+        XBreakpointApi.getInstance().setLine(breakpoint.id, requestId, line, version)
+      }
+      redraw()
+    }
+  }
+
+  class UpdatePosition(override val requestId: Long) : BreakpointRequest {
+    override suspend fun sendRequest(breakpoint: XLineBreakpointProxy, requestId: Long) {
+      retryUntilVersionMatchBool(breakpoint.project, breakpoint.document()) { version ->
+        XBreakpointApi.getInstance().updatePosition(breakpoint.id, requestId, version)
+      }
+    }
+  }
+}
+
+private class RequestsDebouncer(cs: CoroutineScope, private val breakpoint: XLineBreakpointProxy) {
+  private val debouncedRequests = Channel<BreakpointRequest>(Channel.UNLIMITED)
+
+  init {
+    cs.launch {
+      val flows = hashMapOf<Class<out BreakpointRequest>, Channel<BreakpointRequest>>()
+      for (request in debouncedRequests) {
+        val flow = flows.getOrPut(request::class.java) { createRequestTypeFlow() }
+        flow.send(request)
+      }
+    }
+  }
+
+  private fun CoroutineScope.createRequestTypeFlow(): Channel<BreakpointRequest> {
+    val channel = Channel<BreakpointRequest>()
+    launch {
+      channel.consumeAsFlow().collectLatest {
+        it.sendRequest(breakpoint, it.requestId)
+      }
+    }
+    return channel
+  }
+
+  fun sendRequest(request: BreakpointRequest) {
+    debouncedRequests.trySend(request)
+  }
+}
 
 internal class FrontendXLineBreakpointProxy(
   project: Project,
   parentCs: CoroutineScope,
   dto: XBreakpointDto,
   override val type: XLineBreakpointTypeProxy,
-  manager: XBreakpointManagerProxy,
-  onBreakpointChange: (XBreakpointProxy) -> Unit,
-) : FrontendXBreakpointProxy(project, parentCs, dto, type, onBreakpointChange), XLineBreakpointProxy {
+  manager: FrontendXBreakpointManager,
+) : FrontendXBreakpointProxy(project, parentCs, dto, type, manager.breakpointRequestCounter), XLineBreakpointProxy {
+  private val debouncer = RequestsDebouncer(cs, this)
+
   private var lineSourcePosition: XSourcePosition? = null
 
-  private val visualRepresentation = XBreakpointVisualRepresentation(this, useFeLineBreakpointProxy(), manager)
+  private val visualRepresentation = XBreakpointVisualRepresentation(cs, this, SplitDebuggerMode.isSplitDebugger(), manager)
 
   private val lineBreakpointInfo: XLineBreakpointInfo
-    get() = _state.value.lineBreakpointInfo!!
+    get() = currentState.lineBreakpointInfo!!
+
+  internal val registrationInLineManagerStatus = AtomicReference(RegistrationStatus.NOT_STARTED)
 
   override fun isTemporary(): Boolean {
     return lineBreakpointInfo.isTemporary
   }
 
   override fun setTemporary(isTemporary: Boolean) {
-    updateLineBreakpointState { it.copy(isTemporary = isTemporary) }
-    onBreakpointChange()
-    project.service<FrontendXBreakpointProjectCoroutineService>().cs.launch {
-      XBreakpointApi.getInstance().setTemporary(id, isTemporary)
+    updateLineBreakpointStateIfNeeded(newValue = isTemporary,
+                                      getter = { it.isTemporary },
+                                      copy = { it.copy(isTemporary = isTemporary) }) { requestId ->
+      XBreakpointApi.getInstance().setTemporary(id, requestId, isTemporary)
     }
   }
 
@@ -73,57 +148,80 @@ internal class FrontendXLineBreakpointProxy(
   }
 
   override fun setFileUrl(url: String) {
-    if (getFileUrl() != url) {
-      val oldFile = getFile()
-      updateLineBreakpointState { it.copy(fileUrl = url) }
-      lineSourcePosition = null
-      visualRepresentation.removeHighlighter()
+    val oldFile = getFile()
+    updateLineBreakpointStateIfNeeded(
+      newValue = url,
+      getter = { it.fileUrl },
+      copy = { it.copy(fileUrl = url) },
+      afterStateChanged = {
+        lineSourcePosition = null
+        visualRepresentation.removeHighlighter()
+      }) { requestId ->
+      XBreakpointApi.getInstance().setFileUrl(id, requestId, url)
       visualRepresentation.redrawInlineInlays(oldFile, getLine())
       visualRepresentation.redrawInlineInlays(getFile(), getLine())
-      onBreakpointChange()
-
-      project.service<FrontendXBreakpointProjectCoroutineService>().cs.launch {
-        XBreakpointApi.getInstance().setFileUrl(id, url)
-      }
     }
   }
 
   override fun setLine(line: Int) {
-    return setLine(line, true)
+    return positionChanged(line, visualLineMightBeChanged = true)
   }
 
-  fun setLine(line: Int, visualLineMightBeChanged: Boolean) {
-    if (getLine() != line) {
+  private fun positionChanged(line: Int, visualLineMightBeChanged: Boolean) {
+    val oldLine = getLine()
+    if (oldLine != line) {
       // TODO IJPL-185322 support type.lineShouldBeChanged()
-      val oldLine = getLine()
-      updateLineBreakpointState { it.copy(line = line) }
-      lineSourcePosition = null
-      if (visualLineMightBeChanged) {
-        visualRepresentation.removeHighlighter()
+      updateLineBreakpointStateIfNeeded(
+        newValue = line to lineBreakpointInfo.invalidateHighlightingRangeOrNull(),
+        getter = { it.line to it.highlightingRange },
+        copy = { it.copy(line = line, highlightingRange = it.invalidateHighlightingRangeOrNull()) },
+        afterStateChanged = {
+          lineSourcePosition = null
+          if (visualLineMightBeChanged) {
+            visualRepresentation.removeHighlighter()
+          }
+        }
+      ) { requestId ->
+        debouncer.sendRequest(BreakpointRequest.SetLine(requestId, line) {
+          // We try to redraw inlays every time,
+          // due to lack of synchronization between inlay redrawing and breakpoint changes.
+          visualRepresentation.redrawInlineInlays(getFile(), oldLine)
+          visualRepresentation.redrawInlineInlays(getFile(), line)
+        })
       }
-
-      // We try to redraw inlays every time,
-      // due to lack of synchronization between inlay redrawing and breakpoint changes.
-      visualRepresentation.redrawInlineInlays(getFile(), oldLine)
-      visualRepresentation.redrawInlineInlays(getFile(), line)
-
-      onBreakpointChange()
-
-      project.service<FrontendXBreakpointProjectCoroutineService>().cs.launch {
-        XBreakpointApi.getInstance().setLine(id, line)
+    }
+    else {
+      // We should always notify the backend the position might be changed
+      updateLineBreakpointStateIfNeeded(
+        newValue = lineBreakpointInfo.invalidateHighlightingRangeOrNull(),
+        getter = { it.highlightingRange },
+        copy = { it.copy(highlightingRange = it.invalidateHighlightingRangeOrNull()) },
+        afterStateChanged = {
+          // offset in file might change, pass reset to backend
+          lineSourcePosition = null
+        },
+        forceRequestWithoutUpdate = true,
+      ) { requestId ->
+        debouncer.sendRequest(BreakpointRequest.UpdatePosition(requestId))
       }
     }
   }
 
-  override fun getHighlightRange(): TextRange? {
-    return lineBreakpointInfo.highlightingRange?.toTextRange()
+  override fun getHighlightRange(): XLineBreakpointHighlighterRange {
+    val range = lineBreakpointInfo.highlightingRange
+    if (range == UNAVAILABLE_RANGE) return XLineBreakpointHighlighterRange.Unavailable
+    return XLineBreakpointHighlighterRange.Available(range?.textRange())
   }
 
   override fun updatePosition() {
+    // everything is done in fastUpdatePosition
+  }
+
+  override fun fastUpdatePosition() {
     val highlighter: RangeMarker? = visualRepresentation.rangeMarker
     if (highlighter != null && highlighter.isValid()) {
       lineSourcePosition = null // reset the source position even if the line number has not changed, as the offset may be cached inside
-      setLine(highlighter.getDocument().getLineNumber(highlighter.getStartOffset()), visualLineMightBeChanged = false)
+      positionChanged(highlighter.getDocument().getLineNumber(highlighter.getStartOffset()), visualLineMightBeChanged = false)
     }
   }
 
@@ -131,23 +229,39 @@ internal class FrontendXLineBreakpointProxy(
     return visualRepresentation.highlighter
   }
 
-  override fun dispose() {
-    super.dispose()
-    visualRepresentation.removeHighlighter()
-    visualRepresentation.redrawInlineInlays(getFile(), getLine())
+  override fun doUpdateUI(callOnUpdate: () -> Unit) {
+    visualRepresentation.doUpdateUI(callOnUpdate)
   }
 
-  override fun doUpdateUI(callOnUpdate: () -> Unit) {
-    if (useFeLineBreakpointProxy()) {
-      visualRepresentation.doUpdateUI(callOnUpdate)
+  override fun getGutterIconRenderer(): GutterIconRenderer? {
+    return visualRepresentation.highlighter?.gutterIconRenderer
+  }
+
+  private fun <T> updateLineBreakpointStateIfNeeded(
+    newValue: T,
+    getter: (XLineBreakpointInfo) -> T,
+    copy: (XLineBreakpointInfo) -> XLineBreakpointInfo,
+    afterStateChanged: () -> Unit = {},
+    forceRequestWithoutUpdate: Boolean = false,
+    sendRequest: suspend (Long) -> Unit,
+  ) {
+    return updateStateIfNeeded(newValue = newValue,
+                               getter = { state -> getter(state.lineBreakpointInfo!!) },
+                               copy = { state -> state.copy(lineBreakpointInfo = copy(state.lineBreakpointInfo!!)) },
+                               afterStateChanged = afterStateChanged,
+                               forceRequestWithoutUpdate = forceRequestWithoutUpdate) { requestId ->
+      sendRequest(requestId)
     }
   }
 
-  private fun updateLineBreakpointState(update: (XLineBreakpointInfo) -> XLineBreakpointInfo) {
-    _state.update { it.copy(lineBreakpointInfo = update(it.lineBreakpointInfo!!)) }
-  }
-
-  override fun createBreakpointDraggableObject(): GutterDraggableObject? {
+  override fun createBreakpointDraggableObject(): GutterDraggableObject {
     return visualRepresentation.createBreakpointDraggableObject()
   }
+
+  override fun toString(): String {
+    return this::class.simpleName + "(id=$id, type=${type.id}, line=${getLine()}, file=${getFileUrl()})"
+  }
 }
+
+private val UNAVAILABLE_RANGE = TextRangeId(-1, -1)
+private fun XLineBreakpointInfo.invalidateHighlightingRangeOrNull() = if (highlightingRange == null) null else UNAVAILABLE_RANGE

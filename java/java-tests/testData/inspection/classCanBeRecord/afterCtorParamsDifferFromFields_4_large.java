@@ -1,8 +1,6 @@
-// "Convert to record class" "true"
-// no "true-preview" above because of IDEA-369873
+// "Convert to record class" "true-preview"
+
 import org.jetbrains.annotations.NotNull;
 
-class SomeClass {
-    public record Problem(int myLine, int myColumn, @NotNull String code) {
-    }
+record Problem(int myLine, int myColumn, @NotNull String code) {
 }

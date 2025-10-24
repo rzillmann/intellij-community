@@ -83,11 +83,6 @@ public abstract class PyCloningTypeVisitor extends PyTypeVisitorExt<PyType> {
   }
 
   @Override
-  public PyType visitPyNoneType(@NotNull PyNoneType noneType) {
-    return noneType;
-  }
-
-  @Override
   public PyType visitPyGenericType(@NotNull PyCollectionType genericType) {
     return new PyCollectionTypeImpl(
       genericType.getPyClass(),
@@ -136,6 +131,11 @@ public abstract class PyCloningTypeVisitor extends PyTypeVisitorExt<PyType> {
   @Override
   public PyType visitPyUnionType(@NotNull PyUnionType unionType) {
     return PyUnionType.union(ContainerUtil.map(unionType.getMembers(), type -> clone(type)));
+  }
+
+  @Override
+  public PyType visitPyUnsafeUnionType(@NotNull PyUnsafeUnionType unsafeUnionType) {
+    return PyUnsafeUnionType.unsafeUnion(ContainerUtil.map(unsafeUnionType.getMembers(), type -> clone(type)));
   }
 
   @Override

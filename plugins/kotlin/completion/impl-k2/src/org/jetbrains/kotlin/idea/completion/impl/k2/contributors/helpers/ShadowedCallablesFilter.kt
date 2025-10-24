@@ -1,9 +1,11 @@
-// Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.kotlin.idea.completion.contributors.helpers
 
+import com.intellij.openapi.util.Ref
 import org.jetbrains.kotlin.analysis.api.KaSession
 import org.jetbrains.kotlin.analysis.api.components.KaScopeKind
-import org.jetbrains.kotlin.analysis.api.components.KaTypeRelationChecker
+import org.jetbrains.kotlin.analysis.api.components.allSupertypes
+import org.jetbrains.kotlin.analysis.api.components.expandedSymbol
 import org.jetbrains.kotlin.analysis.api.signatures.KaCallableSignature
 import org.jetbrains.kotlin.analysis.api.signatures.KaFunctionSignature
 import org.jetbrains.kotlin.analysis.api.signatures.KaVariableSignature
@@ -27,7 +29,9 @@ internal class ShadowedCallablesFilter {
     )
 
     private val processed = HashSet<SimplifiedSignature>()
-    private val processedSimplifiedSignatures = HashMap<SimplifiedSignature, CompletionSymbolOrigin>()
+
+    // todo reconsider Ref
+    private val processedSimplifiedSignatures = HashMap<SimplifiedSignature, Ref<KaScopeKind>>()
 
     /**
      *  Checks whether callable is shadowed and updates [CallableInsertionOptions] if the callable is already imported and its short name
@@ -38,11 +42,11 @@ internal class ShadowedCallablesFilter {
      *  invoked. For example, `kotlin.text.String()` is not shortened by reference shortener, because shortened version `String()`
      *  is resolved to `kotlin.String()`. That's why we can't rely on reference shortener and need to use [ImportStrategy.DoNothing].
      */
-    context(KaSession)
+    context(_: KaSession)
     fun excludeFromCompletion(
         callableSignature: KaCallableSignature<*>,
         options: CallableInsertionOptions,
-        symbolOrigin: CompletionSymbolOrigin,
+        scopeKind: KaScopeKind?,
         importStrategyDetector: ImportStrategyDetector,
         requiresTypeArguments: (KaFunctionSymbol) -> Boolean,
     ): FilterResult {
@@ -71,36 +75,36 @@ internal class ShadowedCallablesFilter {
 
         // if callable is already imported, try updating importing strategy
         if (importStrategy != ImportStrategy.DoNothing
-            && (symbolOrigin is CompletionSymbolOrigin.Scope || isAlreadyImported())
+            && (scopeKind != null || isAlreadyImported())
         ) {
             val newImportStrategy = ImportStrategy.DoNothing
             val excludeFromCompletion =
-                processSignatureConsideringOptions(fullSimplifiedSignature, simplifiedSignature, newImportStrategy, symbolOrigin)
+                processSignatureConsideringOptions(fullSimplifiedSignature, simplifiedSignature, newImportStrategy, scopeKind)
             if (!excludeFromCompletion) {
                 return FilterResult(excludeFromCompletion = false, newImportStrategy)
             }
         }
 
         val excludeFromCompletion =
-            processSignatureConsideringOptions(fullSimplifiedSignature, simplifiedSignature, importStrategy, symbolOrigin)
+            processSignatureConsideringOptions(fullSimplifiedSignature, simplifiedSignature, importStrategy, scopeKind)
         return FilterResult(excludeFromCompletion)
     }
 
-    context(KaSession)
+    context(_: KaSession)
     private fun processSignatureConsideringOptions(
         fullSimplifiedSignature: SimplifiedSignature,
         simplifiedSignature: SimplifiedSignature,
         importStrategy: ImportStrategy,
-        symbolOrigin: CompletionSymbolOrigin,
+        scopeKind: KaScopeKind?,
     ): Boolean {
         return when (importStrategy) {
-            ImportStrategy.DoNothing -> processSignature(simplifiedSignature, symbolOrigin)
+            ImportStrategy.DoNothing -> processSignature(simplifiedSignature, scopeKind)
 
-            is ImportStrategy.InsertFqNameAndShorten -> processSignature(fullSimplifiedSignature, symbolOrigin)
+            is ImportStrategy.InsertFqNameAndShorten -> processSignature(fullSimplifiedSignature, scopeKind)
 
             is ImportStrategy.AddImport -> {
                 // `AddImport` doesn't necessarily mean that import is required and will be eventually inserted
-                val considerContainer = symbolOrigin is CompletionSymbolOrigin.Index
+                val considerContainer = scopeKind == null
                 val shadowingCallableOrigin = processedSimplifiedSignatures[simplifiedSignature]
                 if (shadowingCallableOrigin == null) {
                     // no callable with unspecified container shadows current callable
@@ -108,18 +112,18 @@ internal class ShadowedCallablesFilter {
                     // import is required and container needs to be considered
                     processSignature(
                         simplifiedSignature = if (considerContainer) fullSimplifiedSignature else simplifiedSignature,
-                        symbolOrigin = symbolOrigin,
+                        scopeKind = scopeKind,
                     )
                 } else {
                     if (!considerContainer) return true
 
                     // if the callable which shadows target callable belongs to the scope with priority lower than the priority of
                     // explicit simple importing scope, then it won't shadow target callable after import is inserted
-                    when ((shadowingCallableOrigin as? CompletionSymbolOrigin.Scope)?.kind) {
+                    when (shadowingCallableOrigin.get()) {
                         is KaScopeKind.PackageMemberScope,
                         is KaScopeKind.DefaultSimpleImportingScope,
                         is KaScopeKind.ExplicitStarImportingScope,
-                        is KaScopeKind.DefaultStarImportingScope -> processSignature(fullSimplifiedSignature, symbolOrigin)
+                        is KaScopeKind.DefaultStarImportingScope -> processSignature(fullSimplifiedSignature, scopeKind)
 
                         else -> true
                     }
@@ -130,8 +134,8 @@ internal class ShadowedCallablesFilter {
 
     private fun processSignature(
         simplifiedSignature: SimplifiedSignature,
-        symbolOrigin: CompletionSymbolOrigin,
-    ): Boolean = processedSimplifiedSignatures.putIfAbsent(simplifiedSignature, symbolOrigin) != null
+        scopeKind: KaScopeKind?,
+    ): Boolean = processedSimplifiedSignatures.putIfAbsent(simplifiedSignature, Ref.create(scopeKind)) != null
 
     companion object {
         /**
@@ -146,7 +150,7 @@ internal class ShadowedCallablesFilter {
          *
          * Also, extensions are sorted by their kind: a function variable can be shadowed by an extension function.
          */
-        context(KaSession)
+        context(_: KaSession)
         fun sortExtensions(
             extensions: Collection<ApplicableExtension>,
             receiversFromContext: List<KaType>
@@ -193,7 +197,7 @@ internal class ShadowedCallablesFilter {
             private data class NameForLocal(val name: Name) : ReceiverId()
 
             companion object {
-                context(KaSession)
+                context(_: KaSession)
                 fun create(type: KaType): ReceiverId? {
                     val expandedClassSymbol = type.expandedSymbol ?: return null
                     val name = expandedClassSymbol.name ?: return null
@@ -226,8 +230,7 @@ private sealed class SimplifiedSignature {
     abstract val containerFqName: FqName?
 
     companion object {
-
-        context(KaSymbolProvider)
+        context(_: KaSession)
         fun KaCallableSymbol.getContainerFqName(): FqName? {
             val callableId = callableId ?: return null
             return when (location) {
@@ -250,10 +253,8 @@ private data class VariableLikeSimplifiedSignature(
     override val name: Name,
     override val containerFqName: FqName?,
 ) : SimplifiedSignature() {
-
     companion object {
-
-        context(KaSymbolProvider)
+        context(_: KaSession)
         fun create(
             signature: KaVariableSignature<*>,
         ) = VariableLikeSimplifiedSignature(
@@ -269,12 +270,12 @@ private class FunctionLikeSimplifiedSignature(
     private val requiredTypeArgumentsCount: Int,
     private val valueParameterTypes: Lazy<List<KaType>>,
     private val varargValueParameterIndices: List<Int>,
-    private val typeRelationChecker: KaTypeRelationChecker,
+    private val kaSession: KaSession,
 ) : SimplifiedSignature() {
 
     companion object {
 
-        context(KaSession)
+        context(session: KaSession)
         fun create(
             signature: KaVariableSignature<*>,
         ) = FunctionLikeSimplifiedSignature(
@@ -287,10 +288,10 @@ private class FunctionLikeSimplifiedSignature(
                 functionalType.parameterTypes
             },
             varargValueParameterIndices = emptyList(),
-            typeRelationChecker = this@KaSession,
+            kaSession = session,
         )
 
-        context(KaSession)
+        context(session: KaSession)
         fun create(
             signature: KaFunctionSignature<*>,
             requiresTypeArguments: (KaFunctionSymbol) -> Boolean,
@@ -308,7 +309,7 @@ private class FunctionLikeSimplifiedSignature(
                             valueParameters.map { it.returnType }
                 },
                 varargValueParameterIndices = valueParameters.mapIndexedNotNull { index, parameter -> index.takeIf { parameter.symbol.isVararg } },
-                typeRelationChecker = this@KaSession,
+                kaSession = session,
             )
         }
     }
@@ -319,7 +320,7 @@ private class FunctionLikeSimplifiedSignature(
         requiredTypeArgumentsCount = requiredTypeArgumentsCount,
         valueParameterTypes = valueParameterTypes,
         varargValueParameterIndices = varargValueParameterIndices,
-        typeRelationChecker = typeRelationChecker,
+        kaSession = kaSession,
     )
 
     override fun hashCode(): Int {
@@ -339,7 +340,7 @@ private class FunctionLikeSimplifiedSignature(
                 && containerFqName == other.containerFqName
                 && requiredTypeArgumentsCount == other.requiredTypeArgumentsCount
                 && varargValueParameterIndices == other.varargValueParameterIndices
-                && with(typeRelationChecker) {
+                && with(kaSession) {
             valueParameterTypes.value
                 .all(other.valueParameterTypes.value) { (left, right) ->
                     left.semanticallyEquals(right)

@@ -24,7 +24,6 @@ import org.junit.jupiter.api.extension.ExtendWith
 import org.junit.jupiter.api.extension.ExtensionContext
 import org.junit.jupiter.api.extension.InvocationInterceptor
 import org.junit.jupiter.api.extension.ReflectiveInvocationContext
-import java.lang.Runnable
 import java.lang.reflect.Method
 import java.util.concurrent.*
 import java.util.concurrent.atomic.AtomicBoolean
@@ -39,7 +38,6 @@ import kotlin.test.assertTrue
 
 @TestApplication
 @ExtendWith(ThreadContextPropagationTest.Enabler::class)
-@ExtendWith(ImplicitBlockingContextTest.Enabler::class)
 class ThreadContextPropagationTest {
 
   class Enabler : InvocationInterceptor {
@@ -109,7 +107,7 @@ class ThreadContextPropagationTest {
     val service = EdtScheduledExecutorService.getInstance()
     doScheduledExecutorServiceTest(service)
     doPropagationTest {
-      service.schedule(it.runnable(), ModalityState.any(), 10, TimeUnit.MILLISECONDS)
+      service.schedule(it.runnable(), 10, TimeUnit.MILLISECONDS)
     }
   }
 
@@ -141,7 +139,7 @@ class ThreadContextPropagationTest {
     val element = TestElement("element")
     withContext(element) {
       suspendCancellableCoroutine { continuation ->
-        installThreadContext(continuation.context).use {                       // install context in calling thread
+        installThreadContext(continuation.context) {                       // install context in calling thread
           submit {                                                         // switch to another thread
             val result: Result<Unit> = runCatching {
               assertSame(element, currentThreadContext()[TestElementKey])  // the same element must be present in another thread context

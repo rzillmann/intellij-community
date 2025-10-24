@@ -1,11 +1,9 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.xdebugger.impl.collection.visualizer
 
 import com.intellij.openapi.extensions.ExtensionPointName
 import com.intellij.openapi.project.Project
 import com.intellij.xdebugger.frame.XDebuggerTreeNodeHyperlink
-import com.intellij.xdebugger.impl.XDebugSessionImpl
-import com.intellij.xdebugger.impl.XDebuggerSuspendScopeProvider
 import com.intellij.xdebugger.impl.frame.XDebugView
 import com.intellij.xdebugger.impl.ui.tree.nodes.XValueNodeImpl
 import kotlinx.coroutines.CoroutineScope
@@ -17,15 +15,12 @@ import org.jetbrains.annotations.ApiStatus
  * Extension point to provide a custom, language-dependent hyperlink for nodes in the Variables view.
  *
  * Note that it will only be invoked if there were no other hyperlinks provided before
- * ([XValueNodeImpl.myFullValueEvaluator] or [XValueNodeImpl.myAdditionalHyperLinks])
+ * ([XValueNodeImpl.myFullValueEvaluator] or [XValueNodeImpl.myAdditionalHyperLink])
  */
 @ApiStatus.Experimental
 interface XDebuggerNodeLinkActionProvider {
   /**
    * Compute a hyperlink for the given [node].
-   *
-   * Passed [CoroutineScope] restricts the lifetime of the link action to a current debugger session state.
-   * Refer to [XDebuggerSuspendScopeProvider.provideSuspendScope] for more details.
    *
    * @see [XDebuggerNodeLinkActionProvider.computeHyperlink]
    */
@@ -38,8 +33,8 @@ interface XDebuggerNodeLinkActionProvider {
     fun computeHyperlink(project: Project, node: XValueNodeImpl) {
       if (node.hasLinks()) return
 
-      val session = XDebugView.getSession(node.tree) as? XDebugSessionImpl ?: return
-      val scope = session.currentSuspendCoroutineScope ?: return
+      val sessionProxy = XDebugView.getSessionProxy(node.tree) ?: return
+      val scope = sessionProxy.currentSuspendContextCoroutineScope ?: return
 
       scope.launch(Dispatchers.Default) {
         for (provider in EP_NAME.extensionList) {

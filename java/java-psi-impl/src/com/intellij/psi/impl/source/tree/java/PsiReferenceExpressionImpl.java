@@ -38,8 +38,10 @@ import com.intellij.psi.util.PsiUtil;
 import com.intellij.psi.util.TypeConversionUtil;
 import com.intellij.util.*;
 import com.intellij.util.containers.ContainerUtil;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.VisibleForTesting;
 
 import java.util.*;
 
@@ -65,10 +67,6 @@ public class PsiReferenceExpressionImpl extends ExpressionPsiElement implements 
 
     if (getQualifierExpression() != null) {
       throw new IncorrectOperationException("Reference is qualified: "+getText());
-    }
-    if (!isPhysical()) {
-      // don't qualify reference: the isReferenceTo() check fails anyway, whether we have a static import for this member or not
-      return this;
     }
     String staticName = getReferenceName();
     PsiFile containingFile = getContainingFile();
@@ -196,7 +194,8 @@ public class PsiReferenceExpressionImpl extends ExpressionPsiElement implements 
       List<ResolveResult[]> qualifiers = resolveAllQualifiers(expression, containingFile);
       JavaResolveResult[] result = expression.resolve(parentType, containingFile);
 
-      if (result.length == 0 && incompleteCode && parentType != JavaElementType.REFERENCE_EXPRESSION) {
+      if (result.length == 0 && incompleteCode && parentType != JavaElementType.REFERENCE_EXPRESSION &&
+          !PsiUtil.isAccessedForWriting(expression)) {
         result = expression.resolve(JavaElementType.REFERENCE_EXPRESSION, containingFile);
       }
 
@@ -307,7 +306,7 @@ public class PsiReferenceExpressionImpl extends ExpressionPsiElement implements 
     PsiMethodCallExpression methodCall = (PsiMethodCallExpression)getParent();
     MethodResolverProcessor processor = new MethodResolverProcessor(methodCall, containingFile);
     try {
-      PsiScopesUtil.setupAndRunProcessor(processor, methodCall, false);
+      PsiScopesUtil.setupAndRunProcessor(processor, methodCall, true);
     }
     catch (MethodProcessorSetupFailedException e) {
       return JavaResolveResult.EMPTY_ARRAY;
@@ -555,7 +554,9 @@ public class PsiReferenceExpressionImpl extends ExpressionPsiElement implements 
     return aClass instanceof PsiCompiledElement && seemsScrambledByStructure(aClass);
   }
 
-  static boolean seemsScrambledByStructure(@NotNull PsiClass aClass) {
+  @VisibleForTesting
+  @ApiStatus.Internal
+  public static boolean seemsScrambledByStructure(@NotNull PsiClass aClass) {
     PsiClass containingClass = aClass.getContainingClass();
     if (containingClass != null && !seemsScrambledByStructure(containingClass)) {
       return false;

@@ -88,7 +88,7 @@ class InspectionRunner {
                            // The containing file this tool was called for. In the case of injected context, this will be the injected file.
                            @NotNull PsiFile psiFile) {
     @Override
-    public String toString() {
+    public @NotNull String toString() {
       return tool +"; inside:"+elementsInside().size()+"; outside:"+elementsOutside().size();
     }
   }
@@ -403,15 +403,22 @@ class InspectionRunner {
    * (starting from this inspection's most fertile elements if any),
    * maintaining parallelism during this process (i.e., several visitors from {@code init} can be executed concurrently, but elements from the list head get higher priority than the list tail).
    */
-  private static void processContext(@NotNull InspectionContext context, List<? extends PsiElement> psiElements,
+  private static void processContext(@NotNull InspectionContext context,
+                                     @NotNull @Unmodifiable List<? extends PsiElement> psiElements,
                                      @NotNull InspectionVisitorOptimizer optimizer) {
     if (LOG.isTraceEnabled()) {
       LOG.trace("processContext: " +
                 context + "; elements(" + psiElements.size() + "): " + StringUtil.join(psiElements, e-> e + "(" + e.getClass() + ")", ", ") + "; accepts=" + context.acceptingPsiTypes());
     }
-    optimizer.acceptElements(psiElements,
-                             context.acceptingPsiTypes,
-                             psiElement -> context.holder.visitElement(psiElement, context.visitor));
+    try {
+      optimizer.acceptElements(psiElements,
+                               context.acceptingPsiTypes,
+                               psiElement -> context.holder.visitElement(psiElement, context.visitor));
+    }
+    catch (Throwable t) {
+      if (Logger.shouldRethrow(t)) throw t;
+      LOG.error(t);
+    }
   }
 
   private void injectedFound(@NotNull PsiFile injectedPsi, @NotNull PsiElement host, @NotNull LocalInspectionToolSession session,
@@ -626,14 +633,14 @@ class InspectionRunner {
     }
   }
 
-  private static boolean shouldInspect(@NotNull PsiFile file) {
+  private static boolean shouldInspect(@NotNull PsiFile psiFile) {
     ApplicationManager.getApplication().assertIsNonDispatchThread();
     ApplicationManager.getApplication().assertReadAccessAllowed();
-    HighlightingLevelManager highlightingLevelManager = HighlightingLevelManager.getInstance(file.getProject());
+    HighlightingLevelManager highlightingLevelManager = HighlightingLevelManager.getInstance(psiFile.getProject());
     // for ESSENTIAL mode, it depends on the current phase: when we run regular LocalInspectionPass then don't, when we run Save All handler then run everything
     return highlightingLevelManager != null
-           && highlightingLevelManager.shouldInspect(file)
-           && !highlightingLevelManager.runEssentialHighlightingOnly(file);
+           && highlightingLevelManager.shouldInspect(psiFile)
+           && !highlightingLevelManager.runEssentialHighlightingOnly(psiFile);
   }
 
   @NotNull

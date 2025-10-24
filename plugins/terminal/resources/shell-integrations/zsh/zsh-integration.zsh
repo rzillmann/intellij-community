@@ -1,6 +1,17 @@
-# Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+# Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 
-function __jetbrains_intellij_update_environment() {
+# Applies IntelliJ configuration to the current Zsh session:
+# 1. Sources `JEDITERM_SOURCE`.
+# 2. Updates environment variables using `_INTELLIJ_FORCE_SET_*` and `_INTELLIJ_FORCE_PREPEND_*`.
+#
+# This function should be called after all startup configuration files (.zshenv,
+# .zprofile, .zshrc / .zlogin), so the user session is fully initialized.
+# It should also be called before any precmd hooks, so those hooks can see
+# the IntelliJ-provided configuration.
+#
+# For example, the Powerlevel10k precmd hook requires an already activated VirtualEnv
+# provided by IntelliJ's Python integration.
+function __jetbrains_intellij_configure_session() {
   if [[ -n "${JEDITERM_SOURCE:-}" ]]; then
     if [[ -n "${JEDITERM_SOURCE_SINGLE_ARG}" ]]; then
       # JEDITERM_SOURCE_ARGS might be either list of args or one arg depending on JEDITERM_SOURCE_SINGLE_ARG
@@ -35,8 +46,18 @@ function __jetbrains_intellij_update_environment() {
   done
 }
 
-__jetbrains_intellij_update_environment
-builtin unset -f __jetbrains_intellij_update_environment
+function __jetbrains_intellij_configure_session_precmd_hook() {
+  __jetbrains_intellij_configure_session
+  builtin unset -f __jetbrains_intellij_configure_session
+
+  # remove this one-time hook
+  builtin typeset -ga precmd_functions
+  precmd_functions=(${precmd_functions:#__jetbrains_intellij_configure_session_precmd_hook})
+  builtin unset -f __jetbrains_intellij_configure_session_precmd_hook
+}
+
+builtin typeset -ga precmd_functions
+precmd_functions=(__jetbrains_intellij_configure_session_precmd_hook $precmd_functions)
 
 builtin local command_block_support="${JETBRAINS_INTELLIJ_ZSH_DIR}/command-block-support.zsh"
 [ -r "$command_block_support" ] && builtin source "$command_block_support"

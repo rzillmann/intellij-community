@@ -1,12 +1,18 @@
+@file:OptIn(IntellijInternalApi::class)
+
 package com.intellij.settingsSync.core
 
+import com.intellij.ide.plugins.PluginManagerCore.VENDOR_JETBRAINS
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.impl.ApplicationImpl
+import com.intellij.openapi.components.ComponentManager
 import com.intellij.openapi.diagnostic.logger
-import com.intellij.settingsSync.core.communicator.RemoteCommunicatorHolder
-import com.intellij.settingsSync.core.communicator.SettingsSyncCommunicatorProvider
-import com.intellij.settingsSync.core.communicator.SettingsSyncUserData
+import com.intellij.openapi.extensions.DefaultPluginDescriptor
+import com.intellij.openapi.extensions.PluginDescriptor
+import com.intellij.openapi.extensions.PluginId
+import com.intellij.openapi.util.IntellijInternalApi
+import com.intellij.settingsSync.core.communicator.*
 import com.intellij.testFramework.common.DEFAULT_TEST_TIMEOUT
 import com.intellij.testFramework.common.timeoutRunBlocking
 import com.intellij.testFramework.junit5.TestApplication
@@ -14,6 +20,8 @@ import com.intellij.testFramework.junit5.TestDisposable
 import com.intellij.util.io.createDirectories
 import com.intellij.util.io.write
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
@@ -27,12 +35,10 @@ import kotlin.time.Duration
 
 internal val TIMEOUT_UNIT = TimeUnit.SECONDS
 
+private val LOG = logger<SettingsSyncTestBase>()
+
 @TestApplication
 internal abstract class SettingsSyncTestBase {
-
-  companion object {
-    val LOG = logger<SettingsSyncTestBase>()
-  }
 
   protected lateinit var application: ApplicationImpl
   protected lateinit var configDir: Path
@@ -59,11 +65,11 @@ internal abstract class SettingsSyncTestBase {
     else {
       MockRemoteCommunicator("mockUser").apply {this.isConnected = true  }
     }
-    val providerEP = SettingsSyncCommunicatorProvider.PROVIDER_EP.point
+    val providerEP = getSyncProviderPoint()
     if (providerEP.extensions.size > 0) {
       LOG.warn("SettingsSyncCommunicatorProvider.PROVIDER_EP is not empty: ${providerEP.extensions.toList()}")
-      providerEP.extensions.forEach {
-        LOG.warn("Unregistering extension: ${it.javaClass.name}")
+      for (it in providerEP.extensions) {
+        LOG.warn("Unregistering extension: ${it.instance.javaClass.name}")
         providerEP.unregisterExtension(it)
       }
     }
@@ -74,7 +80,21 @@ internal abstract class SettingsSyncTestBase {
       remoteCommunicator,
       authService
     )
-    providerEP.registerExtension(mockCommunicatorProvider, disposable)
+    providerEP.registerExtension(object : SettingsSyncCommunicatorBean() {
+      init {
+        this.pluginDescriptor = DefaultPluginDescriptor(
+          PluginId.getId("com.intellij.settingsSync"),
+          SettingsSyncTestBase::class.java.getClassLoader(),
+          VENDOR_JETBRAINS
+        )
+      }
+
+      override fun createInstance(
+        componentManager: ComponentManager,
+        pluginDescriptor: PluginDescriptor,
+      ): SettingsSyncCommunicatorProvider = mockCommunicatorProvider
+    }, disposable)
+
     SettingsSyncLocalSettings.getInstance().providerCode = mockCommunicatorProvider.providerCode
     SettingsSyncLocalSettings.getInstance().userId = DUMMY_USER_ID
 
@@ -89,7 +109,9 @@ internal abstract class SettingsSyncTestBase {
   fun cleanup() {
     remoteCommunicator.deleteAllFiles()
     if (::bridge.isInitialized) {
-      bridge.waitForAllExecuted()
+      runBlocking {
+        bridge.waitForAllExecuted()
+      }
       bridge.stop()
     }
     RemoteCommunicatorHolder.invalidateCommunicator()
@@ -100,7 +122,7 @@ internal abstract class SettingsSyncTestBase {
     coroutineName: String? = null,
     action: suspend CoroutineScope.() -> T,
   ): T {
-    return timeoutRunBlocking(timeout, coroutineName) {
+    return timeoutRunBlocking(timeout, coroutineName, context = Dispatchers.Default) {
       val retval = action()
       cleanup()
       retval
@@ -136,7 +158,7 @@ internal abstract class SettingsSyncTestBase {
     }
   }
 
-  protected fun executeAndWaitUntilPushed(testExecution: () -> Unit): SettingsSnapshot {
+  protected suspend fun executeAndWaitUntilPushed(testExecution: suspend () -> Unit): SettingsSnapshot {
     val snapshot = remoteCommunicator.awaitForPush {
       testExecution()
       bridge.waitForAllExecuted()
@@ -145,11 +167,10 @@ internal abstract class SettingsSyncTestBase {
   }
 }
 
-
 internal fun CountDownLatch.wait(): Boolean {
   return this.await(getDefaultTimeoutInSeconds(), TIMEOUT_UNIT)
 }
 
 private fun isTestingAgainstRealCloudServer() = System.getenv("SETTINGS_SYNC_TEST_CLOUD") == "real"
 
-private fun getDefaultTimeoutInSeconds(): Long = 2
+internal fun getDefaultTimeoutInSeconds(): Long = 2

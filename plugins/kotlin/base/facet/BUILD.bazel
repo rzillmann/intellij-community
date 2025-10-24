@@ -1,27 +1,33 @@
-### auto-generated section `build kotlin.base.facet` start
-load("@rules_jvm//:jvm.bzl", "jvm_library", "jvm_resources")
+### auto-generated section `build intellij.kotlin.base.facet` start
+load("@rules_jvm//:jvm.bzl", "jvm_library", "resourcegroup")
 
-jvm_resources(
-  name = "kotlin-base-facet_resources",
-  files = glob(["resources/**/*"]),
+resourcegroup(
+  name = "facet_resources",
+  srcs = glob(["resources/**/*"]),
   strip_prefix = "resources"
 )
 
 jvm_library(
-  name = "kotlin-base-facet",
-  module_name = "kotlin.base.facet",
+  name = "facet",
+  module_name = "intellij.kotlin.base.facet",
   visibility = ["//visibility:public"],
-  srcs = glob(["src/**/*.kt", "src/**/*.java", "gen/**/*.kt", "gen/**/*.java"], allow_empty = True),
+  srcs = glob(["src/**/*.kt", "src/**/*.java", "src/**/*.form", "gen/**/*.kt", "gen/**/*.java"], allow_empty = True),
+  resources = [":facet_resources"],
   deps = [
     "@lib//:kotlin-stdlib",
     "@lib//:kotlinc-kotlin-compiler-common",
     "@lib//:kotlinc-kotlin-jps-common",
-    "//plugins/kotlin/base/frontend-agnostic:kotlin-base-frontend-agnostic",
-    "//plugins/kotlin/base/util:kotlin-base-util",
-    "//plugins/kotlin/base/compiler-configuration:kotlin-base-compiler-configuration",
-    "//plugins/kotlin/base/plugin:kotlin-base-plugin",
-    "//plugins/kotlin/base/platforms:kotlin-base-platforms",
-    "//plugins/kotlin/base/project-model:kotlin-base-project-model",
+    "//platform/core-api:core",
+    "//platform/editor-ui-api:editor-ui",
+    "//jps/model-api:model",
+    "//jps/model-serialization",
+    "//platform/workspace/storage",
+    "//plugins/kotlin/base/frontend-agnostic",
+    "//plugins/kotlin/base/util",
+    "//plugins/kotlin/base/compiler-configuration",
+    "//plugins/kotlin/base/plugin",
+    "//plugins/kotlin/base/platforms",
+    "//plugins/kotlin/base/project-model",
     "//plugins/kotlin/base/resources:kotlin-base-resources",
     "//platform/util/jdom",
     "//platform/core-impl",
@@ -33,8 +39,7 @@ jvm_library(
     "//java/java-impl:impl",
     "//platform/workspace/jps",
     "//platform/backend/workspace",
-    "@lib//:gson",
-  ],
-  runtime_deps = [":kotlin-base-facet_resources"]
+    "//libraries/gson",
+  ]
 )
-### auto-generated section `build kotlin.base.facet` end
+### auto-generated section `build intellij.kotlin.base.facet` end

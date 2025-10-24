@@ -1,31 +1,36 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.java.workspace.entities
 
 import com.intellij.openapi.util.NlsSafe
 import com.intellij.platform.workspace.jps.entities.SourceRootEntity
+import com.intellij.platform.workspace.jps.entities.SourceRootEntityBuilder
 import com.intellij.platform.workspace.storage.EntitySource
 import com.intellij.platform.workspace.storage.EntityType
-import com.intellij.platform.workspace.storage.GeneratedCodeApiVersion
 import com.intellij.platform.workspace.storage.MutableEntityStorage
 import com.intellij.platform.workspace.storage.WorkspaceEntity
-import com.intellij.platform.workspace.storage.annotations.Child
+import com.intellij.platform.workspace.storage.annotations.Parent
 
 interface JavaSourceRootPropertiesEntity : WorkspaceEntity {
+  @Parent
   val sourceRoot: SourceRootEntity
 
   val generated: Boolean
   val packagePrefix: @NlsSafe String
 
   //region generated code
-  @GeneratedCodeApiVersion(3)
-  interface Builder : WorkspaceEntity.Builder<JavaSourceRootPropertiesEntity> {
-    override var entitySource: EntitySource
-    var sourceRoot: SourceRootEntity.Builder
-    var generated: Boolean
-    var packagePrefix: String
+  @Deprecated(message = "Use JavaSourceRootPropertiesEntityBuilder instead")
+  interface Builder : JavaSourceRootPropertiesEntityBuilder {
+    @Deprecated(message = "Use new API instead")
+    fun getSourceRoot(): SourceRootEntity.Builder = sourceRoot as SourceRootEntity.Builder
+
+    @Deprecated(message = "Use new API instead")
+    fun setSourceRoot(value: SourceRootEntity.Builder) {
+      sourceRoot = value
+    }
   }
 
   companion object : EntityType<JavaSourceRootPropertiesEntity, Builder>() {
+    @Deprecated(message = "Use new API instead")
     @JvmOverloads
     @JvmStatic
     @JvmName("create")
@@ -34,20 +39,14 @@ interface JavaSourceRootPropertiesEntity : WorkspaceEntity {
       packagePrefix: String,
       entitySource: EntitySource,
       init: (Builder.() -> Unit)? = null,
-    ): Builder {
-      val builder = builder()
-      builder.generated = generated
-      builder.packagePrefix = packagePrefix
-      builder.entitySource = entitySource
-      init?.invoke(builder)
-      return builder
-    }
+    ): Builder = JavaSourceRootPropertiesEntityType.compatibilityInvoke(generated, packagePrefix, entitySource, init)
   }
   //endregion
 
 }
 
 //region generated code
+@Deprecated(message = "Use new API instead")
 fun MutableEntityStorage.modifyJavaSourceRootPropertiesEntity(
   entity: JavaSourceRootPropertiesEntity,
   modification: JavaSourceRootPropertiesEntity.Builder.() -> Unit,
@@ -55,29 +54,38 @@ fun MutableEntityStorage.modifyJavaSourceRootPropertiesEntity(
   return modifyEntity(JavaSourceRootPropertiesEntity.Builder::class.java, entity, modification)
 }
 
-var SourceRootEntity.Builder.javaSourceRoots: @Child List<JavaSourceRootPropertiesEntity.Builder>
-  by WorkspaceEntity.extensionBuilder(JavaSourceRootPropertiesEntity::class.java)
+@Deprecated(message = "Use new API instead")
+var SourceRootEntity.Builder.javaSourceRoots: List<JavaSourceRootPropertiesEntity.Builder>
+  get() = (this as SourceRootEntityBuilder).javaSourceRoots as List<JavaSourceRootPropertiesEntity.Builder>
+  set(value) {
+    (this as SourceRootEntityBuilder).javaSourceRoots = value
+  }
 //endregion
 
-val SourceRootEntity.javaSourceRoots: List<@Child JavaSourceRootPropertiesEntity>
+val SourceRootEntity.javaSourceRoots: List<JavaSourceRootPropertiesEntity>
   by WorkspaceEntity.extension()
 
 interface JavaResourceRootPropertiesEntity: WorkspaceEntity {
+  @Parent
   val sourceRoot: SourceRootEntity
 
   val generated: Boolean
   val relativeOutputPath: @NlsSafe String
 
   //region generated code
-  @GeneratedCodeApiVersion(3)
-  interface Builder : WorkspaceEntity.Builder<JavaResourceRootPropertiesEntity> {
-    override var entitySource: EntitySource
-    var sourceRoot: SourceRootEntity.Builder
-    var generated: Boolean
-    var relativeOutputPath: String
+  @Deprecated(message = "Use JavaResourceRootPropertiesEntityBuilder instead")
+  interface Builder : JavaResourceRootPropertiesEntityBuilder {
+    @Deprecated(message = "Use new API instead")
+    fun getSourceRoot(): SourceRootEntity.Builder = sourceRoot as SourceRootEntity.Builder
+
+    @Deprecated(message = "Use new API instead")
+    fun setSourceRoot(value: SourceRootEntity.Builder) {
+      sourceRoot = value
+    }
   }
 
   companion object : EntityType<JavaResourceRootPropertiesEntity, Builder>() {
+    @Deprecated(message = "Use new API instead")
     @JvmOverloads
     @JvmStatic
     @JvmName("create")
@@ -86,20 +94,14 @@ interface JavaResourceRootPropertiesEntity: WorkspaceEntity {
       relativeOutputPath: String,
       entitySource: EntitySource,
       init: (Builder.() -> Unit)? = null,
-    ): Builder {
-      val builder = builder()
-      builder.generated = generated
-      builder.relativeOutputPath = relativeOutputPath
-      builder.entitySource = entitySource
-      init?.invoke(builder)
-      return builder
-    }
+    ): Builder = JavaResourceRootPropertiesEntityType.compatibilityInvoke(generated, relativeOutputPath, entitySource, init)
   }
   //endregion
 
 }
 
 //region generated code
+@Deprecated(message = "Use new API instead")
 fun MutableEntityStorage.modifyJavaResourceRootPropertiesEntity(
   entity: JavaResourceRootPropertiesEntity,
   modification: JavaResourceRootPropertiesEntity.Builder.() -> Unit,
@@ -107,13 +109,19 @@ fun MutableEntityStorage.modifyJavaResourceRootPropertiesEntity(
   return modifyEntity(JavaResourceRootPropertiesEntity.Builder::class.java, entity, modification)
 }
 
-var SourceRootEntity.Builder.javaResourceRoots: @Child List<JavaResourceRootPropertiesEntity.Builder>
-  by WorkspaceEntity.extensionBuilder(JavaResourceRootPropertiesEntity::class.java)
+@Deprecated(message = "Use new API instead")
+var SourceRootEntity.Builder.javaResourceRoots: List<JavaResourceRootPropertiesEntity.Builder>
+  get() = (this as SourceRootEntityBuilder).javaResourceRoots as List<JavaResourceRootPropertiesEntity.Builder>
+  set(value) {
+    (this as SourceRootEntityBuilder).javaResourceRoots = value
+  }
 //endregion
 
-val SourceRootEntity.javaResourceRoots: List<@Child JavaResourceRootPropertiesEntity>
+val SourceRootEntity.javaResourceRoots: List<JavaResourceRootPropertiesEntity>
   by WorkspaceEntity.extension()
 
 fun SourceRootEntity.asJavaSourceRoot(): JavaSourceRootPropertiesEntity? = javaSourceRoots.firstOrNull()
 fun SourceRootEntity.Builder.asJavaSourceRoot(): JavaSourceRootPropertiesEntity.Builder? = javaSourceRoots.firstOrNull()
 fun SourceRootEntity.asJavaResourceRoot(): JavaResourceRootPropertiesEntity? = javaResourceRoots.firstOrNull()
+fun SourceRootEntityBuilder.asJavaSourceRoot(): JavaSourceRootPropertiesEntityBuilder? = javaSourceRoots.firstOrNull()
+fun SourceRootEntityBuilder.asJavaResourceRoot(): JavaResourceRootPropertiesEntityBuilder? = javaResourceRoots.firstOrNull()

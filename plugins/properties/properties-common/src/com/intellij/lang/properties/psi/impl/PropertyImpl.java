@@ -12,6 +12,7 @@ import com.intellij.openapi.util.TextRange;
 import com.intellij.psi.*;
 import com.intellij.psi.search.GlobalSearchScope;
 import com.intellij.psi.search.SearchScope;
+import com.intellij.psi.stubs.IStubElementType;
 import com.intellij.psi.tree.IElementType;
 import com.intellij.util.IncorrectOperationException;
 import com.intellij.util.PlatformIcons;
@@ -35,7 +36,16 @@ public class PropertyImpl extends PropertiesStubElementImpl<PropertyStub> implem
   public PropertyImpl(final PropertyStub stub, final IElementType nodeType) {
     super(stub, nodeType);
   }
-  
+
+  /**
+   * @deprecated use {@link #PropertyImpl(PropertyStub, IElementType)}
+   */
+  @SuppressWarnings("rawtypes")
+  @Deprecated
+  public PropertyImpl(final PropertyStub stub, final IStubElementType nodeType) {
+    this(stub, (IElementType)nodeType);
+  }
+
   @Override
   public IElementType getIElementType() {
     return getElementTypeImpl();
@@ -341,7 +351,7 @@ public class PropertyImpl extends PropertiesStubElementImpl<PropertyStub> implem
    * @param property the property to get the upper edge for
    * @return the property itself or the first {@link PsiComment} node that is related to the property
    */
-  static PsiElement getEdgeOfProperty(final @NotNull Property property) {
+  public static PsiElement getEdgeOfProperty(final @NotNull Property property) {
     PsiElement prev = property;
     for (PsiElement node = property.getPrevSibling(); node != null; node = node.getPrevSibling()) {
       if (node instanceof Property) break;

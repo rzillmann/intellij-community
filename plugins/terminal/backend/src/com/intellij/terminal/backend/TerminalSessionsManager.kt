@@ -5,31 +5,33 @@ import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
 import com.intellij.platform.util.coroutines.childScope
-import com.intellij.terminal.session.TerminalSession
 import com.intellij.util.AwaitCancellationAndInvoke
 import com.intellij.util.awaitCancellationAndInvoke
 import com.jediterm.core.util.TermSize
 import kotlinx.coroutines.CoroutineScope
+import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.plugins.terminal.JBTerminalSystemSettingsProvider
 import org.jetbrains.plugins.terminal.ShellStartupOptions
-import org.jetbrains.plugins.terminal.block.reworked.session.rpc.TerminalPortForwardingId
 import org.jetbrains.plugins.terminal.block.reworked.session.rpc.TerminalSessionId
+import org.jetbrains.plugins.terminal.session.impl.TerminalStartupOptionsImpl
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
+@ApiStatus.Internal
 @OptIn(AwaitCancellationAndInvoke::class)
 @Service(Service.Level.APP)
-internal class TerminalSessionsManager {
-  private val sessionsMap = ConcurrentHashMap<TerminalSessionId, TerminalSession>()
+class TerminalSessionsManager {
+  private val sessionsMap = ConcurrentHashMap<TerminalSessionId, BackendTerminalSession>()
 
   /**
-   * Starts the terminal process using provided [options] and wraps it into [com.intellij.terminal.session.TerminalSession].
+   * Starts the terminal process using provided [options] and wraps it into [com.intellij.terminal.backend.BackendTerminalSession].
    * Also, it installs the port forwarding feature.
    *
    * The created session lifecycle is bound to the [scope]. If it cancels, then the process will be terminated.
-   * And if the process is terminated on its own, then the [scope] will be canceled as well.
+   * And if the process is terminated on its own, for example, if user executes `exit` or press Ctrl+D,
+   * then the [scope] will be canceled as well.
    */
-  suspend fun startSession(
+  fun startSession(
     options: ShellStartupOptions,
     project: Project,
     scope: CoroutineScope,
@@ -42,26 +44,35 @@ internal class TerminalSessionsManager {
 
     val (ttyConnector, configuredOptions) = startTerminalProcess(project, optionsWithSize)
     val observableTtyConnector = ObservableTtyConnector(ttyConnector)
-    val session = createTerminalSession(project, observableTtyConnector, termSize, JBTerminalSystemSettingsProvider(), scope)
-    val stateAwareSession = StateAwareTerminalSession(session)
+
+    // Create the JediTerm session scope as the child of the main scope.
+    // If the original session terminates on its own, then StateAwareTerminalSession will handle the TerminalSessionTerminatedEvent
+    // and cancel the main scope.
+    val jediTermScope = scope.childScope("JediTerm session")
+    val jediTermSession = createTerminalSession(project, observableTtyConnector, configuredOptions, JBTerminalSystemSettingsProvider(), jediTermScope)
+
+    // It should be guaranteed that the shell command and working directory are not null.
+    val options = TerminalStartupOptionsImpl(
+      shellCommand = configuredOptions.shellCommand!!,
+      workingDirectory = configuredOptions.workingDirectory!!,
+      envVariables = configuredOptions.envVariables,
+    )
+    val stateAwareSession = StateAwareTerminalSession(project, jediTermSession, options, scope)
 
     val sessionId = storeSession(stateAwareSession, scope)
-
-    val portForwardingScope = scope.childScope("PortForwarding")
-    val portForwardingId = TerminalPortForwardingManager.getInstance(project).setupPortForwarding(observableTtyConnector, portForwardingScope)
 
     return TerminalSessionStartResult(
       configuredOptions,
       sessionId,
-      portForwardingId
+      observableTtyConnector
     )
   }
 
-  fun getSession(id: TerminalSessionId): TerminalSession? {
+  fun getSession(id: TerminalSessionId): BackendTerminalSession? {
     return sessionsMap[id]
   }
 
-  private fun storeSession(session: TerminalSession, scope: CoroutineScope): TerminalSessionId {
+  private fun storeSession(session: BackendTerminalSession, scope: CoroutineScope): TerminalSessionId {
     val sessionId = TerminalSessionId(sessionIdCounter.getAndIncrement())
     sessionsMap.put(sessionId, session)
     scope.awaitCancellationAndInvoke {
@@ -80,8 +91,9 @@ internal class TerminalSessionsManager {
   }
 }
 
-internal data class TerminalSessionStartResult(
+@ApiStatus.Internal
+data class TerminalSessionStartResult(
   val configuredOptions: ShellStartupOptions,
   val sessionId: TerminalSessionId,
-  val portForwardingId: TerminalPortForwardingId?,
+  val ttyConnector: ObservableTtyConnector,
 )

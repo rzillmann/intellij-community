@@ -7,6 +7,7 @@ import com.intellij.usageView.UsageInfo
 import org.jetbrains.kotlin.analysis.api.KaExperimentalApi
 import org.jetbrains.kotlin.analysis.api.analyze
 import org.jetbrains.kotlin.analysis.api.resolution.*
+import org.jetbrains.kotlin.analysis.api.symbols.KaCallableSymbol
 import org.jetbrains.kotlin.analysis.api.symbols.KaClassSymbol
 import org.jetbrains.kotlin.analysis.api.symbols.KaContextParameterSymbol
 import org.jetbrains.kotlin.analysis.api.symbols.KaValueParameterSymbol
@@ -32,25 +33,29 @@ internal object KotlinChangeSignatureUsageSearcher {
         val oldSignatureParameters = ktCallableDeclaration.valueParameters
         val receiverOffset = if (ktCallableDeclaration.receiverTypeReference != null) 1 else 0
         for ((i, parameterInfo) in changeInfo.newParameters.withIndex()) {
-            val oldIndex = parameterInfo.oldIndex - receiverOffset
-            if (oldIndex >= 0 && oldIndex < oldSignatureParameters.size) {
-                val oldParam = oldSignatureParameters[oldIndex]
-                if (parameterInfo == changeInfo.receiverParameterInfo ||
-                    parameterInfo.oldName != parameterInfo.name ||
-                    isDataClass && i != parameterInfo.oldIndex
-                ) {
-                    for (reference in ReferencesSearch.search(oldParam, oldParam.useScope()).asIterable()) {
-                        val element = reference.element
-                        if (isDataClass &&
-                            element is KtSimpleNameExpression &&
-                            (element.parent as? KtCallExpression)?.calleeExpression == element &&
-                            element.getReferencedName() != parameterInfo.name &&
-                            OperatorNameConventions.COMPONENT_REGEX.matches(element.getReferencedName())
-                        ) {
-                            result.add(KotlinDataClassComponentUsage(element, "component${i + 1}"))
-                        } else if ((element is KtSimpleNameExpression || element is KDocName) && element.parent !is KtValueArgumentName) {
-                            result.add(KotlinParameterUsage(element, parameterInfo))
-                        }
+            val oldParam = if (parameterInfo.wasContextParameter) {
+                ktCallableDeclaration.modifierList?.contextReceiverList?.contextParameters()?.getOrNull(parameterInfo.oldIndex)
+            } else {
+                val oldIndex = parameterInfo.oldIndex - receiverOffset
+                if (oldIndex >= 0 && oldIndex < oldSignatureParameters.size) {
+                    oldSignatureParameters[oldIndex]
+                } else null
+            } ?: continue
+            if (parameterInfo == changeInfo.receiverParameterInfo ||
+                parameterInfo.oldName != parameterInfo.name ||
+                isDataClass && i != parameterInfo.oldIndex
+            ) {
+                for (reference in ReferencesSearch.search(oldParam, oldParam.useScope()).asIterable()) {
+                    val element = reference.element
+                    if (isDataClass &&
+                        element is KtSimpleNameExpression &&
+                        (element.parent as? KtCallExpression)?.calleeExpression == element &&
+                        element.getReferencedName() != parameterInfo.name &&
+                        OperatorNameConventions.COMPONENT_REGEX.matches(element.getReferencedName())
+                    ) {
+                        result.add(KotlinDataClassComponentUsage(element, "component${i + 1}"))
+                    } else if ((element is KtSimpleNameExpression || element is KDocName) && element.parent !is KtValueArgumentName) {
+                        result.add(KotlinParameterUsage(element, parameterInfo))
                     }
                 }
             }
@@ -65,7 +70,7 @@ internal object KotlinChangeSignatureUsageSearcher {
         }
         if (ktCallableDeclaration is KtFunction &&
             changeInfo is KotlinChangeInfo &&
-            (changeInfo.oldReceiverInfo == null || changeInfo.newParameters.any { it.oldIndex == changeInfo.oldReceiverInfo!!.oldIndex }) &&
+            (changeInfo.oldReceiverInfo == null || changeInfo.newParameters.any { it.oldIndex == changeInfo.oldReceiverInfo.oldIndex && !it.wasContextParameter }) &&
             changeInfo.receiverParameterInfo?.oldIndex != changeInfo.oldReceiverInfo?.oldIndex
         ) {
             findReceiverReferences(ktCallableDeclaration, result, changeInfo)
@@ -90,18 +95,24 @@ internal object KotlinChangeSignatureUsageSearcher {
         if (oldContextParameters.isEmpty()) return
         val preservedContextParameters = changeInfo.newParameters.filter { it.isContextParameter }
         analyze(ktCallableDeclaration) {
+            val declarationSymbol = ktCallableDeclaration.symbol as KaCallableSymbol
             ktCallableDeclaration.accept(object : KtTreeVisitorVoid() {
                 override fun visitSimpleNameExpression(expression: KtSimpleNameExpression) {
                     val memberCall = expression.resolveToCall()?.successfulCallOrNull<KaCallableMemberCall<*, *>>()
                     val partiallyAppliedSymbol = memberCall?.partiallyAppliedSymbol ?: return
 
-                    if (partiallyAppliedSymbol.symbol is KaContextParameterSymbol) {
-                        val contextParameter = partiallyAppliedSymbol.symbol.psi as? KtParameter ?: return
+                    val symbol = partiallyAppliedSymbol.symbol
+                    if (symbol is KaContextParameterSymbol) {
+                        val contextParameter = symbol.psi as? KtParameter ?: return
                         val parameterInfo =
                             oldContextParameters.find { it.oldIndex == contextParameter.parameterIndex() } ?: return
                         if (parameterInfo == changeInfo.receiverParameterInfo) {
                             result.add(KotlinParameterUsage(expression, parameterInfo))
                         }
+                        return
+                    }
+
+                    if (symbol == declarationSymbol || symbol in declarationSymbol.allOverriddenSymbols) {
                         return
                     }
 
@@ -129,7 +140,7 @@ internal object KotlinChangeSignatureUsageSearcher {
 
     internal fun findReceiverReferences(ktCallableDeclaration: KtCallableDeclaration, result: MutableList<in UsageInfo>, changeInfo: KotlinChangeInfo) {
         analyze(ktCallableDeclaration) {
-            val originalReceiverInfo = changeInfo.oldReceiverInfo
+            val originalReceiverInfo = changeInfo.newParameters.find { it.oldIndex == 0 && !it.wasContextParameter }.takeIf { changeInfo.oldReceiverInfo != null } ?: changeInfo.oldReceiverInfo
             val originalReceiverType = ktCallableDeclaration.receiverTypeReference?.type
             ktCallableDeclaration.accept(object : KtTreeVisitorVoid() {
 

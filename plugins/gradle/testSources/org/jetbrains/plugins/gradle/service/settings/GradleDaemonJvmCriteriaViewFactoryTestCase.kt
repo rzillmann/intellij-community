@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.plugins.gradle.service.settings
 
 import com.intellij.openapi.Disposable
@@ -7,7 +7,7 @@ import com.intellij.testFramework.junit5.TestDisposable
 import com.intellij.ui.dsl.builder.impl.CollapsibleTitledSeparatorImpl
 import com.intellij.util.ui.UIUtil
 import org.gradle.util.GradleVersion
-import org.jetbrains.jps.model.java.LanguageLevel
+import org.jetbrains.plugins.gradle.jvmcompat.GradleJvmSupportMatrix
 import org.jetbrains.plugins.gradle.service.settings.GradleDaemonJvmCriteriaView.VendorItem
 import org.jetbrains.plugins.gradle.service.settings.GradleDaemonJvmCriteriaView.VersionItem
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -38,15 +38,15 @@ abstract class GradleDaemonJvmCriteriaViewFactoryTestCase {
     assertEquals(isVisible, advancedSettingsComponent?.isVisible)
   }
 
-  fun GradleDaemonJvmCriteriaView.assertVersionDropdownItems() {
-    val expectedVersionList = LanguageLevel.HIGHEST.toJavaVersion().feature.downTo(8)
-    expectedVersionList.forEachIndexed { index, expectedVersion ->
-      val actualVersion = when (val versionItem = versionModel.getElementAt(index)) {
-        is VersionItem.Default -> versionItem.version.toString()
-        is VersionItem.Custom -> throw AssertionError("Unexpected custom version item: " + versionItem.value)
+  fun GradleDaemonJvmCriteriaView.assertVersionDropdownItems(gradleVersion: GradleVersion) {
+    val expectedVersionList = GradleJvmSupportMatrix.getSupportedJavaVersions(gradleVersion)
+    expectedVersionList.reversed().forEachIndexed { index, expectedVersion ->
+        val actualVersion = when (val versionItem = versionModel.getElementAt(index)) {
+          is VersionItem.Default -> versionItem.version
+          is VersionItem.Custom -> throw AssertionError("Unexpected custom version item: " + versionItem.value)
+        }
+        assertEquals(expectedVersion.feature, actualVersion)
       }
-      assertEquals(expectedVersion.toString(), actualVersion)
-    }
   }
 
   fun GradleDaemonJvmCriteriaView.assertVendorDropdownItems() {

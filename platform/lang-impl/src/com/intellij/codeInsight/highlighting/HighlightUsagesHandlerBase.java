@@ -31,9 +31,9 @@ public abstract class HighlightUsagesHandlerBase<T extends PsiElement> implement
   protected @NlsContexts.StatusBarText String myStatusText;
   protected @NlsContexts.HintText String myHintText;
 
-  protected HighlightUsagesHandlerBase(@NotNull Editor editor, @NotNull PsiFile file) {
+  protected HighlightUsagesHandlerBase(@NotNull Editor editor, @NotNull PsiFile psiFile) {
     myEditor = editor;
-    myFile = file;
+    myFile = psiFile;
   }
 
   public void highlightUsages() {
@@ -106,5 +106,10 @@ public abstract class HighlightUsagesHandlerBase<T extends PsiElement> implement
    */
   public boolean highlightReferences() {
     return false;
+  }
+
+  @Override
+  public String toString() {
+    return super.toString() +" myReadUsages="+myReadUsages+"; myWriteUsages="+myWriteUsages;
   }
 }

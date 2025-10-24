@@ -1,4 +1,4 @@
-// Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.ide
 
 import com.intellij.openapi.actionSystem.AnAction
@@ -6,6 +6,7 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
 import com.intellij.util.PathUtil
+import com.intellij.util.concurrency.annotations.RequiresBlockingContext
 import com.intellij.util.concurrency.annotations.RequiresEdt
 import com.intellij.util.messages.Topic
 import org.jetbrains.annotations.ApiStatus
@@ -17,7 +18,11 @@ interface RecentProjectsManager {
     @Topic.AppLevel
     val RECENT_PROJECTS_CHANGE_TOPIC: Topic<RecentProjectsChange> = Topic(RecentProjectsChange::class.java, Topic.BroadcastDirection.NONE)
 
+    @Topic.AppLevel
+    val LAST_PROJECTS_TOPIC: Topic<LastProjectsListener> = Topic(LastProjectsListener::class.java, Topic.BroadcastDirection.NONE)
+
     @JvmStatic
+    @RequiresBlockingContext
     fun getInstance(): RecentProjectsManager = ApplicationManager.getApplication().service<RecentProjectsManager>()
   }
 
@@ -51,11 +56,9 @@ interface RecentProjectsManager {
 
   fun removeProjectFromGroup(projectPath: String, from: ProjectGroup) {}
 
-  fun hasPath(path: @SystemIndependent String?): Boolean {
-    return false
-  }
+  fun hasPath(path: @SystemIndependent String?): Boolean = false
 
-  fun willReopenProjectOnStart(): Boolean
+  suspend fun willReopenProjectOnStart(): Boolean = false
 
   @ApiStatus.Internal
   suspend fun reopenLastProjectsOnStart(): Boolean
@@ -69,5 +72,18 @@ interface RecentProjectsManager {
   interface RecentProjectsChange {
     @RequiresEdt
     fun change()
+  }
+
+  /**
+   * Allows observing events related to the last projects that were open when exiting the IDE
+   *
+   * @see LAST_PROJECTS_TOPIC
+   */
+  interface LastProjectsListener {
+    /**
+     * Called after reopening the last projects
+     */
+    @RequiresEdt
+    fun lastProjectsReopened(activeProject: Project)
   }
 }

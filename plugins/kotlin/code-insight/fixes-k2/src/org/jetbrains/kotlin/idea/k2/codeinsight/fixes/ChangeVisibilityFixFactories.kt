@@ -139,11 +139,6 @@ internal object ChangeVisibilityFixFactories {
             createChangeVisibilityFixOnExposure(diagnostic.psi, diagnostic.elementVisibility, diagnostic.restrictingDeclaration, diagnostic.restrictingVisibility)
         }
 
-    val exposedPropertyTypeInConstructorWarning =
-        KotlinQuickFixFactory.ModCommandBased { diagnostic: KaFirDiagnostic.ExposedPropertyTypeInConstructorWarning ->
-            createChangeVisibilityFixOnExposure(diagnostic.psi, diagnostic.elementVisibility, diagnostic.restrictingDeclaration, diagnostic.restrictingVisibility)
-        }
-
     val exposedParameterType =
         KotlinQuickFixFactory.ModCommandBased { diagnostic: KaFirDiagnostic.ExposedParameterType ->
             createChangeVisibilityFixOnExposure(diagnostic.psi, diagnostic.elementVisibility, diagnostic.restrictingDeclaration, diagnostic.restrictingVisibility)
@@ -389,8 +384,8 @@ internal object ChangeVisibilityFixFactories {
             is KtPrimaryConstructor -> SpecialNames.INIT.asString()
             is KtPropertyAccessor -> symbol.name?.asString()?.let {
                 when {
-                    isGetter() -> "<get-$it>"
-                    isSetter() -> "<set-$it>"
+                    isGetter -> "<get-$it>"
+                    isSetter -> "<set-$it>"
                     else -> null
                 }
             }

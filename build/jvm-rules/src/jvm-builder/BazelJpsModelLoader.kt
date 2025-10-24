@@ -12,18 +12,17 @@ import com.dynatrace.hash4j.hashing.Hashing
 import org.jetbrains.annotations.Unmodifiable
 import org.jetbrains.bazel.jvm.kotlin.JvmBuilderFlags
 import org.jetbrains.bazel.jvm.kotlin.configureCommonCompilerArgs
+import org.jetbrains.bazel.jvm.kotlin.getJvmTargetLevel
 import org.jetbrains.bazel.jvm.util.ArgMap
 import org.jetbrains.bazel.jvm.worker.core.BazelConfigurationHolder
 import org.jetbrains.bazel.jvm.worker.state.TargetConfigurationDigestContainer
 import org.jetbrains.bazel.jvm.worker.state.TargetConfigurationDigestProperty
-import org.jetbrains.bazel.jvm.worker.state.isDependencyTracked
 import org.jetbrains.jps.model.JpsCompositeElement
 import org.jetbrains.jps.model.JpsDummyElement
 import org.jetbrains.jps.model.JpsElement
 import org.jetbrains.jps.model.JpsElementFactory
 import org.jetbrains.jps.model.JpsElementReference
 import org.jetbrains.jps.model.JpsModel
-import org.jetbrains.jps.model.JpsProject
 import org.jetbrains.jps.model.JpsReferenceableElement
 import org.jetbrains.jps.model.ex.JpsNamedCompositeElementBase
 import org.jetbrains.jps.model.impl.JpsElementCollectionImpl
@@ -34,7 +33,6 @@ import org.jetbrains.jps.model.java.JpsJavaLibraryType
 import org.jetbrains.jps.model.java.JpsJavaModuleType
 import org.jetbrains.jps.model.java.JpsJavaSdkType
 import org.jetbrains.jps.model.java.LanguageLevel
-import org.jetbrains.jps.model.java.compiler.JpsJavaCompilerOptions
 import org.jetbrains.jps.model.library.JpsLibrary
 import org.jetbrains.jps.model.library.JpsLibraryReference
 import org.jetbrains.jps.model.library.JpsLibraryRoot
@@ -58,12 +56,10 @@ import java.util.*
 import kotlin.io.path.invariantSeparatorsPathString
 
 private val jpsElementFactory = JpsElementFactory.getInstance()
-
 private val javaHome = Path.of(System.getProperty("java.home")).normalize() ?: error("No java.home system property")
 
+private val JAVA_VERSION_HASH = Hashing.xxh3_64().hashBytesToLong(System.getProperty("java.version")?.toByteArray() ?: error("No java.version system property"))
 private val KOTLINC_VERSION_HASH = Hashing.xxh3_64().hashBytesToLong((KotlinCompilerVersion.getVersion() ?: "@snapshot@").toByteArray())
-
-private const val TOOL_VERSION: Long = 52
 
 internal fun loadJpsModel(
   sources: List<Path>,
@@ -74,8 +70,8 @@ internal fun loadJpsModel(
   val model = jpsElementFactory.createModel()
 
   val digests = TargetConfigurationDigestContainer()
+  digests.set(TargetConfigurationDigestProperty.TOOL_JVM_VERSION, JAVA_VERSION_HASH)
   digests.set(TargetConfigurationDigestProperty.KOTLIN_VERSION, KOTLINC_VERSION_HASH)
-  digests.set(TargetConfigurationDigestProperty.TOOL_VERSION, TOOL_VERSION)
 
   // properties not needed for us (not implemented for java)
   // extension.loadModuleOptions not needed for us (not implemented for java)
@@ -86,8 +82,7 @@ internal fun loadJpsModel(
   )
   val jpsJavaModuleExtension = JpsJavaExtensionService.getInstance().getOrCreateModuleExtension(module)
 
-  val languageLevelEnumName = "JDK_" + args.mandatorySingle(JvmBuilderFlags.JVM_TARGET).let { if (it == "8") "1_8" else it }
-  val langLevel = LanguageLevel.valueOf(languageLevelEnumName)
+  val langLevel = LanguageLevel.valueOf("JDK_" + getJvmTargetLevel(args).replace('.', '_'))
   jpsJavaModuleExtension.languageLevel = langLevel
 
   for (source in sources) {
@@ -130,14 +125,13 @@ internal fun loadJpsModel(
     classPathFiles = classPathFiles,
     sources = sources,
   )
-  configHash.putUnorderedIterable(args.optionalList(JvmBuilderFlags.ADD_EXPORT), HashFunnel.forString(), Hashing.xxh3_64())
+  val javaExports = args.optionalList(JvmBuilderFlags.ADD_EXPORT)
+  configHash.putUnorderedIterable(javaExports, HashFunnel.forString(), Hashing.xxh3_64())
   digests.set(TargetConfigurationDigestProperty.COMPILER, configHash.asLong)
 
   val project = model.project
   project.addModule(module)
   project.container.setChild(JpsProjectSerializationDataExtensionImpl.ROLE, JpsProjectSerializationDataExtensionImpl(classPathRootDir.parent))
-
-  configureJavac(project, args)
 
   module.container.setChild(BazelConfigurationHolder.KIND, BazelConfigurationHolder(
     classPath = classPathFiles,
@@ -146,24 +140,10 @@ internal fun loadJpsModel(
     kotlinArgs = kotlinArgs,
     classPathRootDir = classPathRootDir,
     sources = sources,
+    javaExports = javaExports,
   ))
 
   return model to digests
-}
-
-private fun configureJavac(project: JpsProject, args: ArgMap<JvmBuilderFlags>) {
-  val configuration = JpsJavaExtensionService.getInstance().getCompilerConfiguration(project)
-  val compilerOptions = JpsJavaCompilerOptions()
-  compilerOptions.PREFER_TARGET_JDK_COMPILER = false
-  compilerOptions.DEPRECATION = false
-  compilerOptions.GENERATE_NO_WARNINGS = true
-  compilerOptions.MAXIMUM_HEAP_SIZE = 512
-  compilerOptions.ADDITIONAL_OPTIONS_STRING = args.optionalList(JvmBuilderFlags.ADD_EXPORT).asSequence()
-    .filter { !it.isBlank() }
-    .joinToString(separator = " ") {
-      "--add-exports $it"
-    }
-  configuration.setCompilerOptions("Javac", compilerOptions)
 }
 
 private fun configureKotlinCompiler(
@@ -176,20 +156,14 @@ private fun configureKotlinCompiler(
 ): K2JVMCompilerArguments {
   val kotlinFacetSettings = KotlinFacetSettings()
   kotlinFacetSettings.useProjectSettings = false
-  val kotlinArgs = K2JVMCompilerArguments()
-  val moduleName = args.mandatorySingle(JvmBuilderFlags.KOTLIN_MODULE_NAME)
-  kotlinArgs.moduleName = moduleName
-  kotlinFacetSettings.compilerArguments = kotlinArgs
-  configureCommonCompilerArgs(kotlinArgs = kotlinArgs, args = args, workingDir = classPathRootDir)
 
-  configHash.putString(kotlinArgs.apiVersion ?: "")
-  configHash.putString(kotlinArgs.languageVersion ?: "")
-  configHash.putString(kotlinArgs.jvmTarget ?: "")
-  configHash.putString(kotlinArgs.lambdas ?: "")
-  configHash.putString(kotlinArgs.jvmDefault)
-  configHash.putBoolean(kotlinArgs.inlineClasses)
-  configHash.putBoolean(kotlinArgs.allowKotlinPackage)
-  configHash.putString(moduleName)
+  val kotlinArgs = K2JVMCompilerArguments()
+
+  kotlinArgs.moduleName = args.mandatorySingle(JvmBuilderFlags.KOTLIN_MODULE_NAME)
+  configHash.putString(kotlinArgs.moduleName)
+
+  kotlinFacetSettings.compilerArguments = kotlinArgs
+  configureCommonCompilerArgs(kotlinArgs = kotlinArgs, args = args, workingDir = classPathRootDir, configHash = configHash)
 
   val plugins = args.optionalList(JvmBuilderFlags.PLUGIN_ID).zip(args.optionalList(JvmBuilderFlags.PLUGIN_CLASSPATH))
   configHash.putInt(plugins.size)
@@ -248,7 +222,7 @@ private fun configureClasspath(
   var untrackedCount = 0
   val trackableDependencyFiles = MutableObjectList<Path>(files.size)
   for (file in files) {
-    if (isDependencyTracked(file)) {
+    if (isDependencyTracked(file.toString())) {
       trackableDependencyFiles.add(file)
       continue
     }
@@ -348,3 +322,5 @@ private class BazelJpsLibrary(
 
   override fun toString(): String = "BazelJpsLibrary(files=$files)"
 }
+
+private fun isDependencyTracked(path: String): Boolean = path.endsWith(".abi.jar")

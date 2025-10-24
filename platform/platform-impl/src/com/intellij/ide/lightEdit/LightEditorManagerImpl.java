@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.ide.lightEdit;
 
 import com.intellij.openapi.Disposable;
@@ -40,24 +40,19 @@ import java.util.stream.Collectors;
 
 @ApiStatus.Internal
 public final class LightEditorManagerImpl implements LightEditorManager, Disposable {
-  private static final Logger LOG = Logger.getInstance(LightEditorManagerImpl.class);
-
-  private final List<LightEditorInfo>                myEditors         = new CopyOnWriteArrayList<>();
-  private final EventDispatcher<LightEditorListener> myEventDispatcher =
-    EventDispatcher.create(LightEditorListener.class);
-
-  private final LightEditServiceImpl myLightEditService;
-
   static final Key<Boolean> NO_IMPLICIT_SAVE = Key.create("light.edit.no.implicit.save");
-
+  private static final Logger LOG = Logger.getInstance(LightEditorManagerImpl.class);
   private static final String DEFAULT_FILE_NAME = "untitled_";
+  private final List<LightEditorInfo> editors = new CopyOnWriteArrayList<>();
+  private final EventDispatcher<LightEditorListener> eventDispatcher = EventDispatcher.create(LightEditorListener.class);
+  private final LightEditServiceImpl lightEditService;
 
   public LightEditorManagerImpl(LightEditServiceImpl service) {
-    myLightEditService = service;
+    lightEditService = service;
   }
 
   private @Nullable LightEditorInfo doCreateEditor(@NotNull VirtualFile file) {
-    Project project = LightEditUtil.requireLightEditProject(myLightEditService.getProject());
+    Project project = LightEditUtil.requireLightEditProject(lightEditService.getProject());
     Pair<FileEditorProvider, FileEditor> pair = createFileEditor(project, file);
     if (pair == null) {
       return null;
@@ -72,7 +67,7 @@ public final class LightEditorManagerImpl implements LightEditorManager, Disposa
     if (LightEditorInfoImpl.getEditor(editorInfo) instanceof EditorImpl editor) {
       editor.setDropHandler(new LightEditDropHandler());
     }
-    myEditors.add(editorInfo);
+    editors.add(editorInfo);
     installListener(editorInfo);
     return editorInfo;
   }
@@ -92,14 +87,6 @@ public final class LightEditorManagerImpl implements LightEditorManager, Disposa
     }
   }
 
-  private static @Nullable Pair<FileEditorProvider, FileEditor> createFileEditor(@NotNull Project project, @NotNull VirtualFile file) {
-    for (FileEditorProvider provider : FileEditorProviderManager.getInstance().getProviderList(project, file)) {
-      FileEditor editor = provider.createEditor(project, file);
-      return Pair.create(provider, editor);
-    }
-    return null;
-  }
-
   /**
    * Create an empty editor without any file type assigned (defaults to plain text).
    *
@@ -113,20 +100,6 @@ public final class LightEditorManagerImpl implements LightEditorManager, Disposa
     return Objects.requireNonNull(doCreateEditor(file));
   }
 
-  private static @NotNull FileType getFileType(@Nullable String preferredName) {
-    if (preferredName != null) {
-      int extOffset = preferredName.lastIndexOf(".");
-      if (extOffset >= 0 && preferredName.length() > extOffset + 1) {
-        String extension = preferredName.substring(extOffset + 1);
-        FileType fileType = FileTypeManager.getInstance().getFileTypeByExtension(extension);
-        if (!(fileType instanceof UnknownFileType || fileType.isBinary())) {
-          return fileType;
-        }
-      }
-    }
-    return PlainTextFileType.INSTANCE;
-  }
-
   @Override
   public @Nullable LightEditorInfo createEditor(@NotNull VirtualFile file) {
     LightEditFileTypeOverrider.markUnknownFileTypeAsPlainText(file);
@@ -137,68 +110,57 @@ public final class LightEditorManagerImpl implements LightEditorManager, Disposa
     return editorInfo;
   }
 
-  private static void setImplicitSaveEnabled(@NotNull VirtualFile file, boolean isEnabled) {
-    Document document = FileDocumentManager.getInstance().getDocument(file);
-    if (document != null) {
-      document.putUserData(NO_IMPLICIT_SAVE, isEnabled ? null : true);
-    }
-  }
-
   @Override
   public void dispose() {
     releaseEditors();
   }
 
   public void releaseEditors() {
-    myEditors.forEach(editorInfo -> ((LightEditorInfoImpl)editorInfo).disposeEditor());
-    myEditors.clear();
+    editors.forEach(editorInfo -> ((LightEditorInfoImpl)editorInfo).disposeEditor());
+    editors.clear();
   }
 
   public void closeAllEditors() {
-    myEditors.forEach(editorInfo -> closeEditor(editorInfo));
+    editors.forEach(editorInfo -> closeEditor(editorInfo));
   }
 
   @Override
   public void closeEditor(@NotNull LightEditorInfo editorInfo) {
-    EditorHistoryManager.getInstance(myLightEditService.getOrCreateProject()).updateHistoryEntry(editorInfo.getFile(), false);
-    myEditors.remove(editorInfo);
+    EditorHistoryManager.getInstance(lightEditService.getOrCreateProject()).updateHistoryEntry(editorInfo.getFile(), false);
+    editors.remove(editorInfo);
     setImplicitSaveEnabled(editorInfo.getFile(), true);
     ((LightEditorInfoImpl)editorInfo).disposeEditor();
-    myEventDispatcher.getMulticaster().afterClose(editorInfo);
+    eventDispatcher.getMulticaster().afterClose(editorInfo);
   }
 
   @Override
   public void addListener(@NotNull LightEditorListener listener) {
-    myEventDispatcher.addListener(listener);
+    eventDispatcher.addListener(listener);
   }
 
   @Override
   public void addListener(@NotNull LightEditorListener listener, @NotNull Disposable parent) {
-    myEventDispatcher.addListener(listener, parent);
+    eventDispatcher.addListener(listener, parent);
   }
 
   void fireEditorSelected(@Nullable LightEditorInfo editorInfo) {
-    myEventDispatcher.getMulticaster().afterSelect(editorInfo);
+    eventDispatcher.getMulticaster().afterSelect(editorInfo);
   }
 
   void fireAutosaveModeChanged(boolean autosaveMode) {
-    myEventDispatcher.getMulticaster().autosaveModeChanged(autosaveMode);
+    eventDispatcher.getMulticaster().autosaveModeChanged(autosaveMode);
   }
 
   void fireFileStatusChanged(@NotNull Collection<? extends LightEditorInfo> editorInfos) {
-    myEventDispatcher.getMulticaster().fileStatusChanged(editorInfos);
-  }
-
-  private static @NotNull EditorHighlighter getHighlighter(@NotNull VirtualFile file, @NotNull Editor editor) {
-    return EditorHighlighterFactory.getInstance().createEditorHighlighter(file, editor.getColorsScheme(), null);
+    eventDispatcher.getMulticaster().fileStatusChanged(editorInfos);
   }
 
   int getEditorCount() {
-    return myEditors.size();
+    return editors.size();
   }
 
   public @Nullable LightEditorInfo findOpen(@NotNull VirtualFile file) {
-    return ContainerUtil.find(myEditors, editorInfo -> file.getPath().equals(editorInfo.getFile().getPath()));
+    return ContainerUtil.find(editors, editorInfo -> file.getPath().equals(editorInfo.getFile().getPath()));
   }
 
   @Override
@@ -209,34 +171,34 @@ public final class LightEditorManagerImpl implements LightEditorManager, Disposa
 
   @Override
   public @NotNull @Unmodifiable Collection<VirtualFile> getOpenFiles() {
-    return myEditors.stream().map(info -> info.getFile()).collect(Collectors.toUnmodifiableSet());
+    return editors.stream().map(info -> info.getFile()).collect(Collectors.toUnmodifiableSet());
   }
 
   @Override
   public @Unmodifiable @NotNull Collection<LightEditorInfo> getEditors(@NotNull VirtualFile virtualFile) {
-    return ContainerUtil.filter(myEditors, editorInfo -> virtualFile.equals(editorInfo.getFile()));
+    return ContainerUtil.filter(editors, editorInfo -> virtualFile.equals(editorInfo.getFile()));
   }
 
   @Override
   public boolean isFileOpen(@NotNull VirtualFile file) {
-    return myEditors.stream().anyMatch(editorInfo -> file.equals(editorInfo.getFile()));
+    return editors.stream().anyMatch(editorInfo -> file.equals(editorInfo.getFile()));
   }
 
   @Override
   public boolean containsUnsavedDocuments() {
-    return myEditors.stream().anyMatch(editorInfo -> editorInfo.isSaveRequired());
+    return editors.stream().anyMatch(editorInfo -> editorInfo.isSaveRequired());
   }
 
   @NotNull
   @Unmodifiable
-  List<LightEditorInfo> getUnsavedEditors() {
-    return ContainerUtil.filter(myEditors, editorInfo -> editorInfo.isSaveRequired());
+  List<@NotNull LightEditorInfo> getUnsavedEditors() {
+    return ContainerUtil.filter(editors, editorInfo -> editorInfo.isSaveRequired());
   }
 
   private String getUniqueName() {
     for (int i = 1; ; i++) {
       String candidate = DEFAULT_FILE_NAME + i;
-      if (!ContainerUtil.exists(myEditors, editorInfo -> editorInfo.getFile().getName().equals(candidate))) {
+      if (!ContainerUtil.exists(editors, editorInfo -> editorInfo.getFile().getName().equals(candidate))) {
         return candidate;
       }
     }
@@ -268,8 +230,8 @@ public final class LightEditorManagerImpl implements LightEditorManager, Disposa
   }
 
   @Nullable
-  LightEditorInfo getEditorInfo(@NotNull VirtualFile file) {
-    return ContainerUtil.find(myEditors, editorInfo -> file.equals(editorInfo.getFile()));
+  public LightEditorInfo getEditorInfo(@NotNull VirtualFile file) {
+    return ContainerUtil.find(editors, editorInfo -> file.equals(editorInfo.getFile()));
   }
 
   public void reloadFile(@NotNull VirtualFile file) {
@@ -288,12 +250,45 @@ public final class LightEditorManagerImpl implements LightEditorManager, Disposa
   }
 
   private @Nullable LightEditorInfo findEditor(@NotNull Editor editor) {
-    for (LightEditorInfo editorInfo : myEditors) {
+    for (LightEditorInfo editorInfo : editors) {
       FileEditor fileEditor = editorInfo.getFileEditor();
       if (fileEditor instanceof TextEditor && editor == ((TextEditor)fileEditor).getEditor()) {
         return editorInfo;
       }
     }
     return null;
+  }
+
+  private static @Nullable Pair<FileEditorProvider, FileEditor> createFileEditor(@NotNull Project project, @NotNull VirtualFile file) {
+    for (FileEditorProvider provider : FileEditorProviderManager.getInstance().getProviderList(project, file)) {
+      FileEditor editor = provider.createEditor(project, file);
+      return Pair.create(provider, editor);
+    }
+    return null;
+  }
+
+  private static @NotNull FileType getFileType(@Nullable String preferredName) {
+    if (preferredName != null) {
+      int extOffset = preferredName.lastIndexOf(".");
+      if (extOffset >= 0 && preferredName.length() > extOffset + 1) {
+        String extension = preferredName.substring(extOffset + 1);
+        FileType fileType = FileTypeManager.getInstance().getFileTypeByExtension(extension);
+        if (!(fileType instanceof UnknownFileType || fileType.isBinary())) {
+          return fileType;
+        }
+      }
+    }
+    return PlainTextFileType.INSTANCE;
+  }
+
+  private static void setImplicitSaveEnabled(@NotNull VirtualFile file, boolean isEnabled) {
+    Document document = FileDocumentManager.getInstance().getDocument(file);
+    if (document != null) {
+      document.putUserData(NO_IMPLICIT_SAVE, isEnabled ? null : true);
+    }
+  }
+
+  private static @NotNull EditorHighlighter getHighlighter(@NotNull VirtualFile file, @NotNull Editor editor) {
+    return EditorHighlighterFactory.getInstance().createEditorHighlighter(file, editor.getColorsScheme(), null);
   }
 }

@@ -24,10 +24,7 @@ import com.intellij.psi.util.CachedValuesManager;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.containers.HashSetQueue;
 import com.intellij.util.containers.MultiMap;
-import org.jetbrains.annotations.ApiStatus;
-import org.jetbrains.annotations.NonNls;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.*;
 
 import java.util.*;
 import java.util.stream.Collectors;
@@ -43,7 +40,8 @@ public final class ModuleWithDependentsScope extends GlobalSearchScope implement
   private static final Key<CachedValue<VirtualFileEnumeration>> CACHED_FILE_ID_ENUMERATIONS_KEY =
     Key.create("CACHED_FILE_ID_ENUMERATIONS");
 
-  ModuleWithDependentsScope(@NotNull Module module) {
+  @VisibleForTesting
+  public ModuleWithDependentsScope(@NotNull Module module) {
     this(module.getProject(), Collections.singleton(module));
   }
 
@@ -86,14 +84,14 @@ public final class ModuleWithDependentsScope extends GlobalSearchScope implement
       ModuleIndex index = new ModuleIndex();
       for (Module module : ModuleManager.getInstance(project).getModules()) {
         for (OrderEntry orderEntry : ModuleRootManager.getInstance(module).getOrderEntries()) {
-          if (orderEntry instanceof ModuleOrderEntry) {
-            Module referenced = ((ModuleOrderEntry)orderEntry).getModule();
+          if (orderEntry instanceof ModuleOrderEntry moduleOrderEntry) {
+            Module referenced = moduleOrderEntry.getModule();
             if (referenced != null) {
               index.allUsages.putValue(referenced, module);
-              if (((ModuleOrderEntry)orderEntry).isExported()) {
+              if (moduleOrderEntry.isExported()) {
                 index.exportingUsages.putValue(referenced, module);
               }
-              if (((ModuleOrderEntry)orderEntry).isProductionOnTestDependency()) {
+              if (moduleOrderEntry.isProductionOnTestDependency()) {
                 index.productionOnTestUsages.putValue(referenced, module);
               }
             }
@@ -109,6 +107,7 @@ public final class ModuleWithDependentsScope extends GlobalSearchScope implement
     return contains(file, CodeInsightContexts.anyContext(), false);
   }
 
+  @ApiStatus.Experimental
   @Override
   public @NotNull CodeInsightContextInfo getCodeInsightContextInfo() {
     return this;
@@ -169,10 +168,10 @@ public final class ModuleWithDependentsScope extends GlobalSearchScope implement
         }
       }
       else {
-        if (!(context instanceof ModuleContext)) {
+        if (!(context instanceof ModuleContext moduleContext)) {
           return false;
         }
-        Module module = ((ModuleContext)context).getModule();
+        Module module = moduleContext.getModule();
         if (module == null) {
           return false;
         }
@@ -226,7 +225,7 @@ public final class ModuleWithDependentsScope extends GlobalSearchScope implement
   @Override
   public boolean equals(Object o) {
     if (this == o) return true;
-    return o instanceof ModuleWithDependentsScope && myModules.equals(((ModuleWithDependentsScope)o).myModules);
+    return o instanceof ModuleWithDependentsScope moduleWithDependentsScope && myModules.equals(moduleWithDependentsScope.myModules);
   }
 
   @Override
@@ -241,7 +240,7 @@ public final class ModuleWithDependentsScope extends GlobalSearchScope implement
       Module module = myModules.iterator().next();
       CachedValueProvider<VirtualFileEnumeration> provider = () -> {
         VirtualFile[] roots = ModuleRootManager.getInstance(module).getContentRoots();
-        VirtualFileEnumeration enumeration = ModuleWithDependenciesScope.getFileEnumerationUnderRoots(List.of(roots));
+        VirtualFileEnumeration enumeration = ModuleScopeUtil.getFileEnumerationUnderRoots(List.of(roots));
         return CachedValueProvider.Result.create(enumeration, VirtualFileManager.VFS_STRUCTURE_MODIFICATIONS);
       };
       CachedValuesManager cachedValuesManager = CachedValuesManager.getManager(module.getProject());

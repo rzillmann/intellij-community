@@ -183,34 +183,6 @@ public final class PyUtil {
   // TODO: move to a more proper place?
 
   /**
-   * Determine the type of a special attribute. Currently supported: {@code __class__} and {@code __dict__}.
-   *
-   * @param ref reference to a possible attribute; only qualified references make sense.
-   * @return type, or null (if type cannot be determined, reference is not to a known attribute, etc.)
-   */
-  public static @Nullable PyType getSpecialAttributeType(@Nullable PyReferenceExpression ref, TypeEvalContext context) {
-    if (ref != null) {
-      PyExpression qualifier = ref.getQualifier();
-      if (qualifier != null) {
-        String attr_name = ref.getReferencedName();
-        if (PyNames.__CLASS__.equals(attr_name)) {
-          PyType qualifierType = context.getType(qualifier);
-          if (qualifierType instanceof PyClassType) {
-            return new PyClassTypeImpl(((PyClassType)qualifierType).getPyClass(), true); // always as class, never instance
-          }
-        }
-        else if (PyNames.DUNDER_DICT.equals(attr_name)) {
-          PyType qualifierType = context.getType(qualifier);
-          if (qualifierType instanceof PyClassType && ((PyClassType)qualifierType).isDefinition()) {
-            return PyBuiltinCache.getInstance(ref).getDictType();
-          }
-        }
-      }
-    }
-    return null;
-  }
-
-  /**
    * Makes sure that 'thing' is not null; else throws an {@link IncorrectOperationException}.
    *
    * @param thing what we check.
@@ -446,11 +418,10 @@ public final class PyUtil {
     return currentElement;
   }
 
-  /**
-   * Note that returned list may contain {@code null} items, e.g. for unresolved import elements, originally wrapped
-   * in {@link com.jetbrains.python.psi.resolve.ImportedResolveResult}.
-   */
-  public static @NotNull List<PsiElement> multiResolveTopPriority(@NotNull PsiElement element, @NotNull PyResolveContext resolveContext) {
+  // Note that returned list may contain null items, e.g. for unresolved import elements, originally wrapped
+  //  in `com.jetbrains.python.psi.resolve.ImportedResolveResult`
+  //  TODO: it would be a good idea to revise `filterTopPriority` to return the import definer when the element is null
+  public static @NotNull List<@Nullable PsiElement> multiResolveTopPriority(@NotNull PsiElement element, @NotNull PyResolveContext resolveContext) {
     if (element instanceof PyReferenceOwner referenceOwner) {
       return multiResolveTopPriority(referenceOwner.getReference(resolveContext));
     }
@@ -460,7 +431,7 @@ public final class PyUtil {
     }
   }
 
-  public static @NotNull List<PsiElement> multiResolveTopPriority(@NotNull PsiPolyVariantReference reference) {
+  public static @NotNull List<@NotNull PsiElement> multiResolveTopPriority(@NotNull PsiPolyVariantReference reference) {
     return filterTopPriorityElements(Arrays.asList(reference.multiResolve(false)));
   }
 
@@ -1119,7 +1090,7 @@ public final class PyUtil {
     return null;
   }
 
-  public static @Nullable List<@NotNull String> strListValue(PyExpression value) {
+  public static @Nullable List<@NotNull String> strListValue(@Nullable PyExpression value) {
     return PyUtilCore.strListValue(value);
   }
 
@@ -1183,7 +1154,7 @@ public final class PyUtil {
         return builtinCache.getBoolType();
       }
       case NONE -> {
-        return PyNoneType.INSTANCE;
+        return builtinCache.getNoneType();
       }
       default -> throw new IllegalArgumentException();
     }
@@ -1287,30 +1258,11 @@ public final class PyUtil {
   }
 
   public static @Nullable PsiElement findPrevAtOffset(PsiFile psiFile, int caretOffset, @NotNull Class<? extends PsiElement> @NotNull ... toSkip) {
-    PsiElement element;
-    if (caretOffset < 0) {
-      return null;
-    }
-    int lineStartOffset = 0;
-    final Document document = PsiDocumentManager.getInstance(psiFile.getProject()).getDocument(psiFile);
-    if (document != null) {
-      int lineNumber = document.getLineNumber(caretOffset);
-      lineStartOffset = document.getLineStartOffset(lineNumber);
-    }
-    do {
-      caretOffset--;
-      element = psiFile.findElementAt(caretOffset);
-    }
-    while (caretOffset >= lineStartOffset && PsiTreeUtil.instanceOf(element, toSkip));
-    return PsiTreeUtil.instanceOf(element, toSkip) ? null : element;
+    return PyUtilCore.findPrevAtOffset(psiFile, caretOffset, toSkip);
   }
 
   public static @Nullable PsiElement findNonWhitespaceAtOffset(PsiFile psiFile, int caretOffset) {
-    PsiElement element = findNextAtOffset(psiFile, caretOffset, PsiWhiteSpace.class);
-    if (element == null) {
-      element = findPrevAtOffset(psiFile, caretOffset - 1, PsiWhiteSpace.class);
-    }
-    return element;
+    return PyUtilCore.findNonWhitespaceAtOffset(psiFile, caretOffset);
   }
 
   public static @Nullable PsiElement findElementAtOffset(PsiFile psiFile, int caretOffset) {
@@ -1322,22 +1274,7 @@ public final class PyUtil {
   }
 
   public static @Nullable PsiElement findNextAtOffset(final @NotNull PsiFile psiFile, int caretOffset, @NotNull Class<? extends PsiElement> @NotNull ... toSkip) {
-    PsiElement element = psiFile.findElementAt(caretOffset);
-    if (element == null) {
-      return null;
-    }
-
-    final Document document = PsiDocumentManager.getInstance(psiFile.getProject()).getDocument(psiFile);
-    int lineEndOffset = 0;
-    if (document != null) {
-      int lineNumber = document.getLineNumber(caretOffset);
-      lineEndOffset = document.getLineEndOffset(lineNumber);
-    }
-    while (caretOffset < lineEndOffset && PsiTreeUtil.instanceOf(element, toSkip)) {
-      caretOffset++;
-      element = psiFile.findElementAt(caretOffset);
-    }
-    return PsiTreeUtil.instanceOf(element, toSkip) ? null : element;
+    return PyUtilCore.findNextAtOffset(psiFile, caretOffset, toSkip);
   }
 
 
@@ -1456,7 +1393,7 @@ public final class PyUtil {
   public static boolean isInitOrNewMethod(@Nullable PsiElement element) {
     return PyUtilCore.isInitOrNewMethod(element);
   }
-  
+
   /**
    * @return true if passed {@code element} is a method (this means a function inside a class) named {@code __init__},
    * {@code __init_subclass__}, or {@code __new__}.
@@ -1565,7 +1502,7 @@ public final class PyUtil {
     }
     if (stmt instanceof PyExpressionStatement) {
       final PyExpression expression = ((PyExpressionStatement)stmt).getExpression();
-      if (expression instanceof PyNoneLiteralExpression && ((PyNoneLiteralExpression)expression).isEllipsis()) {
+      if (expression instanceof PyEllipsisLiteralExpression) {
         return true;
       }
     }

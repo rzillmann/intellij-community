@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 @file:Suppress("ReplaceGetOrSet", "ReplaceJavaStaticMethodWithKotlinAnalog")
 @file:OptIn(SettingsInternalApi::class)
 
@@ -23,7 +23,7 @@ import kotlin.concurrent.write
 import kotlin.io.path.invariantSeparatorsPathString
 
 /**
- * If componentManager not specified, storage will not add file tracker
+ * If componentManager not specified, storage will not add a file tracker
  */
 @ApiStatus.Internal
 open class StateStorageManagerImpl(
@@ -53,6 +53,12 @@ open class StateStorageManagerImpl(
 
   override fun removeStreamProvider(aClass: Class<out StreamProvider>) {
     compoundStreamProvider.removeStreamProvider(aClass)
+  }
+
+  private var compoundOperationListener = CompoundOperationListener()
+
+  override fun addOperationListener(listener: OperationListener) {
+    compoundOperationListener.addOperationListener(listener)
   }
 
   // access under storageLock
@@ -90,7 +96,7 @@ open class StateStorageManagerImpl(
   protected open fun normalizeFileSpec(fileSpec: String): String {
     val path = FileUtilRt.toSystemIndependentName(fileSpec)
     // fileSpec for directory-based storage could be erroneously specified as "name/"
-    return if (path.endsWith('/')) path.substring(0, path.length - 1) else path
+    return if (path.endsWith('/')) path.dropLast(1) else path
   }
 
   // storageCustomizer - to ensure that other threads will use fully constructed and configured storage (invoked under the same lock as created)
@@ -102,7 +108,7 @@ open class StateStorageManagerImpl(
     exclusive: Boolean = false,
     storageCustomizer: (StateStorage.() -> Unit)? = null,
     storageCreator: StorageCreator? = null,
-    usePathMacroManager: Boolean = true,
+    usePathMacroManager: Boolean,
   ): StateStorage {
     val normalizedCollapsedPath = normalizeFileSpec(collapsedPath)
     val key = computeStorageKey(
@@ -246,9 +252,6 @@ open class StateStorageManagerImpl(
     return storage
   }
 
-  internal open val isUseVfsForWrite: Boolean
-    get() = false
-
   protected open fun createFileBasedStorage(
     file: Path,
     collapsedPath: String,
@@ -262,7 +265,6 @@ open class StateStorageManagerImpl(
         return it as StateStorage
       }
     }
-    val pathMacroManager = if (usePathMacroManager) macroSubstitutor else null
     val controller = controller?.takeIf { it.isPersistenceStateComponentProxy() }
     return TrackedFileStorage(
       storageManager = this,
@@ -270,8 +272,9 @@ open class StateStorageManagerImpl(
       fileSpec = collapsedPath,
       rootElementName = rootTagName,
       roamingType = roamingType,
-      pathMacroManager = pathMacroManager,
+      pathMacroManager = macroSubstitutor.takeIf { usePathMacroManager },
       provider = compoundStreamProvider,
+      listener = compoundOperationListener,
       controller = controller,
     )
   }
@@ -284,6 +287,7 @@ open class StateStorageManagerImpl(
     roamingType: RoamingType,
     pathMacroManager: PathMacroSubstitutor?,
     provider: StreamProvider?,
+    listener: OperationListener?,
     override val controller: SettingsController?,
   ) : FileBasedStorage(
     file = file,
@@ -292,6 +296,7 @@ open class StateStorageManagerImpl(
     pathMacroManager = pathMacroManager,
     roamingType = roamingType,
     provider = provider,
+    listener = listener,
   ), StorageVirtualFileTracker.TrackedStorage {
     override val isUseXmlProlog: Boolean
       get() = rootElementName != null && storageManager.isUseXmlProlog && !isSpecialStorage(fileSpec)
@@ -310,26 +315,22 @@ open class StateStorageManagerImpl(
 
     override fun providerDataStateChanged(writer: DataWriter?, type: DataStateChanged) {
       storageManager.providerDataStateChanged(storage = this, writer = writer, type = type)
-      super.providerDataStateChanged(writer, type)
     }
 
-    override fun getResolution(component: PersistentStateComponent<*>, operation: StateStorageOperation): Resolution {
+    override fun getResolution(component: PersistentStateComponent<*>, operation: StateStorageOperation, isExternalSystemStorageEnabled: Boolean): Resolution {
       val clearExtStorage = operation == StateStorageOperation.WRITE &&
-                            storageManager.isExternalSystemStorageEnabled &&
+                            isExternalSystemStorageEnabled &&
                             (component as? ProjectModelElement)?.externalSource != null
       return if (clearExtStorage) Resolution.CLEAR else Resolution.DO
     }
   }
 
-  open val isExternalSystemStorageEnabled: Boolean
-    get() = false
-
   // the function must be pure and do not use anything outside passed arguments
-  protected open fun beforeElementSaved(elements: MutableList<Element>, rootAttributes: MutableMap<String, String>) { }
+  protected open fun beforeElementSaved(elements: MutableList<Element>, rootAttributes: MutableMap<String, String>) {}
 
-  protected open fun providerDataStateChanged(storage: FileBasedStorage, writer: DataWriter?, type: DataStateChanged) { }
+  protected open fun providerDataStateChanged(storage: FileBasedStorage, writer: DataWriter?, type: DataStateChanged) {}
 
-  protected open fun beforeElementLoaded(element: Element) { }
+  protected open fun beforeElementLoaded(element: Element) {}
 
   final override fun clearStorages() {
     storageLock.write {
@@ -376,7 +377,7 @@ open class StateStorageManagerImpl(
 
   final override fun getOldStorage(component: Any, componentName: String, operation: StateStorageOperation): StateStorage? {
     val oldStorageSpec = getOldStorageSpec(component = component, componentName = componentName, operation = operation) ?: return null
-    return getOrCreateStorage(collapsedPath = oldStorageSpec, roamingType = RoamingType.DEFAULT)
+    return getOrCreateStorage(collapsedPath = oldStorageSpec, roamingType = RoamingType.DEFAULT, usePathMacroManager = true)
   }
 
   protected open fun getOldStorageSpec(component: Any, componentName: String, operation: StateStorageOperation): String? = null

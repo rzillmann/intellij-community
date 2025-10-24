@@ -1,17 +1,7 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.platform.workspace.storage.testEntities.entities.impl
 
 import com.intellij.platform.workspace.storage.*
-import com.intellij.platform.workspace.storage.ConnectionId
-import com.intellij.platform.workspace.storage.EntitySource
-import com.intellij.platform.workspace.storage.EntityType
-import com.intellij.platform.workspace.storage.GeneratedCodeApiVersion
-import com.intellij.platform.workspace.storage.GeneratedCodeImplVersion
-import com.intellij.platform.workspace.storage.MutableEntityStorage
-import com.intellij.platform.workspace.storage.WorkspaceEntity
-import com.intellij.platform.workspace.storage.WorkspaceEntityInternalApi
-import com.intellij.platform.workspace.storage.annotations.Abstract
-import com.intellij.platform.workspace.storage.annotations.Child
 import com.intellij.platform.workspace.storage.impl.EntityLink
 import com.intellij.platform.workspace.storage.impl.ModifiableWorkspaceEntityBase
 import com.intellij.platform.workspace.storage.impl.WorkspaceEntityBase
@@ -24,10 +14,12 @@ import com.intellij.platform.workspace.storage.instrumentation.MutableEntityStor
 import com.intellij.platform.workspace.storage.metadata.model.EntityMetadata
 import com.intellij.platform.workspace.storage.testEntities.entities.BaseEntity
 import com.intellij.platform.workspace.storage.testEntities.entities.CompositeBaseEntity
+import com.intellij.platform.workspace.storage.testEntities.entities.CompositeBaseEntityBuilder
 import com.intellij.platform.workspace.storage.testEntities.entities.MiddleEntity
+import com.intellij.platform.workspace.storage.testEntities.entities.MiddleEntityBuilder
 
 @GeneratedCodeApiVersion(3)
-@GeneratedCodeImplVersion(6)
+@GeneratedCodeImplVersion(7)
 @OptIn(WorkspaceEntityInternalApi::class)
 internal class MiddleEntityImpl(private val dataSource: MiddleEntityData) : MiddleEntity, WorkspaceEntityBase(dataSource) {
 
@@ -62,7 +54,7 @@ internal class MiddleEntityImpl(private val dataSource: MiddleEntityData) : Midd
 
 
   internal class Builder(result: MiddleEntityData?) : ModifiableWorkspaceEntityBase<MiddleEntity, MiddleEntityData>(
-    result), MiddleEntity.Builder {
+    result), MiddleEntityBuilder {
     internal constructor() : this(MiddleEntityData())
 
     override fun applyToBuilder(builder: MutableEntityStorage) {
@@ -120,17 +112,17 @@ internal class MiddleEntityImpl(private val dataSource: MiddleEntityData) : Midd
 
       }
 
-    override var parentEntity: CompositeBaseEntity.Builder<out CompositeBaseEntity>?
+    override var parentEntity: CompositeBaseEntityBuilder<out CompositeBaseEntity>?
       get() {
         val _diff = diff
         return if (_diff != null) {
           @OptIn(EntityStorageInstrumentationApi::class)
           ((_diff as MutableEntityStorageInstrumentation).getParentBuilder(PARENTENTITY_CONNECTION_ID,
-                                                                           this) as? CompositeBaseEntity.Builder<out CompositeBaseEntity>)
-          ?: (this.entityLinks[EntityLink(false, PARENTENTITY_CONNECTION_ID)] as? CompositeBaseEntity.Builder<out CompositeBaseEntity>)
+                                                                           this) as? CompositeBaseEntityBuilder<out CompositeBaseEntity>)
+          ?: (this.entityLinks[EntityLink(false, PARENTENTITY_CONNECTION_ID)] as? CompositeBaseEntityBuilder<out CompositeBaseEntity>)
         }
         else {
-          this.entityLinks[EntityLink(false, PARENTENTITY_CONNECTION_ID)] as? CompositeBaseEntity.Builder<out CompositeBaseEntity>
+          this.entityLinks[EntityLink(false, PARENTENTITY_CONNECTION_ID)] as? CompositeBaseEntityBuilder<out CompositeBaseEntity>
         }
       }
       set(value) {
@@ -179,7 +171,7 @@ internal class MiddleEntityData : WorkspaceEntityData<MiddleEntity>() {
 
   internal fun isPropertyInitialized(): Boolean = ::property.isInitialized
 
-  override fun wrapAsModifiable(diff: MutableEntityStorage): WorkspaceEntity.Builder<MiddleEntity> {
+  override fun wrapAsModifiable(diff: MutableEntityStorage): WorkspaceEntityBuilder<MiddleEntity> {
     val modifiable = MiddleEntityImpl.Builder(null)
     modifiable.diff = diff
     modifiable.id = createEntityId()
@@ -206,9 +198,9 @@ internal class MiddleEntityData : WorkspaceEntityData<MiddleEntity>() {
     return MiddleEntity::class.java
   }
 
-  override fun createDetachedEntity(parents: List<WorkspaceEntity.Builder<*>>): WorkspaceEntity.Builder<*> {
+  override fun createDetachedEntity(parents: List<WorkspaceEntityBuilder<*>>): WorkspaceEntityBuilder<*> {
     return MiddleEntity(property, entitySource) {
-      this.parentEntity = parents.filterIsInstance<CompositeBaseEntity.Builder<out CompositeBaseEntity>>().singleOrNull()
+      this.parentEntity = parents.filterIsInstance<CompositeBaseEntityBuilder<out CompositeBaseEntity>>().singleOrNull()
     }
   }
 

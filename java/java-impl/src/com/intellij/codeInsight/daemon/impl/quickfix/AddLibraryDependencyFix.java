@@ -69,12 +69,12 @@ class AddLibraryDependencyFix extends OrderEntryFix {
   }
 
   @Override
-  public boolean isAvailable(@NotNull Project project, Editor editor, PsiFile file) {
+  public boolean isAvailable(@NotNull Project project, Editor editor, PsiFile psiFile) {
     return !project.isDisposed() && !myCurrentModule.isDisposed() && !myLibraries.isEmpty() && !ContainerUtil.exists(myLibraries.keySet(), l -> ((LibraryEx)l).isDisposed());
   }
 
   @Override
-  public void invoke(@NotNull Project project, @Nullable Editor editor, PsiFile file) {
+  public void invoke(@NotNull Project project, @Nullable Editor editor, PsiFile psiFile) {
     if (myLibraries.size() == 1) {
       addLibrary(project, editor, ContainerUtil.getFirstItem(myLibraries.keySet()));
     }
@@ -128,10 +128,12 @@ class AddLibraryDependencyFix extends OrderEntryFix {
   }
 
   @Override
-  public @NotNull IntentionPreviewInfo generatePreview(@NotNull Project project, @NotNull Editor editor, @NotNull PsiFile file) {
+  public @NotNull IntentionPreviewInfo generatePreview(@NotNull Project project, @NotNull Editor editor, @NotNull PsiFile psiFile) {
     Library firstItem = ContainerUtil.getFirstItem(myLibraries.keySet());
     String fqName = myLibraries.get(firstItem);
-    String refName = !StringUtil.isEmpty(fqName) ? StringUtil.getShortName(fqName) : null;
+    PsiReference reference = restoreReference();
+    String refName = reference != null && reference.getElement().isPhysical() 
+                     && !StringUtil.isEmpty(fqName) ? StringUtil.getShortName(fqName) : null;
 
     String libraryList = NlsMessages.formatAndList(ContainerUtil.map(myLibraries.keySet(), library -> "'" + getLibraryName(library) + "'"));
     String libraryName = getLibraryName(firstItem);

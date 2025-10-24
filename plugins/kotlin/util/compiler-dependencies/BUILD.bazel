@@ -1,14 +1,14 @@
 ### auto-generated section `build kotlin.util.compiler-dependencies` start
-load("@rules_java//java:defs.bzl", "java_library")
+load("@rules_jvm//:jvm.bzl", "jvm_library")
 
-java_library(
-  name = "kotlin-util-compiler-dependencies",
+jvm_library(
+  name = "compiler-dependencies",
   visibility = ["//visibility:public"],
+  srcs = glob([], allow_empty = True),
   runtime_deps = [
     "@lib//:kotlinc-kotlin-dist",
-    "@lib//:kotlinc-kotlin-ide-dist",
     "@lib//:kotlin-stdlib",
-    "@lib//:kotlin-reflect",
+    "//libraries/kotlin/reflect",
     "@lib//:kotlinc-kotlin-compiler-common",
     "@lib//:kotlinc-kotlin-compiler-fe10",
     "@lib//:kotlinc-kotlin-compiler-fir",
@@ -37,7 +37,6 @@ java_library(
     "@lib//:kotlinc-noarg-compiler-plugin",
     "@lib//:kotlinc-sam-with-receiver-compiler-plugin",
     "@lib//:kotlinc-assignment-compiler-plugin",
-    "@lib//:kotlinc-android-extensions-compiler-plugin",
     "@lib//:kotlinc-parcelize-compiler-plugin",
     "@lib//:kotlinc-lombok-compiler-plugin",
     "@lib//:kotlinc-kotlin-dataframe-compiler-plugin",

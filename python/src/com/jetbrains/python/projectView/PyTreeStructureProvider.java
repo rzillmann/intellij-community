@@ -24,13 +24,12 @@ import com.intellij.psi.PsiFile;
 import com.intellij.psi.util.PsiTreeUtil;
 import com.jetbrains.python.codeInsight.typing.PyBundledStubs;
 import com.jetbrains.python.codeInsight.typing.PyTypeShed;
-import com.jetbrains.python.codeInsight.userSkeletons.PyUserSkeletonsUtil;
 import com.jetbrains.python.psi.PyDocStringOwner;
 import com.jetbrains.python.psi.PyFile;
 import com.jetbrains.python.psi.PyFunction;
 import com.jetbrains.python.psi.impl.PyPsiUtils;
 import com.jetbrains.python.sdk.PythonSdkType;
-import com.jetbrains.python.sdk.PythonSdkUtil;
+import com.jetbrains.python.sdk.legacy.PythonSdkUtil;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -51,10 +50,6 @@ public final class PyTreeStructureProvider implements SelectableTreeStructurePro
       final PySkeletonsNode skeletonsNode = PySkeletonsNode.create(project, sdk, settings);
       if (skeletonsNode != null) {
         newChildren.add(skeletonsNode);
-      }
-      final PyUserSkeletonsNode userSkeletonsNode = PyUserSkeletonsNode.create(project, settings);
-      if (userSkeletonsNode != null) {
-        newChildren.add(userSkeletonsNode);
       }
       final PyRemoteLibrariesNode remoteLibrariesNode = PyRemoteLibrariesNode.create(project, sdk, settings);
       if (remoteLibrariesNode != null) {
@@ -112,9 +107,6 @@ public final class PyTreeStructureProvider implements SelectableTreeStructurePro
           continue;
         }
         VirtualFile dir = directory.getVirtualFile();
-        if (dir.equals(PyUserSkeletonsUtil.getUserSkeletonsDirectory())) {
-          continue;
-        }
         if (dir.getFileSystem() instanceof JarFileSystem) {
           dir = ((JarFileSystem)dir.getFileSystem()).getLocalByEntry(dir);
         }

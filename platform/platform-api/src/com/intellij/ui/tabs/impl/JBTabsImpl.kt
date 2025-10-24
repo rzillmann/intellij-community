@@ -88,7 +88,6 @@ import kotlin.math.min
 private val ABC_COMPARATOR: Comparator<TabInfo> = Comparator { o1, o2 -> NaturalComparator.INSTANCE.compare(o1.text, o2.text) }
 private val LOG = logger<JBTabsImpl>()
 private const val SCROLL_BAR_THICKNESS = 5
-private const val ADJUST_BORDERS = true
 private const val LAYOUT_DONE: @NonNls String = "Layout.done"
 
 @Internal
@@ -253,7 +252,6 @@ open class JBTabsImpl internal constructor(
 
   @JvmField
   internal val separatorWidth: Int = JBUI.scale(1)
-  private var dataProvider: DataProvider? = null
   private val deferredToRemove = WeakHashMap<Component, Component>()
 
   final override val tabsPosition: JBTabsPosition
@@ -350,7 +348,7 @@ open class JBTabsImpl internal constructor(
 
   protected open fun createTabBorder(): JBTabsBorder = JBDefaultTabsBorder(this)
 
-  protected open fun createTabPainterAdapter(): TabPainterAdapter = DefaultTabPainterAdapter(DEFAULT)
+  protected open fun createTabPainterAdapter(): TabPainterAdapter = IslandsPainterProvider.getInstance()?.createCommonTabPainter() ?: DefaultTabPainterAdapter(DEFAULT)
 
   private var tabLabelAtMouse: TabLabel? = null
   private val scrollBar: JBScrollBar
@@ -1148,7 +1146,7 @@ open class JBTabsImpl internal constructor(
               val tabInfo = ClientProperty.get(renderer, TAB_INFO_KEY) ?: return
 
               // The last one is expected to be 'CloseTab'
-              val tabAction = tabInfo.tabLabelActions?.getChildren(null)?.lastOrNull()
+              val tabAction = (tabInfo.tabLabelActions as? DefaultActionGroup)?.childActionsOrStubs?.lastOrNull()
               if (tabAction == null && !tabInfo.isPinned) {
                 return
               }
@@ -1207,7 +1205,7 @@ open class JBTabsImpl internal constructor(
   protected open fun getTabActionIcon(info: TabInfo, isHovered: Boolean): Icon? {
     return when {
       info.isPinned -> AllIcons.Actions.PinTab
-      !info.tabLabelActions?.getChildren(null).isNullOrEmpty() -> if (isHovered) AllIcons.Actions.CloseHovered else AllIcons.Actions.Close
+      (info.tabLabelActions as? DefaultActionGroup)?.getChildActionsOrStubs()?.isNotEmpty() ?: false -> if (isHovered) AllIcons.Actions.CloseHovered else AllIcons.Actions.Close
       else -> EmptyIcon.ICON_16
     }
   }
@@ -1378,7 +1376,6 @@ open class JBTabsImpl internal constructor(
 
     updateSideComponent(info)
     add(label)
-    adjust(info)
     return false
   }
 
@@ -2747,6 +2744,13 @@ open class JBTabsImpl internal constructor(
     return this
   }
 
+  override fun removeTabMouseListener(listener: MouseListener): JBTabs {
+    removeListeners()
+    tabMouseListeners.remove(listener)
+    addListeners()
+    return this
+  }
+
   override fun getComponent(): JComponent = this
 
   private fun addListeners() {
@@ -3090,17 +3094,7 @@ open class JBTabsImpl internal constructor(
         tab.tabLabel?.apply(uiDecoration)
       }
     }
-    for (tabInfo in tabs) {
-      adjust(tabInfo)
-    }
     relayout(forced = true, layoutNow = false)
-  }
-
-  protected open fun adjust(tabInfo: TabInfo) {
-    if (ADJUST_BORDERS) {
-      @Suppress("DEPRECATION")
-      UIUtil.removeScrollBorder(tabInfo.component)
-    }
   }
 
   override fun sortTabs(comparator: Comparator<TabInfo>) {
@@ -3118,7 +3112,6 @@ open class JBTabsImpl internal constructor(
   }
 
   override fun uiDataSnapshot(sink: DataSink) {
-    DataSink.uiDataSnapshot(sink, dataProvider)
     sink[QuickActionProvider.KEY] = this@JBTabsImpl
     sink[MorePopupAware.KEY] = this@JBTabsImpl
     sink[JBTabsEx.NAVIGATION_ACTIONS_KEY] = this@JBTabsImpl
@@ -3130,15 +3123,6 @@ open class JBTabsImpl internal constructor(
 
   val navigationActions: ActionGroup
     get() = myNavigationActions
-
-  @Suppress("removal", "OVERRIDE_DEPRECATION")
-  override fun getDataProvider(): DataProvider? = dataProvider
-
-  @Suppress("removal", "OVERRIDE_DEPRECATION")
-  override fun setDataProvider(dataProvider: DataProvider): JBTabsImpl {
-    this.dataProvider = dataProvider
-    return this
-  }
 
   private class DefaultDecorator : UiDecorator {
     override fun getDecoration(): UiDecoration {

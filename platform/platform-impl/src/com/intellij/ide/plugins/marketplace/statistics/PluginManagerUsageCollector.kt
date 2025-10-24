@@ -9,10 +9,12 @@ import com.intellij.ide.plugins.marketplace.statistics.collectors.PluginManagerM
 import com.intellij.ide.plugins.marketplace.statistics.enums.DialogAcceptanceResultEnum
 import com.intellij.ide.plugins.marketplace.statistics.enums.InstallationSourceEnum
 import com.intellij.ide.plugins.marketplace.statistics.enums.SignatureVerificationResult
+import com.intellij.ide.plugins.newui.PluginUiModel
 import com.intellij.ide.plugins.newui.PluginsGroup
 import com.intellij.ide.plugins.newui.SearchQueryParser
 import com.intellij.openapi.extensions.PluginId
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.IntellijInternalApi
 import org.jetbrains.annotations.ApiStatus
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
@@ -24,8 +26,8 @@ import java.util.concurrent.atomic.AtomicInteger
     - Data about opening plugin cards, installing/removing plugins and plugin state changes will be collected by
       both [PluginManagerMPCollector] and [PluginManagerFUSCollector] for backward compatibility.
  */
-
 @ApiStatus.Internal
+@IntellijInternalApi
 object PluginManagerUsageCollector {
   private val fusCollector = PluginManagerFUSCollector()
   private val mpCollector = PluginManagerMPCollector()
@@ -59,9 +61,9 @@ object PluginManagerUsageCollector {
   fun performMarketplaceSearch(
     project: Project?,
     query: SearchQueryParser.Marketplace,
-    results: List<IdeaPluginDescriptor>,
+    results: List<PluginUiModel>,
     searchIndex: Int,
-    pluginToScore: Map<IdeaPluginDescriptor, Double>? = null
+    pluginToScore: Map<PluginUiModel, Double>? = null
   ) {
     mpCollector.performMarketplaceSearch(project, query, results, searchIndex, sessionId.get(), pluginToScore)
   }
@@ -70,9 +72,9 @@ object PluginManagerUsageCollector {
   fun performInstalledTabSearch(
     project: Project?,
     query: SearchQueryParser.Installed,
-    results: List<IdeaPluginDescriptor>,
+    results: List<PluginUiModel>,
     searchIndex: Int,
-    pluginToScore: Map<IdeaPluginDescriptor, Double>? = null
+    pluginToScore: Map<PluginUiModel, Double>? = null
   ) {
     mpCollector.performInstalledTabSearch(project, query, results, searchIndex, sessionId.get(), pluginToScore)
   }

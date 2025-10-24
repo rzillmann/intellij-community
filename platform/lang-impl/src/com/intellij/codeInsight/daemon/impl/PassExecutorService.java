@@ -182,7 +182,7 @@ public final class PassExecutorService implements Disposable {
     }
 
     if (LOG.isDebugEnabled()) {
-      log(updateProgress, null, "submitPasses: "+virtualFile.getName() + " ----- starting " + threadsToStartCountdown.get() + " passes. Free:"+freePasses+"; editorBound:"+editorBoundPasses+"; documentBound:"+documentBoundPasses);
+      log(updateProgress, null, "submitPasses: "+fileEditor + " ----- starting " + threadsToStartCountdown.get() + " passes. Free:"+freePasses+"; editorBound:"+editorBoundPasses+"; documentBound:"+documentBoundPasses);
     }
 
     for (ScheduledPass dependentPass : dependentPasses) {
@@ -524,7 +524,7 @@ public final class PassExecutorService implements Disposable {
             pass.applyInformationToEditor();
             repaintErrorStripeAndIcon(fileEditor);
             if (pass instanceof TextEditorHighlightingPass text) {
-              text.markUpToDateIfStillValid();
+              text.markUpToDateIfStillValid(updateProgress);
             }
             log(updateProgress, pass, " Applied");
           }
@@ -592,18 +592,16 @@ public final class PassExecutorService implements Disposable {
     ContainerUtil.quickSort(result, Comparator.comparingInt(TextEditorHighlightingPass::getId));
   }
 
-  static void log(ProgressIndicator progressIndicator, HighlightingPass pass, @NonNls Object @NotNull ... info) {
+  static void log(@Nullable ProgressIndicator progressIndicator, @Nullable HighlightingPass pass, @NonNls Object @NotNull ... info) {
     if (LOG.isDebugEnabled()) {
       Document document = pass instanceof TextEditorHighlightingPass text ? text.getDocument() : null;
       CharSequence docText = document == null ? "" : ": '" + StringUtil.first(document.getCharsSequence(), 10, true)+ "'";
-      synchronized (PassExecutorService.class) {
-        String message = StringUtil.repeatSymbol(' ', IdeaForkJoinWorkerThreadFactory.getThreadNum() * 4)
-                         + " " + (pass == null ? "" : pass + " ")
-                         + StringUtil.join(info, Functions.TO_STRING(), " ")
-                         + "; progress=" + progressIndicator
-                         + (docText.isEmpty() ? "": " " + docText);
-        LOG.debug(message);
-      }
+      String message = StringUtil.repeatSymbol(' ', IdeaForkJoinWorkerThreadFactory.getThreadNum() * 4)
+                       + " " + (pass == null ? "" : pass + " ")
+                       + StringUtil.join(info, Functions.TO_STRING(), " ")
+                       + "; progress=" + progressIndicator
+                       + (docText.isEmpty() ? "" : " " + docText);
+      LOG.debug(message);
     }
   }
 

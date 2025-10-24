@@ -12,7 +12,8 @@ import com.intellij.openapi.extensions.ExtensionPointName
 import com.intellij.openapi.util.Disposer
 import com.intellij.platform.runtime.product.ProductMode
 import com.intellij.util.PlatformUtils
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.job
 import org.jetbrains.annotations.ApiStatus
 import java.io.File
 import java.util.*
@@ -151,7 +152,9 @@ abstract class StatisticsEventLoggerProvider(val recorderId: String,
     // Use `String?` instead of boolean flag for future expansion with other IDE modes
     val ideMode = if(AppMode.isRemoteDevHost()) "RDH" else null
     val currentProductModeId = ProductLoadingStrategy.strategy.currentModeId
-    val productMode = if (currentProductModeId != ProductMode.MONOLITH.id) {
+    val productMode = if (PlatformUtils.isQodana()) {
+      null
+    } else if (currentProductModeId != ProductMode.MONOLITH.id) {
       currentProductModeId
     } else if (detectClionNova()) {
       "nova"
@@ -207,7 +210,7 @@ abstract class StatisticsEventLoggerProviderExt(recorderId: String, version: Int
   override fun isLoggingAlwaysActive(): Boolean = StatisticsEventLogProviderUtil.forceLoggingAlwaysEnabled()
 }
 
-internal class EmptyStatisticsEventLoggerProvider(recorderId: String): StatisticsEventLoggerProvider(recorderId, 0, -1, DEFAULT_MAX_FILE_SIZE_BYTES) {
+internal class EmptyStatisticsEventLoggerProvider(recorderId: String): StatisticsEventLoggerProvider(recorderId, 1, -1, DEFAULT_MAX_FILE_SIZE_BYTES) {
   override val logger: StatisticsEventLogger = EmptyStatisticsEventLogger()
 
   override fun isRecordEnabled() = false

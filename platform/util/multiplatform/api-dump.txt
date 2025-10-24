@@ -32,6 +32,8 @@ f:com.intellij.openapi.util.NlsContexts
 - java.lang.annotation.Annotation
 @:com.intellij.openapi.util.NlsContexts$ListItem
 - java.lang.annotation.Annotation
+@:com.intellij.openapi.util.NlsContexts$ModalProgressTitle
+- java.lang.annotation.Annotation
 @:com.intellij.openapi.util.NlsContexts$NotificationContent
 - java.lang.annotation.Annotation
 @:com.intellij.openapi.util.NlsContexts$NotificationSubtitle
@@ -80,6 +82,32 @@ f:com.intellij.util.BitUtil
 - sf:set(B,B,Z):B
 - sf:set(I,I,Z):I
 - sf:set(J,J,Z):J
+com.intellij.util.ThreadLocalKmp
+- a:get():java.lang.Object
+- a:remove():V
+- a:set(java.lang.Object):V
+f:com.intellij.util.ThreadLocalKmpKt
+- sf:ThreadLocalKmp():com.intellij.util.ThreadLocalKmp
+- sf:ThreadLocalKmp(kotlin.jvm.functions.Function0):com.intellij.util.ThreadLocalKmp
+e:com.intellij.util.ThreeState
+- java.lang.Enum
+- sf:Companion:com.intellij.util.ThreeState$Companion
+- sf:NO:com.intellij.util.ThreeState
+- sf:UNSURE:com.intellij.util.ThreeState
+- sf:YES:com.intellij.util.ThreeState
+- sf:fromBoolean(Z):com.intellij.util.ThreeState
+- s:getEntries():kotlin.enums.EnumEntries
+- f:isAtLeast(com.intellij.util.ThreeState):Z
+- f:merge(com.intellij.util.ThreeState):com.intellij.util.ThreeState
+- sf:merge(java.lang.Iterable):com.intellij.util.ThreeState
+- sf:mostPositive(java.lang.Iterable):com.intellij.util.ThreeState
+- f:toBoolean():Z
+- s:valueOf(java.lang.String):com.intellij.util.ThreeState
+- s:values():com.intellij.util.ThreeState[]
+f:com.intellij.util.ThreeState$Companion
+- f:fromBoolean(Z):com.intellij.util.ThreeState
+- f:merge(java.lang.Iterable):com.intellij.util.ThreeState
+- f:mostPositive(java.lang.Iterable):com.intellij.util.ThreeState
 c:com.intellij.util.containers.LimitedPool
 - <init>(I,com.intellij.util.containers.LimitedPool$ObjectFactory):V
 - alloc():java.lang.Object

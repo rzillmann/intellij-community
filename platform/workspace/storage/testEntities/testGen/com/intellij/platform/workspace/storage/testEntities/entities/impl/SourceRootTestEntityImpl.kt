@@ -1,16 +1,7 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.platform.workspace.storage.testEntities.entities.impl
 
 import com.intellij.platform.workspace.storage.*
-import com.intellij.platform.workspace.storage.ConnectionId
-import com.intellij.platform.workspace.storage.EntitySource
-import com.intellij.platform.workspace.storage.EntityType
-import com.intellij.platform.workspace.storage.GeneratedCodeApiVersion
-import com.intellij.platform.workspace.storage.GeneratedCodeImplVersion
-import com.intellij.platform.workspace.storage.MutableEntityStorage
-import com.intellij.platform.workspace.storage.WorkspaceEntity
-import com.intellij.platform.workspace.storage.WorkspaceEntityInternalApi
-import com.intellij.platform.workspace.storage.annotations.Child
 import com.intellij.platform.workspace.storage.impl.EntityLink
 import com.intellij.platform.workspace.storage.impl.ModifiableWorkspaceEntityBase
 import com.intellij.platform.workspace.storage.impl.WorkspaceEntityBase
@@ -22,10 +13,12 @@ import com.intellij.platform.workspace.storage.instrumentation.EntityStorageInst
 import com.intellij.platform.workspace.storage.instrumentation.MutableEntityStorageInstrumentation
 import com.intellij.platform.workspace.storage.metadata.model.EntityMetadata
 import com.intellij.platform.workspace.storage.testEntities.entities.ContentRootTestEntity
+import com.intellij.platform.workspace.storage.testEntities.entities.ContentRootTestEntityBuilder
 import com.intellij.platform.workspace.storage.testEntities.entities.SourceRootTestEntity
+import com.intellij.platform.workspace.storage.testEntities.entities.SourceRootTestEntityBuilder
 
 @GeneratedCodeApiVersion(3)
-@GeneratedCodeImplVersion(6)
+@GeneratedCodeImplVersion(7)
 @OptIn(WorkspaceEntityInternalApi::class)
 internal class SourceRootTestEntityImpl(private val dataSource: SourceRootTestEntityData) : SourceRootTestEntity, WorkspaceEntityBase(
   dataSource) {
@@ -62,7 +55,7 @@ internal class SourceRootTestEntityImpl(private val dataSource: SourceRootTestEn
 
 
   internal class Builder(result: SourceRootTestEntityData?) : ModifiableWorkspaceEntityBase<SourceRootTestEntity, SourceRootTestEntityData>(
-    result), SourceRootTestEntity.Builder {
+    result), SourceRootTestEntityBuilder {
     internal constructor() : this(SourceRootTestEntityData())
 
     override fun applyToBuilder(builder: MutableEntityStorage) {
@@ -138,17 +131,17 @@ internal class SourceRootTestEntityImpl(private val dataSource: SourceRootTestEn
         changedProperty.add("data")
       }
 
-    override var contentRoot: ContentRootTestEntity.Builder
+    override var contentRoot: ContentRootTestEntityBuilder
       get() {
         val _diff = diff
         return if (_diff != null) {
           @OptIn(EntityStorageInstrumentationApi::class)
           ((_diff as MutableEntityStorageInstrumentation).getParentBuilder(CONTENTROOT_CONNECTION_ID,
-                                                                           this) as? ContentRootTestEntity.Builder)
-          ?: (this.entityLinks[EntityLink(false, CONTENTROOT_CONNECTION_ID)]!! as ContentRootTestEntity.Builder)
+                                                                           this) as? ContentRootTestEntityBuilder)
+          ?: (this.entityLinks[EntityLink(false, CONTENTROOT_CONNECTION_ID)]!! as ContentRootTestEntityBuilder)
         }
         else {
-          this.entityLinks[EntityLink(false, CONTENTROOT_CONNECTION_ID)]!! as ContentRootTestEntity.Builder
+          this.entityLinks[EntityLink(false, CONTENTROOT_CONNECTION_ID)]!! as ContentRootTestEntityBuilder
         }
       }
       set(value) {
@@ -189,7 +182,7 @@ internal class SourceRootTestEntityData : WorkspaceEntityData<SourceRootTestEnti
 
   internal fun isDataInitialized(): Boolean = ::data.isInitialized
 
-  override fun wrapAsModifiable(diff: MutableEntityStorage): WorkspaceEntity.Builder<SourceRootTestEntity> {
+  override fun wrapAsModifiable(diff: MutableEntityStorage): WorkspaceEntityBuilder<SourceRootTestEntity> {
     val modifiable = SourceRootTestEntityImpl.Builder(null)
     modifiable.diff = diff
     modifiable.id = createEntityId()
@@ -216,9 +209,9 @@ internal class SourceRootTestEntityData : WorkspaceEntityData<SourceRootTestEnti
     return SourceRootTestEntity::class.java
   }
 
-  override fun createDetachedEntity(parents: List<WorkspaceEntity.Builder<*>>): WorkspaceEntity.Builder<*> {
+  override fun createDetachedEntity(parents: List<WorkspaceEntityBuilder<*>>): WorkspaceEntityBuilder<*> {
     return SourceRootTestEntity(data, entitySource) {
-      parents.filterIsInstance<ContentRootTestEntity.Builder>().singleOrNull()?.let { this.contentRoot = it }
+      parents.filterIsInstance<ContentRootTestEntityBuilder>().singleOrNull()?.let { this.contentRoot = it }
     }
   }
 

@@ -7,6 +7,7 @@ import com.intellij.ide.*
 import com.intellij.ide.impl.OpenProjectTask
 import com.intellij.ide.lightEdit.LightEdit
 import com.intellij.openapi.actionSystem.ActionPlaces
+import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.PlatformCoreDataKeys
 import com.intellij.openapi.components.service
@@ -20,13 +21,15 @@ import com.intellij.openapi.wm.impl.welcomeScreen.cloneableProjects.CloneablePro
 import com.intellij.openapi.wm.impl.welcomeScreen.cloneableProjects.CloneableProjectsService.CloneableProject
 import com.intellij.openapi.wm.impl.welcomeScreen.projectActions.RemoveSelectedProjectsAction
 import com.intellij.platform.eel.provider.EelInitialization
+import com.intellij.platform.eel.provider.EelUnavailableException
 import com.intellij.platform.ide.CoreUiCoroutineScopeHolder
 import com.intellij.platform.ide.progress.ModalTaskOwner
 import com.intellij.platform.ide.progress.runWithModalProgressBlocking
 import com.intellij.util.BitUtil
 import com.intellij.util.SystemProperties
 import kotlinx.coroutines.launch
-import org.jetbrains.annotations.ApiStatus
+import org.jetbrains.annotations.ApiStatus.Internal
+import org.jetbrains.annotations.Nls
 import org.jetbrains.annotations.SystemIndependent
 import java.awt.event.ActionEvent
 import java.nio.file.Files
@@ -43,7 +46,7 @@ import javax.swing.SwingUtilities
  * @see com.intellij.openapi.wm.impl.welcomeScreen.ProjectsTabFactory.createWelcomeTab
  * @see com.intellij.ide.ManageRecentProjectsAction
  */
-@ApiStatus.Internal
+@Internal
 sealed interface RecentProjectTreeItem {
   fun displayName(): @NlsSafe String
 
@@ -77,28 +80,36 @@ internal data class RecentProjectItem(
     }
   }
 
+  private fun showReopenDialog(@Nls message: String) {
+    val exitCode = Messages.showYesNoDialog(
+      message,
+      IdeBundle.message("dialog.title.reopen.project"),
+      IdeBundle.message("button.remove.from.list"),
+      CommonBundle.getCancelButtonText(),
+      Messages.getErrorIcon()
+    )
+
+    if (exitCode == Messages.YES) {
+      RecentProjectsManager.getInstance().removePath(projectPath)
+    }
+  }
+
   fun openProject(event: AnActionEvent) {
     // Force move focus to IdeFrame
     IdeEventQueue.getInstance().popupManager.closeAllPopups()
 
-    runWithModalProgressBlocking(ModalTaskOwner.guess(), IdeBundle.message("progress.title.project.initialization")) {
-      EelInitialization.runEelInitialization(projectPath)
+    try {
+      runWithModalProgressBlocking(ModalTaskOwner.guess(), IdeBundle.message("progress.title.project.initialization")) {
+        EelInitialization.runEelInitialization(projectPath)
+      }
+    } catch (e : EelUnavailableException) {
+      showReopenDialog(e.message)
+      return
     }
 
     val file = Path.of(projectPath).normalize()
     if (!Files.exists(file)) {
-      val exitCode = Messages.showYesNoDialog(
-        IdeBundle.message("message.the.path.0.does.not.exist.maybe.on.remote", FileUtil.toSystemDependentName(projectPath)),
-        IdeBundle.message("dialog.title.reopen.project"),
-        IdeBundle.message("button.remove.from.list"),
-        CommonBundle.getCancelButtonText(),
-        Messages.getErrorIcon()
-      )
-
-      if (exitCode == Messages.YES) {
-        RecentProjectsManager.getInstance().removePath(projectPath)
-      }
-
+      showReopenDialog(IdeBundle.message("message.the.path.0.does.not.exist.maybe.on.remote", FileUtil.toSystemDependentName(projectPath)))
       return
     }
 
@@ -149,10 +160,18 @@ internal data class ProviderRecentProjectItem(
   val branchName: @NlsSafe String? get() = recentProject.branchName
   val providerPath: @NlsSafe String? get() = recentProject.providerPath
   val icon: Icon? get() = recentProject.icon
+  val providerIcon: Icon? get() = recentProject.providerIcon
   val activationTimestamp: Long? get() = recentProject.activationTimestamp
+  val statusText: String? get() = recentProject.status.statusText
+  val progressText: String? get() = recentProject.status.progressText
+  val additionalActions: List<AnAction> get() = recentProject.additionalActions
 
-  fun openProject() {
-    recentProject.openProject()
+  fun canOpenProject() : Boolean {
+    return recentProject.canOpenProject()
+  }
+
+  fun openProject(actionEvent: AnActionEvent) {
+    recentProject.openProject(actionEvent)
   }
 
   fun removeFromRecent() {
@@ -160,13 +179,13 @@ internal data class ProviderRecentProjectItem(
   }
 
   fun searchName(): String {
-    return "${recentProject.projectPath.orEmpty()} ${recentProject.displayName}"
+    return "${recentProject.projectPath.orEmpty()} ${recentProject.displayName} ${recentProject.providerPath.orEmpty()}"
   }
 }
 
-@ApiStatus.Internal
+@Internal
 data class CloneableProjectItem(
-  val projectPath: @SystemIndependent String,
+  val projectPath: Path,
   @NlsSafe val projectName: String,
   @NlsSafe val displayName: String,
   val cloneableProject: CloneableProject
@@ -183,7 +202,7 @@ internal class RootItem(private val collectors: List<() -> List<RecentProjectTre
   override fun children(): List<RecentProjectTreeItem> = collectors.flatMap { collector -> collector() }
 }
 
-@ApiStatus.Internal
+@Internal
 object ProjectCollectors {
   @JvmField
   val recentProjectsCollector: () -> List<RecentProjectTreeItem> = {
@@ -198,7 +217,6 @@ object ProjectCollectors {
   @JvmField
   val all: List<() -> List<RecentProjectTreeItem>> = listOf(cloneableProjectsCollector, recentProjectsCollector)
 
-  @JvmStatic
   fun createRecentProjectsWithoutCurrentCollector(currentProject: Project): () -> List<RecentProjectTreeItem> {
     return {
       RecentProjectListActionProvider.getInstance().collectProjectsWithoutCurrent(currentProject)

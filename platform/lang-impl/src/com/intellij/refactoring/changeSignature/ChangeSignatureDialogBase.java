@@ -42,6 +42,7 @@ import com.intellij.util.ui.UIUtil;
 import com.intellij.util.ui.table.JBListTable;
 import com.intellij.util.ui.table.JBTableRowEditor;
 import com.intellij.util.ui.table.JBTableRowRenderer;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.Nls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -171,7 +172,7 @@ public abstract class ChangeSignatureDialogBase<ParamInfo extends ParameterInfo,
 
     if (table != null && table.getRowCount() > 0) {
       if (table.getColumnModel().getSelectedColumnCount() == 0) {
-        final int selectedIdx = getSelectedIdx();
+        final int selectedIdx = ReadAction.compute(() -> getSelectedIdx());
         table.getSelectionModel().setSelectionInterval(selectedIdx, selectedIdx);
         table.getColumnModel().getSelectionModel().setSelectionInterval(0, 0);
       }
@@ -517,6 +518,7 @@ public abstract class ChangeSignatureDialogBase<ParamInfo extends ParameterInfo,
   /**
    * @deprecated override {@link #createParametersListTable} instead.
    */
+  @ApiStatus.Internal
   @Deprecated(forRemoval = true)
   protected @Nullable JComponent getRowPresentation(ParameterTableModelItemBase<ParamInfo> item, boolean selected, boolean focused) {
     return null;

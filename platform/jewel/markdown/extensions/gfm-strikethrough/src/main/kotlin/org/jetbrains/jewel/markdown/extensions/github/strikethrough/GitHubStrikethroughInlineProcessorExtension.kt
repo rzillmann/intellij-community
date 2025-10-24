@@ -3,6 +3,8 @@ package org.jetbrains.jewel.markdown.extensions.github.strikethrough
 import org.commonmark.ext.gfm.strikethrough.Strikethrough
 import org.commonmark.node.Delimited
 import org.commonmark.node.Node
+import org.jetbrains.annotations.ApiStatus
+import org.jetbrains.jewel.foundation.ExperimentalJewelApi
 import org.jetbrains.jewel.markdown.InlineMarkdown
 import org.jetbrains.jewel.markdown.extensions.MarkdownDelimitedInlineProcessorExtension
 import org.jetbrains.jewel.markdown.processing.MarkdownProcessor
@@ -18,6 +20,8 @@ import org.jetbrains.jewel.markdown.processing.readInlineMarkdown
  * @see GitHubStrikethroughNode
  * @see GitHubStrikethroughRendererExtension
  */
+@ApiStatus.Experimental
+@ExperimentalJewelApi
 public object GitHubStrikethroughInlineProcessorExtension : MarkdownDelimitedInlineProcessorExtension {
     override fun canProcess(delimited: Delimited): Boolean = delimited is Strikethrough
 

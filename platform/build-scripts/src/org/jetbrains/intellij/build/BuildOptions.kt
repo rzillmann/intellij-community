@@ -172,6 +172,12 @@ data class BuildOptions(
     /** Build Linux tar.gz artifact without bundled Runtime. */
     const val LINUX_TAR_GZ_WITHOUT_BUNDLED_RUNTIME_STEP: String = "linux_tar_gz_without_jre"
 
+    /** Build Windows artifacts: .zip archive and .exe installer. */
+    const val WINDOWS_ARTIFACTS_STEP: String = "windows_artifacts"
+
+    /** Build Windows .zip archive */
+    const val WINDOWS_ZIP_STEP: String = "windows_zip_archive"
+
     /** Build *.exe installer for Windows distribution. If skipped, only the .zip archive will be produced. */
     const val WINDOWS_EXE_INSTALLER_STEP: String = "windows_exe_installer"
 
@@ -273,9 +279,9 @@ data class BuildOptions(
     const val TARGET_OS_PROPERTY: String = "intellij.build.target.os"
 
     /**
-     * Use this system property to specify the target JVM architecture. 
-     * Possible values are `x64`, `aarch64` and `current` (which refers to the architecture on which the build scripts are executed). 
-     * If no value is provided, artifacts for all supported architectures will be built.  
+     * Use this system property to specify the target JVM architecture.
+     * Possible values are `x64`, `aarch64` and `current` (which refers to the architecture on which the build scripts are executed).
+     * If no value is provided, artifacts for all supported architectures will be built.
      */
     const val TARGET_ARCH_PROPERTY: String = "intellij.build.target.arch"
     private const val ARCH_CURRENT: String = "current"
@@ -332,6 +338,16 @@ data class BuildOptions(
     const val INTELLIJ_BUILD_IS_NIGHTLY: String = "intellij.build.is.nightly"
 
     /**
+     * The branch used for the TeamCity build.
+     */
+    const val TEAMCITY_BUILD_BRANCH: String = "teamcity.build.branch"
+
+    /**
+     * Whether the branch used for the build is default or not.
+     */
+    const val TEAMCITY_BUILD_BRANCH_IS_DEFAULT: String = "teamcity.build.branch.is_default"
+
+    /**
      * IJPL-176 Download pre-compiled IJent executables.
      */
     const val IJENT_EXECUTABLE_DOWNLOADING: String = "ijent.executable.downloading"
@@ -358,25 +374,28 @@ data class BuildOptions(
   var useLocalLauncher: Boolean = false
 
   /**
-   * When `true`, cross-platform distribution will be packed using zip64 in AlwaysWithCompatibility mode
+   * When set, `WinExeInstallerBuilder` will use the given local NSIS installation.
+   */
+  var useLocalNSIS: String? = null
+
+  /**
+   * When `true`, cross-platform distribution will be packed using zip64 in AlwaysWithCompatibility mode.
    */
   var useZip64ForCrossPlatformDistribution: Boolean = getBooleanProperty("intellij.build.cross.platform.dist.zip64", false)
 
   /**
-   * Pass `true` to this system property to produce .snap packages.
-   * Requires Docker.
+   * Pass `true` to this system property to produce .snap packages. Requires Docker.
    */
   var buildUnixSnaps: Boolean = getBooleanProperty("intellij.build.unix.snaps", false)
 
   /**
-   * Docker image for snap package creation
+   * Docker image for snap package creation.
    */
   var snapDockerImage: String = System.getProperty("intellij.build.snap.docker.image") ?: DEPENDENCIES_PROPERTIES["snapDockerImage"]
   var snapDockerBuildTimeoutMin: Long = System.getProperty("intellij.build.snap.timeoutMin")?.toLong() ?: 20
 
   /**
-   * When `true`, `.resx` files are generated and bundled in the localization plugins.
-   * Requires Docker.
+   * When `true`, `.resx` files are generated and bundled in the localization plugins. Requires Docker.
    */
   var bundleLocalizationPluginResources: Boolean = getBooleanProperty("intellij.build.localization.plugin.resources", false)
 
@@ -399,11 +418,6 @@ data class BuildOptions(
       buildNumber
     }
   }
-
-  /**
-   * Use [BuildContext.pluginBuildNumber] to get the actual build number in build scripts.
-   */
-  var pluginBuildNumber: String? = buildNumber
 
   /**
    * If `true`, the build is running as a unit test.
@@ -431,7 +445,7 @@ data class BuildOptions(
   val nonBundledPluginDirectoriesToInclude: Set<String> = getSetProperty("intellij.build.non.bundled.plugin.dirs.to.include")
 
   /**
-   * If this option is set to `true` and [ProductProperties.rootModuleForModularLoader] is non-null, a file containing module descriptors 
+   * If this option is set to `true` and [ProductProperties.rootModuleForModularLoader] is non-null, a file containing module descriptors
    * will be added to the distribution (IJPL-109), and launchers will use it to start the IDE (IJPL-128).
    */
   @ApiStatus.Experimental
@@ -439,8 +453,8 @@ data class BuildOptions(
 
   /**
    * If this option is set to `false`, [runtime module repository][com.intellij.platform.runtime.repository.RuntimeModuleRepository] won't be included in the installation.
-   * It's supposed to be used only for development to speed up the building process a bit. 
-   * Production builds must always include the module repository since tools like IntelliJ Platform Gradle Plugin and Plugin Verifier relies on it. 
+   * It's supposed to be used only for development to speed up the building process a bit.
+   * Production builds must always include the module repository since tools like IntelliJ Platform Gradle Plugin and Plugin Verifier relies on it.
    * This option doesn't make sense if [modular loader][BuildContext.useModularLoader] is used
    * (in this case, the generation is always enabled).
    */
@@ -472,7 +486,7 @@ data class BuildOptions(
   var isNightlyBuild: Boolean = getBooleanProperty(INTELLIJ_BUILD_IS_NIGHTLY, false)
 
   /**
-   * By default, the current Git revision is stored as a custom property in the product-info.json file. Set this property to `false` to disable this. 
+   * By default, the current Git revision is stored as a custom property in the product-info.json file. Set this property to `false` to disable this.
    */
   var storeGitRevision: Boolean = getBooleanProperty("intellij.build.store.git.revision", true)
 

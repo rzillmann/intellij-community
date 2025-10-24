@@ -20,12 +20,12 @@ import com.intellij.ide.util.TreeClassChooser;
 import com.intellij.ide.util.TreeClassChooserFactory;
 import com.intellij.openapi.actionSystem.DataContext;
 import com.intellij.openapi.diagnostic.Logger;
-import com.intellij.openapi.extensions.ExtensionPointName;
 import com.intellij.openapi.progress.ProcessCanceledException;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.projectRoots.ex.JavaSdkUtil;
 import com.intellij.openapi.util.*;
 import com.intellij.openapi.util.io.FileUtil;
+import com.intellij.openapi.util.registry.Registry;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.util.text.StringUtilRt;
 import com.intellij.pom.java.LanguageLevel;
@@ -46,6 +46,7 @@ import com.intellij.xdebugger.impl.XDebugSessionImpl;
 import com.intellij.xdebugger.impl.breakpoints.XExpressionState;
 import com.intellij.xdebugger.impl.frame.XValueMarkers;
 import com.jetbrains.jdi.MethodImpl;
+import com.jetbrains.jdi.ReferenceTypeImpl;
 import com.sun.jdi.*;
 import com.sun.jdi.connect.Connector;
 import com.sun.jdi.connect.IllegalConnectorArgumentsException;
@@ -223,6 +224,11 @@ public final class DebuggerUtilsImpl extends DebuggerUtilsEx {
     return Boolean.TRUE.equals(debugProcess.getUserData(BatchEvaluator.REMOTE_SESSION_KEY));
   }
 
+  @Override
+  protected void logErrorImpl(@NotNull Throwable e) {
+    logError(e);
+  }
+
   public static void logError(@NotNull Throwable e) {
     logIfNeeded(e, false, LOG::error);
   }
@@ -268,10 +274,17 @@ public final class DebuggerUtilsImpl extends DebuggerUtilsEx {
   }
 
   public static boolean instanceOf(@Nullable ReferenceType type, @NotNull ReferenceType superType) {
+    // Use the reference implementation if possible
+    if (type instanceof ReferenceTypeImpl referenceTypeImpl) {
+      return referenceTypeImpl.isAssignableTo(superType);
+    }
     if (type == null) {
       return false;
     }
-    if (superType.equals(type) || (!(type instanceof InterfaceType) && CommonClassNames.JAVA_LANG_OBJECT.equals(superType.name()))) {
+    if (superType.equals(type)) {
+      return true;
+    }
+    if (type instanceof InterfaceType && CommonClassNames.JAVA_LANG_OBJECT.equals(superType.name())) {
       return true;
     }
     if (type instanceof ArrayType arrayType) {
@@ -376,7 +389,9 @@ public final class DebuggerUtilsImpl extends DebuggerUtilsEx {
   private static <R, T> R suspendAllAndEvaluate(@NotNull ThrowableComputable<? extends T, ? extends EvaluateException> valueComputable,
                                                 @NotNull Function<? super T, ? extends R> processor,
                                                 @NotNull EvaluationContext evaluationContext) throws EvaluateException {
-    LOG.error("Retries exhausted, applying suspend-all evaluation");
+    if (Registry.is("debugger.collectible.value.retries.error", true)) {
+      LOG.error("Retries exhausted, applying suspend-all evaluation");
+    }
     VirtualMachineProxyImpl virtualMachineProxy = ((EvaluationContextImpl)evaluationContext).getSuspendContext().getVirtualMachineProxy();
     virtualMachineProxy.suspend();
     try {
@@ -579,23 +594,6 @@ public final class DebuggerUtilsImpl extends DebuggerUtilsEx {
       }
     }
     return null;
-  }
-
-  // do not catch VMDisconnectedException
-  public static <T> void forEachSafe(ExtensionPointName<T> ep, Consumer<? super T> action) {
-    forEachSafe(ep.getIterable(), action);
-  }
-
-  // do not catch VMDisconnectedException
-  public static <T> void forEachSafe(Iterable<? extends T> iterable, Consumer<? super T> action) {
-    for (T o : iterable) {
-      try {
-        action.accept(o);
-      }
-      catch (Throwable e) {
-        logError(e);
-      }
-    }
   }
 
   public static @Nullable Value invokeClassMethod(@NotNull EvaluationContext evaluationContext,

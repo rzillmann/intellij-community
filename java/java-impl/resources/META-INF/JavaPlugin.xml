@@ -2,7 +2,6 @@
 <idea-plugin xmlns:xi="http://www.w3.org/2001/XInclude">
   <module value="com.intellij.modules.java"/>
 
-  <depends optional="true" config-file="images-integration.xml">com.intellij.platform.images</depends>
   <depends optional="true" config-file="community-integration.xml">com.intellij.modules.idea.community</depends>
 
   <xi:include href="/idea/JavaActions.xml"/>
@@ -135,12 +134,6 @@
     <extensionPoint qualifiedName="com.intellij.runConfigurationExtension" interface="com.intellij.execution.RunConfigurationExtension"
                     dynamic="true"/>
 
-    <extensionPoint qualifiedName="com.intellij.moduleConfigurable"
-                    beanClass="com.intellij.openapi.options.ModuleConfigurableEP"
-                    area="IDEA_MODULE"
-                    dynamic="true">
-      <with attribute="instance" implements="com.intellij.openapi.roots.ui.configuration.projectRoot.ModuleConfigurable"/>
-    </extensionPoint>
     <extensionPoint qualifiedName="com.intellij.variableTypeCalculator"
                     interface="com.intellij.codeInsight.template.macro.VariableTypeCalculator" dynamic="true"/>
     <extensionPoint qualifiedName="com.intellij.jreProvider" interface="com.intellij.execution.ui.JreProvider" dynamic="true"/>
@@ -186,9 +179,6 @@
     <extensionPoint qualifiedName="com.intellij.packaging.artifactType" interface="com.intellij.packaging.artifacts.ArtifactType"
                     dynamic="true"/>
 
-    <extensionPoint qualifiedName="com.intellij.frameworkSupport"
-                    interface="com.intellij.ide.util.frameworkSupport.FrameworkSupportProvider"
-                    dynamic="true"/>
     <extensionPoint qualifiedName="com.intellij.frameworkSupportCommunicator"
                     interface="com.intellij.ide.util.newProjectWizard.impl.FrameworkSupportCommunicator" dynamic="true"/>
 
@@ -233,9 +223,6 @@
     <!--suppress PluginXmlValidity -->
     <extensionPoint qualifiedName="com.intellij.configuration.ModuleStructureExtension" dynamic="true"
                     interface="com.intellij.openapi.roots.ui.configuration.projectRoot.ModuleStructureExtension"/>
-
-    <extensionPoint qualifiedName="com.intellij.configuration.moduleStructureFilterExtension" dynamic="true"
-                    interface="com.intellij.openapi.roots.ui.configuration.projectRoot.ModuleStructureFilterExtension"/>
 
     <extensionPoint qualifiedName="com.intellij.projectStructureValidator"
                     interface="com.intellij.openapi.roots.ui.configuration.projectRoot.daemon.ProjectStructureValidator" dynamic="true"/>
@@ -292,6 +279,9 @@
     <extensionPoint qualifiedName="com.intellij.openapi.projectRoots.externalJavaConfigurationProvider"
                     interface="com.intellij.openapi.projectRoots.impl.ExternalJavaConfigurationProvider" dynamic="true"/>
 
+    <extensionPoint qualifiedName="com.intellij.openapi.projectRoots.externalJavaConfigurationMissingAction"
+                    interface="com.intellij.openapi.projectRoots.impl.ExternalJavaConfigurationMissingAction" dynamic="true"/>
+
     <extensionPoint qualifiedName="com.intellij.gotoByName.defaultProvider.ignoreLanguage" dynamic="true"
                     beanClass="com.intellij.ide.util.gotoByName.IgnoreLanguageInDefaultProvider"/>
 
@@ -324,11 +314,8 @@
     <registryKey key="java.test.enable.tree.live.time" defaultValue="true"
                  description="Enable live time for tests" restartRequired="true"/>
 
-    <registryKey key="java.highest.language.level" defaultValue="24"
-                 description="Highest released language level" restartRequired="false"/>
-
-    <registryKey key="index.ids.from.java.sources.in.jar" defaultValue="true"
-                 description="Index ids from class files instead of source files in JARs" restartRequired="false"/>
+    <registryKey key="ide.index.id.skip.java.sources.in.libs" defaultValue="false"
+                 description="IdIndex skips .java-files in libraries (index .class-files instead)" restartRequired="true"/>
 
     <registryKey key="ide.jps.use.build.tool.window" defaultValue="true"
                  description="Enables 'Build' toolwindow for JPS compilation messages"/>
@@ -345,6 +332,7 @@
     <compilableFileTypesProvider implementation="com.intellij.compiler.impl.javaCompiler.JavaCompilableFileTypesProvider"/>
     <postStartupActivity implementation="com.intellij.compiler.server.BuildManager$BuildManagerStartupActivity"/>
     <postStartupActivity implementation="com.intellij.ide.SetupJavaProjectFromSourcesActivity"/>
+    <postStartupActivity implementation="com.intellij.jarRepository.RepositoryLibraryExtendedPropertiesUpdateStartupActivity"/>
     <backgroundPostStartupActivity implementation="com.intellij.compiler.cache.CompilerCacheStartupActivity"/>
 
     <console.folding implementation="com.intellij.execution.filters.StackTraceFolding"/>
@@ -375,7 +363,6 @@
     <virtualFileSystem implementationClass="com.intellij.openapi.vfs.impl.jrt.JrtFileSystemImpl" key="jrt" physical="true"/>
 
     <registryKey key="use.jdk.vendor.in.suggested.jdk.name" defaultValue="true" description="Include Vendor name in suggested SDK names"/>
-    <registryKey key="java.exceptions.anniversary.banner" defaultValue="[on*|off|force]" description="Show the java anniversary banner in the console"/>
 
     <sdkType implementation="com.intellij.openapi.projectRoots.impl.JavaSdkImpl"/>
 
@@ -411,12 +398,13 @@
     <projectService serviceImplementation="com.intellij.jarRepository.services.MavenRepositoryServicesManager"/>
     <projectService serviceImplementation="com.intellij.codeInsight.JavaProjectCodeInsightSettings"/>
     <optionController implementation="com.intellij.codeInsight.JavaProjectCodeInsightSettings$Provider"/>
+    <optionController implementation="com.intellij.codeInsight.JavaIdeCodeInsightSettings$Provider"/>
     <optionController implementation="com.intellij.codeInsight.OrderEntryConfigurationProvider"/>
     <applicationService serviceImplementation="com.intellij.codeInsight.JavaIdeCodeInsightSettings"/>
     <projectService serviceInterface="com.intellij.testIntegration.TestFailedLineManager"
                     serviceImplementation="com.intellij.execution.codeInspection.TestFailedLineManagerImpl"/>
     <projectService serviceInterface="com.intellij.codeInspection.ex.EntryPointsManager"
-                    serviceImplementation="com.intellij.codeInspection.ex.EntryPointsManagerImpl"/>
+                    serviceImplementation="com.intellij.codeInspection.ex.impl.EntryPointsManagerImpl"/>
     <projectService serviceInterface="com.intellij.openapi.roots.JavaProjectModelModificationService"
                     serviceImplementation="com.intellij.openapi.roots.impl.JavaProjectModelModificationServiceImpl"/>
     <projectService serviceInterface="com.intellij.refactoring.listeners.JavaRefactoringListenerManager"
@@ -492,15 +480,14 @@
 
     <codeInsight.codeVision.settings.defaults implementation="com.intellij.ide.java.JavaCodeVisionSettingsDefaults"/>
 
-
-    <applicationService serviceInterface="com.intellij.lang.IdeLanguageCustomization"
-                        serviceImplementation="com.intellij.ide.java.JavaIdeLanguageCustomization"
-                        overrides="true"/>
-
     <updateSettingsUIProvider implementation="com.intellij.openapi.projectRoots.impl.JdkUpdaterConfigurable"/>
     <postStartupActivity implementation="com.intellij.openapi.projectRoots.impl.ExistingJdkConfigurationActivity"/>
     <openapi.projectRoots.externalJavaConfigurationProvider implementation="com.intellij.openapi.projectRoots.impl.SdkmanrcConfigurationProvider"/>
     <openapi.projectRoots.externalJavaConfigurationProvider implementation="com.intellij.openapi.projectRoots.impl.ToolVersionsConfigurationProvider"/>
+    <codeInsight.codeVisionProvider implementation="com.intellij.openapi.projectRoots.impl.ExternalJavaConfigurationCodeVision"/>
+    <config.codeVisionGroupSettingProvider implementation="com.intellij.openapi.projectRoots.impl.ExternalJavaConfigurationGroupSettingProvider"/>
+    <openapi.projectRoots.externalJavaConfigurationMissingAction implementation="com.intellij.openapi.projectRoots.impl.ExternalJavaConfigurationCopyCommandAction"/>
+    <openapi.projectRoots.externalJavaConfigurationMissingAction implementation="com.intellij.openapi.projectRoots.impl.ExternalJavaConfigurationRefreshAction"/>
     <postStartupActivity implementation="com.intellij.openapi.projectRoots.impl.ExternalJavaConfigurationActivity"/>
 
     <registryKey key="jdk.configure.existing" defaultValue="false" description="Attempt to add an existing SDK to the SDK table."/>
@@ -555,7 +542,6 @@
                     serviceImplementation="com.intellij.openapi.vcs.impl.ModuleVcsPathPresenter"
                     overrides="true"/>
 
-    <projectService serviceImplementation="com.intellij.compiler.impl.javaCompiler.javac.JavacConfiguration"/>
     <projectService serviceImplementation="com.intellij.compiler.impl.javaCompiler.eclipse.EclipseCompilerConfiguration"/>
     <projectService serviceImplementation="com.intellij.compiler.impl.rmiCompiler.RmicConfiguration"/>
     <pathMacroFilter implementation="com.intellij.compiler.impl.javaCompiler.javac.JavacConfigurationMacroFilter"/>
@@ -693,10 +679,6 @@
                          implementationClass="com.intellij.codeInsight.hint.NextParameterAfterCompletionHandler"/>
     <compiler.updateResourcesBuildContributor implementation="com.intellij.compiler.impl.JavaResourcesBuildContributor"/>
 
-    <!--<expectedTypesProvider implementation="com.intellij.codeInsight.JavaExpectedTypesProvider"/>-->
-
-    <editorNotificationProvider implementation="com.intellij.execution.jshell.SnippetEditorDecorator"/>
-
     <projectService serviceImplementation="com.intellij.execution.testDiscovery.JavaAutoRunManager"/>
     <registryKey defaultValue="true" description="Trigger autotest on delay instead of build events" key="trigger.autotest.on.delay"/>
 
@@ -826,6 +808,10 @@
     <applicationService serviceInterface="com.intellij.execution.vmOptions.VMOptionsService"
                         serviceImplementation="com.intellij.execution.vmOptions.VMOptionsServiceImpl"/>
 
+    <registryKey key="ide.jvm.run.marker" defaultValue="false" description="Enable JVM-lang-based run line markers"/>
+    <registryKey key="ide.jvm.command.line.clear.all.environments" defaultValue="true"
+                 description="Clear all environments when running a JVM command line application"/>
+
     <runDashboardCustomizer implementation="com.intellij.execution.CommonJavaRunDashboardCustomizer" id="commonJavaCustomizer"/>
 
     <warmupConfigurator implementation="com.intellij.ide.warmup.JdkWarmupConfigurator"/>
@@ -839,6 +825,7 @@
     <internalFileTemplate name="Interface"/>
     <internalFileTemplate name="Enum"/>
     <internalFileTemplate name="Record"/>
+    <internalFileTemplate name="SimpleSourceFile"/>
     <internalFileTemplate name="AnnotationType" subject="@interface"/>
     <internalFileTemplate name="Exception"/>
     <internalFileTemplate name="package-info"/>
@@ -853,7 +840,6 @@
     <projectConfigurable id="jvm.logging" parentId="language" instance="com.intellij.ui.logging.JvmLoggingConfigurable"
                          bundle="messages.JavaBundle" key="jvm.logging.configurable.display.name"/>
     <jvm.exceptionFilter implementation="com.intellij.execution.filters.NavigateToExceptionClassFilter"/>
-    <jvm.exceptionFilter implementation="com.intellij.execution.filters.JavaExceptionFilter"/>
 
     <additionalLibraryRootsProvider implementation="com.intellij.execution.AlternativeSdkRootsProvider"/>
     <jdkUpdateCheckContributor implementation="com.intellij.execution.AlternativeSdkRootsProviderForJdkUpdate"/>
@@ -884,8 +870,6 @@
     <runConfigurationExtension implementation="com.intellij.execution.testDiscovery.TestDiscoveryExtension"/>
     <runConfigurationExtension implementation="com.intellij.execution.impl.JavaDebuggerAutoAttach"/>
 
-    <editorFloatingToolbarProvider implementation="com.intellij.execution.testDiscovery.JavaAutoRunFloatingToolbarProvider"/>
-
     <completion.contributor language="JAVA" id="methodsChainsCompletionContributor" order="first"
                             implementationClass="com.intellij.compiler.chainsSearch.completion.MethodChainCompletionContributor"/>
     <weigher order="after mostUsed" key="completion" id="methodChains"
@@ -907,7 +891,7 @@
                          key="configurable.RemoteRepositoriesConfigurable.display.name" bundle="messages.JavaUiBundle"
                          order="last"/>
 
-    <scratch.rootType implementation="com.intellij.execution.jshell.JShellRootType"/>
+
     <scratch.creationHelper language="JAVA" implementationClass="com.intellij.ide.actions.JavaScratchFileCreationHelper"/>
 
     <intentionAction>
@@ -1037,7 +1021,7 @@
     <callHierarchyProvider language="JAVA" implementationClass="com.intellij.ide.hierarchy.call.JavaCallHierarchyProvider"/>
     <runLineMarkerContributor language="JAVA" order="after applicationRunLineMarkerProvider"
                               implementationClass="com.intellij.testIntegration.TestRunLineMarkerProvider"/>
-    <testGenerator language="JAVA" implementationClass="com.intellij.testIntegration.createTest.JavaTestGenerator"/>
+    <testGenerator id="javaTestGenerator" language="JAVA" implementationClass="com.intellij.testIntegration.createTest.JavaTestGenerator"/>
     <testCreator language="JAVA" implementationClass="com.intellij.testIntegration.JavaTestCreator"/>
     <testFinder implementation="com.intellij.testIntegration.JavaTestFinder"/>
     <filePasteProvider implementation="com.intellij.ide.JavaFilePasteProvider" order="before fileList"/>
@@ -1045,11 +1029,14 @@
     <enterHandlerDelegate implementation="com.intellij.javadoc.JavadocSnippetEnterHandler" order="before EnterBetweenBracesHandler, before EnterInPropertiesFileHandler"/>
     <enterHandlerDelegate implementation="com.intellij.javadoc.JavaDocMarkdownEnterHandler" order="after EnterInLineCommentHandler" />
     <editorNavigation implementation="com.intellij.javadoc.JavadocNavigationDelegate"/>
+    <methodImplementor implementation="com.intellij.codeInsight.javadoc.SnippetDocTagMethodImplementor"/>
     <methodNavigationOffsetProvider implementation="com.intellij.codeInsight.navigation.JavaMethodNavigationOffsetProvider"/>
     <dom.customAnnotationChecker implementation="com.intellij.util.xml.impl.ExtendsClassChecker"/>
     <codeInsight.surroundWithRangeAdjuster implementation="com.intellij.codeInsight.generation.surroundWith.XmlSurroundWithRangeAdjuster"/>
     <liveTemplateSubstitutor implementation="com.intellij.codeInsight.template.impl.JavaTemplateSubstitutor"/>
     <defaultLiveTemplates file="liveTemplates/Java"/>
+    <defaultLiveTemplates file="liveTemplates/JavaImplicitClass"/>
+    <defaultLiveTemplates file="liveTemplates/JavaNormalClassesWithInstanceMain"/>
     <treeStructureProvider id="ClassesTreeStructureProvider" implementation="com.intellij.ide.projectView.impl.ClassesTreeStructureProvider"
                            order="last, after NestingTreeStructureProvider"/>
     <importFilteringRule implementation="com.intellij.usages.impl.rules.ImportFilteringRule"/>
@@ -1194,6 +1181,18 @@
                          implementation="com.intellij.codeInsight.template.JavaCodeContextType$ElsePlace"/>
     <liveTemplateContext contextId="JAVA_DECLARATION" baseContextId="JAVA_CODE"
                          implementation="com.intellij.codeInsight.template.JavaCodeContextType$Declaration"/>
+    <liveTemplateContext contextId="JAVA_IMPLICIT_CLASS_DECLARATION" baseContextId="JAVA_CODE"
+                         implementation="com.intellij.codeInsight.template.JavaCodeContextType$ImplicitClassDeclaration"/>
+    <liveTemplateContext contextId="JAVA_NORMAL_CLASS_DECLARATION_WITHOUT_INSTANCE_MAIN" baseContextId="JAVA_CODE"
+                         implementation="com.intellij.codeInsight.template.JavaCodeContextType$NormalClassDeclarationBeforeShortMainMethod"/>
+    <liveTemplateContext contextId="JAVA_LANG_IO_STATEMENT" baseContextId="JAVA_CODE"
+                         implementation="com.intellij.codeInsight.template.JavaCodeContextType$JavaLangIOStatement"/>
+    <liveTemplateContext contextId="JAVA_NORMAL_CLASS_DECLARATION_WITH_INSTANCE_MAIN" baseContextId="JAVA_CODE"
+                         implementation="com.intellij.codeInsight.template.JavaCodeContextType$NormalClassDeclarationAfterShortMainMethod"/>
+    <liveTemplateContext contextId="JAVA_STATEMENT_WITH_STRUCTURED_CONCURRENCY_CONSTRUCTORS" baseContextId="JAVA_CODE"
+                         implementation="com.intellij.codeInsight.template.JavaCodeContextType$JavaStructuredConcurrencyConstructors" />
+    <liveTemplateContext contextId="JAVA_STATEMENT_WITH_STRUCTURED_CONCURRENCY_STATIC_FACTORY_METHODS" baseContextId="JAVA_CODE"
+                         implementation="com.intellij.codeInsight.template.JavaCodeContextType$JavaStructuredConcurrencyStaticFactoryMethods" />
     <liveTemplateContext contextId="JAVA_COMMENT" baseContextId="JAVA_CODE"
                          implementation="com.intellij.codeInsight.template.JavaCommentContextType"/>
     <liveTemplateContext contextId="JAVA_STRING" baseContextId="JAVA_CODE"
@@ -1395,6 +1394,8 @@
                              implementationClass="com.intellij.codeInsight.generation.surroundWith.JavaStatementsSurroundDescriptor"/>
     <lang.surroundDescriptor language="JAVA"
                              implementationClass="com.intellij.codeInsight.intention.impl.SurroundAutoCloseableAction$Template"/>
+    <lang.surroundDescriptor language="JAVA"
+                             implementationClass="com.intellij.codeInsight.generation.surroundWith.JavaCommentsSurroundDescriptor"/>
     <lang.psiElementExternalizer language="JAVA" implementationClass="com.intellij.lang.java.JavaPsiElementExternalizer"/>
     <lang.importOptimizer language="JAVA" implementationClass="com.intellij.lang.java.JavaImportOptimizer"/>
     <lang.documentationFixer language="JAVA" implementationClass="com.intellij.codeInsight.documentation.JavaDocCommentFixer"/>
@@ -1422,6 +1423,7 @@
     <externalProjectDataService implementation="com.intellij.externalSystem.JavaModuleDataService"/>
     <externalWorkspaceDataService implementation="com.intellij.externalSystem.JavaManifestDataService"/>
     <libraryDataServiceExtension implementation="com.intellij.externalSystem.JavaLibraryDataServiceExtension"/>
+    <dependencySubstitutionCoordinateContributor implementation="com.intellij.java.impl.dependencySubstitution.MavenCoordinateDependencySubstitutionExtension"/>
     <postStartupActivity implementation="com.intellij.pom.java.AcceptedLanguageLevelsSettingsStartupActivity"/>
     <projectModelModifier implementation="com.intellij.openapi.roots.impl.IdeaProjectModelModifier" order="last"/>
     <multiHostInjector implementation="com.intellij.psi.impl.source.tree.injected.JavaConcatenationToInjectorAdapter" order="first"/>
@@ -1457,7 +1459,8 @@
                             implementationClass="com.intellij.codeInsight.completion.RefactoringCompletionContributor"/>
     <completion.contributor language="JAVA" id="JShell" order="before javaLegacy"
                             implementationClass="com.intellij.codeInsight.completion.JShellCompletionContributor"/>
-
+    <completion.contributor language="JAVA" id="mainArgsString"
+                            implementationClass="com.intellij.codeInsight.completion.JavaMainStringArgsContributor"/>
     <completion.contributor language="JAVA" id="jvmLogger"
                             implementationClass="com.intellij.codeInsight.completion.JvmLoggerCompletionContributor"/>
     <completion.contributor language="JAVA" id="jigsaw"
@@ -1466,6 +1469,8 @@
     <codeInsight.completion.command.factory language="JAVA" implementationClass="com.intellij.codeInsight.completion.commands.JavaCommandCompletionFactory" />
     <codeInsight.completion.intention.skipper language="JAVA"
                                               implementationClass="com.intellij.codeInsight.completion.commands.JavaCommandCompletionFactory$JavaIntentionCommandSkipper"/>
+    <codeInsight.completion.intention.skipper language="JAVA"
+                                              implementationClass="com.intellij.codeInsight.intention.impl.JavaRefactoringIntentionCommandSkipper"/>
     <codeInsight.completion.intention.offset.provider language="JAVA"
                                                       implementationClass="com.intellij.codeInsight.completion.commands.JavaCommandCompletionFactory$JavaIntentionCommandOffsetProvider"/>
     <!--<codeInsight.completion.command.provider language="JAVA" implementationClass="com.intellij.codeInsight.completion.command.commands.SimpleRunMarkerCommandProvider" />-->
@@ -1473,15 +1478,15 @@
     <codeInsight.completion.command.provider language="JAVA" implementationClass="com.intellij.codeInsight.completion.commands.impl.JavaInlineVariableCompletionCommandProvider" />
     <codeInsight.completion.command.provider language="JAVA" implementationClass="com.intellij.codeInsight.completion.commands.impl.JavaGoToDeclarationCommandCompletionProvider" />
     <codeInsight.completion.command.provider language="JAVA"
-                                             implementationClass="com.intellij.codeInsight.completion.command.commands.RenameActionCommandProvider"/>
-    <codeInsight.completion.command.provider language="JAVA" implementationClass="com.intellij.codeInsight.completion.command.commands.OptimizeImportCompletionCommandProvider" />
+                                             implementationClass="com.intellij.codeInsight.completion.commands.impl.JavaRenameActionCommandProvider"/>
+    <codeInsight.completion.command.provider language="JAVA" implementationClass="com.intellij.codeInsight.completion.commands.impl.JavaOptimizeImportCompletionCommandProvider" />
     <codeInsight.completion.command.provider language="JAVA" implementationClass="com.intellij.codeInsight.completion.commands.impl.JavaFormatCodeCompletionCommandProvider" />
-    <codeInsight.completion.command.provider language="JAVA" implementationClass="com.intellij.codeInsight.completion.command.commands.LineCommentCompletionCommandProvider" />
+    <!--<codeInsight.completion.command.provider language="JAVA" implementationClass="com.intellij.codeInsight.completion.command.commands.LineCommentCompletionCommandProvider" />-->
     <codeInsight.completion.command.provider language="JAVA"
                                              implementationClass="com.intellij.codeInsight.completion.command.commands.PsiElementCommentByLineCompletionCommandProvider"/>
     <codeInsight.completion.command.provider language="JAVA"
                                              implementationClass="com.intellij.codeInsight.completion.command.commands.PsiElementCommentByBlockCompletionCommandProvider"/>
-    <codeInsight.completion.command.provider language="JAVA" implementationClass="com.intellij.codeInsight.completion.commands.impl.JavaIntroduceVariableCommandProvider" />
+    <!--<codeInsight.completion.command.provider language="JAVA" implementationClass="com.intellij.codeInsight.completion.commands.impl.JavaIntroduceVariableCommandProvider" />-->
     <codeInsight.completion.command.provider language="JAVA" implementationClass="com.intellij.codeInsight.completion.commands.impl.JavaShowUsagesActionCompletionCommandProvider" />
     <codeInsight.completion.command.provider language="JAVA" implementationClass="com.intellij.codeInsight.completion.commands.impl.GenerateGetterSetterHandleCompletionCommandProvider" />
     <codeInsight.completion.command.provider language="JAVA" implementationClass="com.intellij.codeInsight.completion.commands.impl.JavaDeleteCompletionCommandProvider" />
@@ -1493,9 +1498,18 @@
     <codeInsight.completion.command.provider language="JAVA" implementationClass="com.intellij.codeInsight.completion.commands.impl.JavaExtractConstantCompletionCommandProvider" order="last"/>
     <codeInsight.completion.command.provider language="JAVA" implementationClass="com.intellij.codeInsight.completion.commands.impl.JavaExtractFieldCompletionCommandProvider" order="last"/>
     <codeInsight.completion.command.provider language="JAVA" implementationClass="com.intellij.codeInsight.completion.commands.impl.JavaExtractParameterCompletionCommandProvider" order="last"/>
+    <codeInsight.completion.command.provider language="JAVA" implementationClass="com.intellij.codeInsight.completion.commands.impl.JavaExtractLocalVariableCompletionCommandProvider" order="last"/>
+    <codeInsight.completion.command.provider language="JAVA" implementationClass="com.intellij.codeInsight.completion.commands.impl.JavaExtractMethodCompletionCommandProvider" order="last"/>
     <codeInsight.completion.command.provider language="JAVA" implementationClass="com.intellij.codeInsight.completion.commands.impl.JavaInlineMethodCompletionCommandProvider" order="last"/>
     <codeInsight.completion.command.provider language="JAVA" implementationClass="com.intellij.codeInsight.completion.commands.impl.JavaMoveCompletionCommandProvider" order="last"/>
     <codeInsight.completion.command.provider language="JAVA" implementationClass="com.intellij.codeInsight.completion.commands.impl.JavaCopyCompletionCommandProvider" order="last"/>
+    <codeInsight.completion.command.provider language="JAVA" implementationClass="com.intellij.codeInsight.completion.commands.impl.JavaTypeHierarchyCompletionCommandProvider" order="last"/>
+    <codeInsight.completion.command.provider language="JAVA" implementationClass="com.intellij.codeInsight.completion.commands.impl.JavaTypeInfoCompletionCommandProvider" order="last"/>
+    <codeInsight.completion.command.provider language="JAVA" implementationClass="com.intellij.codeInsight.completion.commands.impl.JavaQuickDocumentationCompletionCommand" order="last"/>
+    <codeInsight.completion.command.provider language="JAVA" implementationClass="com.intellij.codeInsight.completion.commands.impl.JavaGenerateConstructorCompletionCommandProvider" order="last"/>
+    <codeInsight.completion.command.provider language="JAVA" implementationClass="com.intellij.codeInsight.completion.commands.impl.JavaSurroundWithCompletionCommandProvider" order="last"/>
+    <codeInsight.completion.command.provider language="JAVA" implementationClass="com.intellij.codeInsight.completion.commands.impl.JavaSafeDeleteCompletionCommandProvider" order="last"/>
+    <codeInsight.completion.command.provider language="JAVA" implementationClass="com.intellij.codeInsight.completion.command.commands.ViewStructureCompletionCommandProvider" order="last"/>
 
     <weigher implementationClass="com.intellij.codeInsight.completion.LoggerWeigher" key="completion" id="logger"/>
 
@@ -1528,7 +1542,7 @@
                                             implementationClass="com.intellij.codeInsight.daemon.impl.quickfix.JavaCreateFieldFromUsageHelper"/>
     <expressionConverter implementationClass="com.intellij.refactoring.introduceParameter.JavaExpressionConverter" language="JAVA"/>
     <codeFoldingOptionsProvider instance="com.intellij.application.options.editor.JavaCodeFoldingOptionsProvider"/>
-    <consoleConfigurableProvider instance="com.intellij.execution.filters.StackTraceFoldingConfigurable"/>
+    <consoleOptionsProvider instance="com.intellij.execution.filters.StackTraceFoldingConfigurable"/>
     <autoImportOptionsProvider instance="com.intellij.application.options.editor.JavaAutoImportOptions"/>
     <errorOptionsProvider instance="com.intellij.profile.codeInspection.ui.JavaErrorOptionsProvider"/>
     <overrideImplementsAnnotationsHandler implementation="com.intellij.codeInsight.generation.OverrideImplementsAnnotationsHandlerImpl"/>
@@ -1540,7 +1554,6 @@
     <regExpLanguageHost forClass="com.intellij.psi.impl.source.tree.java.PsiLiteralExpressionImpl"
                         implementationClass="com.intellij.psi.impl.JavaRegExpHost"/>
     <diff.DiffExtension implementation="com.intellij.refactoring.extractMethod.preview.ExtractMethodDiffViewerCustomizer"/>
-    <projectExtension id="compiler" implementation="com.intellij.openapi.roots.impl.CompilerProjectExtensionImpl$MyProjectExtension"/>
     <roots.watchedRootsProvider implementation="com.intellij.openapi.roots.impl.CompilerProjectExtensionImpl$MyWatchedRootsProvider"/>
     <orderRootType implementation="com.intellij.openapi.roots.AnnotationOrderRootType"/>
     <orderRootType implementation="com.intellij.openapi.roots.JavadocOrderRootType"/>
@@ -1687,17 +1700,29 @@
                      key="inspection.string.template.reverse.migration.name"/>
     <localInspection groupPathKey="group.path.names.java.language.level.specific.issues.and.migration.aids" language="JAVA"
                      groupBundle="messages.InspectionsBundle"
-                     groupKey="group.names.language.level.specific.issues.and.migration.aids21" enabledByDefault="true" level="INFORMATION"
+                     groupKey="group.names.language.level.specific.issues.and.migration.aids25" enabledByDefault="true" level="INFORMATION"
                      implementationClass="com.intellij.codeInspection.ImplicitToExplicitClassBackwardMigrationInspection"
                      bundle="messages.JavaBundle"
                      key="inspection.implicit.to.explicit.class.backward.migration.name"/>
     <localInspection groupPathKey="group.path.names.java.language.level.specific.issues.and.migration.aids" language="JAVA"
                      groupBundle="messages.InspectionsBundle"
-                     groupKey="group.names.language.level.specific.issues.and.migration.aids21" enabledByDefault="true" level="WARNING"
+                     groupKey="group.names.language.level.specific.issues.and.migration.aids25" enabledByDefault="true" level="WARNING"
                      implementationClass="com.intellij.codeInspection.ExplicitToImplicitClassMigrationInspection"
                      bundle="messages.JavaBundle"
                      editorAttributes="NOT_USED_ELEMENT_ATTRIBUTES"
                      key="inspection.explicit.to.implicit.class.migration.name"/>
+    <localInspection groupPathKey="group.path.names.java.language.level.specific.issues.and.migration.aids" language="JAVA"
+                     groupBundle="messages.InspectionsBundle"
+                     groupKey="group.names.language.level.specific.issues.and.migration.aids25" enabledByDefault="true" level="INFORMATION"
+                     implementationClass="com.intellij.codeInspection.MigrateToJavaLangIoInspection"
+                     bundle="messages.JavaBundle"
+                     key="inspection.migrate.to.java.lang.io.name"/>
+    <localInspection groupPathKey="group.path.names.java.language.level.specific.issues.and.migration.aids" language="JAVA"
+                     groupBundle="messages.InspectionsBundle"
+                     groupKey="group.names.language.level.specific.issues.and.migration.aids25" enabledByDefault="true" level="INFORMATION"
+                     implementationClass="com.intellij.codeInspection.MigrateFromJavaLangIoInspection"
+                     bundle="messages.JavaBundle"
+                     key="inspection.migrate.from.java.lang.io.name"/>
     <localInspection groupPathKey="group.path.names.java.language.level.specific.issues.and.migration.aids" language="JAVA"
                      shortName="TextBlockBackwardMigration"
                      groupBundle="messages.InspectionsBundle"
@@ -2013,7 +2038,7 @@
     <localInspection groupPathKey="group.path.names.probable.bugs" language="JAVA" shortName="NotNullFieldNotInitialized"
                      bundle="messages.JavaBundle" key="inspection.notnull.field.not.initialized.display.name"
                      groupKey="group.names.nullability.problems" groupBundle="messages.InspectionsBundle" enabledByDefault="true"
-                     level="WARNING"
+                     level="WARNING" alternativeId="NullAway.Init"
                      implementationClass="com.intellij.codeInspection.nullable.NotNullFieldNotInitializedInspection"/>
     <localInspection groupPath="Java" language="JAVA" shortName="ParameterCanBeLocal" key="inspection.parameter.can.be.local.display.name"
                      groupKey="group.names.class.structure" groupBundle="messages.InspectionsBundle" enabledByDefault="true"
@@ -2672,7 +2697,6 @@
     <notificationGroup id="Clean artifact" displayType="BALLOON" hideFromSettings="true"/>
     <notificationGroup id="Compiler" displayType="NONE" bundle="messages.JavaCompilerBundle" key="notification.group.compiler"/>
     <notificationGroup id="Build Profiler" displayType="STICKY_BALLOON" hideFromSettings="true"/>
-    <notificationGroup id="JSHELL_NOTIFICATIONS" displayType="BALLOON" bundle="messages.JavaBundle" key="notification.group.jshell"/>
     <notificationGroup id="Repository" displayType="BALLOON" bundle="messages.JavaBundle" key="notification.group.repository"/>
     <notificationGroup id="Source searcher" displayType="BALLOON" bundle="messages.JavaBundle" key="notification.group.source.searcher"/>
     <notificationGroup id="Accepted language levels" displayType="STICKY_BALLOON" bundle="messages.JavaBundle"
@@ -2749,7 +2773,7 @@
     <statistics.counterUsagesCollector
       implementationClass="com.intellij.codeInsight.generation.analysis.GenerateLoggerStatisticsCollector"/>
 
-    <trigramIndexFilterExcludeExtension implementation="com.intellij.java.impl.find.ngrams.JavaTrigramFilterExcludeExtension"/>
+    <trigramIndexFilterExcludeExtension implementation="com.intellij.java.JavaLibrarySourcesExcludingIndexFilterExtension"/>
 
     <registryKey key="java.completion.argument.live.template" defaultValue="false"
                  description="When completing a method call, start a live template with all arguments"/>
@@ -2762,6 +2786,19 @@
     <registryKey key="java.completion.methods.use.tags"
                  defaultValue="true"
                  description="Use additional tags for methods for completion"/>
+    <registryKey key="ide.java.completion.suggest.static.after.instance"
+                 defaultValue="false"
+                 description="Suggest static methods/fields after instance qualifier in Java completion"/>
+
+    <registryKey key="java.create.compact.source.file.separately"
+                 defaultValue="true"
+                 description="Show 'Create java compact file' separately from all other classes"/>
+
+    <virtualFileCustomDataProvider implementation="com.intellij.ide.JavaCodeStyleSettingsCustomDataSynchronizer"/>
+
+    <registryKey key="compiler.external.javac.keep.alive.timeout" defaultValue="300000"
+                 description="If not used for the specified period of time or longer, the IDE will shut down the cached javac compilation process"/>
+    <registryKey key="compiler.build.can.use.eel" defaultValue="true" description="Allow using Eel API to run build processes"/>
   </extensions>
 
   <extensions defaultExtensionNs="org.jetbrains">
@@ -2770,21 +2807,7 @@
   </extensions>
 
   <actions>
-    <group id="Java.MarkRootGroup" searchable="false">
-      <group id="MarkSourceRootGroup" class="com.intellij.ide.projectView.actions.MarkSourceRootActionGroup"/>
-      <action id="MarkExcludeRoot" class="com.intellij.ide.projectView.actions.MarkExcludeRootAction"/>
-      <action id="MarkAsContentRoot" class="com.intellij.ide.projectView.actions.MarkAsContentRootAction"/>
-      <action id="UnmarkRoot" class="com.intellij.ide.projectView.actions.UnmarkRootAction"/>
-      <add-to-group group-id="MarkRootGroup"/>
-    </group>
-
     <action id="WelcomeScreen.CreateNewProject" class="com.intellij.ide.actions.NewProjectAction"/>
-
-    <group id="MarkGeneratedSourceRootGroup">
-      <action id="MarkGeneratedSourceRoot" class="com.intellij.ide.projectView.actions.MarkGeneratedSourceRootAction"/>
-      <action id="UnmarkGeneratedSourceRoot" class="com.intellij.ide.projectView.actions.UnmarkGeneratedSourceRootAction"/>
-      <add-to-group group-id="MarkRootGroup" anchor="after" relative-to-action="MarkSourceRootGroup"/>
-    </group>
 
     <group id="Java.ProjectTemplate.Group" searchable="false">
       <separator/>
@@ -2795,6 +2818,18 @@
   </actions>
 
   <actions resource-bundle="messages/JavaUiBundle">
+    <group id="Java.MarkRootGroup" searchable="false">
+      <!-- Java-only actions that operate with JVM source root types -->
+      <group id="MarkSourceRootGroup" class="com.intellij.ide.projectView.actions.MarkSourceRootActionGroup"/>
+
+      <group id="MarkGeneratedSourceRootGroup">
+        <action id="MarkGeneratedSourceRoot" class="com.intellij.ide.projectView.actions.MarkGeneratedSourceRootAction"/>
+        <action id="UnmarkGeneratedSourceRoot" class="com.intellij.ide.projectView.actions.UnmarkGeneratedSourceRootAction"/>
+      </group>
+
+      <add-to-group group-id="MarkRootGroup" anchor="before" relative-to-action="MarkContentRootGroup"/>
+    </group>
+
     <group id="JarRepositoryLibraries" internal="true" popup="true" searchable="false">
       <action internal="true" id="EnableAllRepositoryLibrariesSha256Checksum"
               class="com.intellij.ide.actions.EnableAllRepositoryLibrariesSha256ChecksumAction"/>
@@ -2807,10 +2842,6 @@
       <action internal="true" id="ResolveAllRepositoryLibraries" class="com.intellij.ide.actions.ResolveAllRepositoryLibrariesAction"/>
       <add-to-group group-id="Internal" anchor="after" relative-to-action="Internal.Java"/>
     </group>
-
-    <action id="ParseSdkmanrcAction" class="com.intellij.openapi.projectRoots.impl.ParseSdkmanrcAction" icon="AllIcons.Actions.Refresh">
-      <add-to-group group-id="EditorContextBarMenu" anchor="last"/>
-    </action>
 
     <action id="DownloadJdkAction" class="com.intellij.ide.actions.DownloadJdkAction" icon="AllIcons.Actions.Download"/>
     <action id="AddJdkAction" class="com.intellij.ide.actions.AddJdkAction" icon="AllIcons.Nodes.PpJdk"/>
@@ -2829,8 +2860,8 @@
 
     <action id="ExternalSystem.AttachProject"
             class="com.intellij.openapi.externalSystem.action.AttachExternalProjectAction">
-      <add-to-group group-id="ExternalSystemView.ActionsToolbar.LeftPanel" anchor="after"
-                    relative-to-action="ExternalSystem.RefreshAllProjects"/>
+      <add-to-group group-id="ExternalSystemView.ActionsToolbar.AttachProjectPanel" anchor="before"
+                    relative-to-action="ExternalSystem.DetachProject"/>/>
     </action>
   </actions>
 
@@ -2847,8 +2878,6 @@
   </applicationListeners>
 
   <projectListeners>
-    <listener class="com.intellij.jarRepository.RepositoryLibraryChangeListener"
-              topic="com.intellij.platform.backend.workspace.WorkspaceModelChangeListener"/>
     <listener class="com.intellij.codeInsight.daemon.problems.pass.ProjectProblemFileInlaySelectionListenerSettingsListener"
               topic="com.intellij.codeInsight.hints.InlayHintsSettings$SettingsListener"/>
     <listener class="com.intellij.codeInsight.daemon.problems.pass.ProjectProblemFileRefactoringEventListener"

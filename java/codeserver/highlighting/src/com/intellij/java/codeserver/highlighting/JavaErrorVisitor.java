@@ -48,7 +48,7 @@ import static java.util.Objects.requireNonNull;
 final class JavaErrorVisitor extends JavaElementVisitor {
   private final @NotNull Consumer<JavaCompilationError<?, ?>> myErrorConsumer;
   private final @NotNull Project myProject;
-  private final @NotNull PsiFile myFile;
+  private final @NotNull PsiFile myPsiFile;
   private final @NotNull PsiElementFactory myFactory;
   private final @NotNull LanguageLevel myLanguageLevel;
   private final @NotNull AnnotationChecker myAnnotationChecker = new AnnotationChecker(this);
@@ -72,20 +72,20 @@ final class JavaErrorVisitor extends JavaElementVisitor {
   private final @NotNull JavaSdkVersion myJavaSdkVersion;
   private boolean myHasError; // true if myHolder.add() was called with HighlightInfo of >=ERROR severity. On each .visit(PsiElement) call this flag is reset. Useful to determine whether the error was already reported while visiting this PsiElement.
 
-  JavaErrorVisitor(@NotNull PsiFile file, @NotNull Consumer<JavaCompilationError<?, ?>> consumer) {
-    myFile = file;
-    myProject = file.getProject();
-    myLanguageLevel = PsiUtil.getLanguageLevel(file);
+  JavaErrorVisitor(@NotNull PsiFile psiFile, @NotNull Consumer<JavaCompilationError<?, ?>> consumer) {
+    myPsiFile = psiFile;
+    myProject = psiFile.getProject();
+    myLanguageLevel = PsiUtil.getLanguageLevel(psiFile);
     myErrorConsumer = consumer;
-    myJavaModule = isApplicable(JavaFeature.MODULES) ? JavaPsiModuleUtil.findDescriptorByElement(file) : null;
+    myJavaModule = isApplicable(JavaFeature.MODULES) ? JavaPsiModuleUtil.findDescriptorByElement(psiFile) : null;
     myJavaSdkVersion = ObjectUtils
-      .notNull(JavaVersionService.getInstance().getJavaSdkVersion(file), JavaSdkVersion.fromLanguageLevel(myLanguageLevel));
+      .notNull(JavaVersionService.getInstance().getJavaSdkVersion(psiFile), JavaSdkVersion.fromLanguageLevel(myLanguageLevel));
     myFactory = JavaPsiFacade.getElementFactory(myProject);
   }
 
   void report(@NotNull JavaCompilationError<?, ?> error) {
     myHasError = true;
-    if (ContainerUtil.exists(JavaErrorFilter.EP_NAME.getExtensionList(), ep -> ep.shouldSuppressError(myFile, error))) return;
+    if (ContainerUtil.exists(JavaErrorFilter.EP_NAME.getExtensionList(), ep -> ep.shouldSuppressError(myPsiFile, error))) return;
     myErrorConsumer.accept(error);
   }
   
@@ -95,7 +95,7 @@ final class JavaErrorVisitor extends JavaElementVisitor {
   }
 
   @NotNull PsiFile file() {
-    return myFile;
+    return myPsiFile;
   }
 
   @NotNull Project project() {
@@ -125,13 +125,13 @@ final class JavaErrorVisitor extends JavaElementVisitor {
   
   @Contract(pure = true)
   boolean isIncompleteModel() {
-    return IncompleteModelUtil.isIncompleteModel(myFile);
+    return IncompleteModelUtil.isIncompleteModel(myPsiFile);
   }
 
   @Override
   public void visitElement(@NotNull PsiElement element) {
     super.visitElement(element);
-    if (!(myFile instanceof ServerPageFile)) {
+    if (!(myPsiFile instanceof ServerPageFile)) {
       checkUnicodeBadCharacter(element);
     }
     myHasError = false;
@@ -758,7 +758,7 @@ final class JavaErrorVisitor extends JavaElementVisitor {
       if (importReference != null) {
         PsiElement referenceNameElement = importReference.getReferenceNameElement();
         if (referenceNameElement != null && targetClass != null) {
-          myGenericsChecker.checkClassSupersAccessibility(targetClass, referenceNameElement, myFile.getResolveScope());
+          myGenericsChecker.checkClassSupersAccessibility(targetClass, referenceNameElement, myPsiFile.getResolveScope());
         }
       }
     }
@@ -827,14 +827,11 @@ final class JavaErrorVisitor extends JavaElementVisitor {
     if (parent instanceof PsiMethodCallExpression methodCallExpression &&
         methodCallExpression.getMethodExpression() == expression &&
         (!result.isAccessible() || !result.isStaticsScopeCorrect())) {
-      PsiExpressionList list = methodCallExpression.getArgumentList();
-      if (!myExpressionChecker.isDummyConstructorCall(methodCallExpression, list, expression)) {
-        myExpressionChecker.checkAmbiguousMethodCallIdentifier(results, result, methodCallExpression);
-        if (!PsiTreeUtil.findChildrenOfType(methodCallExpression.getArgumentList(), PsiLambdaExpression.class).isEmpty()) {
-          PsiElement nameElement = expression.getReferenceNameElement();
-          if (nameElement != null) {
-            myExpressionChecker.checkAmbiguousMethodCallArguments(results, result, methodCallExpression);
-          }
+      myExpressionChecker.checkAmbiguousMethodCallIdentifier(results, result, methodCallExpression);
+      if (!PsiTreeUtil.findChildrenOfType(methodCallExpression.getArgumentList(), PsiLambdaExpression.class).isEmpty()) {
+        PsiElement nameElement = expression.getReferenceNameElement();
+        if (nameElement != null) {
+          myExpressionChecker.checkAmbiguousMethodCallArguments(results, result, methodCallExpression);
         }
       }
     }
@@ -842,7 +839,7 @@ final class JavaErrorVisitor extends JavaElementVisitor {
       if (parent instanceof PsiMethodCallExpression) {
         PsiClass psiClass = RefactoringChangeUtil.getQualifierClass(expression);
         if (psiClass != null) {
-          myGenericsChecker.checkClassSupersAccessibility(psiClass, expression, myFile.getResolveScope());
+          myGenericsChecker.checkClassSupersAccessibility(psiClass, expression, myPsiFile.getResolveScope());
         }
       }
       if (!hasErrorResults()) myGenericsChecker.checkMemberSignatureTypesAccessibility(expression);
@@ -974,7 +971,7 @@ final class JavaErrorVisitor extends JavaElementVisitor {
 
   @Override
   public void visitReferenceElement(@NotNull PsiJavaCodeReferenceElement ref) {
-    JavaResolveResult result = ref instanceof PsiExpression ? resolveOptimised(ref, myFile) : doVisitReferenceElement(ref);
+    JavaResolveResult result = ref instanceof PsiExpression ? resolveOptimised(ref, myPsiFile) : doVisitReferenceElement(ref);
     if (result != null) {
       PsiElement resolved = result.getElement();
       if (!hasErrorResults() && resolved instanceof PsiClass aClass) {
@@ -1001,7 +998,7 @@ final class JavaErrorVisitor extends JavaElementVisitor {
   }
 
   private JavaResolveResult doVisitReferenceElement(@NotNull PsiJavaCodeReferenceElement ref) {
-    JavaResolveResult result = resolveOptimised(ref, myFile);
+    JavaResolveResult result = resolveOptimised(ref, myPsiFile);
     if (result == null) return null;
 
     PsiElement resolved = result.getElement();
@@ -1133,7 +1130,7 @@ final class JavaErrorVisitor extends JavaElementVisitor {
     try {
       if (expression instanceof PsiReferenceExpressionImpl) {
         PsiReferenceExpressionImpl.OurGenericsResolver resolver = PsiReferenceExpressionImpl.OurGenericsResolver.INSTANCE;
-        return JavaResolveUtil.resolveWithContainingFile(expression, resolver, true, true, myFile);
+        return JavaResolveUtil.resolveWithContainingFile(expression, resolver, true, true, myPsiFile);
       }
       else {
         return expression.multiResolve(true);
@@ -1221,7 +1218,6 @@ final class JavaErrorVisitor extends JavaElementVisitor {
       JavaResolveResult result = results.length == 1 ? results[0] : JavaResolveResult.EMPTY;
 
       if ((!result.isAccessible() || !result.isStaticsScopeCorrect()) &&
-          !myExpressionChecker.isDummyConstructorCall(expression, list, referenceExpression) &&
           // this check is for fake expression from JspMethodCallImpl
           referenceExpression.getParent() == expression &&
           PsiTreeUtil.findChildrenOfType(expression.getArgumentList(), PsiLambdaExpression.class).isEmpty()) {

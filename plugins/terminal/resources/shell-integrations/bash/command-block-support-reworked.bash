@@ -46,8 +46,12 @@ __jetbrains_intellij_command_precmd() {
     __jetbrains_intellij_install_debug_trap
     __jetbrains_intellij_initialized="1"
     builtin printf '\e]1341;initialized\a'
+    __jetbrains_intellij_get_aliases
   elif [[ -n "$__jetbrains_intellij_command_running" ]]; then
-    builtin printf '\e]1341;command_finished;exit_code=%s\a' "$LAST_EXIT_CODE"
+    builtin local current_directory="$PWD"
+    builtin printf '\e]1341;command_finished;exit_code=%s;current_directory=%s\a' \
+      "$LAST_EXIT_CODE" \
+      "$(__jetbrains_intellij_encode "$current_directory")"
   fi
 
   if [ -n "$__jetbrains_intellij_should_update_prompt" ]; then
@@ -109,7 +113,7 @@ __jetbrains_intellij_debug_trap() {
 }
 
 __jetbrains_intellij_run_original_debug_trap() {
-  if [[ -n "$__jetbrains_intellij_original_debug_trap" ]]; then
+  if [[ -n "$__jetbrains_intellij_original_debug_trap" && "$__jetbrains_intellij_original_debug_trap" != "-" ]]; then
     builtin eval "${__jetbrains_intellij_original_debug_trap}"
   fi
 }
@@ -161,6 +165,16 @@ __jetbrains_intellij_append_to_prompt_command() {
     fi
 }
 
+__jetbrains_intellij_get_aliases() {
+  builtin local aliases_mapping="$(__jetbrains_intellij_escape_json "$(alias)")"
+  builtin printf '\e]1341;aliases_received;%s\a' "$aliases_mapping"
+}
+
+__jetbrains_intellij_escape_json() {
+  builtin command sed -e 's/\\/\\\\/g'\
+      -e 's/"/\\"/g'\
+      <<< "$1"
+}
 __jetbrains_intellij_original_ps1=""
 __jetbrains_intellij_custom_ps1=""
 

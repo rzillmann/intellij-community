@@ -1,15 +1,13 @@
 // Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.platform.recentFiles.backend
 
-import com.intellij.ide.ui.colors.rpcId
-import com.intellij.ide.ui.icons.rpcId
-import com.intellij.ide.vfs.rpcId
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.ex.IdeDocumentHistory
 import com.intellij.openapi.fileEditor.impl.EditorHistoryManager
 import com.intellij.openapi.fileEditor.impl.EditorTabPresentationUtil
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.Key
 import com.intellij.openapi.util.io.FileUtil
 import com.intellij.openapi.util.io.toNioPathOrNull
 import com.intellij.openapi.vcs.FileStatusManager
@@ -18,14 +16,16 @@ import com.intellij.openapi.vfs.newvfs.VfsPresentationUtil
 import com.intellij.openapi.wm.ex.ToolWindowManagerEx
 import com.intellij.platform.recentFiles.shared.RecentFileKind
 import com.intellij.platform.recentFiles.shared.SWITCHER_ELEMENTS_LIMIT
-import com.intellij.platform.recentFiles.shared.SwitcherRpcDto
 import com.intellij.problems.WolfTheProblemSolver
 import com.intellij.psi.search.FilenameIndex
 import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.util.IconUtil
+import com.intellij.util.PlatformUtils
+import com.intellij.util.Processor
 import com.intellij.util.SystemProperties
 import com.intellij.util.concurrency.annotations.RequiresReadLock
 import java.io.File
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.io.path.Path
 import kotlin.io.path.pathString
 import kotlin.math.max
@@ -116,13 +116,44 @@ private fun getRecentFiles(project: Project): List<VirtualFile> {
   return result
 }
 
-internal fun createRecentFileViewModel(virtualFile: VirtualFile, project: Project): SwitcherRpcDto.File {
+private val IDENTICAL_NAMES_CACHE_KEY = Key.create<Boolean>("IDENTICAL_NAMES_CACHE_KEY")
+
+private fun areThereFilesWithSameName(virtualFile: VirtualFile, project: Project): Boolean {
+  val alreadyComputedValue = virtualFile.getUserData(IDENTICAL_NAMES_CACHE_KEY)
+  if (alreadyComputedValue != null) return alreadyComputedValue
+
+  val searchScope =
+    if (PlatformUtils.isRider()) GlobalSearchScope.allScope(project) else GlobalSearchScope.projectScope(project)
+  val processor = StopOnTwoIdenticalNamesProcessor(virtualFile.name)
+  FilenameIndex.processFilesByName(virtualFile.name, true, searchScope, processor)
+  val moreThanOneOccurrence = processor.areThereMoreThanOneFile()
+  virtualFile.putUserData(IDENTICAL_NAMES_CACHE_KEY, moreThanOneOccurrence)
+  return moreThanOneOccurrence
+}
+
+private class StopOnTwoIdenticalNamesProcessor(private val searchedName: String) : Processor<VirtualFile> {
+  private var fileNameCounter = AtomicInteger(0)
+
+  fun areThereMoreThanOneFile(): Boolean {
+    return fileNameCounter.get() > 1
+  }
+
+  override fun process(file: VirtualFile): Boolean {
+    val name = file.name
+
+    if (searchedName != name) return true
+
+    val newCount = fileNameCounter.incrementAndGet()
+    return newCount <= 1
+  }
+}
+
+internal fun createRecentFileViewModel(virtualFile: VirtualFile, project: Project): BackendRecentFilePresentation {
   ProgressManager.checkCanceled()
   val parentPath = virtualFile.parent?.path?.toNioPathOrNull()
-  val sameNameFiles = FilenameIndex.getVirtualFilesByName(virtualFile.name, GlobalSearchScope.projectScope(project))
   val result = if (parentPath == null ||
                    parentPath.nameCount == 0 ||
-                   sameNameFiles.size <= 1
+                   !areThereFilesWithSameName(virtualFile, project)
   ) {
     ""
   }
@@ -144,14 +175,14 @@ internal fun createRecentFileViewModel(virtualFile: VirtualFile, project: Projec
   }
 
   ProgressManager.checkCanceled()
-  return SwitcherRpcDto.File(
+  return BackendRecentFilePresentation(
     mainText = EditorTabPresentationUtil.getCustomEditorTabTitle(project, virtualFile) ?: virtualFile.presentableName,
     statusText = FileUtil.getLocationRelativeToUserHome(virtualFile.parent?.presentableUrl ?: virtualFile.presentableUrl),
     pathText = result,
     hasProblems = WolfTheProblemSolver.getInstance(project).isProblemFile(virtualFile),
-    virtualFileId = virtualFile.rpcId(),
-    iconId = IconUtil.getIcon(virtualFile, 0, project).rpcId(),
-    backgroundColorId = VfsPresentationUtil.getFileBackgroundColor(project, virtualFile)?.rpcId(),
-    foregroundTextColorId = FileStatusManager.getInstance(project).getStatus(virtualFile).color?.rpcId()
+    virtualFile = virtualFile,
+    icon = IconUtil.getIcon(virtualFile, 0, project),
+    backgroundColor = VfsPresentationUtil.getFileBackgroundColor(project, virtualFile),
+    foregroundTextColor = FileStatusManager.getInstance(project).getStatus(virtualFile).color
   )
 }

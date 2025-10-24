@@ -1,33 +1,28 @@
 // Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.xdebugger.impl.breakpoints
 
+import com.intellij.openapi.application.readAction
+import com.intellij.openapi.application.runReadAction
 import com.intellij.openapi.editor.markup.GutterDraggableObject
 import com.intellij.openapi.editor.markup.RangeHighlighter
-import com.intellij.openapi.util.TextRange
 import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.util.concurrency.annotations.RequiresBackgroundThread
 import org.jetbrains.annotations.ApiStatus
 
 @ApiStatus.Internal
-interface XLineBreakpointProxy : XBreakpointProxy {
+interface XLineBreakpointProxy : XBreakpointProxy, XLightLineBreakpointProxy {
   override val type: XLineBreakpointTypeProxy
 
   fun isTemporary(): Boolean
   fun setTemporary(isTemporary: Boolean)
 
-  fun getFile(): VirtualFile?
-  fun getLine(): Int
   fun setFileUrl(url: String)
   fun getFileUrl(): String
   fun setLine(line: Int)
-  fun getHighlightRange(): TextRange?
 
   fun updatePosition()
+  fun fastUpdatePosition()
 
   fun getHighlighter(): RangeHighlighter?
-
-  @RequiresBackgroundThread
-  fun doUpdateUI(callOnUpdate: () -> Unit = {})
 
 
   @Suppress("DEPRECATION")
@@ -58,12 +53,22 @@ interface XLineBreakpointProxy : XBreakpointProxy {
       breakpoint.line = line
     }
 
-    override fun getHighlightRange(): TextRange? {
-      return breakpoint.highlightRange
+    override fun getHighlightRange(): XLineBreakpointHighlighterRange {
+      val range = runReadAction { breakpoint.highlightRange }
+      return XLineBreakpointHighlighterRange.Available(range)
+    }
+
+    override suspend fun getHighlightRangeSuspend(): XLineBreakpointHighlighterRange {
+      val range = readAction { breakpoint.highlightRange }
+      return XLineBreakpointHighlighterRange.Available(range)
     }
 
     override fun updatePosition() {
       breakpoint.updatePosition()
+    }
+
+    override fun fastUpdatePosition() {
+      // do nothing
     }
 
     override fun getHighlighter(): RangeHighlighter? {

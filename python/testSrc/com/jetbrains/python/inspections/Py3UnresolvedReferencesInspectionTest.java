@@ -390,4 +390,105 @@ public class Py3UnresolvedReferencesInspectionTest extends PyInspectionTestCase 
                  a: A<warning>[</warning>int]
                  """);
   }
+
+  // PY-76895
+  public void testUnresolvedReferenceReportedIfTypeVarHasBound() {
+    doTestByText("""
+                 from typing import TypeVar, Generic
+                 T = TypeVar("T", bound=str)
+                 class Test(Generic[T]):
+                    def foo(self, x: T):
+                        x.capitalize()
+                        x.<warning descr="Cannot find reference 'is_integer' in 'T'">is_integer</warning>()  # E
+                 """);
+    doTestByText("""
+                 class Test[T: str]:
+                     def foo(self, x: T):
+                         x.capitalize()
+                         x.<warning descr="Cannot find reference 'is_integer' in 'T'">is_integer</warning>()  # E
+                 """);
+  }
+
+  // PY-76895
+  public void testUnresolvedReferenceReportedIfTypeVarHasConstraints() {
+    doTestByText("""
+                 from typing import TypeVar, Generic
+                 T = TypeVar("T", int, str)
+                 class Test(Generic[T]):
+                    def foo(self, x: T):
+                        x.capitalize() # OK
+                        x.is_integer()  # OK
+                        x.<warning descr="Cannot find reference 'hex' in 'T'">hex</warning>()  # E
+                 """);
+    doTestByText("""
+                 class Test[T: (str, int)]:
+                     def foo(self, x: T):
+                         x.capitalize() # OK
+                         x.is_integer()  # OK
+                         x.<warning descr="Cannot find reference 'hex' in 'T'">hex</warning>()  # E
+                 """);
+
+  }
+
+  // PY-76895
+  public void testUnresolvedReferenceReportedIfTypeVarHasDefault() {
+    doTestByText("""
+                 from typing import TypeVar, Generic
+                 T = TypeVar("T", default=str)
+                 class Test(Generic[T]):
+                    def foo(self, x: T):
+                        x.capitalize()
+                        x.<warning descr="Cannot find reference 'is_integer' in 'T'">is_integer</warning>()  # E
+                 """);
+    doTestByText("""
+                 class Test[T = str]:
+                     def foo(self, x: T):
+                         x.capitalize() # OK
+                         x.<warning descr="Cannot find reference 'is_integer' in 'T'">is_integer</warning>()  # E
+                 """);
+  }
+
+  // PY-55691
+  public void testAttrsClassMembersProviderAttrsProperty() {
+    runWithAdditionalClassEntryInSdkRoots("packages", () ->
+      doTestByText(
+          """
+            import attrs
+            
+            @attrs.define
+            class User:
+                password: str
+            
+            User().__attrs_attrs__ # OK
+            """)
+    );
+  }
+
+  // PY-82699
+  public void testTypeParameterRebind() {
+    doTestByText("""
+                   def outer1[T]() -> None:
+                       print(<error descr="Unresolved reference 'T'">T</error>)
+                       T = 1
+                   
+                   def outer2[T]() -> None:
+                       print(T)
+                   """);
+  }
+
+
+  // PY-24834
+  public void testStrictUnionMemberAttributeAccess() {
+    doTest();
+  }
+
+  // PY-24834
+  public void testStrictUnionMemberOperatorAccess() {
+    doTest();
+  }
+
+  // PY-24834
+  public void testStrictUnionMemberExtendingAny() {
+    doTest();
+  }
 }

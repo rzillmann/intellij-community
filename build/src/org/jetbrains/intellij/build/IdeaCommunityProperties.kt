@@ -13,10 +13,11 @@ import org.jetbrains.intellij.build.kotlin.KotlinBinaries
 import java.nio.file.Path
 
 internal suspend fun createCommunityBuildContext(
-  options: BuildOptions = BuildOptions(),
+  options: BuildOptions,
   projectHome: Path = COMMUNITY_ROOT.communityRoot,
 ): BuildContext = BuildContextImpl.createContext(
-  projectHome, IdeaCommunityProperties(COMMUNITY_ROOT.communityRoot), setupTracer = true, options = options)
+  projectHome, IdeaCommunityProperties(COMMUNITY_ROOT.communityRoot), setupTracer = true, options = options
+)
 
 open class IdeaCommunityProperties(private val communityHomeDir: Path) : BaseIdeaProperties() {
   companion object {
@@ -35,7 +36,8 @@ open class IdeaCommunityProperties(private val communityHomeDir: Path) : BaseIde
     )
   }
 
-  override val baseFileName: String = "idea"
+  override val baseFileName: String
+    get() = "idea"
 
   init {
     platformPrefix = "Idea"
@@ -43,19 +45,18 @@ open class IdeaCommunityProperties(private val communityHomeDir: Path) : BaseIde
     scrambleMainJar = false
     useSplash = true
     buildCrossPlatformDistribution = true
+    buildSourcesArchive = true
 
     productLayout.productImplementationModules = listOf(
       "intellij.platform.starter",
       "intellij.idea.community.customization",
     )
     productLayout.bundledPluginModules = IDEA_BUNDLED_PLUGINS + sequenceOf(
-      "intellij.javaFX.community",
-      "intellij.vcs.github.community",
-      "intellij.vcs.gitlab.community"
+      "intellij.javaFX.community"
     )
 
     productLayout.prepareCustomPluginRepositoryForPublishedPlugins = false
-    productLayout.buildAllCompatiblePlugins = false
+    productLayout.buildAllCompatiblePlugins = true
     productLayout.pluginLayouts = CommunityRepositoryModules.COMMUNITY_REPOSITORY_PLUGINS.addAll(listOf(
       JavaPluginLayout.javaPlugin(),
       CommunityRepositoryModules.androidPlugin(allPlatforms = true),
@@ -66,7 +67,7 @@ open class IdeaCommunityProperties(private val communityHomeDir: Path) : BaseIde
       layout.withModule("intellij.platform.duplicates.analysis")
       layout.withModule("intellij.platform.structuralSearch")
     }
-    
+
     productLayout.skipUnresolvedContentModules = true
 
     mavenArtifacts.forIdeModules = true
@@ -76,19 +77,28 @@ open class IdeaCommunityProperties(private val communityHomeDir: Path) : BaseIde
       "intellij.platform.util.base.multiplatform",
       "intellij.platform.util.zip",
     ))
+    mavenArtifacts.validateForMavenCentralPublication = { module ->
+      JewelMavenArtifacts.isPublishedJewelModule(module)
+    }
     mavenArtifacts.patchCoordinates = { module, coordinates ->
       when {
-        JewelMavenArtifacts.isJewel(module) -> JewelMavenArtifacts.patchCoordinates(module, coordinates)
+        JewelMavenArtifacts.isPublishedJewelModule(module) -> JewelMavenArtifacts.patchCoordinates(module, coordinates)
         else -> coordinates
+      }
+    }
+    mavenArtifacts.patchDependencies = { module, dependencies ->
+      when {
+        JewelMavenArtifacts.isPublishedJewelModule(module) -> JewelMavenArtifacts.patchDependencies(module, dependencies)
+        else -> dependencies
       }
     }
     mavenArtifacts.addPomMetadata = { module, model ->
       when {
-        JewelMavenArtifacts.isJewel(module) -> JewelMavenArtifacts.addPomMetadata(module, model)
+        JewelMavenArtifacts.isPublishedJewelModule(module) -> JewelMavenArtifacts.addPomMetadata(module, model)
       }
     }
     mavenArtifacts.isJavadocJarRequired = {
-      JewelMavenArtifacts.isJewel(it)
+      JewelMavenArtifacts.isPublishedJewelModule(it) && it.name != "intellij.platform.jewel.intUi.decoratedWindow"
     }
     mavenArtifacts.validate = { context, artifacts ->
       JewelMavenArtifacts.validate(context, artifacts)
@@ -101,7 +111,6 @@ open class IdeaCommunityProperties(private val communityHomeDir: Path) : BaseIde
     @Suppress("SpellCheckingInspection")
     qodanaProductProperties = QodanaProductProperties("QDJVMC", "Qodana Community for JVM")
     additionalVmOptions = persistentListOf("-Dllm.show.ai.promotion.window.on.start=false")
-    enableKotlinPluginK2ByDefault()
   }
 
   override suspend fun copyAdditionalFiles(context: BuildContext, targetDir: Path) {
@@ -118,7 +127,7 @@ open class IdeaCommunityProperties(private val communityHomeDir: Path) : BaseIde
     bundleExternalPlugins(context, targetDir)
   }
 
-  protected open suspend fun bundleExternalPlugins(context: BuildContext, targetDirectory: Path) { }
+  protected open suspend fun bundleExternalPlugins(context: BuildContext, targetDirectory: Path) {}
 
   override fun createWindowsCustomizer(projectHome: String): WindowsDistributionCustomizer = CommunityWindowsDistributionCustomizer()
   override fun createLinuxCustomizer(projectHome: String): LinuxDistributionCustomizer = CommunityLinuxDistributionCustomizer()
@@ -152,8 +161,13 @@ open class IdeaCommunityProperties(private val communityHomeDir: Path) : BaseIde
 
     override fun getRootDirectoryName(appInfo: ApplicationInfoProperties, buildNumber: String): String = "idea-IC-$buildNumber"
 
-    override fun generateExecutableFilesPatterns(context: BuildContext, includeRuntime: Boolean, arch: JvmArchitecture): Sequence<String> =
-      super.generateExecutableFilesPatterns(context, includeRuntime, arch)
+    override fun generateExecutableFilesPatterns(
+      context: BuildContext,
+      includeRuntime: Boolean,
+      arch: JvmArchitecture,
+      targetLibcImpl: LibcImpl,
+    ): Sequence<String> =
+      super.generateExecutableFilesPatterns(context, includeRuntime, arch, targetLibcImpl)
         .plus(KotlinBinaries.kotlinCompilerExecutables)
         .filterNot { it == "plugins/**/*.sh" }
   }

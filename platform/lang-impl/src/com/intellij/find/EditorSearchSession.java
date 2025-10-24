@@ -11,11 +11,12 @@ import com.intellij.icons.AllIcons;
 import com.intellij.ide.lightEdit.LightEditCompatible;
 import com.intellij.openapi.Disposable;
 import com.intellij.openapi.actionSystem.*;
+import com.intellij.openapi.actionSystem.ex.ActionUtil;
 import com.intellij.openapi.actionSystem.ex.CustomComponentAction;
 import com.intellij.openapi.actionSystem.ex.DefaultCustomComponentAction;
-import com.intellij.openapi.actionSystem.impl.ActionButton;
 import com.intellij.openapi.application.ApplicationBundle;
 import com.intellij.openapi.application.ApplicationManager;
+import com.intellij.openapi.application.impl.InternalUICustomization;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.editor.*;
 import com.intellij.openapi.editor.event.EditorFactoryEvent;
@@ -40,6 +41,7 @@ import com.intellij.util.SmartList;
 import com.intellij.util.ui.ComponentWithEmptyText;
 import com.intellij.util.ui.update.Activatable;
 import com.intellij.util.ui.update.UiNotifyConnector;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -137,7 +139,7 @@ public class EditorSearchSession implements SearchSession,
       boolean myIsReplace = myFindModel.isReplaceState();
 
       @Override
-      public void findModelChanged(FindModel findModel1) {
+      public void findModelChanged(@NotNull FindModel findModel1) {
         if (myReentrantLock) return;
         try {
           myReentrantLock = true;
@@ -160,6 +162,7 @@ public class EditorSearchSession implements SearchSession,
           mySearchResults.clear();
           EditorSearchSession.this.updateResults(FindSettings.getInstance().isScrollToResultsDuringTyping());
           FindUtil.updateFindInFileModel(EditorSearchSession.this.getProject(), myFindModel, !ConsoleViewUtil.isConsoleViewEditor(editor));
+          FindUtil.updateFindNextModel(getProject(), getFindModel());
         }
         finally {
           myReentrantLock = false;
@@ -244,7 +247,7 @@ public class EditorSearchSession implements SearchSession,
     group.setPopup(true);
     group.getTemplatePresentation().setText(ApplicationBundle.message("editorsearch.more.popup"));
     group.getTemplatePresentation().setIcon(AllIcons.Actions.More);
-    group.getTemplatePresentation().putClientProperty(ActionButton.HIDE_DROPDOWN_ICON, Boolean.TRUE);
+    group.getTemplatePresentation().putClientProperty(ActionUtil.HIDE_DROPDOWN_ICON, Boolean.TRUE);
     return group;
   }
 
@@ -267,26 +270,63 @@ public class EditorSearchSession implements SearchSession,
     return myEditor;
   }
 
+  @ApiStatus.Internal
+  public static @Nullable SearchReplaceComponent getSearchReplaceComponent(@Nullable Editor editor) {
+    JComponent headerComponent = editor != null ? editor.getHeaderComponent() : null;
+    if (headerComponent instanceof SearchReplaceComponent c) {
+      return c;
+    }
+    if (headerComponent != null) {
+      Object searchComponent = headerComponent.getClientProperty("SearchComponent");
+      if (searchComponent instanceof SearchReplaceComponent o) {
+        return o;
+      }
+    }
+    return null;
+  }
+
   public static @Nullable EditorSearchSession get(@Nullable Editor editor) {
     JComponent headerComponent = editor != null ? editor.getHeaderComponent() : null;
     SearchSession session = headerComponent instanceof SearchReplaceComponent o ? o.getSearchSession() : null;
-    return session instanceof EditorSearchSession o ? o : null;
+    if (session instanceof EditorSearchSession o) {
+      return o;
+    }
+    if (headerComponent != null) {
+      Object searchSession = headerComponent.getClientProperty("SearchSession");
+      if (searchSession instanceof EditorSearchSession o) {
+        return o;
+      }
+    }
+    return null;
   }
 
   public static @NotNull EditorSearchSession start(@NotNull Editor editor, @NotNull Project project) {
     EditorSearchSession session = new EditorSearchSession(editor, project);
-    editor.setHeaderComponent(session.getComponent());
+    editor.setHeaderComponent(session.getHeaderComponent());
     return session;
   }
 
   public static @NotNull EditorSearchSession start(@NotNull Editor editor, @NotNull FindModel findModel, @NotNull Project project) {
     EditorSearchSession session = new EditorSearchSession(editor, project, findModel);
-    editor.setHeaderComponent(session.getComponent());
+    editor.setHeaderComponent(session.getHeaderComponent());
     return session;
   }
 
   @Override
   public @NotNull SearchReplaceComponent getComponent() {
+    return myComponent;
+  }
+
+  private @NotNull JComponent getHeaderComponent() {
+    InternalUICustomization customization = InternalUICustomization.getInstance();
+    if (customization != null) {
+      JComponent header = customization.configureSearchReplaceComponent(myComponent);
+      if (header != myComponent) {
+        header.putClientProperty("SearchComponent", myComponent);
+        header.putClientProperty("SearchSession", this);
+      }
+      return header;
+    }
     return myComponent;
   }
 
@@ -554,7 +594,7 @@ public class EditorSearchSession implements SearchSession,
     myLivePreviewController.dispose();
   }
 
-  private void updateResults(final boolean allowedToChangedEditorSelection) {
+  private void updateResults(boolean allowedToChangedEditorSelection) {
     final String text = myFindModel.getStringToFind();
     if (text.isEmpty()) {
       nothingToSearchFor(allowedToChangedEditorSelection);
@@ -577,16 +617,6 @@ public class EditorSearchSession implements SearchSession,
           myComponent.setStatusText(ApplicationBundle.message("editorsearch.empty.string.matches"));
           return;
         }
-      }
-
-
-      final FindManager findManager = FindManager.getInstance(getProject());
-      if (allowedToChangedEditorSelection) {
-        findManager.setFindWasPerformed();
-        FindModel copy = new FindModel();
-        copy.copyFrom(myFindModel);
-        copy.setReplaceState(false);
-        findManager.setFindNextModel(copy);
       }
       if (myLivePreviewController != null) {
         myLivePreviewController.updateInBackground(myFindModel, allowedToChangedEditorSelection);

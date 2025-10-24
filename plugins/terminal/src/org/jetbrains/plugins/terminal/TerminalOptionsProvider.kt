@@ -1,9 +1,9 @@
 // Copyright 2000-2020 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license that can be found in the LICENSE file.
 package org.jetbrains.plugins.terminal
 
-import com.intellij.configurationStore.saveSettingsForRemoteDevelopment
 import com.intellij.ide.util.RunOnceUtil
 import com.intellij.idea.AppMode
+import com.intellij.idea.AppModeAssertions
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.components.*
 import com.intellij.openapi.diagnostic.logger
@@ -11,11 +11,12 @@ import com.intellij.openapi.util.registry.Registry
 import com.intellij.terminal.TerminalUiSettingsManager
 import com.intellij.terminal.TerminalUiSettingsManager.CursorShape
 import com.intellij.util.PlatformUtils
-import com.intellij.util.application
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.launch
 import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.annotations.Nls
+import org.jetbrains.plugins.terminal.block.completion.TerminalCommandCompletionShowingMode
+import org.jetbrains.plugins.terminal.block.ui.TerminalContrastRatio
+import org.jetbrains.plugins.terminal.block.ui.updateFrontendSettingsAndSync
 import org.jetbrains.plugins.terminal.settings.TerminalLocalOptions
 import java.util.concurrent.CopyOnWriteArrayList
 
@@ -46,12 +47,23 @@ class TerminalOptionsProvider(private val coroutineScope: CoroutineScope) : Pers
 
   class State {
     @ApiStatus.Internal
-    var terminalEngine: TerminalEngine = TerminalEngine.CLASSIC
+    var terminalEngine: TerminalEngine = TerminalEngine.REWORKED
 
     @ApiStatus.Internal
     var terminalEngineInRemDev: TerminalEngine = TerminalEngine.REWORKED
 
-    var myTabName: @Nls String = TerminalBundle.message("local.terminal.default.name")
+    @ApiStatus.Internal
+    var showCompletionPopupAutomatically: Boolean = true
+    @ApiStatus.Internal
+    var commandCompletionShowingMode: TerminalCommandCompletionShowingMode = TerminalCommandCompletionShowingMode.ONLY_PARAMETERS
+
+    @ApiStatus.Internal
+    var enforceMinContrastRatio: Boolean = true
+
+    @ApiStatus.Internal
+    var minContrastRatio: Float = TerminalContrastRatio.DEFAULT_VALUE.value
+
+    var myTabName: @Nls String = defaultTabName()
     var myCloseSessionOnLogout: Boolean = true
     var myReportMouse: Boolean = true
     var mySoundBell: Boolean = true
@@ -90,8 +102,6 @@ class TerminalOptionsProvider(private val coroutineScope: CoroutineScope) : Pers
    * But the setter applies the provided value to both monolith and RemDev modes.
    * So, when a user changes the default in any mode, it will be applied everywhere.
    */
-  @get:ApiStatus.Internal
-  @set:ApiStatus.Internal
   var terminalEngine: TerminalEngine
     get() {
       return if (AppMode.isRemoteDevHost() || PlatformUtils.isJetBrainsClient()) {
@@ -103,6 +113,50 @@ class TerminalOptionsProvider(private val coroutineScope: CoroutineScope) : Pers
       if (state.terminalEngine != value || state.terminalEngineInRemDev != value) {
         state.terminalEngine = value
         state.terminalEngineInRemDev = value
+        fireSettingsChanged()
+      }
+    }
+
+  @get:ApiStatus.Experimental
+  @set:ApiStatus.Experimental
+  var showCompletionPopupAutomatically: Boolean
+    get() = state.showCompletionPopupAutomatically
+    set(value) {
+      if (state.showCompletionPopupAutomatically != value) {
+        state.showCompletionPopupAutomatically = value
+        fireSettingsChanged()
+      }
+    }
+
+  @get:ApiStatus.Experimental
+  @set:ApiStatus.Experimental
+  var commandCompletionShowingMode: TerminalCommandCompletionShowingMode
+    get() = state.commandCompletionShowingMode
+    set(value) {
+      if (state.commandCompletionShowingMode != value) {
+        state.commandCompletionShowingMode = value
+        fireSettingsChanged()
+      }
+    }
+
+  @get:ApiStatus.Experimental
+  @set:ApiStatus.Experimental
+  var enforceMinContrastRatio: Boolean
+    get() = state.enforceMinContrastRatio
+    set(value) {
+      if (state.enforceMinContrastRatio != value) {
+        state.enforceMinContrastRatio = value
+        fireSettingsChanged()
+      }
+    }
+
+  @get:ApiStatus.Experimental
+  @set:ApiStatus.Experimental
+  var minContrastRatio: TerminalContrastRatio
+    get() = TerminalContrastRatio.ofFloat(state.minContrastRatio)
+    set(value) {
+      if (TerminalContrastRatio.ofFloat(state.minContrastRatio) != value) {
+        state.minContrastRatio = value.value
         fireSettingsChanged()
       }
     }
@@ -234,20 +288,11 @@ class TerminalOptionsProvider(private val coroutineScope: CoroutineScope) : Pers
 
   private fun performSettingsInitializationOnce() {
     RunOnceUtil.runOnceForApp("TerminalOptionsProvider.migration.2025.1.1") {
-      // If the settings update is happened in IDE backend, let's skip it.
-      // Because we should receive the values from the frontend and use it.
-      // Otherwise, there can be a race when updating is performed both on backend and frontend simultaneously.
-      if (AppMode.isRemoteDevHost()) return@runOnceForApp
-
-      try {
+      updateFrontendSettingsAndSync(coroutineScope) {
         migrateCursorShape()
-        initializeTerminalEngine()
-      }
-      finally {
-        // Trigger sending the updated values to the backend
-        coroutineScope.launch {
-          saveSettingsForRemoteDevelopment(application)
-        }
+        // Disable the terminal engine migration.
+        // Now it is Reworked by default, not depending on the previously set settings.
+        //initializeTerminalEngine()
       }
     }
   }
@@ -259,6 +304,8 @@ class TerminalOptionsProvider(private val coroutineScope: CoroutineScope) : Pers
     LOG.info("Initialized TerminalOptionsProvider.cursorShape value to ${state.cursorShape}")
   }
 
+  // Left to prevent possible merge conflicts if we need to change something there and backport to the stable release.
+  @Suppress("unused")
   private fun initializeTerminalEngine() {
     if (TerminalNewUserTracker.isNewUser()) {
       state.terminalEngine = TerminalEngine.REWORKED
@@ -296,6 +343,13 @@ class TerminalOptionsProvider(private val coroutineScope: CoroutineScope) : Pers
     private val LOG = logger<TerminalOptionsProvider>()
 
     internal const val COMPONENT_NAME: String = "TerminalOptionsProvider"
+
+    private fun defaultTabName(): @Nls String {
+      return if (AppModeAssertions.isMonolith()) {
+        TerminalBundle.message("local.terminal.default.name")
+      }
+      else TerminalBundle.message("remote.terminal.default.name")
+    }
   }
 
   class PresentableNameGetter: com.intellij.openapi.components.State.NameGetter() {

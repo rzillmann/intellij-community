@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.diff.merge;
 
 import com.intellij.diff.DiffContext;
@@ -14,6 +14,7 @@ import com.intellij.diff.contents.DocumentContent;
 import com.intellij.diff.fragments.MergeLineFragment;
 import com.intellij.diff.requests.ContentDiffRequest;
 import com.intellij.diff.requests.SimpleDiffRequest;
+import com.intellij.diff.statistics.MergeAction;
 import com.intellij.diff.statistics.MergeResultSource;
 import com.intellij.diff.statistics.MergeStatisticsCollector;
 import com.intellij.diff.tools.holders.EditorHolderFactory;
@@ -34,6 +35,7 @@ import com.intellij.diff.tools.util.text.TextDiffProviderBase;
 import com.intellij.diff.util.*;
 import com.intellij.icons.AllIcons;
 import com.intellij.idea.ActionsBundle;
+import com.intellij.lang.Language;
 import com.intellij.openapi.actionSystem.*;
 import com.intellij.openapi.actionSystem.ex.ActionUtil;
 import com.intellij.openapi.application.ApplicationManager;
@@ -50,7 +52,6 @@ import com.intellij.openapi.editor.ex.EditorGutterFreePainterAreaState;
 import com.intellij.openapi.progress.ProcessCanceledException;
 import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.openapi.progress.util.BackgroundTaskUtil;
-import com.intellij.openapi.progress.util.ProgressIndicatorWithDelayedPresentation;
 import com.intellij.openapi.project.DumbAware;
 import com.intellij.openapi.project.DumbAwareAction;
 import com.intellij.openapi.project.DumbService;
@@ -61,6 +62,7 @@ import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.util.Key;
 import com.intellij.openapi.util.NlsSafe;
 import com.intellij.openapi.util.Pair;
+import com.intellij.openapi.util.registry.Registry;
 import com.intellij.openapi.util.text.LineTokenizer;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vcs.ex.*;
@@ -68,6 +70,7 @@ import com.intellij.openapi.vcs.ex.Range;
 import com.intellij.psi.*;
 import com.intellij.ui.JBColor;
 import com.intellij.ui.awt.RelativePoint;
+import com.intellij.ui.progress.ProgressUIUtil;
 import com.intellij.ui.scale.JBUIScale;
 import com.intellij.util.Alarm;
 import com.intellij.util.concurrency.annotations.RequiresBackgroundThread;
@@ -128,6 +131,8 @@ public class MergeThreesideViewer extends ThreesideTextDiffViewerEx {
   protected final @NotNull TextMergeRequest myMergeRequest;
   protected final @NotNull TextMergeViewer myTextMergeViewer;
 
+  private final @NotNull LangSpecificMergeConflictResolverWrapper myConflictResolver;
+
   public MergeThreesideViewer(@NotNull DiffContext context,
                               @NotNull ContentDiffRequest request,
                               @NotNull MergeContext mergeContext,
@@ -172,6 +177,8 @@ public class MergeThreesideViewer extends ThreesideTextDiffViewerEx {
     DiffUtil.registerAction(new NavigateToChangeMarkerAction(true), myPanel);
 
     ProxyUndoRedoAction.register(getProject(), getEditor(), myContentPanel);
+
+    myConflictResolver = new LangSpecificMergeConflictResolverWrapper(context.getProject(), myMergeRequest.getContents());
   }
 
   @Override
@@ -272,31 +279,48 @@ public class MergeThreesideViewer extends ThreesideTextDiffViewerEx {
     return new AbstractAction(caption) {
       @Override
       public void actionPerformed(ActionEvent e) {
-        if ((result == MergeResult.LEFT || result == MergeResult.RIGHT) &&
-            !MergeUtil.showConfirmDiscardChangesDialog(myPanel.getRootPane(),
-                                                       result == MergeResult.LEFT
-                                                       ? DiffBundle.message("button.merge.resolve.accept.left")
-                                                       : DiffBundle.message("button.merge.resolve.accept.right"),
-                                                       myContentModified)) {
+        boolean confirmationShown = false;
+        boolean discardChanges = true;
+
+        switch (result) {
+          case LEFT, RIGHT -> {
+            confirmationShown = myContentModified;
+            discardChanges = MergeUtil.showConfirmDiscardChangesDialog(myPanel.getRootPane(),
+                                                                         result == MergeResult.LEFT
+                                                                         ? DiffBundle.message("button.merge.resolve.accept.left")
+                                                                         : DiffBundle.message("button.merge.resolve.accept.right"),
+                                                                         myContentModified);
+          }
+
+          case RESOLVED -> {
+            if (getChangesCount() > 0 || getConflictsCount() > 0) {
+              confirmationShown = true;
+
+              discardChanges = MessageDialogBuilder.yesNo(DiffBundle.message("apply.partially.resolved.merge.dialog.title"), DiffBundle
+                  .message("merge.dialog.apply.partially.resolved.changes.confirmation.message", getChangesCount(), getConflictsCount()))
+                .yesText(DiffBundle.message("apply.changes.and.mark.resolved"))
+                .noText(DiffBundle.message("continue.merge"))
+                .ask(myPanel.getRootPane());
+            }
+          }
+
+          case CANCEL -> {
+            confirmationShown = myContentModified;
+            discardChanges = MergeUtil.showExitWithoutApplyingChangesDialog(myTextMergeViewer, myMergeRequest, myMergeContext, myContentModified);
+          }
+        }
+
+        logDialogButton(result, confirmationShown, discardChanges, false);
+
+        if (!discardChanges) {
           return;
         }
-        if (result == MergeResult.RESOLVED &&
-            (getChangesCount() > 0 || getConflictsCount() > 0) &&
-            !MessageDialogBuilder.yesNo(DiffBundle.message("apply.partially.resolved.merge.dialog.title"), DiffBundle
-                .message("merge.dialog.apply.partially.resolved.changes.confirmation.message", getChangesCount(), getConflictsCount()))
-              .yesText(DiffBundle.message("apply.changes.and.mark.resolved"))
-              .noText(DiffBundle.message("continue.merge"))
-              .ask(myPanel.getRootPane())) {
-          return;
-        }
-        if (result == MergeResult.CANCEL &&
-            !MergeUtil.showExitWithoutApplyingChangesDialog(myTextMergeViewer, myMergeRequest, myMergeContext, myContentModified)) {
-          return;
-        }
+
         doFinishMerge(result, MergeResultSource.DIALOG_BUTTON);
       }
     };
   }
+
 
   protected void doFinishMerge(final @NotNull MergeResult result, @NotNull MergeResultSource source) {
     logMergeResult(result, source);
@@ -388,7 +412,7 @@ public class MergeThreesideViewer extends ThreesideTextDiffViewerEx {
                                              LOG.error(e);
                                              return () -> myMergeContext.finishMerge(MergeResult.CANCEL);
                                            }
-                                         }), null, ProgressIndicatorWithDelayedPresentation.DEFAULT_PROGRESS_DIALOG_POSTPONE_TIME_MILLIS,
+                                         }), null, ProgressUIUtil.DEFAULT_PROGRESS_DELAY_MILLIS,
                                          ApplicationManager.getApplication().isUnitTestMode());
   }
 
@@ -402,8 +426,11 @@ public class MergeThreesideViewer extends ThreesideTextDiffViewerEx {
       List<DocumentContent> contents = myMergeRequest.getContents();
       MergeRange importRange = ReadAction.compute(() -> {
         sequences.addAll(ContainerUtil.map(contents, content -> content.getDocument().getImmutableCharSequence()));
-        if (getTextSettings().isAutoResolveImportConflicts()) {
+        boolean isAutoResolveImportConflicts = getTextSettings().isAutoResolveImportConflicts();
+        if (myConflictResolver.isAvailable() || isAutoResolveImportConflicts) {
           initPsiFiles();
+        }
+        if (isAutoResolveImportConflicts) {
           boolean canImportsBeProcessedAutomatically = canImportsBeProcessedAutomatically();
           myResolveImportsPossible = canImportsBeProcessedAutomatically;
           if (canImportsBeProcessedAutomatically) {
@@ -415,9 +442,14 @@ public class MergeThreesideViewer extends ThreesideTextDiffViewerEx {
 
       MergeLineFragmentsWithImportMetadata lineFragments = getLineFragments(indicator, sequences, importRange, ignorePolicy);
       List<LineOffsets> lineOffsets = ContainerUtil.map(sequences, LineOffsetsUtil::create);
+
       List<MergeConflictType> conflictTypes = ContainerUtil.map(lineFragments.getFragments(), fragment -> {
         return MergeRangeUtil.getLineMergeType(fragment, sequences, lineOffsets, ignorePolicy.getComparisonPolicy());
       });
+
+      myConflictResolver.init(lineOffsets, lineFragments.getFragments(), myPsiFiles);
+      patchConflictTypes(conflictTypes);
+
 
       FoldingModelSupport.Data foldingState =
         myFoldingModel.createState(lineFragments.getFragments(), lineOffsets, getFoldingModelSettings());
@@ -436,6 +468,15 @@ public class MergeThreesideViewer extends ThreesideTextDiffViewerEx {
         clearDiffPresentation();
         myPanel.setErrorContent();
       };
+    }
+  }
+
+  private void patchConflictTypes(List<MergeConflictType> conflictTypes) {
+    for (int i = 0; i < conflictTypes.size(); i++) {
+      MergeConflictType conflictType = conflictTypes.get(i);
+      if (!conflictType.canBeResolved() && myConflictResolver.canResolveConflictSemantically(i)) {
+        conflictType.setResolutionStrategy(MergeConflictResolutionStrategy.SEMANTIC);
+      }
     }
   }
 
@@ -524,12 +565,19 @@ public class MergeThreesideViewer extends ThreesideTextDiffViewerEx {
     myResolveImportConflicts = getTextSettings().isAutoResolveImportConflicts();
 
     // build initial statistics
-    int autoResolvableChanges = ContainerUtil.count(getAllChanges(), c -> canResolveChangeAutomatically(c, ThreeSide.BASE));
+    List<TextMergeChange> autoResolvableChanges = ContainerUtil.filter(getAllChanges(), c -> canResolveChangeAutomatically(c, ThreeSide.BASE));
+    int autoResolvableWithSemanticsChangesCount = ContainerUtil.count(autoResolvableChanges, c -> c.getConflictType().getResolutionStrategy() == MergeConflictResolutionStrategy.SEMANTIC);
+    Language language = null;
+    if (myPsiFiles.size() == 3) {
+      language = ThreeSide.BASE.select(myPsiFiles).getLanguage();
+    }
 
     myAggregator = new MergeStatisticsAggregator(
       getAllChanges().size(),
-      autoResolvableChanges,
-      getConflictsCount()
+      autoResolvableChanges.size(),
+      autoResolvableWithSemanticsChangesCount,
+      getConflictsCount(),
+      language
     );
 
     if (myResolveImportConflicts) {
@@ -691,7 +739,7 @@ public class MergeThreesideViewer extends ThreesideTextDiffViewerEx {
       if (myScheduled.isEmpty()) return;
 
       myAlarm.cancelAllRequests();
-      myAlarm.addRequest(() -> launchRediff(false), ProgressIndicatorWithDelayedPresentation.DEFAULT_PROGRESS_DIALOG_POSTPONE_TIME_MILLIS);
+      myAlarm.addRequest(() -> launchRediff(false), ProgressUIUtil.DEFAULT_PROGRESS_DELAY_MILLIS);
     }
 
     @RequiresEdt
@@ -704,7 +752,7 @@ public class MergeThreesideViewer extends ThreesideTextDiffViewerEx {
       List<Document> documents = ThreeSide.map((side) -> getEditor(side).getDocument());
       final List<InnerChunkData> data = ContainerUtil.map(scheduled, change -> new InnerChunkData(change, documents));
 
-      int waitMillis = trySync ? ProgressIndicatorWithDelayedPresentation.DEFAULT_PROGRESS_DIALOG_POSTPONE_TIME_MILLIS : 0;
+      long waitMillis = trySync ? ProgressUIUtil.DEFAULT_PROGRESS_DELAY_MILLIS : 0;
       ProgressIndicator progress =
         BackgroundTaskUtil.executeAndTryWait(indicator -> performRediff(scheduled, data, indicator), null, waitMillis, false);
 
@@ -963,8 +1011,16 @@ public class MergeThreesideViewer extends ThreesideTextDiffViewerEx {
   }
 
   protected class MyMergeModel extends MergeModelBase<TextMergeChange.State> {
+    private @Nullable final PsiFile myEditablePsiFile;
+
     MyMergeModel(@Nullable Project project, @NotNull Document document) {
       super(project, document);
+      if (project != null) {
+        myEditablePsiFile = PsiDocumentManager.getInstance(project).getPsiFile(document);
+      }
+      else {
+        myEditablePsiFile = null;
+      }
     }
 
     @Override
@@ -972,6 +1028,19 @@ public class MergeThreesideViewer extends ThreesideTextDiffViewerEx {
       TextMergeChange change = myAllMergeChanges.get(index);
       change.reinstallHighlighters();
       myInnerDiffWorker.scheduleRediff(change);
+    }
+
+    @Override
+    protected void postInstallHighlighters() {
+      if (!Registry.is("semantic.merge.recompute.after.change", false) ||
+          myEditablePsiFile == null ||
+          myProject == null ||
+          !myConflictResolver.isAvailable()) return;
+
+      PsiDocumentManager.getInstance(myProject).commitDocument(myEditablePsiFile.getFileDocument());
+      List<PsiFile> fileList = List.of(ThreeSide.LEFT.select(myPsiFiles), myEditablePsiFile, ThreeSide.RIGHT.select(myPsiFiles));
+
+      myConflictResolver.updateHighlighting(fileList, myAllMergeChanges, () -> myInnerDiffWorker.scheduleRediff(myAllMergeChanges));
     }
 
     @Override
@@ -1055,7 +1124,7 @@ public class MergeThreesideViewer extends ThreesideTextDiffViewerEx {
       return side == ThreeSide.BASE &&
              change.getConflictType().canBeResolved() &&
              !change.isResolved(Side.LEFT) && !change.isResolved(Side.RIGHT) &&
-             !isChangeRangeModified(change);
+             (change.getConflictType().getResolutionStrategy() != MergeConflictResolutionStrategy.TEXT || !isChangeRangeModified(change));
     }
     else {
       return !change.isResolved() &&
@@ -1135,19 +1204,32 @@ public class MergeThreesideViewer extends ThreesideTextDiffViewerEx {
     if (!canResolveChangeAutomatically(change, side)) return null;
 
     if (change.isConflict()) {
-      List<CharSequence> texts =
-        ThreeSide.map(it -> DiffUtil.getLinesContent(getEditor(it).getDocument(), change.getStartLine(it), change.getEndLine(it)));
+      return switch (Objects.requireNonNull(change.getConflictType().getResolutionStrategy())) {
+        case TEXT -> {
+          List<CharSequence> texts =
+            ThreeSide.map(it -> DiffUtil.getLinesContent(getEditor(it).getDocument(), change.getStartLine(it), change.getEndLine(it)));
 
-      CharSequence newContent = ComparisonMergeUtil.tryResolveConflict(texts.get(0), texts.get(1), texts.get(2));
-      if (newContent == null) {
-        LOG.warn(String.format("Can't resolve conflicting change:\n'%s'\n'%s'\n'%s'\n", texts.get(0), texts.get(1), texts.get(2)));
-        return null;
-      }
+          CharSequence leftText = ThreeSide.LEFT.select(texts);
+          CharSequence baseText = ThreeSide.BASE.select(texts);
+          CharSequence rightText = ThreeSide.RIGHT.select(texts);
+          CharSequence newContent = ComparisonMergeUtil.tryResolveConflict(leftText, baseText, rightText);
+          if (newContent == null) {
+            LOG.warn(String.format("Can't resolve conflicting change:\n'%s'\n'%s'\n'%s'\n", leftText, baseText, rightText));
+            yield null;
+          }
 
-      String[] newContentLines = LineTokenizer.tokenize(newContent, false);
-      myModel.replaceChange(change.getIndex(), Arrays.asList(newContentLines));
-      markChangeResolved(change);
-      return new LineRange(myModel.getLineStart(change.getIndex()), myModel.getLineEnd(change.getIndex()));
+          yield replaceWithNewContent(change, newContent);
+        }
+        case SEMANTIC -> {
+          CharSequence newContent = myConflictResolver.getResolvedConflictContent(change.getIndex());
+          if (newContent == null) {
+            LOG.warn("Unable to resolve conflict using semantic merge");
+            yield null;
+          }
+          yield replaceWithNewContent(change, newContent);
+        }
+        case DEFAULT -> null;
+      };
     }
     else {
       Side masterSide = side.select(Side.LEFT,
@@ -1155,6 +1237,13 @@ public class MergeThreesideViewer extends ThreesideTextDiffViewerEx {
                                     Side.RIGHT);
       return replaceChange(change, masterSide, false);
     }
+  }
+
+  private @NotNull LineRange replaceWithNewContent(@NotNull TextMergeChange change, @NotNull CharSequence newContent) {
+    String[] newContentLines = LineTokenizer.tokenize(newContent, false);
+    myModel.replaceChange(change.getIndex(), Arrays.asList(newContentLines));
+    markChangeResolved(change);
+    return new LineRange(myModel.getLineStart(change.getIndex()), myModel.getLineEnd(change.getIndex()));
   }
 
   private static final Key<Boolean> EXTERNAL_OPERATION_IN_PROGRESS = Key.create("external.resolve.operation");
@@ -1298,8 +1387,27 @@ public class MergeThreesideViewer extends ThreesideTextDiffViewerEx {
   }
 
   @ApiStatus.Internal
-  void logMergeCancelled() {
-    logMergeResult(MergeResult.CANCEL, MergeResultSource.DIALOG_CLOSING);
+  void logMergeCancelled(boolean withConfirmation, boolean discardChanges) {
+    logDialogButton(MergeResult.CANCEL, withConfirmation, discardChanges, true);
+
+    if (discardChanges) {
+      logMergeResult(MergeResult.CANCEL, MergeResultSource.DIALOG_CLOSING);
+    }
+  }
+
+  private void logDialogButton(@NotNull MergeResult result,
+                               boolean confirmationShown,
+                               boolean discardChanges,
+                               boolean byEsc
+  ) {
+    MergeAction action = switch (result) {
+      case CANCEL -> MergeAction.CANCEL;
+      case LEFT -> MergeAction.LEFT;
+      case RIGHT -> MergeAction.RIGHT;
+      case RESOLVED -> MergeAction.APPLY;
+    };
+
+    MergeStatisticsCollector.logMergeDialogEvent(myProject, action, confirmationShown, discardChanges, byEsc);
   }
 
   private void logMergeResult(MergeResult mergeResult, MergeResultSource source) {
@@ -1310,7 +1418,7 @@ public class MergeThreesideViewer extends ThreesideTextDiffViewerEx {
     };
     if (statsResult == null) return;
     myAggregator.setUnresolved(getChanges().size());
-    MergeStatisticsCollector.INSTANCE.logMergeFinished(myProject, statsResult, source, myAggregator);
+    MergeStatisticsCollector.logMergeFinished(myProject, statsResult, source, myAggregator);
   }
 
   private class IgnoreSelectedChangesSideAction extends ApplySelectedChangesActionBase {
@@ -1637,7 +1745,7 @@ public class MergeThreesideViewer extends ThreesideTextDiffViewerEx {
     }
 
     @Override
-    public void scrollAndShow(@NotNull Editor editor, @NotNull com.intellij.openapi.vcs.ex.Range range) {
+    public void scrollAndShow(@NotNull Editor editor, @NotNull Range range) {
       if (!myTracker.isValid()) return;
       final Document document = myTracker.getDocument();
       int line = Math.min(!range.hasLines() ? range.getLine2() : range.getLine2() - 1, getLineCount(document) - 1);
@@ -1658,7 +1766,7 @@ public class MergeThreesideViewer extends ThreesideTextDiffViewerEx {
 
     @Override
     protected @NotNull List<AnAction> createToolbarActions(@NotNull Editor editor,
-                                                           @NotNull com.intellij.openapi.vcs.ex.Range range,
+                                                           @NotNull Range range,
                                                            @Nullable Point mousePosition) {
       List<AnAction> actions = new ArrayList<>();
       actions.add(new LineStatusMarkerPopupActions.ShowPrevChangeMarkerAction(editor, myTracker, range, this));
@@ -1671,17 +1779,17 @@ public class MergeThreesideViewer extends ThreesideTextDiffViewerEx {
     }
 
     private final class MyRollbackLineStatusRangeAction extends LineStatusMarkerPopupActions.RangeMarkerAction {
-      private MyRollbackLineStatusRangeAction(@NotNull Editor editor, @NotNull com.intellij.openapi.vcs.ex.Range range) {
+      private MyRollbackLineStatusRangeAction(@NotNull Editor editor, @NotNull Range range) {
         super(editor, myTracker, range, IdeActions.SELECTED_CHANGES_ROLLBACK);
       }
 
       @Override
-      protected boolean isEnabled(@NotNull Editor editor, @NotNull com.intellij.openapi.vcs.ex.Range range) {
+      protected boolean isEnabled(@NotNull Editor editor, @NotNull Range range) {
         return true;
       }
 
       @Override
-      protected void actionPerformed(@NotNull Editor editor, @NotNull com.intellij.openapi.vcs.ex.Range range) {
+      protected void actionPerformed(@NotNull Editor editor, @NotNull Range range) {
         DiffUtil.moveCaretToLineRangeIfNeeded(editor, range.getLine1(), range.getLine2());
         myTracker.rollbackChanges(range);
       }

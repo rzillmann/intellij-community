@@ -5,9 +5,10 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.isSpecified
+import org.jetbrains.jewel.bridge.isDarculaTheme
 import org.jetbrains.jewel.bridge.isNewUiTheme
 import org.jetbrains.jewel.bridge.retrieveColorOrUnspecified
-import org.jetbrains.jewel.bridge.retrieveIntAsDpOrUnspecified
+import org.jetbrains.jewel.bridge.retrieveIntAsNonNegativeDpOrUnspecified
 import org.jetbrains.jewel.ui.component.styling.CheckboxColors
 import org.jetbrains.jewel.ui.component.styling.CheckboxIcons
 import org.jetbrains.jewel.ui.component.styling.CheckboxMetrics
@@ -24,14 +25,14 @@ internal fun readCheckboxStyle(): CheckboxStyle {
         )
 
     val newUiTheme = isNewUiTheme()
-    val metrics = if (newUiTheme) NewUiCheckboxMetrics else ClassicUiCheckboxMetrics
+    val metrics = if (newUiTheme && !isDarculaTheme()) NewUiCheckboxMetrics else ClassicUiCheckboxMetrics
 
     // This value is not normally defined in the themes, but Swing checks it anyway.
     // The default hardcoded in
     // com.intellij.ide.ui.laf.darcula.ui.DarculaCheckBoxUI.getDefaultIcon()
     // is not correct though, the SVG is 19x19 and is missing 1px on the right
     val checkboxSize =
-        retrieveIntAsDpOrUnspecified("CheckBox.iconSize").let {
+        retrieveIntAsNonNegativeDpOrUnspecified("CheckBox.iconSize").let {
             when {
                 it.isSpecified -> DpSize(it, it)
                 else -> metrics.checkboxSize

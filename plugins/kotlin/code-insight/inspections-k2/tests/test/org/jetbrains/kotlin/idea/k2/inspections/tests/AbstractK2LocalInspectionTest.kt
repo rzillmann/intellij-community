@@ -5,15 +5,15 @@ package org.jetbrains.kotlin.idea.k2.inspections.tests
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.platform.ide.progress.runWithModalProgressBlocking
+import com.intellij.psi.util.PsiUtilCore
 import com.intellij.testFramework.common.runAll
 import com.intellij.testFramework.replaceService
 import kotlinx.coroutines.CoroutineScope
 import org.jetbrains.kotlin.idea.base.test.IgnoreTests
 import org.jetbrains.kotlin.idea.base.test.k2FileName
-import org.jetbrains.kotlin.idea.core.script.alwaysVirtualFile
-import org.jetbrains.kotlin.idea.core.script.k2.DefaultScriptConfigurationHandler
-import org.jetbrains.kotlin.idea.core.script.k2.ScriptConfigurationWithSdk
-import org.jetbrains.kotlin.idea.core.script.k2.getConfigurationResolver
+import org.jetbrains.kotlin.idea.core.script.k2.configurations.DefaultScriptConfigurationHandler
+import org.jetbrains.kotlin.idea.core.script.k2.configurations.getConfigurationResolver
+import org.jetbrains.kotlin.idea.core.script.v1.alwaysVirtualFile
 import org.jetbrains.kotlin.idea.fir.K2DirectiveBasedActionUtils
 import org.jetbrains.kotlin.idea.fir.invalidateCaches
 import org.jetbrains.kotlin.idea.inspections.AbstractLocalInspectionTest
@@ -22,6 +22,7 @@ import org.jetbrains.kotlin.idea.test.KotlinWithJdkAndRuntimeLightProjectDescrip
 import org.jetbrains.kotlin.psi.KtFile
 import org.jetbrains.kotlin.scripting.definitions.ScriptDefinition
 import org.jetbrains.kotlin.scripting.definitions.findScriptDefinition
+import org.jetbrains.kotlin.scripting.resolve.ScriptCompilationConfigurationResult
 import java.io.File
 import java.nio.file.Path
 import kotlin.coroutines.EmptyCoroutineContext
@@ -73,10 +74,12 @@ abstract class AbstractK2LocalInspectionTest : AbstractLocalInspectionTest() {
 
         val extraFileNames = findExtraFilesForTest(mainFile)
 
-        myFixture.configureByFiles(*(listOf(mainFile.name) + extraFileNames).toTypedArray()).first()
+        myFixture.configureByFiles(*(arrayOf(mainFile.name) + extraFileNames))
 
-        val ktFile = myFixture.file as? KtFile
-        ktFile?.let { processKotlinScriptIfNeeded(ktFile) }
+        (myFixture.file as? KtFile)?.let {
+            val file = PsiUtilCore.getPsiFile(project, it.virtualFile)
+            processKotlinScriptIfNeeded(it)
+        }
 
         super.doTest(path)
     }
@@ -99,12 +102,15 @@ abstract class AbstractK2LocalInspectionTest : AbstractLocalInspectionTest() {
     // kotlin scripts require adjusting project model which is not possible for lightweight test fixture
     private class DefaultScriptConfigurationHandlerForTests(testProject: Project) :
         DefaultScriptConfigurationHandler(testProject, CoroutineScope(EmptyCoroutineContext)) {
-        override suspend fun updateWorkspaceModel(configurationPerFile: Map<VirtualFile, ScriptConfigurationWithSdk>) {}
+        override suspend fun updateWorkspaceModel(configurationPerFile: Map<VirtualFile, ScriptCompilationConfigurationResult>) {}
 
-        override fun isModuleExist(
+        override fun isScriptExist(
             project: Project,
             scriptFile: VirtualFile,
             definition: ScriptDefinition
-        ): Boolean = true
+        ): Boolean {
+            return true
+        }
+
     }
 }

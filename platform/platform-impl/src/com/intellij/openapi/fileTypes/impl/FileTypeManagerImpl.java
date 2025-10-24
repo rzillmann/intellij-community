@@ -23,6 +23,7 @@ import com.intellij.openapi.fileTypes.ex.ExternalizableFileType;
 import com.intellij.openapi.fileTypes.ex.FileTypeChooser;
 import com.intellij.openapi.fileTypes.ex.FileTypeIdentifiableByVirtualFile;
 import com.intellij.openapi.fileTypes.ex.FileTypeManagerEx;
+import com.intellij.openapi.fileTypes.impl.copy1.IgnoredPatternSet;
 import com.intellij.openapi.options.*;
 import com.intellij.openapi.progress.ProcessCanceledException;
 import com.intellij.openapi.project.Project;
@@ -104,7 +105,7 @@ public class FileTypeManagerImpl extends FileTypeManagerEx implements Persistent
 
   FileTypeAssocTable<FileTypeWithDescriptor> patternsTable = FileTypeAssocTableUtil.newScalableFileTypeAssocTable();
   private final IgnoredPatternSet ignoredPatterns = new IgnoredPatternSet(DEFAULT_IGNORED);
-  private final IgnoredFileCache myIgnoredFileCache = new IgnoredFileCache(ignoredPatterns);
+  private final IgnoredFileCache myIgnoredFileCache = new IgnoredFileCache(name -> ignoredPatterns.isIgnored(name));
 
   private final FileTypeAssocTable<FileType> initialAssociations = FileTypeAssocTableUtil.newScalableFileTypeAssocTable();
   private final Map<FileNameMatcher, String> unresolvedMappings = new HashMap<>();
@@ -121,26 +122,19 @@ public class FileTypeManagerImpl extends FileTypeManagerEx implements Persistent
 
   private @Nullable Consumer<? super ConflictingFileTypeMappingTracker.ResolveConflictResult> conflictResultConsumer;
 
-  private static final class StandardFileType {
-    private final @NotNull FileType fileType;
-    private final @NotNull List<FileNameMatcher> matchers;
-    private final @NotNull PluginDescriptor pluginDescriptor;
-
-    private StandardFileType(@NotNull FileType fileType, @NotNull PluginDescriptor pluginDescriptor, @NotNull List<? extends FileNameMatcher> matchers) {
-      this.fileType = fileType;
-      this.pluginDescriptor = pluginDescriptor;
-      this.matchers = new ArrayList<>(matchers);
+  private record StandardFileType(@NotNull FileType fileType,
+                                  @NotNull PluginDescriptor pluginDescriptor,
+                                  @NotNull List<FileNameMatcher> matchers) {
+      private @NotNull FileTypeWithDescriptor getDescriptor() {
+        return new FileTypeWithDescriptor(fileType, pluginDescriptor);
+      }
     }
-
-    private @NotNull FileTypeWithDescriptor getDescriptor() {
-      return new FileTypeWithDescriptor(fileType, pluginDescriptor);
-    }
-  }
 
   private final Map<String, StandardFileType> standardFileTypes = new LinkedHashMap<>();
   private final SchemeManager<FileTypeWithDescriptor> schemeManager;
 
-  protected FileTypeManagerImpl(@NotNull CoroutineScope coroutineScope) throws IOException {
+  @ApiStatus.Internal
+  public FileTypeManagerImpl(@NotNull CoroutineScope coroutineScope) throws IOException {
     detectionService = new FileTypeDetectionService(this, coroutineScope);
 
     NonLazySchemeProcessor<FileTypeWithDescriptor, FileTypeWithDescriptor> abstractTypesProcessor = new NonLazySchemeProcessor<>() {
@@ -224,6 +218,7 @@ public class FileTypeManagerImpl extends FileTypeManagerEx implements Persistent
   private FileTypeOverrider[] fileTypeOverriderCache;
 
   @Override
+  @ApiStatus.Internal
   public void extensionAdded(@NotNull FileTypeBean fileTypeBean, @NotNull PluginDescriptor pluginDescriptor) {
     fireBeforeFileTypesChanged();
     initializeMatchers(pluginDescriptor, fileTypeBean);
@@ -237,6 +232,7 @@ public class FileTypeManagerImpl extends FileTypeManagerEx implements Persistent
   }
 
   @Override
+  @ApiStatus.Internal
   public void extensionRemoved(@NotNull FileTypeBean extension, @NotNull PluginDescriptor pluginDescriptor) {
     if (extension.implementationClass != null) {
       FileType fileType = findFileTypeByName(extension.name);
@@ -253,7 +249,8 @@ public class FileTypeManagerImpl extends FileTypeManagerEx implements Persistent
   }
 
   @TestOnly
-  void listenAsyncVfsEvents() {
+  @ApiStatus.Internal
+  public void listenAsyncVfsEvents() {
     VirtualFileManager.getInstance().addAsyncFileListener(detectionService::prepareChange, this);
   }
 
@@ -383,7 +380,8 @@ public class FileTypeManagerImpl extends FileTypeManagerEx implements Persistent
   }
 
   @TestOnly
-  void clearStandardFileTypesBeforeTest() {
+  @ApiStatus.Internal
+  public void clearStandardFileTypesBeforeTest() {
     assert ApplicationManager.getApplication().isUnitTestMode();
     myPendingInitializationLock.writeLock().lock();
     try {
@@ -645,17 +643,20 @@ public class FileTypeManagerImpl extends FileTypeManagerEx implements Persistent
   }
 
   @TestOnly
+  @ApiStatus.Internal
   public void drainReDetectQueue() {
     detectionService.drainReDetectQueue();
   }
 
   @TestOnly
-  @NotNull Collection<VirtualFile> dumpReDetectQueue() {
+  @ApiStatus.Internal
+  public @NotNull Collection<VirtualFile> dumpReDetectQueue() {
     return detectionService.dumpReDetectQueue();
   }
 
   @TestOnly
-  void reDetectAsync(boolean enable) {
+  @ApiStatus.Internal
+  public void reDetectAsync(boolean enable) {
     detectionService.reDetectAsync(enable);
   }
 
@@ -680,6 +681,7 @@ public class FileTypeManagerImpl extends FileTypeManagerEx implements Persistent
   }
 
   @Override
+  @ApiStatus.Internal
   public void initializeComponent() {
     initStandardFileTypes();
 
@@ -755,6 +757,7 @@ public class FileTypeManagerImpl extends FileTypeManagerEx implements Persistent
   }
 
   @Override
+  @ApiStatus.Internal
   public void freezeFileTypeTemporarilyIn(@NotNull VirtualFile file, @NotNull Runnable runnable) {
     freezeFileTypeTemporarilyWithProvidedValueIn(file, null, runnable);
   }
@@ -826,6 +829,7 @@ public class FileTypeManagerImpl extends FileTypeManagerEx implements Persistent
   }
 
   private record CachedFileTypes(@NotNull ConcurrentIntObjectMap<FileType> fileTypes, @NotNull AtomicInteger useCount) {}
+
   @ApiStatus.Internal
   public void cacheFileTypesInside(@NotNull Runnable runnable) {
     CachedFileTypes cached;
@@ -1116,7 +1120,7 @@ public class FileTypeManagerImpl extends FileTypeManagerEx implements Persistent
 
   @ApiStatus.Internal
   public static @NotNull FileTypeWithDescriptor detectPluginDescriptor(@NotNull FileType type) {
-    PluginDescriptor pluginDescriptor = PluginManagerCore.getPluginDescriptorOrPlatformByClassName(type.getClass().getName());
+    PluginDescriptor pluginDescriptor = PluginUtils.getPluginDescriptorOrPlatformByClassName(type.getClass().getName());
     if (pluginDescriptor == null) pluginDescriptor = coreIdeaPluginDescriptor();
     return new FileTypeWithDescriptor(type, pluginDescriptor);
   }
@@ -1357,6 +1361,7 @@ public class FileTypeManagerImpl extends FileTypeManagerEx implements Persistent
   }
 
   @Override
+  @ApiStatus.Internal
   public @NotNull Element getState() {
     return withReadLock(() -> {
       Element state = new Element("state");
@@ -1841,11 +1846,13 @@ public class FileTypeManagerImpl extends FileTypeManagerEx implements Persistent
     return ConcurrencyUtil.withLock(myPendingInitializationLock.readLock(), computable);
   }
 
-  @NotNull
-  RemovedMappingTracker getRemovedMappingTracker() {
+  @VisibleForTesting
+  @ApiStatus.Internal
+  public @NotNull RemovedMappingTracker getRemovedMappingTracker() {
     return removedMappingTracker;
   }
 
+  @ApiStatus.Internal
   public PluginDescriptor findPluginDescriptor(@NotNull FileType fileType) {
     for (FileTypeWithDescriptor ftd : getAllFileTypeWithDescriptors()) {
       if (ftd.fileType().equals(fileType)) {
@@ -1885,7 +1892,7 @@ public class FileTypeManagerImpl extends FileTypeManagerEx implements Persistent
 
     private void register(@NotNull FileType fileType,
                           @NotNull PluginDescriptor pluginDescriptor,
-                          @NotNull List<? extends FileNameMatcher> fileNameMatchers) {
+                          @NotNull List<FileNameMatcher> fileNameMatchers) {
       String typeName = fileType.getName();
       instantiatePendingFileTypeByName(typeName);
       for (FileNameMatcher matcher : fileNameMatchers) {
@@ -1915,12 +1922,14 @@ public class FileTypeManagerImpl extends FileTypeManagerEx implements Persistent
   }
 
   @TestOnly
-  void setConflictResultConsumer(@Nullable Consumer<? super ConflictingFileTypeMappingTracker.ResolveConflictResult> consumer) {
+  @ApiStatus.Internal
+  public void setConflictResultConsumer(@Nullable Consumer<? super ConflictingFileTypeMappingTracker.ResolveConflictResult> consumer) {
     if (!ApplicationManager.getApplication().isUnitTestMode()) throw new IllegalStateException();
     conflictResultConsumer = consumer;
   }
 
   @Override
+  @ApiStatus.Internal
   public String toString() {
     return super.toString() + " FileTypeManagerImpl{" +
            "myDetectionService=" + detectionService +

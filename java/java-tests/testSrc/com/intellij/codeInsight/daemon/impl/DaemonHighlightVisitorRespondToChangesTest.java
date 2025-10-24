@@ -174,7 +174,7 @@ public class DaemonHighlightVisitorRespondToChangesTest extends DaemonAnalyzerTe
     }
 
     @Override
-    public boolean suitableForFile(@NotNull PsiFile file) {
+    public boolean suitableForFile(@NotNull PsiFile psiFile) {
       return true;
     }
 
@@ -194,7 +194,7 @@ public class DaemonHighlightVisitorRespondToChangesTest extends DaemonAnalyzerTe
     }
 
     @Override
-    public boolean analyze(@NotNull PsiFile file,
+    public boolean analyze(@NotNull PsiFile psiFile,
                            boolean updateWholeFile,
                            @NotNull HighlightInfoHolder holder,
                            @NotNull Runnable action) {
@@ -246,7 +246,7 @@ public class DaemonHighlightVisitorRespondToChangesTest extends DaemonAnalyzerTe
     }
 
     @Override
-    public boolean suitableForFile(@NotNull PsiFile file) {
+    public boolean suitableForFile(@NotNull PsiFile psiFile) {
       return true;
     }
 
@@ -262,7 +262,7 @@ public class DaemonHighlightVisitorRespondToChangesTest extends DaemonAnalyzerTe
     }
 
     @Override
-    public boolean analyze(@NotNull PsiFile file,
+    public boolean analyze(@NotNull PsiFile psiFile,
                            boolean updateWholeFile,
                            @NotNull HighlightInfoHolder holder,
                            @NotNull Runnable action) {
@@ -353,7 +353,7 @@ public class DaemonHighlightVisitorRespondToChangesTest extends DaemonAnalyzerTe
     private HighlightInfoHolder myHolder;
 
     @Override
-    public boolean suitableForFile(@NotNull PsiFile file) {
+    public boolean suitableForFile(@NotNull PsiFile psiFile) {
       return true;
     }
 
@@ -369,7 +369,7 @@ public class DaemonHighlightVisitorRespondToChangesTest extends DaemonAnalyzerTe
     }
 
     @Override
-    public boolean analyze(@NotNull PsiFile file,
+    public boolean analyze(@NotNull PsiFile psiFile,
                            boolean updateWholeFile,
                            @NotNull HighlightInfoHolder holder,
                            @NotNull Runnable action) {
@@ -460,7 +460,7 @@ public class DaemonHighlightVisitorRespondToChangesTest extends DaemonAnalyzerTe
     public abstract @NotNull HighlightVisitor clone();
 
     @Override
-    public boolean suitableForFile(@NotNull PsiFile file) {
+    public boolean suitableForFile(@NotNull PsiFile psiFile) {
       return true;
     }
 
@@ -485,7 +485,7 @@ public class DaemonHighlightVisitorRespondToChangesTest extends DaemonAnalyzerTe
     }
 
     @Override
-    public boolean analyze(@NotNull PsiFile file,
+    public boolean analyze(@NotNull PsiFile psiFile,
                            boolean updateWholeFile,
                            @NotNull HighlightInfoHolder holder,
                            @NotNull Runnable action) {
@@ -615,7 +615,7 @@ public class DaemonHighlightVisitorRespondToChangesTest extends DaemonAnalyzerTe
     private static volatile boolean VISIT_CALLED;
 
     @Override
-    public boolean suitableForFile(@NotNull PsiFile file) {
+    public boolean suitableForFile(@NotNull PsiFile psiFile) {
       return true;
     }
 
@@ -625,7 +625,7 @@ public class DaemonHighlightVisitorRespondToChangesTest extends DaemonAnalyzerTe
     }
 
     @Override
-    public boolean analyze(@NotNull PsiFile file,
+    public boolean analyze(@NotNull PsiFile psiFile,
                            boolean updateWholeFile,
                            @NotNull HighlightInfoHolder holder,
                            @NotNull Runnable action) {
@@ -659,7 +659,7 @@ public class DaemonHighlightVisitorRespondToChangesTest extends DaemonAnalyzerTe
     HighlightingSettingsPerFile.getInstance(myProject).setHighlightingSettingForRoot(myFile, FileHighlightingSetting.SKIP_HIGHLIGHTING);
     MyCheckingCallsVisitor.VISIT_CALLED = false;
     MyCheckingCallsVisitor.ANALYZE_CALLED = false;
-    myDaemonCodeAnalyzer.restart();
+    myDaemonCodeAnalyzer.restart(this);
     doHighlighting();
     assertFalse(MyCheckingCallsVisitor.VISIT_CALLED);
     assertFalse(MyCheckingCallsVisitor.ANALYZE_CALLED);

@@ -208,6 +208,7 @@ class EditorTabbedContainer internal constructor(
     indexToInsert: Int,
     selectedEditor: FileEditor?,
     parentDisposable: Disposable,
+    holderCreator: (TabInfo) -> TabInfoIconHolder,
   ): TabInfo {
     editorTabs.findInfo(file)?.let {
       return it
@@ -223,7 +224,7 @@ class EditorTabbedContainer internal constructor(
         it.setText(file.presentableName)
         it.setTooltipText(tooltip)
         if (UISettings.getInstance().showFileIconInTabs) {
-          it.setIcon(icon)
+          it.setIconHolder(holderCreator(it)).setIcon(icon)
         }
         InternalUICustomization.getInstance()?.aiComponentMarker?.markAiComponent(it.component, file)
       }
@@ -234,14 +235,14 @@ class EditorTabbedContainer internal constructor(
 
     coroutineScope.launch {
       val title = EditorTabPresentationUtil.getCustomEditorTabTitleAsync(window.manager.project, file) ?: return@launch
-      withContext(Dispatchers.ui(UiDispatcherKind.RELAX)) {
+      withContext(Dispatchers.UiWithModelAccess) {
         tab.setText(title)
       }
     }
     val project = window.manager.project
     coroutineScope.launch {
       val color = readAction { EditorTabPresentationUtil.getEditorTabBackgroundColor(project, file) }
-      withContext(Dispatchers.ui(UiDispatcherKind.RELAX) + ModalityState.any().asContextElement()) {
+      withContext(Dispatchers.UiWithModelAccess + ModalityState.any().asContextElement()) {
         tab.setTabColor(color)
       }
     }
@@ -565,6 +566,7 @@ private class EditorTabs(
     source.templatePresentation.putClientProperty(ActionUtil.HIDE_DROPDOWN_ICON, true)
     source.templatePresentation.putClientProperty(ActionUtil.ALWAYS_VISIBLE_GROUP, true)
     _entryPointActionGroup = DefaultActionGroup(java.util.List.of(source))
+    InternalUICustomization.getInstance()?.installEditorBackground(this)
   }
 
   override fun uiDataSnapshot(sink: DataSink) {
@@ -614,7 +616,10 @@ private class EditorTabs(
 
   override fun shouldPaintBottomBorder(): Boolean {
     val tab = selectedInfo ?: return true
-    return !(tab.component as EditorCompositePanel).composite.selfBorder
+    if ((tab.component as EditorCompositePanel).composite.selfBorder) {
+      return false
+    }
+    return InternalUICustomization.getInstance()?.shouldPaintEditorTabsBottomBorder(tab.component) ?: true
   }
 
   // return same instance to avoid unnecessary action toolbar updates
@@ -635,7 +640,7 @@ private class EditorTabs(
     }
 
     val group = info.tabLabelActions ?: return null
-    val actions: Array<AnAction?> = if (group is DefaultActionGroup) {
+    val actions: Array<AnAction> = if (group is DefaultActionGroup) {
       group.getChildren(ActionManager.getInstance())
     }
     else if (group is CustomisedActionGroup && group.delegate is DefaultActionGroup) {
@@ -649,7 +654,7 @@ private class EditorTabs(
     return closeTabAction?.getIcon(isHovered)
   }
 
-  override fun createTabPainterAdapter(): TabPainterAdapter = InternalUICustomization.getInstance()?.editorTabPainterAdapter ?: DefaultTabPainterAdapter(DEFAULT)
+  override fun createTabPainterAdapter(): TabPainterAdapter = InternalUICustomization.getInstance()?.editorTabPainterAdapter ?: EditorTabPainterAdapter()
 
   override fun createTabBorder(): JBTabsBorder = JBEditorTabsBorder(this)
 
@@ -735,7 +740,11 @@ private class EditorTabLabel(info: TabInfo, tabs: JBTabsImpl) : TabLabel(tabs, i
   override val isTabActionsOnTheRight: Boolean
     get() = UISettings.getInstance().closeTabButtonOnTheRight
 
-  override fun shouldPaintFadeout(): Boolean = super.shouldPaintFadeout() && Registry.`is`("ide.editor.tabs.show.fadeout", true)
+  override fun shouldPaintFadeout(): Boolean {
+    val customization = InternalUICustomization.getInstance()
+    return super.shouldPaintFadeout() && Registry.`is`("ide.editor.tabs.show.fadeout", true) &&
+           (customization == null || customization.shouldPaintEditorFadeout)
+  }
 
   override fun editLabelForeground(baseForeground: Color?): Color? {
     if (baseForeground != null && paintDimmed()) {

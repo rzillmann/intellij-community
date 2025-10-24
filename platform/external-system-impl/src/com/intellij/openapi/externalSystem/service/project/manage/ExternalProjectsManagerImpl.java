@@ -1,8 +1,7 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.openapi.externalSystem.service.project.manage;
 
 import com.intellij.execution.ExecutionException;
-import com.intellij.ide.impl.ProjectUtilKt;
 import com.intellij.ide.plugins.DynamicPluginListener;
 import com.intellij.ide.plugins.IdeaPluginDescriptor;
 import com.intellij.openapi.Disposable;
@@ -38,7 +37,7 @@ import com.intellij.openapi.util.Disposer;
 import com.intellij.task.ProjectTaskContext;
 import com.intellij.task.ProjectTaskManager;
 import com.intellij.util.SmartList;
-import com.intellij.util.concurrency.annotations.RequiresReadLock;
+import com.intellij.util.concurrency.annotations.RequiresBlockingContext;
 import kotlinx.coroutines.CoroutineScope;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
@@ -50,6 +49,7 @@ import java.util.stream.Collectors;
 
 import static com.intellij.openapi.externalSystem.model.ProjectKeys.MODULE;
 import static com.intellij.openapi.externalSystem.model.ProjectKeys.TASK;
+import static com.intellij.util.concurrency.AppJavaExecutorUtil.executeOnPooledCpuThread;
 
 /**
  * @author Vladislav.Soroka
@@ -109,6 +109,7 @@ public final class ExternalProjectsManagerImpl implements ExternalProjectsManage
       });
   }
 
+  @RequiresBlockingContext
   public static ExternalProjectsManagerImpl getInstance(@NotNull Project project) {
     return (ExternalProjectsManagerImpl)ExternalProjectsManager.getInstance(project);
   }
@@ -124,9 +125,10 @@ public final class ExternalProjectsManagerImpl implements ExternalProjectsManage
   }
 
   public void setStoreExternally(boolean value) {
-    ExternalStorageConfigurationManager externalStorageConfigurationManager =
-      ExternalStorageConfigurationManager.getInstance(myProject);
-    if (externalStorageConfigurationManager.isEnabled() == value) return;
+    ExternalStorageConfigurationManager externalStorageConfigurationManager = ExternalStorageConfigurationManager.getInstance(myProject);
+    if (externalStorageConfigurationManager.isEnabled() == value) {
+      return;
+    }
     externalStorageConfigurationManager.setEnabled(value);
 
     // force re-save
@@ -216,7 +218,7 @@ public final class ExternalProjectsManagerImpl implements ExternalProjectsManage
       });
 
       //noinspection deprecation
-      ProjectUtilKt.executeOnPooledThread(myProject, coroutineScope, () -> {
+      executeOnPooledCpuThread(coroutineScope, () -> {
         myPostInitializationBGActivities.run();
         myPostInitializationBGActivities.clear();
       });
@@ -304,12 +306,11 @@ public final class ExternalProjectsManagerImpl implements ExternalProjectsManage
 
   @ApiStatus.Internal
   @Override
-  @RequiresReadLock
   public @NotNull ExternalProjectsState getState() {
     for (ExternalProjectsView externalProjectsView : myProjectsViews) {
       if (externalProjectsView instanceof ExternalProjectsViewImpl) {
-        final ExternalProjectsViewState externalProjectsViewState = ((ExternalProjectsViewImpl)externalProjectsView).getState();
-        final ExternalProjectsState.State state = myState.getExternalSystemsState().get(externalProjectsView.getSystemId().getId());
+        ExternalProjectsViewState externalProjectsViewState = ((ExternalProjectsViewImpl)externalProjectsView).getState();
+        ExternalProjectsState.State state = myState.getExternalSystemsState().get(externalProjectsView.getSystemId().getId());
         assert state != null;
         state.setProjectsViewState(externalProjectsViewState);
       }

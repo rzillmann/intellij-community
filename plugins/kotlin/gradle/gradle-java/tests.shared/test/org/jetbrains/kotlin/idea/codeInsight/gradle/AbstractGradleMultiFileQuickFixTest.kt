@@ -119,7 +119,7 @@ abstract class AbstractGradleMultiFileQuickFixTest : MultiplePluginVersionGradle
             val action = actionHint.findAndCheck(actions) { "Test file: ${projectPath.relativize(mainFilePath).pathString}" }
             if (action != null) {
                 codeInsightTestFixture.launchAction(action)
-                KotlinProjectConfigurationService.getInstance(project).awaitSyncFinished()
+                KotlinProjectConfigurationService.getInstance(myProject).awaitSyncFinished()
 
                 IndexingTestUtil.waitUntilIndexesAreReady(myProject)
 
@@ -139,6 +139,11 @@ abstract class AbstractGradleMultiFileQuickFixTest : MultiplePluginVersionGradle
                                     when (vFile.name) {
                                         ".gradle", "gradle", "build", "gradle.properties", "gradlew", "gradlew.bat", ".kotlin" -> return false
                                     }
+                                }
+                                // submodules could contain a build dir as well as a root project
+                                // it usually contains commonizedNativeDistributionLocation.txt
+                                when (vFile.name) {
+                                    "build" -> return false
                                 }
 
                                 if (ignoreChangesInBuildScriptFiles && ".gradle" in vFile.name) return false

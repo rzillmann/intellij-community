@@ -1,84 +1,94 @@
 ### auto-generated section `build intellij.ide.startup.importSettings` start
-load("@rules_jvm//:jvm.bzl", "jvm_library", "jvm_resources", "jvm_test")
+load("@rules_jvm//:jvm.bzl", "jvm_library", "resourcegroup")
 
-jvm_resources(
-  name = "ide-startup-importSettings_resources",
-  files = glob(["resources/**/*"]),
+resourcegroup(
+  name = "importSettings_resources",
+  srcs = glob(["resources/**/*"]),
   strip_prefix = "resources"
 )
 
 jvm_library(
-  name = "ide-startup-importSettings",
+  name = "importSettings",
   module_name = "intellij.ide.startup.importSettings",
   visibility = ["//visibility:public"],
-  srcs = glob(["src/**/*.kt", "src/**/*.java"], allow_empty = True),
+  srcs = glob(["src/**/*.kt", "src/**/*.java", "src/**/*.form"], allow_empty = True),
+  resources = [":importSettings_resources"],
   deps = [
     "@lib//:kotlin-stdlib",
+    "//platform/analysis-api:analysis",
+    "//platform/core-api:core",
+    "//platform/editor-ui-api:editor-ui",
     "//platform/platform-impl:ide-impl",
-    "//platform/platform-impl/bootstrap:ide-bootstrap",
+    "//platform/platform-impl/bootstrap",
     "//platform/core-ui",
     "//platform/ide-core-impl",
-    "//platform/ide-core/plugins:ide-core-plugins",
+    "//platform/ide-core/plugins",
+    "//platform/core-impl",
     "@lib//:rd-core",
     "@lib//:rd-swing",
+    "//platform/projectModel-api:projectModel",
     "//platform/rd-platform-community:rd-community",
     "//platform/configuration-store-impl:configurationStore-impl",
-    "//platform/service-container:serviceContainer",
+    "//platform/service-container",
     "//platform/code-style-api:codeStyle",
     "//platform/util-class-loader:util-classLoader",
     "//platform/util/jdom",
     "//platform/statistics",
-    "@lib//:jackson-databind",
-    "@lib//:jackson",
-    "//platform/observable:ide-observable",
-    "@lib//:miglayout-swing",
-    "@lib//:kotlinx-serialization-json",
-    "@lib//:kotlinx-serialization-core",
+    "//libraries/jackson/databind",
+    "//libraries/jackson/jackson",
+    "//platform/observable",
+    "//libraries/miglayout-swing",
+    "//libraries/kotlinx/serialization/json",
+    "//libraries/kotlinx/serialization/core",
     "@lib//:jna",
     "@lib//:sqlite",
-    "@lib//:classgraph",
+    "//libraries/classgraph",
     "//platform/util:util-ui",
     "//platform/lang-impl",
     "//platform/util/progress",
-    "//platform/platform-impl/ui:ide-ui",
-    "//platform/plugins/parser/impl:plugins-parser-impl",
-  ],
-  runtime_deps = [":ide-startup-importSettings_resources"]
+    "//platform/platform-impl/ui",
+    "//platform/platform-impl/initial-config-import",
+    "//platform/plugins/parser/impl",
+  ]
 )
 
 jvm_library(
-  name = "ide-startup-importSettings_test_lib",
+  name = "importSettings_test_lib",
   visibility = ["//visibility:public"],
-  srcs = glob(["test/**/*.kt", "test/**/*.java"], allow_empty = True),
-  associates = [":ide-startup-importSettings"],
+  srcs = glob(["test/**/*.kt", "test/**/*.java", "test/**/*.form"], allow_empty = True),
+  associates = [":importSettings"],
   deps = [
     "@lib//:kotlin-stdlib",
+    "//platform/analysis-api:analysis",
+    "//platform/core-api:core",
+    "//platform/editor-ui-api:editor-ui",
     "//platform/platform-impl:ide-impl",
-    "//platform/platform-impl:ide-impl_test_lib",
-    "//platform/platform-impl/bootstrap:ide-bootstrap",
+    "//platform/platform-impl/bootstrap",
     "//platform/core-ui",
     "//platform/ide-core-impl",
-    "//platform/ide-core/plugins:ide-core-plugins",
+    "//platform/ide-core/plugins",
+    "//platform/core-impl",
     "@lib//:rd-core",
     "@lib//:rd-swing",
+    "//platform/projectModel-api:projectModel",
     "//platform/rd-platform-community:rd-community",
     "//platform/configuration-store-impl:configurationStore-impl",
-    "//platform/service-container:serviceContainer",
-    "//platform/service-container:serviceContainer_test_lib",
+    "//platform/service-container",
+    "//platform/service-container:service-container_test_lib",
     "//platform/code-style-api:codeStyle",
     "//platform/util-class-loader:util-classLoader",
     "//platform/util/jdom",
     "//platform/statistics",
     "//platform/statistics:statistics_test_lib",
-    "@lib//:jackson-databind",
-    "@lib//:jackson",
-    "//platform/observable:ide-observable",
-    "@lib//:miglayout-swing",
-    "@lib//:kotlinx-serialization-json",
-    "@lib//:kotlinx-serialization-core",
+    "//libraries/jackson/databind",
+    "//libraries/jackson/jackson",
+    "//platform/observable",
+    "//libraries/miglayout-swing",
+    "//libraries/kotlinx/serialization/json",
+    "//libraries/kotlinx/serialization/core",
     "@lib//:jna",
     "@lib//:sqlite",
-    "@lib//:classgraph",
+    "//libraries/classgraph",
     "//platform/util:util-ui",
     "//platform/testFramework",
     "//platform/testFramework:testFramework_test_lib",
@@ -86,14 +96,19 @@ jvm_library(
     "//platform/testFramework/junit5:junit5_test_lib",
     "//platform/lang-impl",
     "//platform/util/progress",
-    "//platform/platform-impl/ui:ide-ui",
-    "//platform/plugins/parser/impl:plugins-parser-impl",
-  ],
-  runtime_deps = [":ide-startup-importSettings_resources"]
-)
-
-jvm_test(
-  name = "ide-startup-importSettings_test",
-  runtime_deps = [":ide-startup-importSettings_test_lib"]
+    "//platform/platform-impl/ui",
+    "//platform/platform-impl/initial-config-import",
+    "//platform/plugins/parser/impl",
+    "//platform/plugins/parser/impl:impl_test_lib",
+  ]
 )
 ### auto-generated section `build intellij.ide.startup.importSettings` end
+
+### auto-generated section `test intellij.ide.startup.importSettings` start
+load("@community//build:tests-options.bzl", "jps_test")
+
+jps_test(
+  name = "importSettings_test",
+  runtime_deps = [":importSettings_test_lib"]
+)
+### auto-generated section `test intellij.ide.startup.importSettings` end

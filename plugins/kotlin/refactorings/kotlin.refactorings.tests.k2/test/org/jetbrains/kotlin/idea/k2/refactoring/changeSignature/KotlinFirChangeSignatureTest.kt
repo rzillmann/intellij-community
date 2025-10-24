@@ -69,7 +69,7 @@ class KotlinFirChangeSignatureTest :
     override fun createChangeInfo(): KotlinChangeInfo {
         val element = findTargetElement()?.unwrapped as KtElement
         val targetElement = KotlinChangeSignatureHandler.findDeclaration(element, element, project, editor) as KtNamedDeclaration
-        val superMethod = (checkSuperMethods(targetElement, emptyList(), RefactoringBundle.message("to.refactor")).first() as KtNamedDeclaration).takeIf { !file.name.contains("OverriderOnly") } ?: targetElement
+        val superMethod = (checkSuperMethods(targetElement, emptyList(), RefactoringBundle.message("to.refactor")).last() as KtNamedDeclaration).takeIf { !file.name.contains("OverriderOnly") } ?: targetElement
         return KotlinChangeInfo(KotlinMethodDescriptor(superMethod))
     }
 
@@ -233,11 +233,24 @@ class KotlinFirChangeSignatureTest :
     }
 
     fun testToContextParameterClassFunctionFromReceiver() = doTest {
-        this.newParameters[0].isContextParameter = true
+        newParameters[0].isContextParameter = true
+        receiverParameterInfo = null
+    }
+
+    fun testToContextParameterFromReceiverWithUnqualifiedThisInFunctionalLiteral() = doTest {
+        newParameters[0].isContextParameter = true
         receiverParameterInfo = null
     }
 
     fun testFromContextParameterClassFunction() = doTest {
+        newParameters[0].isContextParameter = false
+    }
+
+    fun testFromContextParameterClassFunctionSubtyping() = doTest {
+        newParameters[0].isContextParameter = false
+    }
+
+    fun testFromContextParameterInsideAnotherContextFunction() = doTest {
         newParameters[0].isContextParameter = false
     }
 
@@ -251,7 +264,64 @@ class KotlinFirChangeSignatureTest :
         receiverParameterInfo = parameterInfo
     }
 
+    fun testFromContextParameterClassFunctionToReceiver1() = doTest {
+        val parameterInfo = newParameters[0]
+        parameterInfo.isContextParameter = false
+        receiverParameterInfo = parameterInfo
+    }
+
+    fun testFromContextParameterToParameter() = doTest {
+        val parameterInfo = newParameters[0]
+        parameterInfo.isContextParameter = false
+    }
+
     fun testDeleteUsedContextParameter() = doTestConflict {
-        removeParameter(0)
+        removeContextParameter(0)
+    }
+
+    fun testChangingTypeOfContextParameter() = doTest {
+        newParameters[0].setType("kotlin.String")
+    }
+
+    fun testChangingContextParametersOrder() = doTest {
+        swapParameters(0, 1)
+    }
+
+    fun testConflictingRenameContextParameter() = doTestConflict {
+        newParameters[0].name = "a"
+    }
+
+    fun testRenameContextParameter() = doTest {
+        newParameters[0].name = "a"
+    }
+
+    fun testContextParameterInDeepHierarchy() = doTest {
+      newParameters[0].isContextParameter = false
+    }
+
+    fun testFromContextParameterCalledInAnonymousContext() = doTest {
+      newParameters[0].isContextParameter = false
+    }
+
+    fun testFromContextParameterPreserveAnnotations() = doTest {
+      newParameters[0].isContextParameter = false
+    }
+
+    fun testConvertToContextParameterInDeepHierarchy() = doTest {
+      newParameters[1].isContextParameter = true
+    }
+
+    fun testFromContextParameterNormalParameterConflict() = doTest {
+        newParameters[0].isContextParameter = false
+    }
+
+    fun testFromPropertyContextParameterToReceiver() = doTest {
+        val parameterInfo = newParameters[0]
+        parameterInfo.isContextParameter = false
+        receiverParameterInfo = parameterInfo
+    }
+
+    fun testContextParameterAndNewParameter() = doTest {
+        addParameter(createKotlinIntParameter())
     }
 }

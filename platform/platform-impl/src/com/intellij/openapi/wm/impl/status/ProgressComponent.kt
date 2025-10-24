@@ -5,6 +5,7 @@ import com.intellij.icons.AllIcons
 import com.intellij.ide.IdeBundle
 import com.intellij.ide.ui.UISettings.Companion.setupAntialiasing
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.application.impl.InternalUICustomization
 import com.intellij.openapi.progress.ProgressModel
 import com.intellij.openapi.progress.TaskInfo
 import com.intellij.openapi.ui.popup.IconButton
@@ -112,12 +113,17 @@ open class ProgressComponent(val isCompact: Boolean, val info: TaskInfo, progres
     val textAndProgress: JPanel = NonOpaquePanel(BorderLayout())
     textAndProgress.add(textPanel, BorderLayout.CENTER)
 
-    val progressWrapper = NonOpaquePanel(BorderLayout())
+    val progressWrapper = wrapProgress()
     progressWrapper.setBorder(JBUI.Borders.empty(0, 4))
-    progressWrapper.add(progress, BorderLayout.CENTER)
 
     textAndProgress.add(progressWrapper, BorderLayout.EAST)
     component.add(textAndProgress, BorderLayout.CENTER)
+  }
+
+  protected open fun wrapProgress(): JComponent {
+    val progressWrapper = NonOpaquePanel(BorderLayout())
+    progressWrapper.add(progress, BorderLayout.CENTER)
+    return progressWrapper
   }
 
   protected open fun createEastButtons(): List<ProgressButton> {
@@ -129,7 +135,7 @@ open class ProgressComponent(val isCompact: Boolean, val info: TaskInfo, progres
       IconButton(indicatorModel.getCancelTooltipText(),
                  if (isCompact) AllIcons.Process.StopSmall else AllIcons.Process.Stop,
                  if (isCompact) AllIcons.Process.StopSmallHovered else AllIcons.Process.StopHovered),
-      ActionListener { event: ActionEvent? -> cancelRequest() }).setFillBg(false)
+      ActionListener { _: ActionEvent? -> cancelRequest() }).setFillBg(false)
 
     cancelButton.isVisible = indicatorModel.isCancellable()
 
@@ -208,7 +214,7 @@ open class ProgressComponent(val isCompact: Boolean, val info: TaskInfo, progres
     }
   }
 
-  protected open var textValue: String?
+  protected open var textValue: @NlsContexts.DetailedDescription String?
     get() = textPanel.text
     set(text) {
       this.textPanel.text = text
@@ -218,7 +224,7 @@ open class ProgressComponent(val isCompact: Boolean, val info: TaskInfo, progres
     textPanel.setEnabled(value)
   }
 
-  protected open var text2Value: String?
+  protected open var text2Value: @NlsContexts.DetailedDescription String?
     get() = detailsPanel.text
     set(text) {
       detailsPanel.text = text
@@ -256,6 +262,10 @@ open class ProgressComponent(val isCompact: Boolean, val info: TaskInfo, progres
           }
         }
       })
+    }
+
+    override fun paint(g: Graphics) {
+      super.paint(InternalUICustomization.getInstance()?.preserveGraphics(g))
     }
 
     override fun paintComponent(g: Graphics) {

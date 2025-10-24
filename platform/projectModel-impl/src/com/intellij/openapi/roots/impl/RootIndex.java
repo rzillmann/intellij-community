@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.openapi.roots.impl;
 
 import com.intellij.openapi.diagnostic.Logger;
@@ -7,7 +7,6 @@ import com.intellij.openapi.fileTypes.impl.FileTypeAssocTable;
 import com.intellij.openapi.module.Module;
 import com.intellij.openapi.module.ModuleManager;
 import com.intellij.openapi.module.UnloadedModuleDescription;
-import com.intellij.openapi.module.impl.ModuleManagerEx;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.projectRoots.Sdk;
 import com.intellij.openapi.roots.*;
@@ -21,6 +20,7 @@ import com.intellij.openapi.vfs.VirtualFileManager;
 import com.intellij.openapi.vfs.VirtualFileSet;
 import com.intellij.openapi.vfs.VirtualFileSetFactory;
 import com.intellij.openapi.vfs.pointers.VirtualFilePointer;
+import com.intellij.platform.backend.workspace.WorkspaceModelTopics;
 import com.intellij.platform.workspace.storage.WorkspaceEntity;
 import com.intellij.util.Function;
 import com.intellij.util.ObjectUtils;
@@ -28,8 +28,10 @@ import com.intellij.util.SmartList;
 import com.intellij.util.concurrency.ThreadingAssertions;
 import com.intellij.util.containers.*;
 import com.intellij.util.containers.Stack;
+import com.intellij.workspaceModel.core.fileIndex.impl.FileTypeAssocTableUtil;
 import kotlin.Lazy;
 import kotlin.LazyKt;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.Unmodifiable;
@@ -39,7 +41,8 @@ import java.util.*;
 import java.util.HashMap;
 import java.util.HashSet;
 
-class RootIndex {
+@ApiStatus.Internal
+public final class RootIndex {
   static final Comparator<OrderEntry> BY_OWNER_MODULE = (o1, o2) -> {
     String name1 = o1.getOwnerModule().getName();
     String name2 = o2.getOwnerModule().getName();
@@ -50,8 +53,14 @@ class RootIndex {
   private static final FileTypeRegistry ourFileTypes = FileTypeRegistry.getInstance();
 
   private final @NotNull Project myProject;
-  private final Lazy<OrderEntryGraph> myOrderEntryGraphLazy = LazyKt.lazy(() -> calculateOrderEntryGraph());
+  private final Lazy<OrderEntryGraph> myOrderEntryGraphLazy;
 
+  public RootIndex(@NotNull Project project, @Nullable OrderEntryGraph graph) {
+    myProject = project;
+    myOrderEntryGraphLazy = graph == null ? LazyKt.lazy(() -> calculateOrderEntryGraph()) : LazyKt.lazyOf(graph);
+  }
+
+  @SuppressWarnings("deprecation")
   RootIndex(@NotNull Project project) {
     myProject = project;
 
@@ -59,10 +68,12 @@ class RootIndex {
     if (project.isDefault()) {
       LOG.error("Directory index may not be queried for default project");
     }
-    ModuleManager manager = ModuleManager.getInstance(project);
-    if (manager instanceof ModuleManagerEx) {
-      LOG.assertTrue(((ModuleManagerEx)manager).areModulesLoaded(), "Directory index can only be queried after project initialization");
+
+    WorkspaceModelTopics workspaceModelTopics = project.getService(WorkspaceModelTopics.class);
+    if (workspaceModelTopics != null) {
+      LOG.assertTrue(workspaceModelTopics.getModulesAreLoaded(), "Directory index can only be queried after project initialization");
     }
+    myOrderEntryGraphLazy = LazyKt.lazy(() -> calculateOrderEntryGraph());
   }
 
   private @NotNull RootInfo buildRootInfo(@NotNull Project project) {
@@ -90,7 +101,7 @@ class RootIndex {
           }
           List<String> patterns = contentEntry.getExcludePatterns();
           if (!patterns.isEmpty()) {
-            FileTypeAssocTable<Boolean> table = new FileTypeAssocTable<>();
+            FileTypeAssocTable<Boolean> table = FileTypeAssocTableUtil.newScalableFileTypeAssocTable();
             for (String pattern : patterns) {
               table.addAssociation(FileNameMatcherFactory.getInstance().createMatcher(pattern), Boolean.TRUE);
             }
@@ -257,7 +268,8 @@ class RootIndex {
     return RootFileValidityChecker.ensureValid(file, container, null);
   }
 
-  private @NotNull OrderEntryGraph getOrderEntryGraph() {
+  @ApiStatus.Internal
+  public @NotNull OrderEntryGraph getOrderEntryGraph() {
     return myOrderEntryGraphLazy.getValue();
   }
 
@@ -272,7 +284,8 @@ class RootIndex {
    * <p>
    * <p>Each edge carries with it the associated OrderEntry that caused the dependency.
    */
-  private static class OrderEntryGraph {
+  @ApiStatus.Internal
+  public static class OrderEntryGraph {
     private static class Edge {
       private final Module myKey;
       private final @NotNull ModuleOrderEntry myOrderEntry; // Order entry from myKey -> the node containing the edge

@@ -6,7 +6,6 @@ import com.intellij.ide.DataManager;
 import com.intellij.ide.util.treeView.TreeState;
 import com.intellij.openapi.Disposable;
 import com.intellij.openapi.actionSystem.*;
-import com.intellij.openapi.project.DumbAware;
 import com.intellij.openapi.project.DumbAwareToggleAction;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.DialogWrapper;
@@ -26,10 +25,11 @@ import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.ui.JBUI;
 import com.intellij.util.ui.tree.TreeUtil;
 import com.intellij.xdebugger.XDebuggerBundle;
-import com.intellij.xdebugger.breakpoints.XBreakpoint;
-import com.intellij.xdebugger.breakpoints.XBreakpointType;
 import com.intellij.xdebugger.breakpoints.ui.XBreakpointGroupingRule;
-import com.intellij.xdebugger.impl.breakpoints.*;
+import com.intellij.xdebugger.impl.breakpoints.XBreakpointManagerProxy;
+import com.intellij.xdebugger.impl.breakpoints.XBreakpointProxy;
+import com.intellij.xdebugger.impl.breakpoints.XBreakpointTypeProxy;
+import com.intellij.xdebugger.impl.breakpoints.XBreakpointsDialogState;
 import com.intellij.xdebugger.impl.breakpoints.ui.grouping.XBreakpointCustomGroup;
 import com.intellij.xdebugger.impl.breakpoints.ui.tree.BreakpointItemNode;
 import com.intellij.xdebugger.impl.breakpoints.ui.tree.BreakpointItemsTreeController;
@@ -102,6 +102,11 @@ public class BreakpointsDialog extends DialogWrapper {
 
     collectGroupingRules();
 
+    // First subscribe, then collect — we shouldn't skip any changes.
+    myBreakpointManager.subscribeOnBreakpointsChanges(myListenerDisposable, () -> {
+      myRebuildAlarm.cancelAndRequest();
+      return Unit.INSTANCE;
+    });
     collectItems();
 
     setTitle(XDebuggerBundle.message("xbreakpoints.dialog.title"));
@@ -276,16 +281,23 @@ public class BreakpointsDialog extends DialogWrapper {
         ActionGroup group = new ActionGroup(XDebuggerBundle.message("move.to.group"), true) {
           @Override
           public AnAction @NotNull [] getChildren(@Nullable AnActionEvent e) {
-            Set<String> groups = getBreakpointManager().getAllGroups();
-            AnAction[] res = new AnAction[groups.size() + 3];
-            int i = 0;
-            res[i++] = new MoveToGroupAction(null);
-            for (@NlsSafe String group : groups) {
-              res[i++] = new MoveToGroupAction(group);
-            }
-            res[i++] = new Separator();
-            res[i] = new MoveToGroupAction();
-            return res;
+            List<AnAction> res = new ArrayList<>();
+            res.add(new MoveToGroupAction(null));
+
+            myBreakpointItems.stream()
+              .map(BreakpointItem::getBreakpoint)
+              .filter(Objects::nonNull)
+              .map(XBreakpointProxy::getGroup)
+              .filter(Objects::nonNull)
+              .distinct()
+              .sorted()
+              .forEach((@NlsSafe var g) -> {
+                res.add(new MoveToGroupAction(g));
+              });
+
+            res.add(new Separator());
+            res.add(new MoveToGroupAction());
+            return res.toArray(AnAction.EMPTY_ARRAY);
           }
         };
         List<AnAction> res = new ArrayList<>();
@@ -348,11 +360,6 @@ public class BreakpointsDialog extends DialogWrapper {
 
     initSelection(myBreakpointItems);
 
-    myBreakpointManager.subscribeOnBreakpointsChanges(myListenerDisposable, () -> {
-      myRebuildAlarm.cancelAndRequest();
-      return Unit.INSTANCE;
-    });
-
     return decoratorPanel;
   }
 
@@ -389,7 +396,7 @@ public class BreakpointsDialog extends DialogWrapper {
     XBreakpointsDialogState settings = (getBreakpointManager()).getBreakpointsDialogSettings();
 
     for (XBreakpointGroupingRule rule : myRulesAvailable) {
-      if (rule.isAlwaysEnabled() || (settings != null && settings.getSelectedGroupingRules().contains(rule.getId()) ) ) {
+      if (rule.isAlwaysEnabled() || (settings != null && settings.getSelectedGroupingRules().contains(rule.getId()))) {
         myRulesEnabled.add(rule);
       }
     }
@@ -501,7 +508,7 @@ public class BreakpointsDialog extends DialogWrapper {
   }
 
   private final class SetAsDefaultGroupAction extends AnAction {
-    private final String myName;
+    private final @Nullable String myName;
 
     private SetAsDefaultGroupAction(XBreakpointCustomGroup group) {
       super(group.isDefault()

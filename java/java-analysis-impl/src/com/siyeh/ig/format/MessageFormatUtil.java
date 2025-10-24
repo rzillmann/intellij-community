@@ -171,7 +171,8 @@ public final class MessageFormatUtil {
   }
 
   @VisibleForTesting
-  static @NotNull List<MessageFormatError> checkQuote(@NotNull String string) {
+  @ApiStatus.Internal
+  public static @NotNull List<MessageFormatError> checkQuote(@NotNull String string) {
     List<MessageFormatError> errors = new ArrayList<>();
     int fromIndex = 0;
     while (true) {
@@ -215,7 +216,8 @@ public final class MessageFormatUtil {
   }
 
   @VisibleForTesting
-  static @NotNull MessageHolder parseMessageHolder(@NotNull String pattern) {
+  @ApiStatus.Internal
+  public static @NotNull MessageHolder parseMessageHolder(@NotNull String pattern) {
     MessageHolder holder = new MessageHolder(pattern);
     while (!holder.hasRuntimeError && holder.hasNext()) {
       char ch = holder.nextPool();
@@ -337,7 +339,7 @@ public final class MessageFormatUtil {
       if (holder.errors.isEmpty()) {
         List<MessageFormatPart> notStrings =
           ContainerUtil.filter(holder.parts, t -> !(t.getParsedType() == MessageFormatParsedType.STRING && t.getText().isEmpty()));
-        if (notStrings.size() == 1 && notStrings.get(0).getParsedType() == MessageFormatParsedType.FORMAT_ELEMENT) {
+        if (notStrings.size() == 1 && notStrings.getFirst().getParsedType() == MessageFormatParsedType.FORMAT_ELEMENT) {
           return nextQuote + current;
         }
       }
@@ -380,7 +382,7 @@ public final class MessageFormatUtil {
               currentSelector = ChoiceFormat.nextDouble(currentSelector);
             }
             if (!selectors.isEmpty()) {
-              Double previousSelector = selectors.get(selectors.size() - 1);
+              Double previousSelector = selectors.getLast();
               if (previousSelector >= currentSelector) {
                 holder.addError(MessageFormatErrorType.INCORRECT_ORDER_CHOICE_SELECTOR, holder.current - selector.length(), holder.current);
               }
@@ -485,18 +487,16 @@ public final class MessageFormatUtil {
       messageFormatElement = element;
     }
 
-    @Nullable
-    MessageFormatElement getMessageFormatElement() {
+    public @Nullable MessageFormatElement getMessageFormatElement() {
       return messageFormatElement;
     }
 
     @VisibleForTesting
-    String getText() {
+    public String getText() {
       return text.toString();
     }
 
-    @NotNull
-    MessageFormatParsedType getParsedType() {
+    public @NotNull MessageFormatParsedType getParsedType() {
       return parsedType;
     }
 
@@ -522,7 +522,7 @@ public final class MessageFormatUtil {
     private @Nullable Integer index;
     private @Nullable MessageFormatType formatType;
 
-    @Nullable Integer getIndex() {
+    public @Nullable Integer getIndex() {
       return index;
     }
 
@@ -614,11 +614,11 @@ public final class MessageFormatUtil {
       parts.add(new MessageFormatPart(0, MessageFormatParsedType.STRING, null));
     }
 
-    List<MessageFormatPart> getParts() {
+    public List<MessageFormatPart> getParts() {
       return parts;
     }
 
-    List<MessageFormatError> getErrors() {
+    public List<MessageFormatError> getErrors() {
       return errors;
     }
 
@@ -643,7 +643,7 @@ public final class MessageFormatUtil {
     }
 
     private @NotNull MessageFormatPart getLastPart() {
-      return parts.get(parts.size() - 1);
+      return parts.getLast();
     }
 
     private void startFormatElement(char ch) {

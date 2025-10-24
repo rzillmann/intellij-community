@@ -28,9 +28,9 @@ public class FacetLibrariesValidatorTest extends FacetTestCase {
   private MockFacetValidatorsManager myValidatorsManager;
   private static final LibraryInfo
     FAST_UTIL = new LibraryInfo("fastutil.jar", (String)null, null, null, "it.unimi.dsi.fastutil.objects.ObjectOpenHashSet");
-  private static final LibraryInfo JUNIT = new LibraryInfo("junit.jar", (String)null, null, null, "junit.framework.TestCase");
+  private static final LibraryInfo BB = new LibraryInfo("bb.jar", (String)null, null, null, "net.bytebuddy.build.BuildLogger");
   private VirtualFile myFastUtilJar;
-  private VirtualFile myJUnitJar;
+  private VirtualFile myBBJar;
   @NonNls private static final String LIB_NAME = "lib";
   private MockFacet myFacet;
   private FacetLibrariesValidatorDescription myDescription;
@@ -41,7 +41,7 @@ public class FacetLibrariesValidatorTest extends FacetTestCase {
     myValidatorsManager = new MockFacetValidatorsManager();
     myFacet = createFacet();
     myFastUtilJar = IntelliJProjectConfiguration.getJarFromSingleJarProjectLibrary("fastutil-min");
-    myJUnitJar = IntelliJProjectConfiguration.getJarFromSingleJarProjectLibrary("JUnit3");
+    myBBJar = IntelliJProjectConfiguration.getJarFromSingleJarProjectLibrary("byte-buddy");
     myDescription = new FacetLibrariesValidatorDescription(LIB_NAME);
   }
 
@@ -75,27 +75,27 @@ public class FacetLibrariesValidatorTest extends FacetTestCase {
     validator.setRequiredLibraries(LibraryInfo.EMPTY_ARRAY);
     assertNoErrors();
 
-    validator.setRequiredLibraries(new LibraryInfo[]{JUNIT});
-    assertError("junit.jar");
+    validator.setRequiredLibraries(new LibraryInfo[]{BB});
+    assertError("bb.jar");
   }
 
   public void testAddJars() {
-    final FacetLibrariesValidatorImpl validator = createValidator(FAST_UTIL, JUNIT);
+    final FacetLibrariesValidatorImpl validator = createValidator(FAST_UTIL, BB);
     assertError("");
 
     ModuleRootModificationUtil.addModuleLibrary(myModule, myFastUtilJar.getUrl());
     IndexingTestUtil.waitUntilIndexesAreReady(myProject);
     myValidatorsManager.validate();
-    assertError("junit");
+    assertError("bb");
 
-    ModuleRootModificationUtil.addModuleLibrary(myModule, myJUnitJar.getUrl());
+    ModuleRootModificationUtil.addModuleLibrary(myModule, myBBJar.getUrl());
     IndexingTestUtil.waitUntilIndexesAreReady(myProject);
     myValidatorsManager.validate();
     validator.onFacetInitialized(createFacet());
 
     final List<VirtualFile> classpath = Arrays.asList(OrderEnumerator.orderEntries(myModule).getClassesRoots());
     assertTrue(classpath.contains(myFastUtilJar));
-    assertTrue(classpath.contains(myJUnitJar));
+    assertTrue(classpath.contains(myBBJar));
   }
 
   public void testUnresolvedLibrary() {
@@ -104,8 +104,8 @@ public class FacetLibrariesValidatorTest extends FacetTestCase {
   }
 
   public void testLibrary() {
-    PsiTestUtil.addProjectLibrary(myModule, "lib1", myFastUtilJar, myJUnitJar);
-    createValidator(FAST_UTIL, JUNIT);
+    PsiTestUtil.addProjectLibrary(myModule, "lib1", myFastUtilJar, myBBJar);
+    createValidator(FAST_UTIL, BB);
     assertNoErrors();
   }
 

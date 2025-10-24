@@ -8,12 +8,14 @@ import com.intellij.ide.IdeEventQueue
 import com.intellij.ide.actions.ui.JBListWithOpenInRightSplit
 import com.intellij.ide.ui.UISettings
 import com.intellij.ide.util.gotoByName.QuickSearchComponent
-import com.intellij.ide.vfs.virtualFile
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.actionSystem.*
 import com.intellij.openapi.actionSystem.ex.ActionUtil
+import com.intellij.openapi.actionSystem.remoting.ActionRemoteBehaviorSpecification
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.application.ModalityState
+import com.intellij.openapi.application.UiWithModelAccess
+import com.intellij.openapi.application.writeIntentReadAction
 import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.fileLogger
 import com.intellij.openapi.fileEditor.FileEditorManager
@@ -21,7 +23,6 @@ import com.intellij.openapi.fileEditor.impl.EditorWindow
 import com.intellij.openapi.fileEditor.impl.FileEditorManagerImpl
 import com.intellij.openapi.fileEditor.impl.getOpenMode
 import com.intellij.openapi.keymap.KeymapUtil
-import com.intellij.openapi.progress.blockingContext
 import com.intellij.openapi.project.LightEditActionFactory
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.popup.JBPopup
@@ -40,10 +41,7 @@ import com.intellij.platform.recentFiles.frontend.SwitcherLogger.NAVIGATED_ORIGI
 import com.intellij.platform.recentFiles.frontend.SwitcherLogger.SHOWN_TIME_ACTIVITY
 import com.intellij.platform.recentFiles.frontend.SwitcherSpeedSearch.Companion.installOn
 import com.intellij.platform.recentFiles.frontend.model.FrontendRecentFilesModel
-import com.intellij.platform.recentFiles.shared.FileSwitcherApi
-import com.intellij.platform.recentFiles.shared.RecentFileKind
-import com.intellij.platform.recentFiles.shared.RecentFilesBackendRequest
-import com.intellij.platform.recentFiles.shared.RecentFilesCoroutineScopeProvider
+import com.intellij.platform.recentFiles.shared.*
 import com.intellij.platform.util.coroutines.childScope
 import com.intellij.ui.*
 import com.intellij.ui.components.JBList
@@ -59,16 +57,16 @@ import com.intellij.util.ui.SwingTextTrimmer
 import com.intellij.util.ui.accessibility.ScreenReader
 import com.intellij.util.ui.components.BorderLayoutPanel
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.annotations.Nls
 import org.jetbrains.annotations.NonNls
 import org.jetbrains.concurrency.await
+import java.awt.BorderLayout
 import java.awt.Component
 import java.awt.Dimension
-import java.awt.event.InputEvent
-import java.awt.event.ItemEvent
-import java.awt.event.ItemListener
-import java.awt.event.MouseEvent
+import java.awt.event.*
 import java.util.*
 import javax.swing.*
 import javax.swing.event.ListDataEvent
@@ -82,7 +80,7 @@ import kotlin.time.Duration.Companion.milliseconds
 
 private const val ACTION_PLACE = "Switcher"
 
-object Switcher : BaseSwitcherAction(null) {
+object Switcher : BaseSwitcherAction(null), ActionRemoteBehaviorSpecification.Frontend {
   @ApiStatus.Internal
   val SWITCHER_KEY: Key<SwitcherPanel> = Key.create("SWITCHER_KEY")
 
@@ -91,6 +89,7 @@ object Switcher : BaseSwitcherAction(null) {
     val project: Project,
     val title: @Nls String,
     launchParameters: SwitcherLaunchEventParameters,
+    alreadyReleasedKeys: List<KeyEvent>?,
     onlyEditedFiles: Boolean?,
     private val frontendModel: FrontendRecentFilesModel,
     private val remoteApi: FileSwitcherApi,
@@ -126,6 +125,9 @@ object Switcher : BaseSwitcherAction(null) {
     private val uiUpdateScope: CoroutineScope
     private val modelUpdateScope: CoroutineScope
 
+    private val unpinnedFilesKind: RecentFileKind
+      get() = if (EditorWindow.tabLimit > 1) RecentFileKind.RECENTLY_OPENED_UNPINNED else RecentFileKind.RECENTLY_OPENED
+
     override fun uiDataSnapshot(sink: DataSink) {
       sink[CommonDataKeys.PROJECT] = project
       sink[PlatformCoreDataKeys.SELECTED_ITEM] =
@@ -137,6 +139,15 @@ object Switcher : BaseSwitcherAction(null) {
           .mapNotNull { it.virtualFile }
           .takeIf { it.isNotEmpty() }
           ?.toTypedArray()
+    }
+
+    private fun setupBottomPanel(): JComponent {
+      return RecentFilesAdvertisementProvider.EP_NAME.extensionList.firstNotNullOfOrNull { it.getBanner(project) }?.let { banner ->
+        JPanel(BorderLayout()).apply {
+          add(pathLabel, BorderLayout.NORTH)
+          add(banner, BorderLayout.SOUTH)
+        }
+      } ?: pathLabel
     }
 
     init {
@@ -261,7 +272,7 @@ object Switcher : BaseSwitcherAction(null) {
 
       // setup files
       val initialData = when {
-        !pinned -> frontendModel.getRecentFiles(RecentFileKind.RECENTLY_OPENED_UNPINNED)
+        !pinned -> frontendModel.getRecentFiles(unpinnedFilesKind)
         onlyEdited -> frontendModel.getRecentFiles(RecentFileKind.RECENTLY_EDITED)
         else -> frontendModel.getRecentFiles(RecentFileKind.RECENTLY_OPENED)
       }
@@ -315,7 +326,9 @@ object Switcher : BaseSwitcherAction(null) {
       })
 
       files = JBListWithOpenInRightSplit.createListWithOpenInRightSplitter<SwitcherVirtualFile>(maybeSearchableModel, null)
+      files.visibleRowCount = files.itemsCount
 
+      val selectedValueFlow = MutableStateFlow<SwitcherListItem?>(null)
       val filesSelectionListener = object : ListSelectionListener {
         override fun valueChanged(e: ListSelectionEvent) {
           LOG.debug("Switcher value changed: $e")
@@ -325,9 +338,20 @@ object Switcher : BaseSwitcherAction(null) {
           }
 
           updatePathLabel()
-          val hint = hint
-          val popupUpdater = if (hint == null || !hint.isVisible) null else hint.getUserData(PopupUpdateProcessorBase::class.java)
-          popupUpdater?.updatePopup(CommonDataKeys.PSI_ELEMENT.getData(DataManager.getInstance().getDataContext(this@SwitcherPanel)))
+          selectedValueFlow.value = selectedList?.selectedValue
+        }
+      }
+      uiUpdateScope.launch(CoroutineName("Switcher hint popup updater")) {
+        selectedValueFlow.collectLatest { selectedValue ->
+          withContext(Dispatchers.UiWithModelAccess) { // can't use STRICT because updatePopup needs a WIRA
+            val hint = hint
+            val popupUpdater = if (hint == null || !hint.isVisible) null else hint.getUserData(PopupUpdateProcessorBase::class.java)
+            if (selectedValue != null && popupUpdater != null) {
+              writeIntentReadAction {
+                popupUpdater.updatePopup(CommonDataKeys.PSI_ELEMENT.getData(DataManager.getInstance().getDataContext(this@SwitcherPanel)))
+              }
+            }
+          }
         }
       }
       toolWindows.selectionModel.addListSelectionListener(filesSelectionListener)
@@ -356,7 +380,7 @@ object Switcher : BaseSwitcherAction(null) {
       ListHoverListener.DEFAULT.addTo(files)
       clickListener.installOn(files)
       addToTop(header)
-      addToBottom(pathLabel)
+      addToBottom(setupBottomPanel())
       addToCenter(SwitcherScrollPane(files, true))
       if (!windows.isEmpty()) {
         addToLeft(SwitcherScrollPane(toolWindows, false))
@@ -373,7 +397,7 @@ object Switcher : BaseSwitcherAction(null) {
         .setModalContext(false)
         .setFocusable(true)
         .setRequestFocus(true)
-        .setCancelOnWindowDeactivation(true)
+        .setCancelOnWindowDeactivation(!pinned || !StartupUiUtil.isWaylandToolkit())
         .setCancelOnOtherWindowOpen(true)
         .setMovable(pinned)
         .setDimensionServiceKey(if (pinned) project else null, if (pinned) "SwitcherDM" else null, false)
@@ -402,6 +426,14 @@ object Switcher : BaseSwitcherAction(null) {
 
       if (Registry.`is`("highlighting.passes.cache")) {
         scheduleBackendRecentFilesUpdate(RecentFilesBackendRequest.ScheduleRehighlighting(project.projectId()))
+      }
+
+      if (alreadyReleasedKeys?.isNotEmpty() == true) {
+        uiUpdateScope.launch(Dispatchers.EDT) { // using EDT because some navigate() stuff inside may need the WIL
+          for (event in alreadyReleasedKeys) {
+            onKeyRelease.keyReleased(event)
+          }
+        }
       }
     }
 
@@ -460,8 +492,9 @@ object Switcher : BaseSwitcherAction(null) {
         when (item) {
           is SwitcherVirtualFile -> {
             listModel.remove(item)
-            closeEditorForFile(item, project)
-            filesToHide.add(item)
+            if (closeEditorForFile(item, project)) {
+              filesToHide.add(item)
+            }
           }
           is SwitcherToolWindow -> {
             closeToolWindow(item, project)
@@ -471,12 +504,12 @@ object Switcher : BaseSwitcherAction(null) {
       }
 
       val currentlyShownFileType = when {
-        cbShowOnlyEditedFiles == null -> RecentFileKind.RECENTLY_OPENED_UNPINNED
+        cbShowOnlyEditedFiles == null -> unpinnedFilesKind
         cbShowOnlyEditedFiles.isSelected -> RecentFileKind.RECENTLY_EDITED
         else -> RecentFileKind.RECENTLY_OPENED
       }
       if (filesToHide.isNotEmpty()) {
-        frontendModel.applyFrontendChanges(currentlyShownFileType, filesToHide.mapNotNull { it.virtualFile }, false)
+        frontendModel.applyFrontendChanges(currentlyShownFileType, filesToHide.mapNotNull { it.virtualFile }, FileChangeKind.REMOVED)
       }
     }
 
@@ -606,9 +639,7 @@ object Switcher : BaseSwitcherAction(null) {
         }
         val event = AnActionEvent.createEvent(dataContext, gotoAction.templatePresentation.clone(),
                                               ACTION_PLACE, ActionUiKind.NONE, e)
-        blockingContext {
-          ActionUtil.performActionDumbAwareWithCallbacks(gotoAction, event)
-        }
+        ActionUtil.performAction(gotoAction, event)
       }
     }
 

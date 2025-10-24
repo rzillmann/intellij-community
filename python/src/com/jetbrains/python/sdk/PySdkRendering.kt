@@ -1,4 +1,4 @@
-// Copyright 2000-2019 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license that can be found in the LICENSE file.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.jetbrains.python.sdk
 
 import com.intellij.icons.AllIcons
@@ -11,18 +11,26 @@ import com.intellij.ui.LayeredIcon
 import com.intellij.ui.SimpleColoredComponent
 import com.intellij.ui.SimpleTextAttributes
 import com.jetbrains.python.PyBundle
+import com.jetbrains.python.isCondaVirtualEnv
+import com.jetbrains.python.isVirtualEnv
 import com.jetbrains.python.psi.LanguageLevel
+import com.jetbrains.python.sdk.legacy.PythonSdkUtil.isRemote
 import com.jetbrains.python.sdk.flavors.PythonSdkFlavor
+import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.annotations.Nls
 import javax.swing.Icon
 
 val noInterpreterMarker: String = "<${PyBundle.message("python.sdk.there.is.no.interpreter")}>"
+
+@ApiStatus.Internal
 
 fun name(sdk: Sdk): Triple<String?, String, String?> = name(sdk, sdk.name)
 
 /**
  * Returns modifier that shortly describes that is wrong with passed [sdk], [name] and additional info.
  */
+@ApiStatus.Internal
+
 fun name(sdk: Sdk, name: String): Triple<String?, String, String?> {
   val modifier = when {
     !sdk.sdkSeemsValid || PythonSdkType.hasInvalidRemoteCredentials(sdk) -> "invalid"
@@ -47,6 +55,8 @@ fun name(sdk: Sdk, name: String): Triple<String?, String, String?> {
  *
  * @see FileUtil.getLocationRelativeToUserHome
  */
+@ApiStatus.Internal
+
 fun path(sdk: Sdk): @NlsSafe String? {
   val name = sdk.name
   val homePath = sdk.homePath ?: return null
@@ -73,6 +83,8 @@ fun path(sdk: Sdk): @NlsSafe String? {
  * @see PythonSdkType.hasInvalidRemoteCredentials
  * @see LanguageLevel.SUPPORTED_LEVELS
  */
+@ApiStatus.Internal
+
 fun icon(sdk: Sdk): Icon {
   val flavor: PythonSdkFlavor<*> = sdk.getOrCreateAdditionalData().flavor
 
@@ -99,19 +111,21 @@ fun icon(sdk: Sdk): Icon {
  * All the others are considered as [PyRenderedSdkType.SYSTEM].
  *
  * @see Sdk.isAssociatedWithAnotherModule
- * @see PythonSdkUtil.isVirtualEnv
- * @see PythonSdkUtil.isCondaVirtualEnv
- * @see PythonSdkUtil.isRemote
+ * @see com.jetbrains.python.sdk.legacy.PythonSdkUtil.isVirtualEnv
+ * @see com.jetbrains.python.sdk.legacy.PythonSdkUtil.isCondaVirtualEnv
+ * @see com.jetbrains.python.sdk.legacy.PythonSdkUtil.isRemote
  * @see PyRenderedSdkType
  */
+@ApiStatus.Internal
+
 fun groupModuleSdksByTypes(allSdks: List<Sdk>, module: Module?, invalid: (Sdk) -> Boolean): Map<PyRenderedSdkType, List<Sdk>> {
   return allSdks
     .asSequence()
     .filter { !it.isAssociatedWithAnotherModule(module) && !invalid(it) }
     .groupBy {
       when {
-        PythonSdkUtil.isVirtualEnv(it) || PythonSdkUtil.isCondaVirtualEnv(it) -> PyRenderedSdkType.VIRTUALENV
-        PythonSdkUtil.isRemote(it) -> PyRenderedSdkType.REMOTE
+        it.isVirtualEnv || it.isCondaVirtualEnv -> PyRenderedSdkType.VIRTUALENV
+        isRemote(it) -> PyRenderedSdkType.REMOTE
         else -> PyRenderedSdkType.SYSTEM
       }
     }
@@ -122,6 +136,8 @@ fun groupModuleSdksByTypes(allSdks: List<Sdk>, module: Module?, invalid: (Sdk) -
  *
  * @see groupModuleSdksByTypes
  */
+@ApiStatus.Internal
+
 enum class PyRenderedSdkType {
   VIRTUALENV, SYSTEM, REMOTE
 }
@@ -132,10 +148,12 @@ private fun wrapIconWithWarningDecorator(icon: Icon): LayeredIcon =
     setIcon(AllIcons.Actions.Cancel, 1)
   }
 
-internal fun SimpleColoredComponent.customizeWithSdkValue(value: Any?,
-                                                          nullSdkName: @Nls String,
-                                                          nullSdkValue: Sdk?,
-                                                          actualSdkName: String? = null) {
+internal fun SimpleColoredComponent.customizeWithSdkValue(
+  value: Any?,
+  nullSdkName: @Nls String,
+  nullSdkValue: Sdk?,
+  actualSdkName: String? = null,
+) {
   when (value) {
     is PySdkToInstall -> {
       value.renderInList(this)

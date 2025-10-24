@@ -29,10 +29,7 @@ import com.intellij.openapi.wm.impl.ToolWindowManagerImpl
 import com.intellij.openapi.wm.impl.ToolWindowManagerImpl.Companion.getAdjustedRatio
 import com.intellij.openapi.wm.impl.ToolWindowManagerImpl.Companion.getRegisteredMutableInfoOrLogError
 import com.intellij.openapi.wm.impl.WindowInfoImpl
-import com.intellij.ui.ExperimentalUI
-import com.intellij.ui.JBColor
-import com.intellij.ui.OnePixelSplitter
-import com.intellij.ui.ScreenUtil
+import com.intellij.ui.*
 import com.intellij.ui.awt.DevicePoint
 import com.intellij.ui.paint.PaintUtil
 import com.intellij.ui.scale.JBUIScale
@@ -40,7 +37,6 @@ import com.intellij.ui.scale.ScaleContext
 import com.intellij.ui.scale.ScaleContextCache
 import com.intellij.util.IJSwingUtilities
 import com.intellij.util.concurrency.annotations.RequiresEdt
-import com.intellij.util.ui.GraphicsUtil
 import com.intellij.util.ui.ImageUtil
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
@@ -49,11 +45,13 @@ import org.jetbrains.annotations.ApiStatus.Internal
 import org.jetbrains.annotations.VisibleForTesting
 import java.awt.*
 import java.awt.geom.Point2D
-import java.awt.geom.RoundRectangle2D
 import java.awt.image.BufferedImage
 import java.lang.ref.SoftReference
 import java.util.concurrent.Future
-import javax.swing.*
+import javax.swing.JComponent
+import javax.swing.JFrame
+import javax.swing.JLayeredPane
+import javax.swing.LayoutFocusTraversalPolicy
 import kotlin.math.max
 import kotlin.math.min
 
@@ -127,6 +125,7 @@ class ToolWindowPane private constructor(
 
   internal val frame: JFrame
 
+  internal var borderPainter: BorderPainter = DefaultBorderPainter()
   /**
    * This panel is the layered pane where all sliding tool windows are located. The DEFAULT
    * layer contains splitters. The PALETTE layer contains all sliding tool windows.
@@ -184,9 +183,7 @@ class ToolWindowPane private constructor(
     add(layeredPane, DEFAULT_LAYER, -1)
     focusTraversalPolicy = LayoutFocusTraversalPolicy()
     ToolWindowDragHelper(disposable, this).start()
-    if (Registry.`is`("ide.allow.split.and.reorder.in.tool.window")) {
-      ToolWindowInnerDragHelper(disposable, this).start()
-    }
+    ToolWindowInnerDragHelper(disposable, this).start()
   }
 
   private fun setUpSplitter(splitter: ThreeComponentsSplitter) {
@@ -401,6 +398,11 @@ class ToolWindowPane private constructor(
     }
   }
 
+  override fun paintChildren(g: Graphics) {
+    super.paintChildren(g)
+    borderPainter.paintAfterChildren(this, g)
+  }
+
   val bottomHeight: Int
     get() = buttonManager.getBottomHeight()
   val isBottomSideToolWindowsVisible: Boolean
@@ -426,6 +428,10 @@ class ToolWindowPane private constructor(
     val maxValue = if (vertical) verticalSplitter.getMaxSize(first) else horizontalSplitter.getMaxSize(first)
     val minValue = if (vertical) verticalSplitter.getMinSize(first) else horizontalSplitter.getMinSize(first)
     pair.first.setSize(max(minValue, min(maxValue, actualSize)))
+  }
+
+  @Internal fun getComponentSize(window: ToolWindow): Dimension? {
+    return findResizerAndComponent(window)?.second?.size
   }
 
   private fun findResizerAndComponent(window: ToolWindow): Pair<Resizer, Component>? {
@@ -616,8 +622,27 @@ class ToolWindowPane private constructor(
       }
 
       override fun createDivider(): Divider {
-        return InternalUICustomization.getInstance()?.createCustomDivider(isVisible, this)
+        return InternalUICustomization.getInstance()?.createCustomDivider(isVertical, this)
                ?: super.createDivider().also { it.background = JBUI.CurrentTheme.ToolWindow.mainBorderColor() }
+      }
+
+      private val myCustomDividerWidth: Int
+
+      init {
+        val dividerWidth = divider.getClientProperty("DividerWidth")
+        if (dividerWidth is Int) {
+          myCustomDividerWidth = dividerWidth
+        }
+        else {
+          myCustomDividerWidth = -1
+        }
+      }
+
+      override fun getDividerWidth(): Int {
+        if (myCustomDividerWidth != -1) {
+          return myCustomDividerWidth
+        }
+        return super.getDividerWidth()
       }
 
       override fun toString() = "[$firstComponent|$secondComponent]"
@@ -839,7 +864,7 @@ private class ImageCache(imageProvider: (ScaleContext) -> ImageRef) : ScaleConte
   }
 }
 
-private class FrameLayeredPane(splitter: JComponent, frame: JFrame) : JLayeredPane() {
+internal open class FrameLayeredPane(splitter: JComponent, frame: JFrame) : JLayeredPane() {
   private val imageProvider: (ScaleContext) -> ImageRef = {
     val width = max(max(1, width), frame.width)
     val height = max(max(1, height), frame.height)
@@ -924,44 +949,6 @@ private class FrameLayeredPane(splitter: JComponent, frame: JFrame) : JLayeredPa
         LOG.error("unknown anchor $anchor")
       }
     }
-  }
-
-  override fun paintChildren(g: Graphics) {
-    val cornerRadius = getIslandArc()
-
-    if (cornerRadius == 0) {
-      super.paintChildren(g)
-      return
-    }
-
-    val clip = g.clip
-    g.clip = null
-    val cornerRadiusF = cornerRadius.toFloat()
-    g.clip = RoundRectangle2D.Float(x.toFloat(), y.toFloat(), width.toFloat(), height.toFloat(), cornerRadiusF, cornerRadiusF)
-
-    super.paintChildren(g)
-
-    g.clip = null
-    g.clip = clip
-
-    val color = UIManager.get("Island.borderColor")
-
-    if (color is Color) {
-      val config = GraphicsUtil.setupRoundedBorderAntialiasing(g)
-      g.color = color
-      g.drawRoundRect(0, 0, width - 1, height - 1, cornerRadius, cornerRadius)
-      config.restore()
-    }
-  }
-
-  override fun isPaintingOrigin(): Boolean = getIslandArc() > 0
-
-  private fun getIslandArc(): Int {
-    val customization = InternalUICustomization.getInstance()
-    if (customization == null || customization.isDefaultCustomization) {
-      return JBUI.getInt("Island.arc", 0)
-    }
-    return 0
   }
 }
 

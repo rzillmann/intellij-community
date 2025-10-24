@@ -17,7 +17,6 @@ import com.intellij.openapi.project.DumbAware;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.ComboBox;
 import com.intellij.openapi.util.Disposer;
-import com.intellij.openapi.util.registry.Registry;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vcs.AbstractVcs;
 import com.intellij.openapi.vcs.FilePath;
@@ -29,6 +28,7 @@ import com.intellij.openapi.vcs.changes.actions.diff.UnversionedDiffRequestProdu
 import com.intellij.openapi.vcs.changes.actions.diff.lst.LocalChangeListDiffTool;
 import com.intellij.openapi.vcs.impl.LineStatusTrackerManager;
 import com.intellij.openapi.vcs.rollback.RollbackEnvironment;
+import com.intellij.platform.vcs.impl.shared.commit.PartialCommitChangeNodeDecorator;
 import com.intellij.ui.CollectionComboBoxModel;
 import com.intellij.ui.ColoredListCellRenderer;
 import com.intellij.ui.SimpleTextAttributes;
@@ -38,7 +38,6 @@ import com.intellij.util.ui.JBUI;
 import com.intellij.util.ui.ThreeStateCheckBox.State;
 import com.intellij.util.ui.update.DisposableUpdate;
 import com.intellij.util.ui.update.MergingUpdateQueue;
-import com.intellij.vcs.commit.PartialCommitChangeNodeDecorator;
 import com.intellij.vcs.commit.PartialCommitInclusionModel;
 import com.intellij.vcs.commit.SingleChangeListCommitWorkflowUi;
 import org.jetbrains.annotations.Contract;
@@ -97,12 +96,6 @@ class MultipleLocalChangeListsBrowser extends CommitDialogChangesBrowser impleme
 
     if (!changeListManager.areChangeListsEnabled()) {
       myChangeListChooser.setVisible(false);
-    }
-    else if (Registry.is("vcs.skip.single.default.changelist")) {
-      List<LocalChangeList> allChangeLists = changeListManager.getChangeLists();
-      if (allChangeLists.size() == 1 && allChangeLists.get(0).isBlank()) {
-        myChangeListChooser.setVisible(false);
-      }
     }
 
     myInclusionModel = new PartialCommitInclusionModel(myProject);

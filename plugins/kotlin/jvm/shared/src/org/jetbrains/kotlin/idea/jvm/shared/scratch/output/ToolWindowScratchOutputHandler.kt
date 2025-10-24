@@ -92,6 +92,12 @@ private object ScratchToolWindowHandlerKeeper {
 
 private class ToolWindowScratchOutputHandler(private val parentDisposable: Disposable) : ScratchOutputHandlerAdapter() {
 
+    override fun handle(file: ScratchFile, output: ScratchOutput) {
+        printToConsole(file) {
+            print(output.text, output.type.convert())
+        }
+    }
+
     override fun handle(file: ScratchFile, expression: ScratchExpression, output: ScratchOutput) {
         printToConsole(file) {
             val psiFile = file.getPsiFile()
@@ -126,6 +132,7 @@ private class ToolWindowScratchOutputHandler(private val parentDisposable: Dispo
             for (content in contents) {
                 val component = content.component
                 if (component is ConsoleViewImpl) {
+                    component.clear()
                     component.print()
                     component.print("\n", ConsoleViewContentType.NORMAL_OUTPUT)
                 }

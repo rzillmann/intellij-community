@@ -27,6 +27,7 @@ import com.intellij.platform.diagnostic.telemetry.TelemetryManager
 import com.intellij.util.SystemProperties
 import com.intellij.util.concurrency.AppExecutorUtil
 import com.intellij.util.concurrency.AppScheduledExecutorService
+import com.intellij.util.concurrency.ThreadingAssertions
 import com.intellij.util.io.basicAttributesIfExists
 import com.intellij.util.io.sanitizeFileName
 import kotlinx.coroutines.*
@@ -84,12 +85,14 @@ internal class PerformanceWatcherImpl(private val coroutineScope: CoroutineScope
   }
 
   private val isActive: Boolean = !ApplicationManager.getApplication().isHeadlessEnvironment
+  private var smokeAndMirrorsCounter: Int = 0
 
   private val taskFlow = MutableSharedFlow<FreezeCheckerTask?>(replay = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
 
   init {
     if (isActive) {
-      coroutineScope.launch {
+      LOG.debug("Freeze detection started")
+      coroutineScope.launch(CoroutineName("EDT freeze detector")) {
         asyncInit()
 
         taskFlow.collectLatest { task ->
@@ -116,16 +119,22 @@ internal class PerformanceWatcherImpl(private val coroutineScope: CoroutineScope
       return
     }
 
-    coroutineScope.launch {
-      val samplingIntervalMs = samplingInterval
-      @Suppress("KotlinConstantConditions")
-      if (samplingIntervalMs <= 0) {
-        return@launch
-      }
+    LOG.debug("EDT sampling started")
+    coroutineScope.launch(CoroutineName("EDT sampling")) {
+      try {
+        val samplingIntervalMs = samplingInterval
+        @Suppress("KotlinConstantConditions")
+        if (samplingIntervalMs <= 0) {
+          return@launch
+        }
 
-      while (true) {
-        delay(samplingIntervalMs)
-        samplePerformance(samplingIntervalMs)
+        while (true) {
+          delay(samplingIntervalMs)
+          samplePerformance(samplingIntervalMs)
+        }
+      }
+      finally {
+        LOG.debug("EDT sampling stopped")
       }
     }
   }
@@ -200,7 +209,9 @@ internal class PerformanceWatcherImpl(private val coroutineScope: CoroutineScope
       diffMs -= samplingIntervalMs
     }
     jitWatcher.checkJitState()
-    val latencyMs = withContext(Dispatchers.EDT + ModalityState.any().asContextElement()) {
+    LOG.trace("Scheduling EDT sample")
+    val latencyMs = withContext(Dispatchers.ui(CoroutineSupport.UiDispatcherKind.STRICT) + ModalityState.any().asContextElement()) {
+      LOG.trace("Processing EDT sample")
       TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - current)
     }
     swingApdex = swingApdex.withEvent(TOLERABLE_LATENCY, latencyMs)
@@ -227,15 +238,29 @@ internal class PerformanceWatcherImpl(private val coroutineScope: CoroutineScope
       return if (value <= 0) 0 else value.coerceIn(500, 20000)
     }
 
+  override fun smokeAndMirrors(name: @NonNls String): AccessToken {
+    LOG.trace("Entered smokeAndMirrors phase: $name")
+    ThreadingAssertions.assertEventDispatchThread()
+    smokeAndMirrorsCounter++
+
+    return AccessToken.create {
+      LOG.trace("Exited smokeAndMirrors phase: $name")
+      ThreadingAssertions.assertEventDispatchThread()
+      smokeAndMirrorsCounter--
+    }
+  }
+
   @ApiStatus.Internal
   override fun edtEventStarted() {
     if (!isActive) return
+    if (smokeAndMirrorsCounter > 0) return
     stopCurrentTaskAndReEmit(FreezeCheckerTask(System.nanoTime()))
   }
 
   @ApiStatus.Internal
   override fun edtEventFinished() {
     if (!isActive) return
+    if (smokeAndMirrorsCounter > 0) return
     stopCurrentTaskAndReEmit(null)
   }
 
@@ -585,11 +610,13 @@ private fun collectCrashInfo(pid: String, lastModified: Long): CrashInfo? {
   val osCrashContent = runCatching {
     if (!SystemInfoRt.isMac) return@runCatching null
     for (reportsDir in MacOSDiagnosticReportDirectories) {
-      val reportFiles = Path.of(reportsDir).useDirectoryEntries { entries -> entries
+      val reportFiles = Path.of(reportsDir)
+        .takeIf(Files::isDirectory)
+        ?.useDirectoryEntries { entries -> entries
         .filter { it.name.endsWith(".ips") && it.isRegularFile() && it.getLastModifiedTime().toMillis() > lastModified }
         .toList()
       }
-      val osCrashContent = reportFiles.firstNotNullOfOrNull { file ->
+      val osCrashContent = reportFiles?.firstNotNullOfOrNull { file ->
         if (file.fileSize() > CRASH_MAX_SIZE) {
           LOG.info("OS crash file $file is too big to process or report")
           return@firstNotNullOfOrNull null

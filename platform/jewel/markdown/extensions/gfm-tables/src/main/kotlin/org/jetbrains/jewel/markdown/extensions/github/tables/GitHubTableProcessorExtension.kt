@@ -16,16 +16,17 @@ import org.commonmark.parser.Parser.Builder
 import org.commonmark.parser.Parser.ParserExtension
 import org.commonmark.renderer.text.TextContentRenderer
 import org.commonmark.renderer.text.TextContentRenderer.TextContentRendererExtension
+import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.jewel.foundation.ExperimentalJewelApi
 import org.jetbrains.jewel.markdown.InlineMarkdown
 import org.jetbrains.jewel.markdown.MarkdownBlock
 import org.jetbrains.jewel.markdown.extensions.MarkdownBlockProcessorExtension
-import org.jetbrains.jewel.markdown.extensions.MarkdownBlockRendererExtension
+import org.jetbrains.jewel.markdown.extensions.MarkdownHtmlConverterExtension
 import org.jetbrains.jewel.markdown.extensions.MarkdownProcessorExtension
-import org.jetbrains.jewel.markdown.extensions.MarkdownRendererExtension
 import org.jetbrains.jewel.markdown.processing.MarkdownProcessor
+import org.jetbrains.jewel.markdown.processing.html.HtmlElementConverter
+import org.jetbrains.jewel.markdown.processing.html.MarkdownHtmlNode
 import org.jetbrains.jewel.markdown.processing.readInlineMarkdown
-import org.jetbrains.jewel.markdown.rendering.MarkdownStyling
 
 /**
  * Adds support for table parsing. Tables are a GitHub Flavored Markdown extension, defined
@@ -33,12 +34,15 @@ import org.jetbrains.jewel.markdown.rendering.MarkdownStyling
  *
  * @see TablesExtension
  */
-@OptIn(ExperimentalJewelApi::class)
+@ApiStatus.Experimental
+@ExperimentalJewelApi
 public object GitHubTableProcessorExtension : MarkdownProcessorExtension {
     override val parserExtension: ParserExtension = GitHubTablesCommonMarkExtension
     override val textRendererExtension: TextContentRendererExtension = GitHubTablesCommonMarkExtension
 
     override val blockProcessorExtension: MarkdownBlockProcessorExtension = GitHubTablesProcessorExtension
+
+    override val htmlConverterExtension: MarkdownHtmlConverterExtension = GitHubTablesHtmlConverterExtension
 
     private object GitHubTablesProcessorExtension : MarkdownBlockProcessorExtension {
         override fun canProcess(block: CustomBlock): Boolean = block is CommonMarkTableBlock
@@ -129,37 +133,51 @@ private object GitHubTablesCommonMarkExtension : ParserExtension, TextContentRen
     }
 }
 
-@OptIn(ExperimentalJewelApi::class)
-public class GitHubTableRendererExtension(tableStyling: GfmTableStyling, rootStyling: MarkdownStyling) :
-    MarkdownRendererExtension {
-    override val blockRenderer: MarkdownBlockRendererExtension = GitHubTableBlockRenderer(rootStyling, tableStyling)
-}
+private object GitHubTablesHtmlConverterExtension : MarkdownHtmlConverterExtension {
+    override val supportedTags: Set<String>
+        get() = setOf("table")
 
-internal data class TableBlock(val header: TableHeader, val rows: List<TableRow>) : MarkdownBlock.CustomBlock {
-    val rowCount: Int = rows.size + 1 // We always have a header
-    val columnCount: Int
+    override fun provideConverter(tagName: String): HtmlElementConverter = GitHubTableHtmlElementConverter
 
-    init {
-        require(header.cells.isNotEmpty()) { "Header cannot be empty" }
-        val headerColumns = header.cells.size
-
-        if (rows.isNotEmpty()) {
-            val bodyColumns = rows.first().cells.size
-            require(rows.all { it.cells.size == bodyColumns }) { "Inconsistent cell count in table body" }
-            require(headerColumns == bodyColumns) { "Inconsistent cell count between table body and header" }
+    private object GitHubTableHtmlElementConverter : HtmlElementConverter {
+        override fun convert(
+            htmlElement: MarkdownHtmlNode.Element,
+            convertChildren: MarkdownHtmlNode.Element.() -> List<MarkdownBlock>,
+            convertInlines: (List<MarkdownHtmlNode>) -> List<InlineMarkdown>,
+        ): MarkdownBlock? {
+            val tbody =
+                htmlElement.children.filterIsInstance<MarkdownHtmlNode.Element>().find { it.tag == "tbody" }
+                    ?: return null
+            val htmlRows = tbody.children.filterIsInstance<MarkdownHtmlNode.Element>().filter { it.tag == "tr" }
+            if (htmlRows.isEmpty()) return null
+            val markdownRows: List<MutableList<TableCell>> = buildList {
+                for (i in 0..htmlRows.lastIndex) {
+                    add(
+                        htmlRows[i]
+                            .rowElements()
+                            .mapIndexed { index, rowCell ->
+                                val inlines = convertInlines(rowCell.children)
+                                if (inlines.isEmpty()) return@mapIndexed TableCell(i, index, emptyList(), null)
+                                TableCell(rowIndex = i, columnIndex = index, content = inlines, alignment = null)
+                            }
+                            .toMutableList()
+                    )
+                }
+            }
+            val maxColumns = markdownRows.maxOf { it.size }
+            for ((rowIndex, row) in markdownRows.withIndex()) {
+                for (columnIndex in row.size until maxColumns) {
+                    row.add(TableCell(rowIndex, columnIndex, emptyList(), null))
+                }
+            }
+            val header = TableHeader(markdownRows.first())
+            val rows = markdownRows.drop(1).mapIndexed(::TableRow)
+            return TableBlock(header, rows)
         }
 
-        columnCount = headerColumns
+        // html allows mixing header (<th>) and row (<td>) elements deliberately,
+        // so each of them can be used in any row
+        private fun MarkdownHtmlNode.Element.rowElements(): List<MarkdownHtmlNode.Element> =
+            children.filterIsInstance<MarkdownHtmlNode.Element>().filter { it.tag == "td" || it.tag == "th" }
     }
 }
-
-internal data class TableHeader(val cells: List<TableCell>) : MarkdownBlock.CustomBlock
-
-internal data class TableRow(val rowIndex: Int, val cells: List<TableCell>) : MarkdownBlock.CustomBlock
-
-internal data class TableCell(
-    val rowIndex: Int,
-    val columnIndex: Int,
-    val content: List<InlineMarkdown>,
-    val alignment: Alignment.Horizontal?,
-) : MarkdownBlock.CustomBlock

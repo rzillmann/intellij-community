@@ -30,7 +30,7 @@ import org.jetbrains.uast.UClass
 import org.jetbrains.uast.UDeclaration
 import org.jetbrains.uast.visitor.AbstractUastNonRecursiveVisitor
 
-class ImplicitSubclassInspection : LocalInspectionTool() {
+public class ImplicitSubclassInspection : LocalInspectionTool() {
   private val allModifiers = listOf(PsiModifier.PRIVATE, PsiModifier.PROTECTED, PsiModifier.PACKAGE_LOCAL, PsiModifier.PUBLIC)
 
   private fun checkClass(aClass: UClass, manager: InspectionManager, isOnTheFly: Boolean): Array<ProblemDescriptor> {
@@ -142,11 +142,11 @@ class ImplicitSubclassInspection : LocalInspectionTool() {
 
     override fun getFamilyName(): String = QuickFixBundle.message("fix.modifiers.family")
 
-    override fun invoke(project: Project, file: PsiFile, startElement: PsiElement, endElement: PsiElement) {
+    override fun invoke(project: Project, psiFile: PsiFile, startElement: PsiElement, endElement: PsiElement) {
       try {
         for (intentionAction in actionsToPerform) {
-          if (intentionAction.isAvailable(project, null, file))
-            intentionAction.invoke(project, null, file)
+          if (intentionAction.isAvailable(project, null, psiFile))
+            intentionAction.invoke(project, null, psiFile)
         }
       }
       catch (e: IncorrectOperationException) {

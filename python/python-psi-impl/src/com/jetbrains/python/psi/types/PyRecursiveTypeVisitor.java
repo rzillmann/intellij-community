@@ -141,15 +141,6 @@ public final class PyRecursiveTypeVisitor extends PyTypeVisitorExt<PyRecursiveTy
     }
 
     @Override
-    public @NotNull List<@Nullable PyType> visitPyClassLikeType(@NotNull PyClassLikeType classLikeType) {
-      // Don't inherit the default implementation from PyCallableType.
-      // Even though PyClassLikeType can behave like a callable if the corresponding class
-      // has __init__ or __call__, most likely the respective parameter types and
-      // return type are not part of its notation.
-      return Collections.emptyList();
-    }
-
-    @Override
     public @NotNull List<@Nullable PyType> visitPyGenericType(@NotNull PyCollectionType genericType) {
       return genericType.getElementTypes();
     }
@@ -191,6 +182,11 @@ public final class PyRecursiveTypeVisitor extends PyTypeVisitorExt<PyRecursiveTy
     @Override
     public @NotNull List<@Nullable PyType> visitPyUnionType(@NotNull PyUnionType unionType) {
       return Collections.unmodifiableList(new ArrayList<>(unionType.getMembers()));
+    }
+
+    @Override
+    public @NotNull List<@Nullable PyType> visitPyUnsafeUnionType(@NotNull PyUnsafeUnionType unsafeUnionType) {
+      return Collections.unmodifiableList(new ArrayList<>(unsafeUnionType.getMembers()));
     }
 
     @Override

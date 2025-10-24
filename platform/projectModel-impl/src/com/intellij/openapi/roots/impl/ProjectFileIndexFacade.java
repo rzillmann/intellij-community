@@ -81,6 +81,10 @@ public class ProjectFileIndexFacade extends FileIndexFacade {
     return myFileIndex.isUnderIgnored(file);
   }
 
+  @ApiStatus.Experimental
+  @Override
+  public boolean isIndexable(@NotNull VirtualFile file) { return myWorkspaceFileIndex.isIndexable(file); }
+
   @Override
   public @Nullable Module getModuleForFile(@NotNull VirtualFile file) {
     return myFileIndex.getModuleForFile(file);
@@ -113,7 +117,7 @@ public class ProjectFileIndexFacade extends FileIndexFacade {
   @Override
   public boolean isInProjectScope(@NotNull VirtualFile file) {
     // optimization: equivalent to the super method but has fewer getInfoForFile() calls
-    WorkspaceFileInternalInfo fileInfo = myWorkspaceFileIndex.getFileInfo(file, true, true, true, false, false);
+    WorkspaceFileInternalInfo fileInfo = myWorkspaceFileIndex.getFileInfo(file, true, true, true, true, false, false);
     if (fileInfo instanceof WorkspaceFileInternalInfo.NonWorkspace) {
       return false;
     }

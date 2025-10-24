@@ -5,6 +5,8 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
+import org.jetbrains.annotations.ApiStatus
+import org.jetbrains.jewel.foundation.ExperimentalJewelApi
 import org.jetbrains.jewel.markdown.InlineMarkdown
 import org.jetbrains.jewel.markdown.extensions.MarkdownDelimitedInlineRendererExtension
 import org.jetbrains.jewel.markdown.rendering.InlineMarkdownRenderer
@@ -14,6 +16,8 @@ import org.jetbrains.jewel.markdown.rendering.InlinesStyling
  * An extension for [`MarkdownInlineRenderer`][org.jetbrains.jewel.markdown.rendering.InlineMarkdownRenderer] that
  * renders [GitHubStrikethroughNode]s into annotated strings.
  */
+@ApiStatus.Experimental
+@ExperimentalJewelApi
 public object GitHubStrikethroughInlineRendererExtension : MarkdownDelimitedInlineRendererExtension {
     private val strikethroughSpanStyle = SpanStyle(textDecoration = TextDecoration.Companion.LineThrough)
 

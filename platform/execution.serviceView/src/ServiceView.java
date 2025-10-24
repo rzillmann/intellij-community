@@ -3,13 +3,16 @@ package com.intellij.platform.execution.serviceView;
 
 import com.intellij.execution.services.*;
 import com.intellij.openapi.Disposable;
-import com.intellij.openapi.actionSystem.*;
+import com.intellij.openapi.actionSystem.DataSink;
+import com.intellij.openapi.actionSystem.PlatformCoreDataKeys;
+import com.intellij.openapi.actionSystem.PlatformDataKeys;
+import com.intellij.openapi.actionSystem.UiDataProvider;
 import com.intellij.openapi.project.Project;
 import com.intellij.platform.execution.serviceView.ServiceModel.ServiceViewItem;
-import com.intellij.pom.Navigatable;
 import com.intellij.ui.AutoScrollToSourceHandler;
 import com.intellij.util.containers.ContainerUtil;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Unmodifiable;
 import org.jetbrains.concurrency.Promise;
 
 import javax.swing.*;
@@ -56,7 +59,7 @@ abstract class ServiceView extends JPanel implements UiDataProvider, Disposable 
     myModel.saveState(state);
   }
 
-  abstract @NotNull List<ServiceViewItem> getSelectedItems();
+  abstract @NotNull @Unmodifiable List<ServiceViewItem> getSelectedItems();
 
   abstract Promise<Void> select(@NotNull Object service, @NotNull Class<?> contributorClass);
 
@@ -76,7 +79,7 @@ abstract class ServiceView extends JPanel implements UiDataProvider, Disposable 
     myModel.setGroupByContributor(value);
   }
 
-  abstract List<Object> getChildrenSafe(@NotNull List<Object> valueSubPath, @NotNull Class<?> contributorClass);
+  abstract @Unmodifiable List<Object> getChildrenSafe(@NotNull List<Object> valueSubPath, @NotNull Class<?> contributorClass);
 
   void setAutoScrollToSourceHandler(@NotNull AutoScrollToSourceHandler autoScrollToSourceHandler) {
     myAutoScrollToSourceHandler = autoScrollToSourceHandler;
@@ -113,8 +116,6 @@ abstract class ServiceView extends JPanel implements UiDataProvider, Disposable 
 
     sink.set(PlatformCoreDataKeys.HELP_ID,
              ServiceViewManagerImpl.getToolWindowContextHelpId());
-    sink.set(PlatformCoreDataKeys.SELECTED_ITEMS,
-             ContainerUtil.map2Array(selection, ServiceViewItem::getValue));
     sink.set(PlatformCoreDataKeys.SELECTED_ITEM,
              onlyItem != null ? onlyItem.getValue() : null);
     sink.set(ServiceViewActionProvider.SERVICES_SELECTED_ITEMS, selection);
@@ -133,9 +134,9 @@ abstract class ServiceView extends JPanel implements UiDataProvider, Disposable 
              getModel().getRoots().stream().map(item -> item.getRootContributor()).collect(Collectors.toSet()));
     sink.set(ServiceViewActionUtils.OPTIONS_KEY, myViewOptions);
 
-    List<Navigatable> navigatables = ContainerUtil.mapNotNull(selection, item -> item.getViewDescriptor().getNavigatable());
-    sink.set(CommonDataKeys.NAVIGATABLE_ARRAY,
-             navigatables.toArray(Navigatable.EMPTY_NAVIGATABLE_ARRAY));
+    List<ServiceViewDescriptorId> selectedDescriptorIds = ContainerUtil.map(selection,
+                                                                            item -> ServiceViewDescriptorIdKt.toId(item, myProject));
+    sink.set(ServiceViewActionProvider.SERVICES_SELECTED_DESCRIPTOR_IDS, selectedDescriptorIds);
 
     ServiceViewDescriptor descriptor = onlyItem == null || onlyItem.isRemoved() ? null : onlyItem.getViewDescriptor();
     if (descriptor instanceof UiDataProvider uiDataProvider) {

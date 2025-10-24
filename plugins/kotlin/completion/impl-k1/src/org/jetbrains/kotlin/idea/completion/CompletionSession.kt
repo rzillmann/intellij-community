@@ -24,13 +24,14 @@ import org.jetbrains.kotlin.idea.base.projectStructure.moduleInfo.OriginCapabili
 import org.jetbrains.kotlin.idea.base.psi.isInsideAnnotationEntryArgumentList
 import org.jetbrains.kotlin.idea.base.util.ImportableFqNameClassifier
 import org.jetbrains.kotlin.idea.base.util.isJavaClassNotToBeUsedInKotlin
+import org.jetbrains.kotlin.idea.base.util.isJavaClassWithKotlinTypeAlias
 import org.jetbrains.kotlin.idea.caches.resolve.getResolutionFacade
 import org.jetbrains.kotlin.idea.caches.resolve.resolveToDescriptorIfAny
-import org.jetbrains.kotlin.idea.caches.resolve.util.getResolveScope
 import org.jetbrains.kotlin.idea.codeInsight.ReferenceVariantsHelper
 import org.jetbrains.kotlin.idea.completion.implCommon.weighers.PreferKotlinClassesWeigher
 import org.jetbrains.kotlin.idea.core.*
 import org.jetbrains.kotlin.idea.core.util.CodeFragmentUtils
+import org.jetbrains.kotlin.idea.core.util.getResolveScope
 import org.jetbrains.kotlin.idea.imports.importableFqName
 import org.jetbrains.kotlin.idea.kdoc.resolveKDocLink
 import org.jetbrains.kotlin.idea.references.mainReference
@@ -219,6 +220,10 @@ abstract class CompletionSession(
     private fun isVisibleDescriptor(descriptor: DeclarationDescriptor, completeNonAccessible: Boolean): Boolean {
         if (!configuration.javaClassesNotToBeUsed && descriptor is ClassDescriptor) {
             if (descriptor.importableFqName?.isJavaClassNotToBeUsedInKotlin() == true) return false
+        }
+
+        if (!configuration.javaClassesNotToBeUsed && descriptor is ClassDescriptor) {
+            if (descriptor.importableFqName?.isJavaClassWithKotlinTypeAlias() == true) return false
         }
 
         if (descriptor is TypeParameterDescriptor && !isTypeParameterVisible(descriptor)) return false

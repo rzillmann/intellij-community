@@ -28,9 +28,7 @@ import com.intellij.util.containers.ContainerUtil;
 import com.jetbrains.python.PyBundle;
 import com.jetbrains.python.psi.LanguageLevel;
 import com.jetbrains.python.psi.PyFile;
-import com.jetbrains.python.psi.PyFromImportStatement;
-import com.jetbrains.python.psi.impl.PyPsiUtils;
-import com.jetbrains.python.sdk.PythonSdkUtil;
+import com.jetbrains.python.sdk.legacy.PythonSdkUtil;
 import one.util.streamex.StreamEx;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -38,6 +36,8 @@ import org.jetbrains.annotations.Nullable;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+
+import static com.jetbrains.python.statistics.PythonCompatibilityInspectionAdvertiserIdsHolder.*;
 
 /**
  * @author Mikhail Golubev
@@ -77,14 +77,6 @@ public final class PyCompatibilityInspectionAdvertiser implements Annotator {
             showStalePython3VersionWarning(pyFile, project, pyVersion);
           }
         }
-        else if (containsFutureImports(pyFile)) {
-          showSingletonNotification(
-            project, PyBundle.message("python.compatibility.inspection.advertiser.using.future.imports.warning.message"));
-        }
-        else if (PyPsiUtils.containsImport(pyFile, "six")) {
-          showSingletonNotification(
-            project, PyBundle.message("python.compatibility.inspection.advertiser.using.six.warning.message"));
-        }
       }
     }
   }
@@ -115,6 +107,7 @@ public final class PyCompatibilityInspectionAdvertiser implements Annotator {
       project,
       PyBundle.message("python.compatibility.inspection.advertiser.notifications.title"),
       message,
+      STALE_PYTHON_VERSION,
       (notification, event) -> {
         final boolean enabled = "#yes".equals(event.getDescription());
         if (enabled) {
@@ -153,11 +146,12 @@ public final class PyCompatibilityInspectionAdvertiser implements Annotator {
     }
   }
 
-  private static void showSingletonNotification(@NotNull Project project, @NotificationContent String msg) {
+  private static void showSingletonNotification(@NotNull Project project, @NotificationContent String msg, @NotNull String displayId) {
     showSingletonNotification(
       project,
       PyBundle.message("python.compatibility.inspection.advertiser.notifications.title"),
       msg,
+      displayId,
       (notification, event) -> {
         final boolean enabled = "#yes".equals(event.getDescription());
         if (enabled) {
@@ -172,10 +166,12 @@ public final class PyCompatibilityInspectionAdvertiser implements Annotator {
   private static void showSingletonNotification(@NotNull Project project,
                                                 @NotNull @NotificationTitle String title,
                                                 @NotNull @NotificationContent String htmlContent,
+                                                @NotNull String displayId,
                                                 @NotNull NotificationListener listener) {
     project.putUserData(DONT_SHOW_BALLOON, true);
     NotificationGroupManager.getInstance().getNotificationGroup("Python Compatibility Inspection Advertiser")
       .createNotification(title, htmlContent, NotificationType.INFORMATION)
+      .setDisplayId(displayId)
       .setSuggestionType(true)
       .setListener((notification, event) -> {
         try {
@@ -186,15 +182,6 @@ public final class PyCompatibilityInspectionAdvertiser implements Annotator {
         }
       })
       .notify(project);
-  }
-
-  private static boolean containsFutureImports(@NotNull PyFile file) {
-    for (PyFromImportStatement importStatement : file.getFromImports()) {
-      if (importStatement.isFromFuture()) {
-        return true;
-      }
-    }
-    return false;
   }
 
   private static boolean isCompatibilityInspectionEnabled(@NotNull PsiElement anchor) {
@@ -214,7 +201,8 @@ public final class PyCompatibilityInspectionAdvertiser implements Annotator {
 
   private static @Nullable LanguageLevel getLatestConfiguredCompatiblePythonVersion(@NotNull PsiElement anchor) {
     final InspectionProfile profile = InspectionProfileManager.getInstance(anchor.getProject()).getCurrentProfile();
-    final PyCompatibilityInspection inspection = (PyCompatibilityInspection)profile.getUnwrappedTool(getCompatibilityInspectionShortName(), anchor);
+    final PyCompatibilityInspection inspection =
+      (PyCompatibilityInspection)profile.getUnwrappedTool(getCompatibilityInspectionShortName(), anchor);
     assert inspection != null;
     final JDOMExternalizableStringList versions = inspection.ourVersions;
     if (versions.isEmpty()) {

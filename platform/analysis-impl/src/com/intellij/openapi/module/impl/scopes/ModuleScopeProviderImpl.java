@@ -1,4 +1,4 @@
-// Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.openapi.module.impl.scopes;
 
 import com.intellij.concurrency.ConcurrentCollectionFactory;
@@ -9,105 +9,103 @@ import com.intellij.util.containers.IntObjectMap;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 
-/**
- * Author: dmitrylomov
- */
 @ApiStatus.Internal
 public class ModuleScopeProviderImpl implements ModuleScopeProvider {
-  private final Module myModule;
-  private final IntObjectMap<GlobalSearchScope> myScopeCache =
-    ConcurrentCollectionFactory.createConcurrentIntObjectMap();
-  private ModuleWithDependentsTestScope myModuleTestsWithDependentsScope;
-  private volatile ModuleWithDependenciesContentScope myModuleWithDependenciesContentScope;
+  private final Module module;
+  private final IntObjectMap<GlobalSearchScope> scopeCache = ConcurrentCollectionFactory.createConcurrentIntObjectMap();
+  private ModuleWithDependentsTestScope moduleTestsWithDependentsScope;
+  private volatile ModuleWithDependenciesContentScope moduleWithDependenciesContentScope;
 
   public ModuleScopeProviderImpl(@NotNull Module module) {
-    myModule = module;
+    this.module = module;
   }
 
-  private @NotNull GlobalSearchScope getCachedScope(@ModuleWithDependenciesScope.ScopeConstant int options) {
-    GlobalSearchScope scope = myScopeCache.get(options);
+  private @NotNull GlobalSearchScope getCachedScope(@ScopeConstant int options) {
+    GlobalSearchScope scope = scopeCache.get(options);
     if (scope == null) {
-      scope = new ModuleWithDependenciesScope(myModule, options);
-      myScopeCache.put(options, scope);
+      scope = new ModuleWithDependenciesScope(module, options);
+      scopeCache.put(options, scope);
     }
     return scope;
   }
 
   @Override
-  public @NotNull GlobalSearchScope getModuleScope() {
-    return getCachedScope(ModuleWithDependenciesScope.COMPILE_ONLY | ModuleWithDependenciesScope.TESTS);
+  public final @NotNull GlobalSearchScope getModuleScope() {
+    return getCachedScope(ModuleScopeUtil.COMPILE_ONLY | ModuleScopeUtil.TESTS);
   }
 
   @Override
-  public @NotNull GlobalSearchScope getModuleScope(boolean includeTests) {
-    return getCachedScope(ModuleWithDependenciesScope.COMPILE_ONLY | (includeTests ? ModuleWithDependenciesScope.TESTS : 0));
+  public final @NotNull GlobalSearchScope getModuleScope(boolean includeTests) {
+    return getCachedScope(ModuleScopeUtil.COMPILE_ONLY | (includeTests ? ModuleScopeUtil.TESTS : 0));
   }
 
   @Override
-  public @NotNull GlobalSearchScope getModuleWithLibrariesScope() {
-    return getCachedScope(ModuleWithDependenciesScope.COMPILE_ONLY | ModuleWithDependenciesScope.TESTS | ModuleWithDependenciesScope.LIBRARIES);
+  public final @NotNull GlobalSearchScope getModuleWithLibrariesScope() {
+    return getCachedScope(ModuleScopeUtil.COMPILE_ONLY | ModuleScopeUtil.TESTS | ModuleScopeUtil.LIBRARIES);
   }
 
   @Override
-  public @NotNull GlobalSearchScope getModuleWithDependenciesScope() {
-    return getCachedScope(ModuleWithDependenciesScope.COMPILE_ONLY | ModuleWithDependenciesScope.TESTS | ModuleWithDependenciesScope.MODULES);
+  public final @NotNull GlobalSearchScope getModuleWithDependenciesScope() {
+    return getCachedScope(ModuleScopeUtil.COMPILE_ONLY | ModuleScopeUtil.TESTS | ModuleScopeUtil.MODULES);
   }
 
   @Override
-  public @NotNull GlobalSearchScope getModuleContentScope() {
-    return new ModuleContentScope(myModule);
+  public final @NotNull GlobalSearchScope getModuleContentScope() {
+    return new ModuleContentScope(module);
   }
 
   @Override
-  public @NotNull GlobalSearchScope getModuleContentWithDependenciesScope() {
-    ModuleWithDependenciesContentScope scope = myModuleWithDependenciesContentScope;
+  public final @NotNull GlobalSearchScope getModuleContentWithDependenciesScope() {
+    ModuleWithDependenciesContentScope scope = moduleWithDependenciesContentScope;
     if (scope == null) {
-      myModuleWithDependenciesContentScope = scope = new ModuleWithDependenciesContentScope(myModule);
+      scope = new ModuleWithDependenciesContentScope(module);
+      moduleWithDependenciesContentScope = scope;
     }
     return scope;
   }
 
   @Override
-  public @NotNull GlobalSearchScope getModuleWithDependenciesAndLibrariesScope(boolean includeTests) {
-    return getCachedScope(ModuleWithDependenciesScope.COMPILE_ONLY |
-                          ModuleWithDependenciesScope.MODULES |
-                          ModuleWithDependenciesScope.LIBRARIES | (includeTests ? ModuleWithDependenciesScope.TESTS : 0));
+  public final @NotNull GlobalSearchScope getModuleWithDependenciesAndLibrariesScope(boolean includeTests) {
+    return getCachedScope(ModuleScopeUtil.COMPILE_ONLY |
+                          ModuleScopeUtil.MODULES |
+                          ModuleScopeUtil.LIBRARIES | (includeTests ? ModuleScopeUtil.TESTS : 0));
   }
 
   @Override
   public @NotNull GlobalSearchScope getModuleWithDependentsScope() {
-    return getModuleTestsWithDependentsScope().getDelegate();
+    return ((ModuleWithDependentsTestScope)getModuleTestsWithDependentsScope()).getDelegate();
   }
 
   @Override
-  public @NotNull ModuleWithDependentsTestScope getModuleTestsWithDependentsScope() {
-    ModuleWithDependentsTestScope scope = myModuleTestsWithDependentsScope;
+  public final @NotNull GlobalSearchScope getModuleTestsWithDependentsScope() {
+    ModuleWithDependentsTestScope scope = moduleTestsWithDependentsScope;
     if (scope == null) {
-      myModuleTestsWithDependentsScope = scope = new ModuleWithDependentsTestScope(myModule);
+      scope = new ModuleWithDependentsTestScope(module);
+      moduleTestsWithDependentsScope = scope;
     }
     return scope;
   }
 
   @Override
-  public @NotNull GlobalSearchScope getModuleRuntimeScope(boolean includeTests) {
+  public final @NotNull GlobalSearchScope getModuleRuntimeScope(boolean includeTests) {
     return getCachedScope(
-      ModuleWithDependenciesScope.MODULES | ModuleWithDependenciesScope.LIBRARIES | (includeTests ? ModuleWithDependenciesScope.TESTS : 0));
+      ModuleScopeUtil.MODULES | ModuleScopeUtil.LIBRARIES | (includeTests ? ModuleScopeUtil.TESTS : 0));
   }
 
   @Override
-  public @NotNull GlobalSearchScope getModuleProductionSourceScope() {
+  public final @NotNull GlobalSearchScope getModuleProductionSourceScope() {
     return getCachedScope(0);
   }
 
   @Override
-  public @NotNull GlobalSearchScope getModuleTestSourceScope() {
-    return getCachedScope(ModuleWithDependenciesScope.TESTS);
+  public final @NotNull GlobalSearchScope getModuleTestSourceScope() {
+    return getCachedScope(ModuleScopeUtil.TESTS);
   }
 
   @Override
-  public void clearCache() {
-    myScopeCache.clear();
-    myModuleTestsWithDependentsScope = null;
-    myModuleWithDependenciesContentScope = null;
+  public final void clearCache() {
+    scopeCache.clear();
+    moduleTestsWithDependentsScope = null;
+    moduleWithDependenciesContentScope = null;
   }
 }

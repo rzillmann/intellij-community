@@ -33,6 +33,7 @@ import com.intellij.openapi.vcs.changes.CommitExecutor
 import com.intellij.openapi.vcs.changes.actions.DefaultCommitExecutorAction
 import com.intellij.openapi.vcs.changes.ui.ChangesViewContentManager
 import com.intellij.openapi.vcs.changes.ui.ChangesViewContentManager.Companion.LOCAL_CHANGES
+import com.intellij.openapi.vcs.changes.ui.hideWindowedFloatingTwOnCommit
 import com.intellij.openapi.vcs.checkin.*
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.vfs.VirtualFileManager
@@ -67,6 +68,7 @@ abstract class NonModalCommitWorkflowHandler<W : NonModalCommitWorkflow, U : Non
     if (oldValue == newValue) return@observable
     updateDefaultCommitActionName()
   }
+  private var smartChecksWereBlocked = false
 
   private val checkinErrorNotifications = SingletonNotificationManager(VcsNotifier.importantNotification().displayId,
                                                                        NotificationType.ERROR)
@@ -107,6 +109,8 @@ abstract class NonModalCommitWorkflowHandler<W : NonModalCommitWorkflow, U : Non
 
       override fun exitDumbMode() {
         ui.commitProgressUi.isDumbMode = false
+        smartChecksWereBlocked = false
+        updateDefaultCommitActionName()
       }
     })
   }
@@ -124,7 +128,7 @@ abstract class NonModalCommitWorkflowHandler<W : NonModalCommitWorkflow, U : Non
 
   private fun getCommitActionTextForNotification(
     executor: CommitExecutor?,
-    isSkipCommitChecks: Boolean
+    isSkipCommitChecks: Boolean,
   ): @Nls(capitalization = Nls.Capitalization.Sentence) String {
     val isAmend = amendCommitHandler.isAmendCommitMode
     val actionText: @Nls String = getActionTextWithoutEllipsis(workflow.vcses, executor, isAmend, isSkipCommitChecks,
@@ -208,7 +212,8 @@ abstract class NonModalCommitWorkflowHandler<W : NonModalCommitWorkflow, U : Non
 
   private fun willSkipCommitChecks() = isCommitChecksResultUpToDate == RecentCommitChecks.EARLY_FAILED ||
                                        isCommitChecksResultUpToDate == RecentCommitChecks.MODIFICATIONS_FAILED ||
-                                       isCommitChecksResultUpToDate == RecentCommitChecks.POST_FAILED
+                                       isCommitChecksResultUpToDate == RecentCommitChecks.POST_FAILED ||
+                                       smartChecksWereBlocked
 
   private fun willSkipEarlyCommitChecks() = isCommitChecksResultUpToDate == RecentCommitChecks.EARLY_FAILED ||
                                             isCommitChecksResultUpToDate == RecentCommitChecks.MODIFICATIONS_FAILED ||
@@ -221,6 +226,7 @@ abstract class NonModalCommitWorkflowHandler<W : NonModalCommitWorkflow, U : Non
 
   private fun willSkipPostCommitChecks() = isCommitChecksResultUpToDate == RecentCommitChecks.POST_FAILED
 
+  private fun willSkipSmartCommitChecks() = smartChecksWereBlocked
 
   protected fun resetCommitChecksResult() {
     isCommitChecksResultUpToDate = RecentCommitChecks.UNKNOWN
@@ -300,6 +306,7 @@ abstract class NonModalCommitWorkflowHandler<W : NonModalCommitWorkflow, U : Non
 
   @ApiStatus.Internal
   override suspend fun doExecuteSession(sessionInfo: CommitSessionInfo, commitInfo: DynamicCommitInfo): Boolean {
+    hideWindowedFloatingTwOnCommit(project)
     if (!sessionInfo.isVcsCommit) {
       return workflow.executeSession(sessionInfo, commitInfo)
     }
@@ -314,11 +321,12 @@ abstract class NonModalCommitWorkflowHandler<W : NonModalCommitWorkflow, U : Non
       val skipModificationCommitChecks = !isOnlyRunCommitChecks && willSkipModificationCommitChecks()
       val skipLateCommitChecks = !isOnlyRunCommitChecks && willSkipLateCommitChecks()
       val skipPostCommitChecks = !isOnlyRunCommitChecks && willSkipPostCommitChecks()
+      val allowSkippingSmartCommitChecks = willSkipSmartCommitChecks()
       resetCommitChecksResult()
 
       ui.commitProgressUi.runWithProgress(isOnlyRunCommitChecks) {
         val failure = runNonModalBeforeCommitChecks(commitInfo, skipEarlyCommitChecks, skipModificationCommitChecks,
-                                                    skipLateCommitChecks, skipPostCommitChecks)
+                                                    skipLateCommitChecks, skipPostCommitChecks, allowSkippingSmartCommitChecks)
         handleCommitProblem(failure, isOnlyRunCommitChecks)
       }
     }
@@ -332,6 +340,7 @@ abstract class NonModalCommitWorkflowHandler<W : NonModalCommitWorkflow, U : Non
     skipModificationCommitChecks: Boolean,
     skipLateCommitChecks: Boolean,
     skipPostCommitChecks: Boolean,
+    allowSkippingSmartCommitChecks: Boolean,
   ): NonModalCommitChecksFailure? = reportSequentialProgress { reporter ->
     try {
       val handlers = workflow.commitHandlers
@@ -339,18 +348,25 @@ abstract class NonModalCommitWorkflowHandler<W : NonModalCommitWorkflow, U : Non
         .filter { it.acceptExecutor(commitInfo.executor) }
         .map { it.asCommitCheck(commitInfo) }
         .filter { it.isEnabled() }
-        .groupBy { it.getExecutionOrder() }
 
-      val earlyChecks = commitChecks[CommitCheck.ExecutionOrder.EARLY].orEmpty()
-      val modificationChecks = commitChecks[CommitCheck.ExecutionOrder.MODIFICATION].orEmpty()
-      val lateChecks = commitChecks[CommitCheck.ExecutionOrder.LATE].orEmpty()
-      val postCommitChecks = commitChecks[CommitCheck.ExecutionOrder.POST_COMMIT].orEmpty()
+      val dumbModeFailure = handleDumbModeCompatibility(commitChecks)
+
+      val commitChecksByOrder = commitChecks.groupBy { it.getExecutionOrder() }
+
+      val earlyChecks = commitChecksByOrder[CommitCheck.ExecutionOrder.EARLY].orEmpty()
+      val modificationChecks = commitChecksByOrder[CommitCheck.ExecutionOrder.MODIFICATION].orEmpty()
+      val lateChecks = commitChecksByOrder[CommitCheck.ExecutionOrder.LATE].orEmpty()
+      val postCommitChecks = commitChecksByOrder[CommitCheck.ExecutionOrder.POST_COMMIT].orEmpty()
       @Suppress("DEPRECATION") val metaHandlers = handlers.filterIsInstance<CheckinMetaHandler>()
 
       if (!skipEarlyCommitChecks) {
         reporter.nextStep(PROGRESS_FRACTION_EARLY) {
           runEarlyCommitChecks(commitInfo, earlyChecks)
         }?.let { return it }
+      }
+
+      if (!allowSkippingSmartCommitChecks && dumbModeFailure != null) {
+        return dumbModeFailure
       }
 
       if (!skipModificationCommitChecks) {
@@ -395,6 +411,23 @@ abstract class NonModalCommitWorkflowHandler<W : NonModalCommitWorkflow, U : Non
     }
   }
 
+  private fun handleDumbModeCompatibility(commitChecks: List<CommitCheck>): NonModalCommitChecksFailure? {
+    val dumbService = DumbService.getInstance(project)
+    val hasBlockedSmartChecks = commitChecks.any { commitCheck ->
+      !dumbService.isUsableInCurrentContext(commitCheck)
+    }
+
+    if (hasBlockedSmartChecks) {
+      smartChecksWereBlocked = true
+      ui.commitProgressUi.showWarningAboutDumbMode()
+      CommitSessionCollector.getInstance(project).logSmartCommitCheckBlocked()
+      return NonModalCommitChecksFailure.SMART_MODE_REQUIRED
+    }
+    smartChecksWereBlocked = false
+    ui.commitProgressUi.hideWarningAboutDumbMode()
+    return null
+  }
+
   private suspend fun runEarlyCommitChecks(commitInfo: DynamicCommitInfo, commitChecks: List<CommitCheck>): NonModalCommitChecksFailure? {
     val problems = commitChecks.mapWithProgress { commitCheck ->
       AbstractCommitWorkflow.runCommitCheck(project, commitCheck, commitInfo)
@@ -405,10 +438,12 @@ abstract class NonModalCommitWorkflowHandler<W : NonModalCommitWorkflow, U : Non
     return NonModalCommitChecksFailure.EARLY_FAILED
   }
 
-  private suspend fun runModificationCommitChecks(commitInfo: DynamicCommitInfo,
-                                                  commitChecks: List<CommitCheck>,
-                                                  @Suppress("DEPRECATION")
-                                                  metaHandlers: List<CheckinMetaHandler>): NonModalCommitChecksFailure? {
+  private suspend fun runModificationCommitChecks(
+    commitInfo: DynamicCommitInfo,
+    commitChecks: List<CommitCheck>,
+    @Suppress("DEPRECATION")
+    metaHandlers: List<CheckinMetaHandler>,
+  ): NonModalCommitChecksFailure? {
     if (metaHandlers.isEmpty() && commitChecks.isEmpty()) return null
 
     return workflow.runModificationCommitChecks underChangelist@{
@@ -449,8 +484,10 @@ abstract class NonModalCommitWorkflowHandler<W : NonModalCommitWorkflow, U : Non
     }
   }
 
-  private suspend fun runSyncPostCommitChecks(commitInfo: DynamicCommitInfo,
-                                              commitChecks: List<CommitCheck>): NonModalCommitChecksFailure? {
+  private suspend fun runSyncPostCommitChecks(
+    commitInfo: DynamicCommitInfo,
+    commitChecks: List<CommitCheck>,
+  ): NonModalCommitChecksFailure? {
     val problems = commitChecks.mapWithProgress { commitCheck ->
       AbstractCommitWorkflow.runCommitCheck(project, commitCheck, commitInfo)
     }.filterNotNull()
@@ -477,6 +514,7 @@ abstract class NonModalCommitWorkflowHandler<W : NonModalCommitWorkflow, U : Non
   private fun handleCommitProblem(failure: NonModalCommitChecksFailure?, isOnlyRunCommitChecks: Boolean): CommitChecksResult {
     val checksPassed = failure == null
     val aborted = failure == NonModalCommitChecksFailure.ABORTED
+    val smartModeRequired = failure == NonModalCommitChecksFailure.SMART_MODE_REQUIRED
 
     when (failure) {
       null -> {
@@ -484,6 +522,8 @@ abstract class NonModalCommitWorkflowHandler<W : NonModalCommitWorkflow, U : Non
           isCommitChecksResultUpToDate = RecentCommitChecks.PASSED
         }
         else {
+          smartChecksWereBlocked = false
+          ui.commitProgressUi.hideWarningAboutDumbMode()
           isCommitChecksResultUpToDate = RecentCommitChecks.UNKNOWN // We are going to commit, remembering the result is not needed.
         }
       }
@@ -496,8 +536,12 @@ abstract class NonModalCommitWorkflowHandler<W : NonModalCommitWorkflow, U : Non
       NonModalCommitChecksFailure.POST_FAILED -> {
         isCommitChecksResultUpToDate = RecentCommitChecks.POST_FAILED
       }
+      NonModalCommitChecksFailure.SMART_MODE_REQUIRED -> {
+        isCommitChecksResultUpToDate = RecentCommitChecks.SMART_MODE_REQUIRED
+      }
       NonModalCommitChecksFailure.ABORTED,
-      NonModalCommitChecksFailure.ERROR -> {
+      NonModalCommitChecksFailure.ERROR,
+        -> {
         isCommitChecksResultUpToDate = RecentCommitChecks.FAILED
       }
     }
@@ -510,6 +554,9 @@ abstract class NonModalCommitWorkflowHandler<W : NonModalCommitWorkflow, U : Non
     }
     else if (checksPassed) {
       return CommitChecksResult.Passed
+    }
+    else if (smartModeRequired) {
+      return CommitChecksResult.SmartModeRequired
     }
     else {
       return CommitChecksResult.Failed()
@@ -599,6 +646,6 @@ abstract class NonModalCommitWorkflowHandler<W : NonModalCommitWorkflow, U : Non
 
 private class PendingPostCommitChecks(val commitInfo: StaticCommitInfo, val commitChecks: List<CommitCheck>)
 
-private enum class NonModalCommitChecksFailure { EARLY_FAILED, MODIFICATIONS_FAILED, POST_FAILED, ABORTED, ERROR }
+private enum class NonModalCommitChecksFailure { EARLY_FAILED, MODIFICATIONS_FAILED, POST_FAILED, ABORTED, ERROR, SMART_MODE_REQUIRED }
 
-private enum class RecentCommitChecks { UNKNOWN, PASSED, EARLY_FAILED, MODIFICATIONS_FAILED, POST_FAILED, FAILED }
+private enum class RecentCommitChecks { UNKNOWN, PASSED, EARLY_FAILED, MODIFICATIONS_FAILED, POST_FAILED, FAILED, SMART_MODE_REQUIRED }

@@ -1,4 +1,4 @@
-// Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.intellij.build.dependencies
 
 import org.jetbrains.annotations.ApiStatus
@@ -10,6 +10,9 @@ import java.nio.file.Path
 object TeamCityHelper {
   @JvmField
   val isUnderTeamCity: Boolean = System.getenv("TEAMCITY_VERSION") != null
+
+  @JvmField
+  val isPersonalBuild: Boolean = System.getenv("BUILD_IS_PERSONAL") == "true"
 
   val checkoutDirectory: Path?
     get() {
@@ -32,7 +35,7 @@ object TeamCityHelper {
     }
 
   val persistentCachePath: Path?
-    get() = systemProperties["agent.persistent.cache"]?.let { Path.of(it)  }
+    get() = (systemProperties["agent.persistent.cache"] ?: System.getProperty("agent.persistent.cache"))?.let { Path.of(it) }
 
   val tempDirectory: Path?
     get() {

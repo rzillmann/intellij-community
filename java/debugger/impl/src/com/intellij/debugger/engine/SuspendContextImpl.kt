@@ -1,7 +1,6 @@
 // Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.debugger.engine
 
-import com.intellij.Patches
 import com.intellij.debugger.JavaDebuggerBundle
 import com.intellij.debugger.engine.DebuggerDiagnosticsUtil.needAnonymizedReports
 import com.intellij.debugger.engine.evaluation.EvaluateException
@@ -59,6 +58,9 @@ abstract class SuspendContextImpl @ApiStatus.Internal constructor(
 
   @JvmField
   internal var myIsVotedForResume: Boolean = true
+
+  @JvmField
+  protected var mySteppingThreadForResumeOneSteppingCurrentMode: ThreadReferenceProxyImpl? = null
 
   @get:ApiStatus.Internal
   @set:ApiStatus.Internal
@@ -192,13 +194,11 @@ abstract class SuspendContextImpl @ApiStatus.Internal constructor(
     }
     DebuggerManagerThreadImpl.assertIsManagerThread()
     try {
-      if (!Patches.IBM_JDK_DISABLE_COLLECTION_BUG) {
-        // delay enable collection to speed up the resume
-        for (r in myKeptReferences) {
-          managerThread.schedule(PrioritizedTask.Priority.LOWEST) { DebuggerUtilsEx.enableCollection(r) }
-        }
-        myKeptReferences.clear()
+      // delay enable collection to speed up the resume
+      for (r in myKeptReferences) {
+        managerThread.schedule(PrioritizedTask.Priority.LOWEST) { DebuggerUtilsEx.enableCollection(r) }
       }
+      myKeptReferences.clear()
 
       cancelAllPostponed()
       if (callResume) {
@@ -383,20 +383,16 @@ abstract class SuspendContextImpl @ApiStatus.Internal constructor(
     }
 
   fun keep(reference: ObjectReference) {
-    if (!Patches.IBM_JDK_DISABLE_COLLECTION_BUG) {
-      val added = myKeptReferences.add(reference)
-      if (added) {
-        DebuggerUtilsEx.disableCollection(reference)
-      }
+    val added = myKeptReferences.add(reference)
+    if (added) {
+      DebuggerUtilsEx.disableCollection(reference)
     }
   }
 
   fun keepAsync(reference: ObjectReference) {
-    if (!Patches.IBM_JDK_DISABLE_COLLECTION_BUG) {
-      val added = myKeptReferences.add(reference)
-      if (added) {
-        DebuggerUtilsAsync.disableCollection(reference)
-      }
+    val added = myKeptReferences.add(reference)
+    if (added) {
+      DebuggerUtilsAsync.disableCollection(reference)
     }
   }
 
@@ -440,7 +436,6 @@ abstract class SuspendContextImpl @ApiStatus.Internal constructor(
   }
 
   override fun computeExecutionStacks(container: XExecutionStackContainer) {
-    assertCanBeUsed()
     managerThread.schedule(object : SuspendContextCommandImpl(this) {
       val myAddedThreads = hashSetOf<ThreadReferenceProxyImpl>()
 
@@ -455,7 +450,7 @@ abstract class SuspendContextImpl @ApiStatus.Internal constructor(
             else
               CompletableFuture.completedFuture(emptyList())
           }
-          .thenAccept { tds -> addThreads(tds, THREADS_SUSPEND_AND_NAME_COMPARATOR, true) }
+          .thenCompose { tds -> addThreads(tds, THREADS_SUSPEND_AND_NAME_COMPARATOR, true) }
           .exceptionally { DebuggerUtilsAsync.logError(it) }
       }
 
@@ -464,6 +459,7 @@ abstract class SuspendContextImpl @ApiStatus.Internal constructor(
         comparator: Comparator<in JavaExecutionStack>,
         last: Boolean,
       ): CompletableFuture<Boolean> {
+        DebuggerManagerThreadImpl.assertIsManagerThread()
         val futures = threads.filterNotNull().mapNotNull { thread ->
           if (container.isObsolete) return CompletableFuture.completedFuture(false)
           if (!myAddedThreads.add(thread)) return@mapNotNull null
@@ -471,7 +467,7 @@ abstract class SuspendContextImpl @ApiStatus.Internal constructor(
         }
         return DebuggerUtilsAsync.reschedule(CompletableFuture.allOf(*futures.toTypedArray())).thenApply {
           if (container.isObsolete) return@thenApply true
-          val stacks = futures.map { it.join() }.sortedWith(comparator)
+          val stacks = futures.mapNotNull { it.join() }.sortedWith(comparator)
           container.addExecutionStack(stacks, last)
           true
         }

@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.ui
 
 import com.intellij.ide.PowerSaveMode
@@ -29,6 +29,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import javax.swing.Icon
 import javax.swing.JTree
+import kotlin.coroutines.resume
 
 private val repaintScheduler = DeferredIconRepaintScheduler()
 
@@ -63,7 +64,7 @@ class DeferredIconImpl<T> : JBScalableIcon, DeferredIcon, RetrievableIcon, IconW
   val isNeedReadAction: Boolean
 
   @get:RequiresEdt
-  var isDone: Boolean = false
+  override var isDone: Boolean = false
     private set
 
   private var modificationCount = AtomicLong(0)
@@ -136,7 +137,8 @@ class DeferredIconImpl<T> : JBScalableIcon, DeferredIcon, RetrievableIcon, IconW
     return icon
   }
 
-  override fun getBaseIcon(): Icon = delegateIcon
+  override val baseIcon: Icon
+    get() = delegateIcon
 
   private fun checkDelegationDepth() {
     var depth = 0
@@ -229,7 +231,7 @@ class DeferredIconImpl<T> : JBScalableIcon, DeferredIcon, RetrievableIcon, IconW
           readAction { evaluate() }
         }
         else {
-          asyncEvaluator?.let { adjustResultWithScale(it(param)) } ?: evaluate()
+          evaluateAsync()
         }
       }
 
@@ -249,9 +251,38 @@ class DeferredIconImpl<T> : JBScalableIcon, DeferredIcon, RetrievableIcon, IconW
     scheduleCalculationIfNeeded()
   }
 
+  @ApiStatus.Internal
+  suspend fun awaitEvaluation() {
+    // fast-path: note that modificationCount is incremented before setDone(),
+    // but after setting scaledDelegateIcon to the evaluated value,
+    // so it pretty much guarantees that the icon is ready to be painted
+    if (modificationCount.get() > 0) return
+    triggerEvaluation()
+    withContext(Dispatchers.UI + ModalityState.any().asContextElement()) {
+      // using isDone instead of modificationCount now to avoid races, as it's EDT-only
+      if (isDone) return@withContext
+      val connection = ApplicationManager.getApplication().messageBus.simpleConnect()
+      try {
+        suspendCancellableCoroutine { continuation ->
+          val listener = object : DeferredIconListener {
+            override fun evaluated(deferred: DeferredIcon, result: Icon) {
+              if (deferred === this@DeferredIconImpl) {
+                continuation.resume(Unit)
+              }
+            }
+          }
+          connection.subscribe(DeferredIconListener.TOPIC, listener)
+        }
+      }
+      finally {
+        connection.disconnect()
+      }
+    }
+  }
+
   private suspend fun processRepaints(oldWidth: Int, result: Icon) {
     val shouldRevalidate = Registry.`is`("ide.tree.deferred.icon.invalidates.cache", true) && scaledDelegateIcon.iconWidth != oldWidth
-    withContext(Dispatchers.EDT + ModalityState.any().asContextElement()) {
+    withContext(Dispatchers.UI + ModalityState.any().asContextElement()) {
       val repaints = scheduledRepaints
       if (result == delegateIcon || repaints == null) {
         return@withContext
@@ -272,7 +303,7 @@ class DeferredIconImpl<T> : JBScalableIcon, DeferredIcon, RetrievableIcon, IconW
 
   private suspend fun setDone(result: Icon) {
     val deferredIconListener = ApplicationManager.getApplication().messageBus.syncPublisher(DeferredIconListener.TOPIC)
-    withContext(Dispatchers.EDT + ModalityState.any().asContextElement()) {
+    withContext(Dispatchers.UI + ModalityState.any().asContextElement()) {
       isDone = true
       evaluator = null
       asyncEvaluator = null
@@ -288,11 +319,26 @@ class DeferredIconImpl<T> : JBScalableIcon, DeferredIcon, RetrievableIcon, IconW
     return evaluate()
   }
 
-  override fun evaluate(): Icon {
+  override fun evaluate(): Icon = runEvaluator {
+    evaluator?.invoke(param) ?: EMPTY_ICON
+  }
+
+  /**
+   * Computes and returns the computed icon immediately.
+   *
+   * Unlike [evaluate], supports suspending evaluators, falling back to the regular one if no suspending was specified.
+   */
+  @ApiStatus.Internal
+  @VisibleForTesting
+  suspend fun evaluateAsync(): Icon = runEvaluator {
+    asyncEvaluator?.invoke(param) ?: evaluator?.invoke(param) ?: EMPTY_ICON
+  }
+
+  private inline fun runEvaluator(evaluator: () -> Icon): Icon {
     val result = try {
-      evaluator?.invoke(param) ?: EMPTY_ICON
+      evaluator()
     }
-    catch (e: IndexNotReadyException) {
+    catch (_: IndexNotReadyException) {
       EMPTY_ICON
     }
 

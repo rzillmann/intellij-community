@@ -75,7 +75,7 @@ def _write_launcher_action(ctx, rjars, main_class, jvm_flags):
     return []
 
 def _jvm_test(ctx):
-    providers = kt_jvm_produce_jar_actions(ctx, "kt_jvm_test")
+    providers = kt_jvm_produce_jar_actions(ctx, True)
     runtime_jars = depset(ctx.files._bazel_test_runner, transitive = [providers.java.transitive_runtime_jars])
 
     #     coverage_runfiles = []
@@ -145,7 +145,7 @@ Setup a simple kotlin_test.
             doc = """The list of source files that are processed to create the target, this can contain both Java and Kotlin
               files. Java analysis occurs first so Kotlin classes may depend on Java classes in the same compilation unit.""",
             default = [],
-            allow_files = [".kt", ".java"],
+            allow_files = [".kt", ".java", ".form"],
         ),
         "_bazel_test_runner": attr.label(
             default = Label("@bazel_tools//tools/jdk:TestRunner_deploy.jar"),

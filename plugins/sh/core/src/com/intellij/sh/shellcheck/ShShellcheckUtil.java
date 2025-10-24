@@ -20,24 +20,26 @@ import com.intellij.openapi.util.Key;
 import com.intellij.openapi.util.NlsSafe;
 import com.intellij.openapi.util.Pair;
 import com.intellij.openapi.util.io.FileUtil;
+import com.intellij.openapi.util.io.NioFiles;
 import com.intellij.openapi.util.text.StringUtil;
+import com.intellij.openapi.util.text.Strings;
 import com.intellij.platform.eel.EelPlatform;
 import com.intellij.sh.ShNotificationDisplayIds;
 import com.intellij.sh.settings.ShSettings;
 import com.intellij.sh.utils.ExternalServicesUtil;
+import com.intellij.util.concurrency.annotations.RequiresBackgroundThread;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.download.DownloadableFileDescription;
 import com.intellij.util.download.DownloadableFileService;
 import com.intellij.util.download.FileDownloader;
 import com.intellij.util.io.Decompressor;
 import com.intellij.util.text.SemVer;
-import org.jetbrains.annotations.Nls;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.*;
 
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Collections;
 import java.util.Locale;
 import java.util.Map;
@@ -45,7 +47,7 @@ import java.util.TreeMap;
 
 import static com.intellij.platform.eel.EelPlatformKt.*;
 import static com.intellij.platform.eel.provider.EelProviderUtil.getEelDescriptor;
-import static com.intellij.platform.eel.provider.EelProviderUtil.upgradeBlocking;
+import static com.intellij.platform.eel.provider.EelProviderUtil.toEelApiBlocking;
 import static com.intellij.sh.ShBundle.message;
 import static com.intellij.sh.ShBundle.messagePointer;
 import static com.intellij.sh.ShNotification.NOTIFICATION_GROUP;
@@ -66,7 +68,8 @@ public final class ShShellcheckUtil {
     download(project, onSuccess, onFailure, false);
   }
 
-  static @NotNull String spellcheckBin(@NotNull EelPlatform platform) {
+  @VisibleForTesting
+  public static @NotNull String spellcheckBin(@NotNull EelPlatform platform) {
     return isWindows(platform) ? SHELLCHECK + ".exe" : SHELLCHECK;
   }
 
@@ -75,7 +78,7 @@ public final class ShShellcheckUtil {
       @Override
       public void run(@NotNull ProgressIndicator indicator) {
         final var eelDescriptor = getEelDescriptor(project);
-        final var eel = upgradeBlocking(eelDescriptor);
+        final var eel = toEelApiBlocking(eelDescriptor);
 
         final var downloadPath = ExternalServicesUtil.computeDownloadPath(eel);
 
@@ -117,8 +120,8 @@ public final class ShShellcheckUtil {
           final var first = ContainerUtil.getFirstItem(pairs);
           final var file = first != null ? first.first : null;
           if (file != null) {
-            String path = decompressShellcheck(file, downloadPath.toFile(), eel.getPlatform());
-            if (StringUtil.isNotEmpty(path)) {
+            String path = decompressShellcheck(file.toPath(), downloadPath, eel.getPlatform());
+            if (Strings.isNotEmpty(path)) {
               FileUtil.setExecutable(new File(path));
               ShSettings.setShellcheckPath(project, path);
               if (withReplace) {
@@ -185,20 +188,23 @@ public final class ShShellcheckUtil {
     FileUtil.delete(oldShellcheck);
   }
 
-  static boolean isExecutionValidPath(@Nullable String path) {
+  @VisibleForTesting
+  public static boolean isExecutionValidPath(@Nullable String path) {
     if (path == null || ShSettings.I_DO_MIND_SUPPLIER.get().equals(path)) return false;
     File file = new File(path);
     return file.canExecute() && file.getName().contains(SHELLCHECK);
   }
 
-  static boolean isValidPath(@Nullable String path) {
+  @ApiStatus.Internal
+  public static boolean isValidPath(@Nullable String path) {
     if (path == null) return false;
     if (ShSettings.I_DO_MIND_SUPPLIER.get().equals(path)) return true;
     File file = new File(path);
     return file.canExecute() && file.getName().contains(SHELLCHECK);
   }
 
-  static void checkShellCheckForUpdate(@NotNull Project project) {
+  @ApiStatus.Internal
+  public static void checkShellCheckForUpdate(@NotNull Project project) {
     Application application = ApplicationManager.getApplication();
     if (application.getUserData(UPDATE_NOTIFICATION_SHOWN) != null) return;
     application.putUserData(UPDATE_NOTIFICATION_SHOWN, true);
@@ -210,8 +216,8 @@ public final class ShShellcheckUtil {
     }
   }
 
+  @RequiresBackgroundThread
   private static void checkForUpdateInBackgroundThread(@NotNull Project project) {
-    ApplicationManager.getApplication().assertIsNonDispatchThread();
     Pair<String, String> newVersionAvailable = getVersionUpdate(project);
     if (newVersionAvailable == null) return;
 
@@ -293,16 +299,18 @@ public final class ShShellcheckUtil {
     return null;
   }
 
-  static @NotNull String decompressShellcheck(File tarPath, File directory, @NotNull EelPlatform eelPlatform) throws IOException {
+  public static @NotNull String decompressShellcheck(Path tarPath, Path directory, @NotNull EelPlatform eelPlatform) throws IOException {
     new Decompressor.Tar(tarPath).extract(directory);
 
-    FileUtil.delete(tarPath);  // cleaning up
+    // cleaning up
+    NioFiles.deleteRecursively(tarPath);
 
-    File shellcheck = new File(directory, spellcheckBin(eelPlatform));
+    File shellcheck = new File(directory.toFile(), spellcheckBin(eelPlatform));
     return shellcheck.exists() ? shellcheck.getPath() : "";
   }
 
-  static @NlsSafe @Nullable String getShellcheckDistributionLink(@NotNull EelPlatform platform) {
+  @VisibleForTesting
+  public static @NlsSafe @Nullable String getShellcheckDistributionLink(@NotNull EelPlatform platform) {
     String platformString = isMac(platform) ? "mac" : isWindows(platform) ? "windows" : isLinux(platform) ? "linux" : null;
     if (platformString == null) return null;
     String arch = isArm64(platform) ? "arm64" : "amd64";
@@ -644,7 +652,8 @@ public final class ShShellcheckUtil {
     put("SC2249", message("consider.adding.a.default.case.even.if.it.just.exits.with.error"));
   }};
 
-  static int calcOffset(CharSequence sequence, int startOffset, int column) {
+  @ApiStatus.Internal
+  public static int calcOffset(CharSequence sequence, int startOffset, int column) {
     int i = 1;
     while (i < column) {
       int c = Character.codePointAt(sequence, startOffset);

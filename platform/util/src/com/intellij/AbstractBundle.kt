@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 @file:Suppress("KDocUnresolvedReference")
 
 package com.intellij
@@ -93,6 +93,13 @@ open class AbstractBundle {
         }
       }
     }
+
+    @ApiStatus.Internal
+    @JvmStatic
+    @Deprecated("do not use, for compatibility only")
+    fun resolveBundle(loader: ClassLoader, locale: Locale, pathToBundle: String): ResourceBundle {
+      return _doResolveBundle(loader = loader, locale = locale, pathToBundle = pathToBundle)
+    }
   }
 
   @Contract(pure = true)
@@ -145,7 +152,7 @@ open class AbstractBundle {
   @ApiStatus.Internal
   fun getResourceBundle(classLoader: ClassLoader): ResourceBundle {
     val isDefault = DefaultBundleService.isDefaultBundle()
-    var bundle = getBundle(isDefault, classLoader)
+    var bundle = getBundle(isDefault, classLoader, pathToBundle)
     if (bundle == null) {
       bundle = resolveResourceBundleWithFallback(loader = classLoader, pathToBundle = pathToBundle, firstTry = {
         findBundle(pathToBundle = pathToBundle, loader = classLoader, control = IntelliJResourceControl)
@@ -164,7 +171,7 @@ open class AbstractBundle {
   }
 
   @ApiStatus.Internal
-  protected open fun getBundle(isDefault: Boolean, classLoader: ClassLoader): ResourceBundle? = (if (isDefault) defaultBundle else bundle)?.get()
+  protected open fun getBundle(isDefault: Boolean, classLoader: ClassLoader, pathToBundle: String?): ResourceBundle? = (if (isDefault) defaultBundle else bundle)?.get()
 
   protected open fun findBundle(pathToBundle: @NonNls String, loader: ClassLoader, control: ResourceBundle.Control): ResourceBundle {
     return ResourceBundle.getBundle(pathToBundle, Locale.getDefault(), loader, control)
@@ -213,16 +220,10 @@ private object IntelliJResourceControl : ResourceBundle.Control() {
   }
 }
 
-private class MissingResourceBundle(val baseName: String) : ResourceBundle() {
-  override fun handleGetObject(key: String?): Any? {
-    return null
-  }
+private class MissingResourceBundle(private val baseName: String) : ResourceBundle() {
+  override fun handleGetObject(key: String?): Any? = null
 
-  override fun getKeys(): Enumeration<String> {
-    return Collections.emptyEnumeration()
-  }
+  override fun getKeys(): Enumeration<String> = Collections.emptyEnumeration()
 
-  override fun getBaseBundleName(): String? {
-    return baseName
-  }
+  override fun getBaseBundleName(): String = baseName
 }

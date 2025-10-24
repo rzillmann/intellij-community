@@ -4,6 +4,9 @@
 
 package org.jetbrains.intellij.build.impl.compilation
 
+import com.intellij.devkit.runtimeModuleRepository.generator.RuntimeModuleRepositoryGenerator
+import com.intellij.util.lang.EmptyZipFile
+import com.intellij.util.lang.ImmutableZipFile
 import io.opentelemetry.api.common.AttributeKey
 import io.opentelemetry.api.common.Attributes
 import io.opentelemetry.api.trace.Span
@@ -14,7 +17,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.jetbrains.annotations.VisibleForTesting
 import org.jetbrains.intellij.build.BuildMessages
@@ -43,8 +45,11 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 import java.util.zip.GZIPOutputStream
 import kotlin.io.path.ExperimentalPathApi
+import kotlin.io.path.copyTo
 import kotlin.io.path.deleteRecursively
+import kotlin.io.path.isRegularFile
 import kotlin.io.path.listDirectoryEntries
+import kotlin.io.path.name
 
 private val nettyMax = Runtime.getRuntime().availableProcessors() * 2
 internal val uploadParallelism = nettyMax.coerceIn(4, 32)
@@ -59,6 +64,7 @@ class CompilationCacheUploadConfiguration(
   serverUrl: String? = null,
   val checkFiles: Boolean = true,
   val uploadOnly: Boolean = false,
+  val saveMetadata: Boolean = true,
   branch: String? = null,
   uploadPredix: String? = null,
 ) {
@@ -103,9 +109,31 @@ private fun getAndNormalizeServerUrlBySystemProperty(): String {
 }
 
 private const val COMPILATION_CACHE_METADATA_JSON = "metadata.json"
+internal val COMPILATION_PARTS_SPECIAL_FILES: Collection<String> = setOf(
+  RuntimeModuleRepositoryGenerator.JAR_REPOSITORY_FILE_NAME,
+  RuntimeModuleRepositoryGenerator.COMPACT_REPOSITORY_FILE_NAME,
+)
 
 suspend fun packAndUploadToServer(context: CompilationContext, zipDir: Path, config: CompilationCacheUploadConfiguration) {
-  val items = if (config.uploadOnly) {
+  val items = if (config.uploadOnly && config.saveMetadata) {  // no metadata.json
+    context.project.modules.flatMap { module ->
+      listOf(
+        "production/${module.name}" to context.getModuleOutputRoots(module, forTests = false).singleOrNull(),
+        "test/${module.name}" to context.getModuleOutputRoots(module, forTests = true).singleOrNull(),
+      )
+    }.filter { (_, output) ->
+      output != null && ImmutableZipFile.load(output) !is EmptyZipFile  // ignore empty
+    }.map { (name, output) ->
+      PackAndUploadItem(output = Path.of(""), name = name, archive = output!!)
+    }.apply {
+      forEachConcurrent { item ->
+        spanBuilder("compute hash").setAttribute("name", item.name).blockingUse {
+          item.hash = computeHash(item.archive)
+        }
+      }
+    }
+  }
+  else if (config.uploadOnly) {
     Json.decodeFromString<CompilationPartsMetadata>(Files.readString(zipDir.resolve(COMPILATION_CACHE_METADATA_JSON))).files.map {
       val item = PackAndUploadItem(output = Path.of(""), name = it.key, archive = zipDir.resolve(it.key + ".jar"))
       item.hash = it.value
@@ -168,11 +196,18 @@ private suspend fun packCompilationResult(zipDir: Path, context: CompilationCont
         }
       }
     }
+    // module-descriptors.jar
+    for (name in COMPILATION_PARTS_SPECIAL_FILES) {
+      val path = context.classesOutputDirectory.resolve(name)
+      if (path.isRegularFile()) {
+        items.add(PackAndUploadItem(output = path, name = name, archive = zipDir.resolve(name))) // don't archive, upload as is
+      }
+    }
   }
 
   spanBuilder("build zip archives").use(Dispatchers.IO) {
     items.forEachConcurrent { item ->
-      item.hash = packAndComputeHash(addDirEntriesMode = addDirEntriesMode, name = item.name, archive = item.archive, directory = item.output)
+      item.hash = packAndComputeHash(addDirEntriesMode = addDirEntriesMode, name = item.name, archive = item.archive, source = item.output)
     }
   }
   return items
@@ -182,17 +217,24 @@ internal fun packAndComputeHash(
   addDirEntriesMode: AddDirEntriesMode,
   name: String,
   archive: Path,
-  directory: Path,
+  source: Path,
 ): String {
-  spanBuilder("pack").setAttribute("name", name).blockingUse {
-    // we compress the whole file using ZSTD - no need to compress
-    zip(
-      targetFile = archive,
-      dirs = mapOf(directory to ""),
-      overwrite = true,
-      fileFilter = { it != ".unmodified" && it != ".DS_Store" },
-      addDirEntriesMode = addDirEntriesMode,
-    )
+  if (source.isRegularFile()) {
+    spanBuilder("copy").setAttribute("name", name).blockingUse {
+      source.copyTo(archive, overwrite = true)
+    }
+  }
+  else {
+    spanBuilder("pack").setAttribute("name", name).blockingUse {
+      // we compress the whole file using ZSTD - no need to compress
+      zip(
+        targetFile = archive,
+        dirs = mapOf(source to ""),
+        overwrite = true,
+        fileFilter = { it != ".unmodified" && it != ".DS_Store" },
+        addDirEntriesMode = addDirEntriesMode,
+      )
+    }
   }
   return spanBuilder("compute hash").setAttribute("name", name).blockingUse {
     computeHash(archive)
@@ -229,7 +271,7 @@ private suspend fun upload(
   )
 
   // save a metadata file
-  if (!config.uploadOnly) {
+  if (config.saveMetadata) {
     val metadataFile = zipDir.resolve(COMPILATION_CACHE_METADATA_JSON)
     val gzippedMetadataFile = zipDir.resolve("$COMPILATION_CACHE_METADATA_JSON.gz")
     Files.createDirectories(metadataFile.parent)
@@ -435,7 +477,9 @@ private suspend fun checkPreviouslyUnpackedDirectories(
         return@forEachConcurrent
       }
 
-      val hashFile = out.resolve(".hash")
+      val hashFile =
+        if (item.name in COMPILATION_PARTS_SPECIAL_FILES) out.resolveSibling(out.name + ".hash")
+        else out.resolve(".hash")
       if (!Files.isRegularFile(hashFile)) {
         span.addEvent("no .hash file in output directory", Attributes.of(AttributeKey.stringKey("name"), item.name))
         out.deleteRecursively()

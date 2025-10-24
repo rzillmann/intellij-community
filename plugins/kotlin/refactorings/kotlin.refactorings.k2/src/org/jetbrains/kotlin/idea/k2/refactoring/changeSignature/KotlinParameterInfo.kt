@@ -44,7 +44,7 @@ class KotlinParameterInfo(
 ) : KotlinModifiableParameterInfo {
     val oldName: String = name
     var currentType: KotlinTypeInfo = originalType
-    val wasContextParameter: Boolean = isContextParameter
+    val wasContextParameter: Boolean = originalIndex > -1 && isContextParameter
 
     override fun getName(): @NlsSafe String {
         return name
@@ -102,6 +102,13 @@ class KotlinParameterInfo(
 
     fun getInheritedName(inheritor: KtCallableDeclaration?): String {
         val name = this.name.quoteIfNeeded()
+
+        if (wasContextParameter) {
+            val contextParameters = inheritor?.modifierList?.contextReceiverList?.contextParameters() ?: return name
+            if (oldIndex < 0 || oldIndex >= contextParameters.size) return name
+            return contextParameters[oldIndex].name ?: name
+        }
+
         if (inheritor is KtFunctionLiteral && inheritor.valueParameters.size == 0 && oldIndex == 0) {
             //preserve default name
             return "it"
@@ -133,6 +140,7 @@ class KotlinParameterInfo(
     }
 
     private fun getOriginalParameter(inheritedCallable: KtDeclaration?): KtParameter? {
+        if (isContextParameter || wasContextParameter) return null
         val indexInVariableParameters = oldIndex - (if ((inheritedCallable as? KtCallableDeclaration)?.receiverTypeReference != null) 1 else 0)
         return (inheritedCallable as? KtCallableDeclaration)?.valueParameters?.getOrNull(indexInVariableParameters)
     }
@@ -190,7 +198,8 @@ class KotlinParameterInfo(
             newParameter.typeReference = psiFactory.createType(typeText, inheritedCallable, baseFunction, Variance.IN_VARIANCE)
         }
 
-        if (!isInherited) {
+        if (!isInherited && isNewParameter) {
+            // don't override unchanged default values
             defaultValue?.let { newParameter.setDefaultValue(it) }
         }
 

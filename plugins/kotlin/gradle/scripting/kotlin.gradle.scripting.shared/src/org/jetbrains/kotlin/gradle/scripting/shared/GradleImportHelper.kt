@@ -2,13 +2,13 @@
 
 package org.jetbrains.kotlin.gradle.scripting.shared
 
-import com.intellij.diff.util.DiffUtil
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.CommonDataKeys
 import com.intellij.openapi.components.service
 import com.intellij.openapi.editor.Editor
+import com.intellij.openapi.editor.EditorKind
 import com.intellij.openapi.externalSystem.importing.ImportSpecBuilder
 import com.intellij.openapi.externalSystem.util.ExternalSystemUtil
 import com.intellij.openapi.fileEditor.FileDocumentManager
@@ -20,11 +20,9 @@ import org.gradle.tooling.model.kotlin.dsl.KotlinDslModelsParameters
 import org.gradle.util.GradleVersion
 import org.jetbrains.kotlin.gradle.scripting.shared.importing.KotlinDslScriptModelResolver
 import org.jetbrains.kotlin.gradle.scripting.shared.roots.GradleBuildRoot
-import org.jetbrains.kotlin.gradle.scripting.shared.roots.GradleBuildRootsManager
-import org.jetbrains.kotlin.idea.core.script.settings.KotlinScriptingSettings
+import org.jetbrains.kotlin.gradle.scripting.shared.roots.GradleBuildRootsLocator
 import org.jetbrains.kotlin.idea.util.isKotlinFileType
 import org.jetbrains.kotlin.scripting.definitions.ScriptDefinitionProvider
-import org.jetbrains.kotlin.scripting.definitions.findScriptDefinition
 import org.jetbrains.plugins.gradle.service.GradleInstallationManager
 import org.jetbrains.plugins.gradle.service.project.GradlePartialResolverPolicy
 import org.jetbrains.plugins.gradle.settings.GradleProjectSettings
@@ -49,28 +47,12 @@ fun runPartialGradleImport(project: Project, root: GradleBuildRoot) {
     )
 }
 
-fun autoReloadScriptConfigurations(project: Project, file: VirtualFile): Boolean {
-    val definition = file.findScriptDefinition(project) ?: return false
-
-    return KotlinScriptingSettings.getInstance(project).autoReloadConfigurations(definition)
-}
-
-fun scriptConfigurationsNeedToBeUpdated(project: Project, file: VirtualFile) {
-    if (autoReloadScriptConfigurations(project, file)) {
-        GradleBuildRootsManager.getInstance(project)?.getScriptInfo(file)?.buildRoot?.let {
-            runPartialGradleImport(project, it)
-        }
-    } else {
-        // notification is shown in LoadConfigurationAction
-    }
-}
-
 internal class LoadKtGradleConfigurationAction : AnAction() {
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
         val editor = e.getData(CommonDataKeys.EDITOR) ?: return
         val file = getKotlinScriptFile(editor) ?: return
-        val root = GradleBuildRootsManager.getInstance(project)?.getScriptInfo(file)?.buildRoot ?: return
+        val root = GradleBuildRootsLocator.getInstance(project).getScriptInfo(file)?.buildRoot ?: return
 
         runPartialGradleImport(project, root)
     }
@@ -89,7 +71,7 @@ internal class LoadKtGradleConfigurationAction : AnAction() {
 
     private fun getNotificationVisibility(editor: Editor): Boolean {
         if (!scriptConfigurationsNeedToBeUpdatedBalloon) return false
-        if (DiffUtil.isDiffEditor(editor)) return false
+        if (editor.getEditorKind() == EditorKind.DIFF) return false
 
         val project = editor.project ?: return false
 
@@ -99,11 +81,7 @@ internal class LoadKtGradleConfigurationAction : AnAction() {
 
         val file = getKotlinScriptFile(editor) ?: return false
 
-        if (autoReloadScriptConfigurations(project, file)) {
-            return false
-        }
-
-        return GradleBuildRootsManager.getInstance(project)?.isConfigurationOutOfDate(file) == true
+        return GradleBuildRootsLocator.getInstance(project).isConfigurationOutOfDate(file)
     }
 
     private fun getKotlinScriptFile(editor: Editor): VirtualFile? {

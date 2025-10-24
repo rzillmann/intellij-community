@@ -1,80 +1,114 @@
 // Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.kotlin.gradle.scripting.k2.importing
 
-import com.intellij.openapi.application.readAction
-import com.intellij.openapi.progress.blockingContext
+import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.vfs.VirtualFileManager
+import com.intellij.platform.eel.provider.getEelDescriptor
+import com.intellij.platform.eel.provider.utils.asNio
+import com.intellij.platform.workspace.storage.ImmutableEntityStorage
 import com.intellij.platform.workspace.storage.MutableEntityStorage
-import com.intellij.psi.PsiManager
-import org.gradle.tooling.model.kotlin.dsl.KotlinDslScriptsModel
-import org.jetbrains.kotlin.gradle.scripting.k2.GradleScriptDefinitionsHolder
-import org.jetbrains.kotlin.gradle.scripting.shared.GradleScriptModel
-import org.jetbrains.kotlin.gradle.scripting.shared.GradleScriptRefinedConfigurationProvider
+import com.intellij.platform.workspace.storage.toBuilder
+import org.jetbrains.kotlin.gradle.scripting.k2.GradleKotlinScriptService
+import org.jetbrains.kotlin.gradle.scripting.shared.GradleDefinitionsParams
+import org.jetbrains.kotlin.gradle.scripting.shared.KotlinGradleScriptEntitySource
+import org.jetbrains.kotlin.gradle.scripting.shared.importing.collectErrors
+import org.jetbrains.kotlin.gradle.scripting.shared.importing.getKotlinDslScripts
 import org.jetbrains.kotlin.gradle.scripting.shared.importing.kotlinDslSyncListenerInstance
-import org.jetbrains.kotlin.gradle.scripting.shared.importing.processScriptModel
 import org.jetbrains.kotlin.gradle.scripting.shared.importing.saveGradleBuildEnvironment
-import org.jetbrains.kotlin.gradle.scripting.shared.kotlinDslScriptsModelImportSupported
-import org.jetbrains.kotlin.gradle.scripting.shared.loadGradleDefinitions
-import org.jetbrains.kotlin.idea.core.script.k2.DefaultScriptResolutionStrategy
-import org.jetbrains.kotlin.psi.KtFile
+import org.jetbrains.plugins.gradle.model.GradleBuildScriptClasspathModel
 import org.jetbrains.plugins.gradle.service.project.ProjectResolverContext
 import org.jetbrains.plugins.gradle.service.syncAction.GradleSyncContributor
-import org.jetbrains.plugins.gradle.service.syncAction.GradleSyncProjectConfigurator.project
+import org.jetbrains.plugins.gradle.service.syncAction.GradleSyncExtension
+import org.jetbrains.plugins.gradle.service.syncAction.GradleSyncPhase
 import java.nio.file.Path
+import kotlin.io.path.pathString
 
-class KotlinDslScriptSyncContributor : GradleSyncContributor {
+internal class KotlinDslScriptSyncExtension : GradleSyncExtension {
+
+    override fun updateProjectModel(
+        context: ProjectResolverContext, syncStorage: MutableEntityStorage, projectStorage: MutableEntityStorage, phase: GradleSyncPhase
+    ) {
+        if (phase == GradleSyncPhase.ADDITIONAL_MODEL_PHASE) {
+            projectStorage.replaceBySource({ it is KotlinGradleScriptEntitySource }, syncStorage)
+        }
+    }
+}
+
+internal class KotlinDslScriptSyncContributor : GradleSyncContributor {
 
     override val name: String = "Kotlin DSL Script"
 
-    override suspend fun onModelFetchCompleted(context: ProjectResolverContext, storage: MutableEntityStorage) {
-        val project = context.project()
+    override val phase: GradleSyncPhase = GradleSyncPhase.ADDITIONAL_MODEL_PHASE
+
+    override suspend fun createProjectModel(
+        context: ProjectResolverContext, storage: ImmutableEntityStorage
+    ): ImmutableEntityStorage {
+        val project = context.project
         val taskId = context.externalSystemTaskId
-        val tasks = kotlinDslSyncListenerInstance?.tasks ?: return
+        val tasks = kotlinDslSyncListenerInstance?.tasks ?: return storage
         val sync = synchronized(tasks) { tasks[taskId] }
 
-        blockingContext {
-            for (buildModel in context.allBuilds) {
-                for (projectModel in buildModel.projects) {
-                    val projectIdentifier = projectModel.projectIdentifier.projectPath
-                    if (projectIdentifier == ":") {
-                        val gradleVersion = context.projectGradleVersion
-                        if (gradleVersion != null && kotlinDslScriptsModelImportSupported(gradleVersion)) {
-                            val model = context.getProjectModel(projectModel, KotlinDslScriptsModel::class.java)
-                            if (model != null) {
-                                if (!processScriptModel(context, sync, model, projectIdentifier)) {
-                                    continue
-                                }
-                            }
-                        }
+        val models = getKotlinDslScripts(context).toList()
 
-                        saveGradleBuildEnvironment(context)
-                    }
+        if (sync != null) {
+            synchronized(sync) {
+                sync.models.addAll(models)
+                if (models.collectErrors().any()) {
+                    sync.failed = true
                 }
             }
         }
 
-        if (sync == null || sync.models.isEmpty()) return
+        saveGradleBuildEnvironment(context)
 
-        val definitions = loadGradleDefinitions(sync.workingDir, sync.gradleHome, sync.javaHome, project)
-        GradleScriptDefinitionsHolder.getInstance(project).updateDefinitions(definitions)
+        if (models.isEmpty()) return storage
 
-        val gradleScripts = sync.models.mapNotNullTo(mutableSetOf()) {
+        val gradleHome = context.allBuilds.asSequence().flatMap { it.projects.asSequence() }
+            .mapNotNull { context.getProjectModel(it, GradleBuildScriptClasspathModel::class.java) }
+            .firstNotNullOfOrNull { it.gradleHomeDir?.absolutePath } ?: context.settings.gradleHome ?: return storage
+
+        // String is then converted to `nio.Path` and must reside on the same eel as project
+        // i.e: homePath = "/foo/java", eel is Docker, so javaHome must be "\\docker\..\foo\java\" to be converted to nioPath
+        val javaHome = context.buildEnvironment.java.javaHome.asNio(context.project.getEelDescriptor())
+
+        val builder = storage.toBuilder()
+
+        val gradleScripts = models.mapNotNullTo(mutableSetOf()) {
             val virtualFile = VirtualFileManager.getInstance().findFileByNioPath(Path.of(it.file)) ?: return@mapNotNullTo null
             GradleScriptModel(
                 virtualFile,
                 it.classPath,
                 it.sourcePath,
                 it.imports,
-                sync.javaHome
             )
         }
 
-        GradleScriptRefinedConfigurationProvider.getInstance(project).processScripts(gradleScripts, storage)
+        val scriptData = GradleScriptData(
+            gradleScripts,
+            GradleDefinitionsParams(
+                context.projectPath,
+                gradleHome,
+                javaHome.pathString,
+                context.buildEnvironment.gradle.gradleVersion,
+                context.settings.jvmArguments,
+                context.settings.env
+            )
+        )
 
-        val ktFiles = gradleScripts.mapNotNull {
-            readAction { PsiManager.getInstance(project).findFile(it.virtualFile) as? KtFile }
-        }.toTypedArray()
+        GradleKotlinScriptService.getInstance(project).processScripts(scriptData, builder)
 
-        DefaultScriptResolutionStrategy.getInstance(project).execute(*ktFiles).join()
+        return builder.toSnapshot()
     }
 }
+
+class GradleScriptData(
+    val models: Collection<GradleScriptModel>,
+    val definitionsParams: GradleDefinitionsParams
+)
+
+class GradleScriptModel(
+    val virtualFile: VirtualFile,
+    val classPath: List<String>,
+    val sourcePath: List<String>,
+    val imports: List<String>,
+)

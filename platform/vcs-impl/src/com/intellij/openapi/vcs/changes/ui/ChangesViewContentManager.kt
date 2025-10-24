@@ -2,11 +2,17 @@
 package com.intellij.openapi.vcs.changes.ui
 
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.actionSystem.ActionUpdateThread
+import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DataKey
+import com.intellij.openapi.actionSystem.ToggleAction
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.service
+import com.intellij.openapi.diagnostic.debug
 import com.intellij.openapi.diagnostic.logger
+import com.intellij.openapi.options.advanced.AdvancedSettings
 import com.intellij.openapi.options.advanced.AdvancedSettingsChangeListener
+import com.intellij.openapi.project.DumbAware
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.Key
@@ -15,15 +21,16 @@ import com.intellij.openapi.wm.ToolWindowId
 import com.intellij.openapi.wm.ToolWindowManager
 import com.intellij.openapi.wm.ToolWindowType
 import com.intellij.openapi.wm.ex.ToolWindowManagerListener
+import com.intellij.platform.vcs.impl.shared.ui.ToolWindowLazyContent
 import com.intellij.ui.content.Content
 import com.intellij.ui.content.ContentManager
-import com.intellij.ui.content.ContentManagerEvent
-import com.intellij.ui.content.ContentManagerListener
 import com.intellij.util.IJSwingUtilities
 import com.intellij.util.ObjectUtils.tryCast
+import com.intellij.util.concurrency.annotations.RequiresEdt
 import com.intellij.util.messages.MessageBusConnection
 import com.intellij.vcs.commit.CommitMode
 import com.intellij.vcs.commit.CommitModeManager
+import kotlinx.coroutines.CoroutineScope
 import org.jetbrains.annotations.NonNls
 import java.util.function.Predicate
 
@@ -40,7 +47,7 @@ internal fun ContentManager.selectFirstContent() {
 
 private val LOG = logger<ChangesViewContentManager>()
 
-class ChangesViewContentManager(private val project: Project) : ChangesViewContentI, Disposable {
+class ChangesViewContentManager private constructor(private val project: Project, coroutineScope: CoroutineScope) : ChangesViewContentI, Disposable {
   private val addedContents = mutableListOf<Content>()
   private var selectedAddedContent: Content? = null
 
@@ -62,7 +69,7 @@ class ChangesViewContentManager(private val project: Project) : ChangesViewConte
   private var isCommitToolWindowShown: Boolean = shouldUseCommitToolWindow()
 
   init {
-    ApplicationManager.getApplication().messageBus.connect(project)
+    ApplicationManager.getApplication().messageBus.connect(coroutineScope)
       .subscribe(AdvancedSettingsChangeListener.TOPIC, object : AdvancedSettingsChangeListener {
         override fun advancedSettingChanged(id: String, oldValue: Any, newValue: Any) {
           if (id == CommitMode.NonModalCommitMode.COMMIT_TOOL_WINDOW_SETTINGS_KEY) {
@@ -70,7 +77,7 @@ class ChangesViewContentManager(private val project: Project) : ChangesViewConte
           }
         }
       })
-    val projectBusConnection = project.messageBus.connect()
+    val projectBusConnection = project.messageBus.connect(coroutineScope)
     CommitModeManager.subscribeOnCommitModeChange(projectBusConnection, object : CommitModeManager.CommitModeListener {
       override fun commitModeChanged() {
         updateToolWindowMappings()
@@ -103,15 +110,12 @@ class ChangesViewContentManager(private val project: Project) : ChangesViewConte
 
   private fun initContentManager(toolWindow: ToolWindow) {
     val contentManager = toolWindow.contentManager
-    val listener = ContentProvidersListener(toolWindow)
-    contentManager.addContentManagerListener(listener)
-    Disposer.register(this, Disposable { contentManager.removeContentManagerListener(listener) })
-    project.messageBus.connect(this).subscribe(ToolWindowManagerListener.TOPIC, listener)
+    ToolWindowLazyContent.installInitializer(toolWindow)
 
     val contents = addedContents.filter { it.resolveContentManager() === contentManager }
-    contents.forEach {
-      addIntoCorrectPlace(contentManager, it)
-      IJSwingUtilities.updateComponentTreeUI(it.component)
+    for (content in contents) {
+      addIntoCorrectPlace(contentManager, content)
+      IJSwingUtilities.updateComponentTreeUI(content.component)
     }
     addedContents.removeAll(contents)
 
@@ -120,7 +124,7 @@ class ChangesViewContentManager(private val project: Project) : ChangesViewConte
       contentManager.setSelectedContent(toSelect)
     }
     else {
-      // Ensure that first tab is selected after tabs reordering
+      // ensure that the first tab is selected after tab reordering
       contentManager.selectFirstContent()
     }
     selectedAddedContent = null
@@ -144,7 +148,9 @@ class ChangesViewContentManager(private val project: Project) : ChangesViewConte
     }
   }
 
-  override fun removeContent(content: Content) = removeContent(content, true)
+  override fun removeContent(content: Content) {
+    removeContent(content, true)
+  }
 
   private fun removeContent(content: Content, dispose: Boolean) {
     val contentManager = content.manager
@@ -163,7 +169,7 @@ class ChangesViewContentManager(private val project: Project) : ChangesViewConte
   }
 
   override fun setSelectedContent(content: Content, requestFocus: Boolean) {
-    LOG.debug("select content: ${content.tabName}")
+    LOG.debug { "select content: ${content.tabName}" }
     val contentManager = content.manager
     if (contentManager != null) {
       contentManager.setSelectedContent(content, requestFocus)
@@ -204,28 +210,6 @@ class ChangesViewContentManager(private val project: Project) : ChangesViewConte
     return content.resolveToolWindowId()
   }
 
-  fun initLazyContent(content: Content) {
-    val provider = content.getUserData(CONTENT_PROVIDER_SUPPLIER_KEY)?.invoke() ?: return
-    content.putUserData(CONTENT_PROVIDER_SUPPLIER_KEY, null)
-    provider.initTabContent(content)
-    IJSwingUtilities.updateComponentTreeUI(content.component)
-  }
-
-  private inner class ContentProvidersListener(val toolWindow: ToolWindow) : ContentManagerListener, ToolWindowManagerListener {
-    override fun stateChanged(toolWindowManager: ToolWindowManager) {
-      if (toolWindow.isVisible) {
-        val content = toolWindow.contentManager.selectedContent ?: return
-        initLazyContent(content)
-      }
-    }
-
-    override fun selectionChanged(event: ContentManagerEvent) {
-      if (toolWindow.isVisible) {
-        initLazyContent(event.content)
-      }
-    }
-  }
-
   enum class TabOrderWeight(val tabName: String?, val weight: Int) {
     LOCAL_CHANGES(ChangesViewContentManager.LOCAL_CHANGES, 10),
     REPOSITORY(ChangesViewContentManager.REPOSITORY, 20),
@@ -257,23 +241,27 @@ class ChangesViewContentManager(private val project: Project) : ChangesViewConte
   }
 
   companion object {
-    const val TOOLWINDOW_ID = ToolWindowId.VCS
+    const val TOOLWINDOW_ID: String = ToolWindowId.VCS
     internal const val COMMIT_TOOLWINDOW_ID = ToolWindowId.COMMIT
 
+    /**
+     * Whether the commit window is in the windowed or floating mode.
+     */
     @JvmField
-    internal val CONTENT_PROVIDER_SUPPLIER_KEY = Key.create<() -> ChangesViewContentProvider?>("CONTENT_PROVIDER_SUPPLIER")
+    internal val IS_COMMIT_TOOLWINDOW_WINDOWED_KEY: DataKey<Boolean> =
+      DataKey.create<Boolean>("ChangesViewContentManager.IS_COMMIT_TOOLWINDOW_WINDOWED_KEY")
 
     /**
      * Whether [Content] should be shown in [ToolWindowId.COMMIT] toolwindow.
      */
     @JvmField
-    val IS_IN_COMMIT_TOOLWINDOW_KEY = Key.create<Boolean>("ChangesViewContentManager.IS_IN_COMMIT_TOOLWINDOW_KEY")
+    val IS_IN_COMMIT_TOOLWINDOW_KEY: Key<Boolean> = Key.create<Boolean>("ChangesViewContentManager.IS_IN_COMMIT_TOOLWINDOW_KEY")
 
     @JvmField
-    val CONTENT_TAB_NAME_KEY = DataKey.create<@NonNls String>("ChangesViewContentManager.CONTENT_TAB_KEY")
+    val CONTENT_TAB_NAME_KEY: DataKey<@NonNls String> = DataKey.create<@NonNls String>("ChangesViewContentManager.CONTENT_TAB_KEY")
 
     @JvmStatic
-    fun getInstance(project: Project) = project.service<ChangesViewContentI>()
+    fun getInstance(project: Project): ChangesViewContentI = project.service<ChangesViewContentI>()
 
     fun getInstanceImpl(project: Project): ChangesViewContentManager? =
       getInstance(project) as? ChangesViewContentManager
@@ -322,12 +310,12 @@ class ChangesViewContentManager(private val project: Project) : ChangesViewConte
     }
 
     /**
-     * Specified tab order in toolwindow.
+     * Specified tab order in the toolwindow.
      *
      * @see ChangesViewContentManager.TabOrderWeight
      */
     @JvmField
-    val ORDER_WEIGHT_KEY = Key.create<Int>("ChangesView.ContentOrderWeight")
+    val ORDER_WEIGHT_KEY: Key<Int> = Key.create<Int>("ChangesView.ContentOrderWeight")
 
     const val LOCAL_CHANGES: @NonNls String = "Local Changes"
     const val CONSOLE: @NonNls String = "Console"
@@ -344,7 +332,7 @@ private fun getContentWeight(content: Content): Int {
   if (userData != null) return userData
 
   val tabName: @NonNls String = content.tabName
-  for (value in ChangesViewContentManager.TabOrderWeight.values()) {
+  for (value in ChangesViewContentManager.TabOrderWeight.entries) {
     if (value.tabName != null && value.tabName == tabName) {
       return value.weight
     }
@@ -360,4 +348,56 @@ fun MessageBusConnection.subscribeOnVcsToolWindowLayoutChanges(updateLayout: Run
   subscribe(ToolWindowManagerListener.TOPIC, object : ToolWindowManagerListener {
     override fun stateChanged(toolWindowManager: ToolWindowManager) = updateLayout.run()
   })
+}
+
+/**
+ * Hides windowed/floating Commit TW when the commit started. Only for default non-modal commit mode
+ */
+@RequiresEdt
+internal fun hideWindowedFloatingTwOnCommit(project: Project) {
+  if (!CloseWindowedFloatingTwOnCommit.isSelected()) return
+
+  ifCommitTwOpenInWindow(project) { it.hide() }
+}
+
+
+private fun getCommitToolWindow(project: Project): ToolWindow? {
+  return ToolWindowManager.getInstance(project).getToolWindow(ToolWindowId.COMMIT)
+}
+
+private fun ifCommitTwOpenInWindow(project: Project, handler: (commitTw: ToolWindow) -> Unit) {
+  val commitTw = getCommitToolWindow(project) ?: return
+  if (!commitTw.isActive || !commitTw.isVisible) return
+  if (!CommitToolWindowUtil.isInWindow(commitTw.type)) return
+
+  handler(commitTw)
+}
+
+private object CloseWindowedFloatingTwOnCommit {
+  private const val ID = "vcs.non.modal.commit.close.in.windowed.mode"
+
+  fun isSelected(): Boolean = AdvancedSettings.getBoolean(ID)
+  fun setSelected(state: Boolean) {
+    AdvancedSettings.setBoolean(ID, state)
+  }
+}
+
+private class CloseWindowedFloatingTwOnCommitAction : ToggleAction(), DumbAware {
+  override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
+
+  override fun update(e: AnActionEvent) {
+    super.update(e)
+    val pr = e.project ?: return
+
+    e.presentation.isEnabledAndVisible = false
+    ifCommitTwOpenInWindow(pr) {
+      e.presentation.isEnabledAndVisible = true
+    }
+  }
+
+  override fun isSelected(e: AnActionEvent): Boolean = CloseWindowedFloatingTwOnCommit.isSelected()
+
+  override fun setSelected(e: AnActionEvent, state: Boolean) {
+    CloseWindowedFloatingTwOnCommit.setSelected(state)
+  }
 }

@@ -23,6 +23,18 @@ sealed interface DataRenderer<in T> {
     override val serialName: String = "inline_double"
   }
 
+  data object InlineInt : DataRenderer<Int> {
+    override val serialName: String = "inline_int"
+  }
+
+  data object CodeCommentRanges : DataRenderer<List<CodeCommentRange>> {
+    override val serialName: String = "code_comment_ranges"
+  }
+
+  data object ClickableLink : DataRenderer<String> {
+    override val serialName: String = "clickable_link"
+  }
+
   data class Text(val wrapping: Boolean = false, val showEmpty: Boolean = false) : DataRenderer<String> {
     override val serialName: String = "text"
     override fun skip(value: String): Boolean = !showEmpty && value.isBlank()
@@ -32,8 +44,16 @@ sealed interface DataRenderer<in T> {
     override val serialName: String = "lines"
   }
 
+  data object Snippets : DataRenderer<List<String>> {
+    override val serialName: String = "snippets"
+  }
+
   data object TextDiff : DataRenderer<TextUpdate> {
     override val serialName: String = "text_diff"
+  }
+
+  data object ColoredInsights : DataRenderer<ColoredInsightsData> {
+    override val serialName: String = "colored_insights"
   }
 
   class Serializer : JsonSerializer<DataRenderer<*>>, JsonDeserializer<DataRenderer<*>> {
@@ -50,13 +70,22 @@ sealed interface DataRenderer<in T> {
         "inline_boolean" -> InlineBoolean
         "inline_long" -> InlineLong
         "inline_double" -> InlineDouble
+        "inline_int" -> InlineInt
+        "code_comment_ranges" -> CodeCommentRanges
+        "clickable_link" -> ClickableLink
         "text" -> context?.deserialize(json, Text::class.java)
         "lines" -> Lines
         "text_diff" -> TextDiff
+        "snippets" -> Snippets
+        "colored_insights" -> ColoredInsights
         else -> throw IllegalArgumentException("Unknown type: $type")
       }
     }
   }
+}
+
+interface HasDescription {
+  val descriptionText: String
 }
 
 interface TextUpdate {
@@ -70,4 +99,35 @@ interface TextUpdate {
   private class Impl(override val originalText: String, override val updatedText: String) : TextUpdate
 }
 
-data class FileUpdate(val filePath: String, override val originalText: String, override val updatedText: String) : TextUpdate
+data class FileUpdate(
+  val filePath: String,
+  val originalNonSanitizedText: String,
+  override val updatedText: String
+) : TextUpdate, HasDescription {
+  override val originalText: String = originalNonSanitizedText.replace("\r\n", "\n")
+
+  override val descriptionText: String = filePath
+
+  val isRemoved: Boolean = updatedText.isEmpty()
+}
+
+fun sanitizeText(text: String): String = text.replace("\r\n", "\n")
+
+
+/**
+ * 0-based line numbers.
+ * [start] and [end] are inclusive.
+ */
+interface Range {
+  val start: Int
+  val end: Int
+}
+
+data class CodeCommentRange(
+  override val start: Int,
+  override val end: Int,
+  val text: String,
+  val negativeExample: Boolean? = null,
+  val category: String? = null,
+  val type: String? = null,
+) : Range

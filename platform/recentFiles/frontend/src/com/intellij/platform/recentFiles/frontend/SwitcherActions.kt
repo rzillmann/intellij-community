@@ -2,13 +2,13 @@
 package com.intellij.platform.recentFiles.frontend
 
 import com.intellij.featureStatistics.FeatureUsageTracker
-import com.intellij.ide.IdeBundle.message
 import com.intellij.ide.actions.shouldUseFallbackSwitcher
 import com.intellij.ide.lightEdit.LightEditCompatible
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.CustomShortcutSet
 import com.intellij.openapi.actionSystem.remoting.ActionRemoteBehaviorSpecification
+import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.DumbAwareToggleAction
 import com.intellij.ui.components.JBList
@@ -26,7 +26,7 @@ internal class ShowSwitcherForwardAction : BaseSwitcherAction(true)
 internal class ShowSwitcherBackwardAction : BaseSwitcherAction(false)
 
 @ApiStatus.Internal
-abstract class BaseSwitcherAction(val forward: Boolean?) : DumbAwareAction() {
+abstract class BaseSwitcherAction(val forward: Boolean?) : DumbAwareAction(), ActionRemoteBehaviorSpecification.Frontend {
   private fun isControlTab(event: KeyEvent?) = event?.run { isControlDown && keyCode == KeyEvent.VK_TAB } ?: false
   private fun isControlTabDisabled(event: AnActionEvent) = ScreenReader.isActive() && isControlTab(event.inputEvent as? KeyEvent)
 
@@ -50,7 +50,7 @@ abstract class BaseSwitcherAction(val forward: Boolean?) : DumbAwareAction() {
     }
     else {
       FeatureUsageTracker.getInstance().triggerFeatureUsed("switcher")
-      createAndShowNewSwitcher(null, event, message("window.title.switcher"), project)
+      createAndShowNewSwitcher(event, project)
     }
   }
 }
@@ -58,7 +58,7 @@ abstract class BaseSwitcherAction(val forward: Boolean?) : DumbAwareAction() {
 
 internal class ShowRecentFilesAction : LightEditCompatible, BaseRecentFilesAction(false)
 internal class ShowRecentlyEditedFilesAction : BaseRecentFilesAction(true)
-internal abstract class BaseRecentFilesAction(private val onlyEditedFiles: Boolean) : DumbAwareAction() {
+internal abstract class BaseRecentFilesAction(private val onlyEditedFiles: Boolean) : DumbAwareAction(), ActionRemoteBehaviorSpecification.Frontend {
   override fun update(event: AnActionEvent) {
     if (shouldUseFallbackSwitcher()) {
       event.presentation.isEnabledAndVisible = false
@@ -79,13 +79,13 @@ internal abstract class BaseRecentFilesAction(private val onlyEditedFiles: Boole
       existingPanel.cbShowOnlyEditedFiles?.apply { isSelected = !isSelected }
     }
     else {
-      createAndShowNewSwitcher(onlyEditedFiles, null, message("title.popup.recent.files"), project)
+      createAndShowNewRecentFiles(onlyEditedFiles, project)
     }
   }
 }
 
 
-internal class SwitcherIterateThroughItemsAction : DumbAwareAction() {
+internal class SwitcherIterateThroughItemsAction : DumbAwareAction(), ActionRemoteBehaviorSpecification.Frontend {
   override fun update(event: AnActionEvent) {
     if (shouldUseFallbackSwitcher()) {
       event.presentation.isEnabledAndVisible = false
@@ -129,7 +129,7 @@ internal class SwitcherToggleOnlyEditedFilesAction : DumbAwareToggleAction(), Ac
 
 internal class SwitcherNextProblemAction : SwitcherProblemAction(true)
 internal class SwitcherPreviousProblemAction : SwitcherProblemAction(false)
-internal abstract class SwitcherProblemAction(val forward: Boolean) : DumbAwareAction() {
+internal abstract class SwitcherProblemAction(val forward: Boolean) : DumbAwareAction(), ActionRemoteBehaviorSpecification.Frontend {
   private fun getFileList(event: AnActionEvent): JBList<SwitcherVirtualFile>? {
     return Switcher.SWITCHER_KEY.get(event.project)?.let { if (it.pinned) it.files else null }
   }
@@ -179,11 +179,15 @@ internal class SwitcherListFocusAction(val fromList: JList<*>, val toList: JList
   : FocusListener, AbstractAction() {
 
   override fun actionPerformed(event: ActionEvent) {
+    thisLogger().debug("SwitcherListFocusAction.actionPerformed: isShowing = ${toList.isShowing}, " +
+                       "target list = ${toList}, " +
+                       "some element from the list: ${if (toList.model.size > 0) toList.model.getElementAt(0) else null}")
     if (toList.isShowing) toList.requestFocusInWindow()
   }
 
   override fun focusLost(event: FocusEvent): Unit = Unit
   override fun focusGained(event: FocusEvent) {
+    thisLogger().debug("SwitcherListFocusAction.focusGained: isShowing = ${toList.isShowing}, target list = ${toList}, target list size = ${toList.model.size}")
     val size = toList.model.size
     if (size > 0) {
       val fromIndex = fromList.selectedIndex

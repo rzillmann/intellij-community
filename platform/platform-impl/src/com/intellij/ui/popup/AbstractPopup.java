@@ -702,38 +702,52 @@ public class AbstractPopup implements JBPopup, ScreenAreaConsumer, AlignedPopup 
 
   @Override
   public void showInFocusCenter() {
-    final Component focused = getWndManager().getFocusedComponent(myProject);
-    if (focused != null) {
-      showInCenterOf(focused);
+    var parent = getFocusedParent(myProject);
+    if (parent != null) {
+      showInCenterOf(parent);
     }
     else {
-      final WindowManager manager = WindowManager.getInstance();
-      final JFrame frame = myProject != null ? manager.getFrame(myProject) : manager.findVisibleFrame();
-      showInCenterOf(frame.getRootPane());
+      LOG.error(new Throwable("Can't show the popup because no focused component could be found"));
     }
+  }
+
+  @ApiStatus.Internal
+  public static @Nullable Component getFocusedParent(@Nullable Project project) {
+    var windowManager = getWndManager();
+    var focused = windowManager == null ? null : windowManager.getFocusedComponent(project);
+    if (focused != null) {
+      LOG.debug("Using the focused component to show the popup " + focused);
+      return focused;
+    }
+    var manager = WindowManager.getInstance();
+    var frame = project != null ? manager.getFrame(project) : manager.findVisibleFrame();
+    if (frame != null) {
+      var pane = frame.getRootPane();
+      LOG.debug("Using the focused frame's root pane to show the popup: frame=" + frame + " rootPane=" + pane);
+      return pane;
+    }
+    // Fall back to using just ANY window.
+    for (Window window : Window.getWindows()) {
+      if (window.isShowing() && window instanceof RootPaneContainer rootPaneContainer) {
+        var pane = rootPaneContainer.getRootPane();
+        LOG.debug("Using a random visible window to show the popup: window=" + window + " rootPane=" + pane);
+        return pane;
+      }
+    }
+    return null;
   }
 
   private @NotNull RelativePoint relativePointByQuickSearch(@NotNull DataContext dataContext) {
     Rectangle dominantArea = PlatformDataKeys.DOMINANT_HINT_AREA_RECTANGLE.getData(dataContext);
 
     if (dominantArea != null) {
-      final Component focusedComponent = getWndManager().getFocusedComponent(myProject);
+      var windowManager = getWndManager();
+      Component focusedComponent = windowManager == null ? null : windowManager.getFocusedComponent(myProject);
       if (focusedComponent != null) {
-        Window window = SwingUtilities.windowForComponent(focusedComponent);
-        JLayeredPane layeredPane;
-        if (window instanceof JFrame) {
-          layeredPane = ((JFrame)window).getLayeredPane();
+        JLayeredPane layeredPane = UIUtil.getWindowLayeredPaneFor(focusedComponent);
+        if (layeredPane == null) {
+          throw new IllegalStateException("cannot find parent window: project=" + myProject + "; component=" + focusedComponent);
         }
-        else if (window instanceof JDialog) {
-          layeredPane = ((JDialog)window).getLayeredPane();
-        }
-        else if (window instanceof JWindow) {
-          layeredPane = ((JWindow)window).getLayeredPane();
-        }
-        else {
-          throw new IllegalStateException("cannot find parent window: project=" + myProject + "; window=" + window);
-        }
-
         return relativePointWithDominantRectangle(layeredPane, dominantArea);
       }
     }
@@ -980,10 +994,11 @@ public class AbstractPopup implements JBPopup, ScreenAreaConsumer, AlignedPopup 
 
   @Override
   public boolean canClose() {
+    Computable<Boolean> callBack = myCallBack;
     return
       (!anyModalWindowsKeepPopupOpen() &&
-      (myCallBack == null || myCallBack.compute().booleanValue()) &&
-      !preventImmediateClosingAfterOpening()) ||
+       (callBack == null || callBack.compute().booleanValue()) &&
+       !preventImmediateClosingAfterOpening()) ||
       myDisposed; // check for myDisposed last to allow `myCallBack` to be executed
   }
 
@@ -1334,7 +1349,7 @@ public class AbstractPopup implements JBPopup, ScreenAreaConsumer, AlignedPopup 
       LOG.warn("Lightweight popup is shown using AbstractPopup class. But this class is not supposed to work with lightweight popups.");
     }
 
-    window.setFocusableWindowState(myRequestFocus);
+    window.setFocusableWindowState(myFocusable);
     window.setFocusable(myRequestFocus);
 
     // Swing popup default always on top state is set in true
@@ -1377,11 +1392,19 @@ public class AbstractPopup implements JBPopup, ScreenAreaConsumer, AlignedPopup 
 
     window.setAutoRequestFocus(myRequestFocus);
 
+    if (myCaption instanceof TitlePanel titlePanel) {
+      window.getAccessibleContext()
+        .setAccessibleName(StringUtil.unescapeXmlEntities(titlePanel.getLabel().getText()).replace("&nbsp;", " "));
+    }
+
     if (roundedCornerParams != null) {
       WindowRoundedCornersManager.setRoundedCorners(window, roundedCornerParams);
     }
 
-    if (myNormalWindowLevel && !window.isDisplayable()) {
+    if (shouldUseTrueWaylandPopups()) {
+      window.setType(Window.Type.POPUP);
+    }
+    else if (myNormalWindowLevel && !window.isDisplayable()) {
       window.setType(Window.Type.NORMAL);
     }
     myWindow = window;
@@ -1473,9 +1496,10 @@ public class AbstractPopup implements JBPopup, ScreenAreaConsumer, AlignedPopup 
       if (myPreferredFocusedComponent != null) {
         // `resetThreadContext` here is needed because `setVisible` runs event loop
         // IJPL-161712
-        try (AccessToken ignored = ThreadContext.resetThreadContext()) {
+        ThreadContext.resetThreadContext(() -> {
           myPreferredFocusedComponent.requestFocus();
-        }
+          return null;
+        });
       }
       else {
         _requestFocus();
@@ -1505,19 +1529,33 @@ public class AbstractPopup implements JBPopup, ScreenAreaConsumer, AlignedPopup 
   }
 
   private static Point getLocationRelativeToParent(Rectangle bounds, Window popupParent) {
+    Rectangle newBounds = new Rectangle(bounds);
+    // The Wayland server may refuse to show a popup whose top-left corner is located outside the parent toplevel's bounds.
+    var toplevelParent = ComponentUtil.findUltimateParent(popupParent);
+    var toplevelParentLocation = toplevelParent.getLocationOnScreen();
+    if (LOG.isDebugEnabled()) {
+      LOG.debug(
+        "The top-level parent is located at " + toplevelParentLocation +
+        " and has the size " + toplevelParent.getSize()
+      );
+    }
+    Rectangle okBounds = new Rectangle(toplevelParentLocation.x, toplevelParentLocation.y,
+                                       toplevelParent.getWidth() + newBounds.width, toplevelParent.getHeight() + newBounds.height);
+    ScreenUtil.moveToFit(newBounds, okBounds, new Insets(0, 0, 1, 1));
+    if (LOG.isDebugEnabled()) {
+      LOG.debug("The bounds after fitting into the top-level parent: " + newBounds);
+    }
     // The "bounds" are "screen" coordinates, which in Wayland means that they
     // are relative to the nearest toplevel (Window) in the hierarchy.
     // But popups in Wayland are expected to be located relative to popup's "parent" (a toplevel or another popup).
     // We need to adjust "bounds" to be relative to the parent.
-    Rectangle newBounds = new Rectangle(bounds);
     Point parentLocation = popupParent.getLocationOnScreen();
     newBounds.x -= parentLocation.x;
     newBounds.y -= parentLocation.y;
-    // The Wayland server may refuse to show a popup whose top-left corner is located outside the parent toplevel's bounds.
-    // TODO: Need to fit into the nearest toplevel, not popupParent that may be another popup.
-    Rectangle okBounds = new Rectangle(0, 0,
-                                       popupParent.getWidth() + newBounds.width, popupParent.getHeight() + newBounds.height);
-    ScreenUtil.moveToFit(newBounds, okBounds, new Insets(0, 0, 1, 1));
+    if (LOG.isDebugEnabled()) {
+      LOG.debug("The direct popup parent is located at " + parentLocation);
+      LOG.debug("The bounds after converting to the parent coordinate system: " + newBounds);
+    }
     return newBounds.getLocation();
   }
 
@@ -2812,6 +2850,7 @@ public class AbstractPopup implements JBPopup, ScreenAreaConsumer, AlignedPopup 
   }
 
   private @Nullable Point getStoredLocation() {
+    if (shouldUseTrueWaylandPopups()) return null; // not supported at the moment
     if (myDimensionServiceKey == null) return null;
     return getWindowStateService(getProjectDependingOnKey(myDimensionServiceKey)).getLocation(myDimensionServiceKey);
   }
@@ -2869,7 +2908,7 @@ public class AbstractPopup implements JBPopup, ScreenAreaConsumer, AlignedPopup 
     // Try forwarding the input method event to various possible speed search handlers
 
     JComponent comp = myPreferredFocusedComponent == null ? myComponent : myPreferredFocusedComponent;
-    SpeedSearchSupply supply = SpeedSearchSupply.getSupply(comp, true);
+    SpeedSearchSupply supply = comp == null ? null : SpeedSearchSupply.getSupply(comp, true);
 
     if (!event.isConsumed() && supply instanceof SpeedSearchBase<?>) {
       ((SpeedSearchBase<?>)supply).processInputMethodEvent(event);
@@ -2887,5 +2926,9 @@ public class AbstractPopup implements JBPopup, ScreenAreaConsumer, AlignedPopup 
       mySpeedSearch.update();
     }
     return event.isConsumed();
+  }
+
+  private static boolean shouldUseTrueWaylandPopups() {
+    return StartupUiUtil.isWaylandToolkit() && Registry.is("wayland.true.popups", false);
   }
 }

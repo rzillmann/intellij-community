@@ -6,7 +6,7 @@ import com.intellij.frontend.FrontendApplicationInfo
 import com.intellij.frontend.FrontendType
 import com.intellij.ide.ui.icons.icon
 import com.intellij.java.debugger.impl.shared.SharedDebuggerUtils
-import com.intellij.java.debugger.impl.shared.SharedJavaDebuggerManager
+import com.intellij.java.debugger.impl.shared.SharedJavaDebuggerSession
 import com.intellij.java.debugger.impl.shared.rpc.JavaDebuggerSessionApi
 import com.intellij.java.debugger.impl.shared.rpc.JavaThreadDumpDto
 import com.intellij.java.debugger.impl.shared.rpc.JavaThreadDumpItemDto
@@ -19,11 +19,11 @@ import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.NlsSafe
 import com.intellij.openapi.util.registry.Registry
+import com.intellij.platform.debugger.impl.rpc.toSimpleTextAttributes
 import com.intellij.ui.SimpleTextAttributes
 import com.intellij.unscramble.DumpItem
 import com.intellij.util.BitUtil
 import com.intellij.xdebugger.impl.frame.XDebugSessionProxy
-import com.intellij.xdebugger.impl.rpc.toSimpleTextAttributes
 import com.intellij.xdebugger.impl.ui.DebuggerUIUtil
 import fleet.rpc.core.util.map
 import kotlinx.coroutines.Dispatchers
@@ -31,6 +31,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.jetbrains.annotations.Nls
 import java.awt.event.InputEvent
 import javax.swing.Icon
 
@@ -58,20 +59,9 @@ private class ThreadDumpAction : DumbAwareAction(), ActionRemoteBehaviorSpecific
   }
 
   override fun update(e: AnActionEvent) {
-    val presentation = e.presentation
-    val project = e.project
-    if (project == null) {
-      presentation.setEnabled(false)
-      return
-    }
-    val sessionProxy = DebuggerUIUtil.getSessionProxy(e)
-    if (sessionProxy == null) {
-      presentation.setEnabled(false)
-      return
-    }
-    val javaSession = SharedJavaDebuggerManager.getInstance(project).getJavaSession(sessionProxy.id)
+    val javaSession = SharedJavaDebuggerSession.findSession(e)
     val isAttached = javaSession != null && javaSession.isAttached
-    presentation.setEnabled(isAttached)
+    e.presentation.setEnabled(isAttached)
   }
 
   override fun getActionUpdateThread(): ActionUpdateThread {
@@ -114,7 +104,7 @@ private fun ThreadDumpWithAwaitingDependencies.toDumpItems(): List<DumpItem> {
   val iconsCache = icons.map { it.icon() }
   val attributesCache = attributes.map { it.toSimpleTextAttributes() }
 
-  val feDumpItems = items.map { FrontendDumpItem(it, iconsCache, attributesCache, stackTraces, stateDescriptions) }
+  val feDumpItems = items.map { FrontendDumpItem(it, iconsCache, attributesCache, stackTraces, stateDescriptions, iconToolTips) }
   for ((index, awaitingIndices) in awaitingDependencies) {
     val awaitingItems = awaitingIndices.map { feDumpItems[it] }.toHashSet()
     feDumpItems[index].setAwaitingItems(awaitingItems)
@@ -128,12 +118,14 @@ private class FrontendDumpItem(
   private val attributesCache: List<SimpleTextAttributes>,
   private val stackTracesCache: List<@NlsSafe String>,
   private val stateDescriptionsCache: List<@NlsSafe String>,
+  private val iconToolTipsCache: List<@Nls String?>,
 ) : DumpItem {
   private var internalAwaitingItems: Set<DumpItem> = emptySet()
 
   override val name: @NlsSafe String get() = itemDto.name
   override val stateDesc: @NlsSafe String get() = stateDescriptionsCache[itemDto.stateDescriptionIndex]
   override val stackTrace: @NlsSafe String get() = "${itemDto.firstLine}\n${stackTracesCache[itemDto.stackTraceIndex]}"
+  override val iconToolTip: @Nls String? get() = iconToolTipsCache[itemDto.iconToolTipIndex.toUInt().toInt()]
   override val interestLevel: Int get() = itemDto.interestLevel
   override val icon: Icon get() = iconsCache[itemDto.iconIndex.toUInt().toInt()]
   override val attributes: SimpleTextAttributes get() = attributesCache[itemDto.attributesIndex.toInt().toUInt().toInt()]

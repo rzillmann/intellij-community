@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.platform.workspace.storage.impl
 
 import com.intellij.openapi.diagnostic.logger
@@ -7,7 +7,9 @@ import com.intellij.platform.diagnostic.telemetry.JPS
 import com.intellij.platform.diagnostic.telemetry.TelemetryManager
 import com.intellij.platform.diagnostic.telemetry.helpers.MillisecondsMeasurer
 import com.intellij.platform.workspace.storage.ConnectionId
+import com.intellij.platform.workspace.storage.SymbolicEntityId
 import com.intellij.platform.workspace.storage.WorkspaceEntity
+import com.intellij.util.containers.CollectionFactory
 import io.opentelemetry.api.metrics.Meter
 import kotlinx.collections.immutable.*
 
@@ -17,6 +19,8 @@ internal class WorkspaceBuilderChangeLog {
   var modificationCount: Long = 0
 
   internal val changeLog: ChangeLog = LinkedHashMap()
+  private val addedSymbolicIds = CollectionFactory.createSmallMemoryFootprintSet<SymbolicEntityId<*>>()
+  private val removedSymbolicIds = CollectionFactory.createSmallMemoryFootprintSet<SymbolicEntityId<*>>()
 
   internal fun clear() {
     modificationCount++
@@ -24,7 +28,7 @@ internal class WorkspaceBuilderChangeLog {
   }
 
   internal fun join(other: WorkspaceBuilderChangeLog) {
-    other.changeLog.forEach { (id, entry) ->
+    for ((id, entry) in other.changeLog) {
       when (entry) {
         is ChangeEntry.AddEntity -> {
           this.addAddEventImpl(id, entry.entityData, true)
@@ -467,8 +471,32 @@ internal class WorkspaceBuilderChangeLog {
     }
   }
 
+  internal fun addAddedIds(addedIds: Set<SymbolicEntityId<*>>) {
+    if (addedIds.isEmpty()) return
+    addedIds.forEach { addedId ->
+      addedSymbolicIds.add(addedId)
+      removedSymbolicIds.remove(addedId)
+    }
+  }
+
+  internal fun addRemovedIds(removedIds: Set<SymbolicEntityId<*>>) {
+    if (removedIds.isEmpty()) return
+    removedIds.forEach { removedId ->
+      removedSymbolicIds.add(removedId)
+      addedSymbolicIds.remove(removedId)
+    }
+  }
+
+  internal fun addedSymbolicIds(): Set<SymbolicEntityId<*>> {
+    return addedSymbolicIds
+  }
+
+  internal fun removedSymbolicIds(): Set<SymbolicEntityId<*>> {
+    return removedSymbolicIds
+  }
+
   companion object {
-    val LOG = logger<WorkspaceBuilderChangeLog>()
+    private val LOG = logger<WorkspaceBuilderChangeLog>()
 
     private val addReplaceEventForNewParentMs = MillisecondsMeasurer()
     private val addReplaceEventForNewChildMs = MillisecondsMeasurer()

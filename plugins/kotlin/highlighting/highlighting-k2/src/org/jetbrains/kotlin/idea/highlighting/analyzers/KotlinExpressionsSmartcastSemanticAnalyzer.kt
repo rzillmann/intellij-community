@@ -31,14 +31,22 @@ internal class KotlinExpressionsSmartcastSemanticAnalyzer(holder: HighlightInfoH
                 KotlinBaseHighlightingBundle.message(
                     "0.smart.cast.to.1",
                     receiverName,
-                    it.type.toString()
+                    it.type.render(position = Variance.INVARIANT)
                 )
             )
             if (builder != null) {
                 holder.add(builder.create())
             }
         }
+
         expression.smartCastInfo?.takeIf { it.isStable }?.let { info ->
+            expression.expectedType?.let { expectedType ->
+                if (info.originalType.isSubtypeOf(expectedType)) {
+                    // Skip redundant smart casts (the code compiles without a smart cast)
+                    return
+                }
+            }
+
             val builder = HighlightingFactory.highlightName(
                 getSmartCastTarget(expression),
                 KotlinHighlightInfoTypeSemanticNames.SMART_CAST_VALUE,

@@ -24,7 +24,6 @@ import com.intellij.openapi.fileEditor.impl.FileEditorOpenOptions
 import com.intellij.openapi.fileEditor.impl.navigateAndSelectEditor
 import com.intellij.openapi.fileTypes.FileTypeManager
 import com.intellij.openapi.fileTypes.INativeFileType
-import com.intellij.openapi.progress.blockingContext
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.registry.Registry
 import com.intellij.platform.backend.navigation.NavigationRequest
@@ -138,12 +137,14 @@ private suspend fun tryNavigateToSource(
 
   when (request) {
     is SourceNavigationRequest -> {
-      navigateToSourceImpl(
-        request = request,
-        options = options,
-        project = project,
-        dataContext = dataContext,
-      )
+      withContext(Dispatchers.EDT) {
+        navigateToSourceImpl(
+          request = request,
+          options = options,
+          project = project,
+          dataContext = dataContext,
+        )
+      }
       return true
     }
     is DirectoryNavigationRequest -> {
@@ -168,9 +169,7 @@ private suspend fun navigateNonSource(project: Project, request: NavigationReque
   return when (request) {
     is DirectoryNavigationRequest -> {
       withContext(Dispatchers.EDT) {
-        blockingContext {
-          PsiNavigationSupport.getInstance().navigateToDirectory(request.directory, options.requestFocus)
-        }
+        PsiNavigationSupport.getInstance().navigateToDirectory(request.directory, options.requestFocus)
       }
     }
     is RawNavigationRequest -> {
@@ -212,7 +211,7 @@ private suspend fun navigateToSourceImpl(
   val type = if (file.isDirectory) null else FileTypeManager.getInstance().getKnownFileTypeOrAssociate(file, project)
   if (type != null && file.isValid) {
     if (type is INativeFileType) {
-      if (blockingContext { type.openFileInAssociatedApplication(project, file) }) {
+      if (type.openFileInAssociatedApplication(project, file)) {
         return
       }
     }
@@ -237,16 +236,7 @@ private suspend fun navigateToSourceImpl(
         }
       }
 
-      if (options.openInRightSplit) {
-        if (openFile(request = request, project = project, options = options)) {
-          return
-        }
-      }
-      // TODO: replace with openFile once IJPL-184882 is fixed
-      else if (FileNavigator.getInstance().canNavigate(descriptor)) {
-        withContext(Dispatchers.EDT) {
-          FileNavigator.getInstance().navigate(descriptor, true)
-        }
+      if (openFile(request = request, project = project, options = options)) {
         return
       }
     }
@@ -278,6 +268,7 @@ private suspend fun openFile(
       reuseOpen = true,
       requestFocus = options.requestFocus,
       openMode = if (options.openInRightSplit) FileEditorManagerImpl.OpenMode.RIGHT_SPLIT else FileEditorManagerImpl.OpenMode.DEFAULT,
+      forceFocus = options.forceFocus,
     ),
   )
 
@@ -311,7 +302,21 @@ private suspend fun openFile(
         val navigated = withContext(Dispatchers.EDT) {
           //todo: try read action only
           writeIntentReadAction {
-            navigateAndSelectEditor(editor = editor, descriptor = descriptor, composite = composite as? EditorComposite)
+            // The current implementation of navigation depends on the type of the editor.
+            // If the editor is a subtype of TextEditorImpl, it falls into the condition editor.canNavigateTo.
+            // If the editor is a subtype of EditorWrapper, the second branch is tested. This scenario is possible
+            // during running some tests but could potentially happen in production code as well.
+            // More details: IJPL-184882 openFile doesn’t perform navigation for a SourceNavigationRequest
+            when {
+              editor.canNavigateTo(descriptor) -> {
+                navigateAndSelectEditor(editor, descriptor, composite as? EditorComposite)
+              }
+              FileNavigator.getInstance().canNavigate(descriptor) -> {
+                FileNavigator.getInstance().navigate(descriptor, options.requestFocus)
+                true
+              }
+              else -> false
+            }
           }
         }
         if (navigated) {

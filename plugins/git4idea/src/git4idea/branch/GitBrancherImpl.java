@@ -164,12 +164,12 @@ class GitBrancherImpl implements GitBrancher {
 
   @Override
   public void compare(@NotNull String branchName, @NotNull List<? extends GitRepository> repositories) {
-    new GitCompareBranchesUi(myProject, repositories, branchName).open();
+    myProject.getService(GitBranchesUIHandler.class).compareWithCurrent(repositories, branchName);
   }
 
   @Override
   public void compareAny(@NotNull String branchName, @NotNull String otherBranchName, @NotNull List<? extends GitRepository> repositories) {
-    new GitCompareBranchesUi(myProject, repositories, branchName, otherBranchName).open();
+    myProject.getService(GitBranchesUIHandler.class).compare(repositories, branchName, otherBranchName);
   }
 
   @Override
@@ -266,6 +266,18 @@ class GitBrancherImpl implements GitBrancher {
       @Override
       void execute(@NotNull ProgressIndicator indicator) {
         newWorker(indicator).renameBranch(currentName, newName, repositories);
+      }
+    }.runInBackground();
+  }
+
+  @Override
+  public void renameBranchAndUnsetUpstream(@NotNull String currentName,
+                                           @NotNull String newName,
+                                           @NotNull List<? extends @NotNull GitRepository> repositories) {
+    new CommonBackgroundTask(myProject, GitBundle.message("branch.renaming.branch.process", currentName, newName), null) {
+      @Override
+      void execute(@NotNull ProgressIndicator indicator) {
+        newWorker(indicator).renameBranchAndUnsetUpstream(currentName, newName, repositories);
       }
     }.runInBackground();
   }

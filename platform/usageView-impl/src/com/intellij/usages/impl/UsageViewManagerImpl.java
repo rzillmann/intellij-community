@@ -35,16 +35,13 @@ import com.intellij.usageView.UsageViewContentManager;
 import com.intellij.usages.*;
 import com.intellij.usages.rules.PsiElementUsage;
 import com.intellij.usages.rules.UsageInFile;
+import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.ui.UIUtil;
 import kotlin.coroutines.EmptyCoroutineContext;
 import kotlinx.coroutines.CoroutineScope;
-import org.jetbrains.annotations.ApiStatus;
-import org.jetbrains.annotations.Nls;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.*;
 
-import java.util.Arrays;
-import java.util.Objects;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
@@ -100,11 +97,11 @@ public class UsageViewManagerImpl extends UsageViewManager {
                                        @Nullable Factory<? extends UsageSearcher> factory) {
     UsageViewEx usageView = createUsageView(searchedFor, foundUsages, presentation, factory);
     showUsageView(usageView, presentation);
-    if (usageView instanceof UsageViewImpl) {
+    if (usageView instanceof UsageViewImpl impl) {
       showToolWindow(true);
       UIUtil.invokeLaterIfNeeded(() -> {
-        if (!((UsageViewImpl)usageView).isDisposed()) {
-          ((UsageViewImpl)usageView).expandRoot();
+        if (!impl.isDisposed()) {
+          impl.expandRoot();
         }
       });
     }
@@ -201,13 +198,18 @@ public class UsageViewManagerImpl extends UsageViewManager {
         Class<? extends PsiElement> targetClass = element != null ? element.getClass() : null;
         Language language = element != null ? ReadAction.compute(element::getLanguage) : null;
         SearchScope scope = null;
-        if (element instanceof DataProvider) {
-          scope = UsageView.USAGE_SCOPE.getData((DataProvider)element);
+        if (element instanceof DataProvider provider) {
+          scope = UsageView.USAGE_SCOPE.getData(provider);
         }
         int numberOfUsagesFound = view == null ? 0 : view.getUsagesCount();
+
         UsageViewStatisticsCollector.logSearchFinished(myProject, view, targetClass, scope, language, numberOfUsagesFound,
                                                        durationFirstResults, duration,
                                                        tooManyUsages.get(), isCancelled, CodeNavigateSource.FindToolWindow);
+
+        Set<Usage> usages = view == null ? Collections.emptySet() : view.getUsages();
+        informRankerMlService(project, usages, FileRankerMlService.CallSource.FIND_USAGES);
+
         return duration;
       }
     };
@@ -215,7 +217,23 @@ public class UsageViewManagerImpl extends UsageViewManager {
     return usageViewRef.get();
   }
 
-  @NotNull Supplier<SearchScope> getMaxSearchScopeToWarnOfFallingOutOf(UsageTarget @NotNull [] searchFor) {
+  @ApiStatus.Internal
+  public static void informRankerMlService(@NotNull Project project,
+                                           @NotNull Collection<Usage> usages,
+                                           FileRankerMlService.@NotNull CallSource source) {
+    FileRankerMlService rankerMlService = FileRankerMlService.getInstance();
+    if (rankerMlService == null) {
+      return;
+    }
+    Set<VirtualFile> foundFiles = ContainerUtil.map2SetNotNull(
+      usages, usage -> usage instanceof UsageInFile inFile ? inFile.getFile() : null
+    );
+    rankerMlService.onSessionFinished(project, foundFiles, source);
+  }
+
+  @VisibleForTesting
+  @ApiStatus.Internal
+  public @NotNull Supplier<SearchScope> getMaxSearchScopeToWarnOfFallingOutOf(UsageTarget @NotNull [] searchFor) {
     UsageTarget target = searchFor.length > 0 ? searchFor[0] : null;
     DataContext dataContext = CustomizedDataContext.withSnapshot(DataContext.EMPTY_CONTEXT, sink ->
       DataSink.uiDataSnapshot(sink, target));
@@ -304,7 +322,9 @@ public class UsageViewManagerImpl extends UsageViewManager {
         if (element == null) return false;
         if (searchScope instanceof EverythingGlobalScope ||
             searchScope instanceof ProjectScopeImpl ||
-            searchScope instanceof ProjectAndLibrariesScope) return true;
+            searchScope instanceof ProjectAndLibrariesScope) {
+          return true;
+        }
         file = PsiUtilCore.getVirtualFile(element);
       }
       else if (usage instanceof UsageInFile usageInFile){
@@ -318,8 +338,8 @@ public class UsageViewManagerImpl extends UsageViewManager {
   }
 
   private static boolean isFileInScope(@NotNull VirtualFile file, @NotNull SearchScope searchScope) {
-    if (file instanceof VirtualFileWindow) {
-      file = ((VirtualFileWindow)file).getDelegate();
+    if (file instanceof VirtualFileWindow window) {
+      file = window.getDelegate();
     }
     file = BackedVirtualFile.getOriginFileIfBacked(file);
     return searchScope.contains(file);

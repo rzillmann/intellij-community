@@ -1,5 +1,7 @@
 import com.ncorti.ktfmt.gradle.tasks.KtfmtBaseTask
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import org.jmailen.gradle.kotlinter.tasks.FormatTask
+import org.jmailen.gradle.kotlinter.tasks.LintTask
 
 plugins {
     id("jewel-linting")
@@ -13,12 +15,10 @@ val gitHubRef: String? = System.getenv("GITHUB_REF")
 version =
     when {
         properties.containsKey("versionOverride") -> {
-            val rawVersion = (properties["versionOverride"] as String).trim()
-            if (!rawVersion.matches("^\\d\\.\\d{2,}\\.\\d+$".toRegex())) {
-                throw GradleException("Invalid versionOverride: $rawVersion")
-            }
-            logger.warn("Using version override: $rawVersion")
-            rawVersion
+            val jewelVersion = getJewelVersion()
+            validateJewelVersion(jewelVersion)
+            logger.warn("Using version override: $jewelVersion")
+            jewelVersion
         }
         gitHubRef?.startsWith("refs/tags/") == true -> {
             gitHubRef.substringAfter("refs/tags/").removePrefix("v")
@@ -41,7 +41,7 @@ kotlin {
     jvmToolchain { languageVersion = JavaLanguageVersion.of(jdkLevel) }
 
     compilerOptions {
-        freeCompilerArgs.add("-Xcontext-receivers")
+        freeCompilerArgs.add("-Xcontext-parameters")
         jvmTarget.set(JvmTarget.fromTarget(jdkLevel))
     }
 
@@ -57,42 +57,22 @@ kotlin {
     }
 }
 
-detekt {
-    config.from(files(rootProject.file("detekt.yml")))
-    buildUponDefaultConfig = true
-}
-
-val sarifReport: Provider<RegularFile> = layout.buildDirectory.file("reports/ktlint-${project.name}.sarif")
-
 tasks {
-    detektMain {
-        val sarifOutputFile = layout.buildDirectory.file("reports/detekt-${project.name}.sarif")
-        exclude { it.file.absolutePath.startsWith(layout.buildDirectory.asFile.get().absolutePath) }
-        reports {
-            sarif.required = true
-            sarif.outputLocation = sarifOutputFile
-        }
-    }
+    val buildDir = layout.buildDirectory.asFile.get().relativeTo(project.projectDir).path
+    detektMain { exclude { it.file.path.contains(buildDir) } }
 
-    formatKotlinMain { exclude { it.file.absolutePath.replace('\\', '/').contains("build/generated") } }
-    withType<KtfmtBaseTask> { exclude { it.file.absolutePath.contains("build/generated") } }
+    withType<KtfmtBaseTask> { exclude { it.file.path.contains(buildDir) } }
 
-    lintKotlinMain {
-        exclude { it.file.absolutePath.replace('\\', '/').contains("build/generated") }
+    withType<FormatTask> { exclude { it.file.path.contains(buildDir) } }
+
+    withType<LintTask> {
+        exclude { it.file.path.contains(buildDir) }
 
         reports = provider {
             mapOf(
                 "plain" to layout.buildDirectory.file("reports/ktlint-${project.name}.txt").get().asFile,
                 "html" to layout.buildDirectory.file("reports/ktlint-${project.name}.html").get().asFile,
-                "sarif" to sarifReport.get().asFile,
             )
         }
-    }
-}
-
-configurations.named("sarif") {
-    outgoing {
-        artifact(tasks.detektMain.flatMap { it.sarifReportFile }) { builtBy(tasks.detektMain) }
-        artifact(sarifReport) { builtBy(tasks.lintKotlinMain) }
     }
 }

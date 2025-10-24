@@ -15,16 +15,42 @@ class CommunityPluginModelTest {
     val options = PluginValidationOptions(
       skipUnresolvedOptionalContentModules = true,
       referencedPluginIdsOfExternalPlugins = setOf(
-        "com.intellij.modules.python-in-mini-ide-capable", //defined in the ultimate part
-        "com.intellij.modules.rider", //defined in the ultimate part
+        //these modules are defined in the ultimate part
+        "com.intellij.marketplace",
+        "com.intellij.modules.python-in-mini-ide-capable",
+        "com.intellij.modules.rider",
+        "com.intellij.modules.ultimate",
+        "com.intellij.jetbrains.client",
+        "com.intellij.modules.appcode.ide",
       ),
       modulesWithIncorrectlyPlacedModuleDescriptor = setOf(
         "intellij.android.device-explorer",
       ),
-      pathsIncludedFromLibrariesViaXiInclude = setOf(
+      prefixesOfPathsIncludedFromLibrariesViaXiInclude = listOf(
         "META-INF/analysis-api/analysis-api-fe10.xml",
         "META-INF/analysis-api/analysis-api-fir.xml",
         "META-INF/wizard-template-impl.xml",
+        "META-INF/tips-"
+      ),
+      additionalPatternsOfDirectoriesContainingIncludedXmlFiles = listOf(
+        "org/jetbrains/android/dom",
+        "com/android/tools/idea/ui/resourcemanager/META-INF",
+      ),
+      componentImplementationClassesToIgnore = setOf(
+        "com.intellij.designer.DesignerToolWindowManager",
+        "com.intellij.designer.palette.PaletteToolWindowManager",
+      ),
+      pluginVariantsWithDynamicIncludes = listOf(
+        PluginVariantWithDynamicIncludes(
+          mainModuleName = "kotlin.plugin",
+          systemPropertyName = "idea.kotlin.plugin.use.k1",
+          systemPropertyValue = "false",
+        ),
+        PluginVariantWithDynamicIncludes(
+          mainModuleName = "kotlin.plugin",
+          systemPropertyName = "idea.kotlin.plugin.use.k1",
+          systemPropertyValue = "true",
+        ),
       )
     )
     val result = validatePluginModel(communityPath, options)

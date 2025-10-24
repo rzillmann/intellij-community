@@ -148,8 +148,28 @@ class JavaDocParser(
     else if (tokenType === JavaDocSyntaxTokenType.DOC_LBRACKET) {
       parseMarkdownReferenceChecked()
     }
+    else if (tokenType === JavaDocSyntaxTokenType.DOC_COMMENT_DATA) {
+      parseCommentData()
+    }
     else {
       remapAndAdvance()
+    }
+  }
+
+  private fun parseCommentData() {
+    val commentData = builder.mark()
+    val offset = builder.currentOffset
+
+    while (COMMENT_DATA_TOKENS.contains(builder.rawLookup(1))) {
+      builder.advanceLexer()
+    }
+
+    if (builder.currentOffset != offset) {
+      builder.advanceLexer()
+      commentData.collapse(JavaDocSyntaxTokenType.DOC_COMMENT_DATA)
+    } else {
+      commentData.drop()
+      builder.advanceLexer()
     }
   }
 
@@ -267,15 +287,22 @@ class JavaDocParser(
     tag.rollbackTo()
     tag = builder.mark()
     if (hasLabel) {
+      builder.advanceLexer()
+      val label = builder.mark()
       // Label range already known, mark it as comment data
       while (!builder.eof()) {
-        builder.advanceLexer()
+        if (builder.tokenType === JavaDocSyntaxTokenType.DOC_INLINE_CODE_FENCE) {
+          parseInlineCodeBlock()
+          continue
+        }
         if (builder.currentOffset < endLabelOffset) {
           builder.remapCurrentToken(JavaDocSyntaxTokenType.DOC_COMMENT_DATA)
+          builder.advanceLexer()
           continue
         }
         break
       }
+      label.done(JavaDocSyntaxElementType.DOC_MARKDOWN_REFERENCE_LABEL)
       builder.advanceLexer()
     }
 
@@ -289,17 +316,26 @@ class JavaDocParser(
 
   private fun parseMarkdownReference() {
     val refStart = builder.mark()
+    val moduleMarker = parseModuleRef(builder.mark())
+    var referenceParsed = false
+    var referenceEnded = false
+    var fragmentReference = false
+
     if (getTokenType() === JavaDocSyntaxTokenType.DOC_RBRACKET) {
-      refStart.drop()
-      return
+      if (moduleMarker == null) {
+        refStart.drop()
+        return
+      } else {
+        referenceEnded = true
+      }
     }
 
-    if (getTokenType() !== JavaDocSyntaxTokenType.DOC_SHARP) {
+    if (!referenceEnded && getTokenType() !== JavaDocSyntaxTokenType.DOC_SHARP && getTokenType() !== JavaDocSyntaxTokenType.DOC_DOUBLE_SHARP) {
       builder.remapCurrentToken(JavaDocSyntaxElementType.DOC_REFERENCE_HOLDER)
       builder.advanceLexer()
     }
 
-    if (getTokenType() === JavaDocSyntaxTokenType.DOC_SHARP) {
+    if (!referenceEnded && getTokenType() === JavaDocSyntaxTokenType.DOC_SHARP) {
       // Existing integration require this token for auto completion
       builder.remapCurrentToken(JavaDocSyntaxTokenType.DOC_TAG_VALUE_SHARP_TOKEN)
 
@@ -333,10 +369,36 @@ class JavaDocParser(
         }
       }
 
-      refStart.done(JavaDocSyntaxElementType.DOC_METHOD_OR_FIELD_REF)
-      return
+      referenceParsed = true
     }
-    refStart.drop()
+    else if (!referenceEnded && getTokenType() === JavaDocSyntaxTokenType.DOC_DOUBLE_SHARP) {
+      // auto-completion token
+      builder.remapCurrentToken(JavaDocSyntaxTokenType.DOC_TAG_VALUE_DOUBLE_SHARP_TOKEN)
+      builder.advanceLexer()
+
+      // fragment name
+      val nameMarker = builder.mark()
+
+      if (getTokenType() !== JavaDocSyntaxTokenType.DOC_COMMENT_DATA) {
+        nameMarker.rollbackTo()
+      }
+      else {
+        builder.advanceLexer()
+        nameMarker.done(JavaDocSyntaxElementType.DOC_FRAGMENT_NAME)
+        referenceParsed = true
+        fragmentReference = true
+      }
+    }
+
+    if (referenceParsed || moduleMarker != null) {
+      moduleMarker?.done(JavaDocSyntaxElementType.DOC_TAG_VALUE_ELEMENT)
+      when (fragmentReference) {
+        true -> refStart.done(JavaDocSyntaxElementType.DOC_FRAGMENT_REF)
+        false -> refStart.done(JavaDocSyntaxElementType.DOC_METHOD_OR_FIELD_REF)
+      }
+    } else {
+      refStart.drop()
+    }
   }
 
 
@@ -479,11 +541,14 @@ class JavaDocParser(
   }
 
   private fun parseSeeTagValue(allowBareFieldReference: Boolean) {
-    parseModuleRef(builder.mark())
+    val moduleMarker = parseModuleRef(builder.mark())
 
     val tokenType = getTokenType()
     if (tokenType === JavaDocSyntaxTokenType.DOC_TAG_VALUE_SHARP_TOKEN) {
       parseMethodRef(builder.mark())
+    }
+    else if (tokenType === JavaDocSyntaxTokenType.DOC_TAG_VALUE_DOUBLE_SHARP_TOKEN) {
+      parseFragmentRef(builder.mark())
     }
     else if (tokenType === JavaDocSyntaxTokenType.DOC_TAG_VALUE_TOKEN) {
       val refStart = builder.mark()
@@ -492,6 +557,9 @@ class JavaDocParser(
 
       if (getTokenType() === JavaDocSyntaxTokenType.DOC_TAG_VALUE_SHARP_TOKEN) {
         parseMethodRef(refStart)
+      }
+      else if (getTokenType() === JavaDocSyntaxTokenType.DOC_TAG_VALUE_DOUBLE_SHARP_TOKEN) {
+        parseFragmentRef(refStart)
       }
       else if (allowBareFieldReference) {
         refStart.rollbackTo()
@@ -502,22 +570,43 @@ class JavaDocParser(
         refStart.drop()
       }
     }
-    else {
+    else if (moduleMarker == null) {
       val tagValue = builder.mark()
       builder.advanceLexer()
       tagValue.done(JavaDocSyntaxElementType.DOC_TAG_VALUE_ELEMENT)
     }
+
+    moduleMarker?.done(JavaDocSyntaxElementType.DOC_TAG_VALUE_ELEMENT)
   }
 
   private fun parseModuleRef(
     refStart: SyntaxTreeBuilder.Marker,
-  ) {
+  ): SyntaxTreeBuilder.Marker? {
     builder.advanceLexer()
-    if (getTokenType() === JavaDocSyntaxTokenType.DOC_TAG_VALUE_DIV_TOKEN) {
-      refStart.done(JavaSyntaxElementType.MODULE_REFERENCE)
+    if (getTokenType() === JavaDocSyntaxTokenType.DOC_TAG_VALUE_SLASH) {
+      refStart.rollbackTo()
+      val containerRef = builder.mark()
+      val moduleRef = builder.mark()
       builder.advanceLexer()
+      moduleRef.done(JavaSyntaxElementType.MODULE_REFERENCE)
+      builder.advanceLexer()
+      return containerRef
     } else {
       refStart.rollbackTo()
+      return null
+    }
+  }
+
+  private fun parseFragmentRef(mark: SyntaxTreeBuilder.Marker) {
+    builder.advanceLexer()
+    val fragmentName = builder.mark()
+    if (getTokenType() !== JavaDocSyntaxTokenType.DOC_TAG_VALUE_TOKEN) {
+      fragmentName.drop()
+      mark.done(JavaDocSyntaxElementType.DOC_FRAGMENT_REF)
+    } else {
+      builder.advanceLexer()
+      fragmentName.done(JavaDocSyntaxElementType.DOC_FRAGMENT_NAME)
+      mark.done(JavaDocSyntaxElementType.DOC_FRAGMENT_REF)
     }
   }
 
@@ -619,7 +708,7 @@ class JavaDocParser(
 private val TAG_VALUES_SET: SyntaxElementTypeSet = syntaxElementTypeSetOf(
   JavaDocSyntaxTokenType.DOC_TAG_VALUE_TOKEN, JavaDocSyntaxTokenType.DOC_TAG_VALUE_COMMA, JavaDocSyntaxTokenType.DOC_TAG_VALUE_DOT,
   JavaDocSyntaxTokenType.DOC_TAG_VALUE_LPAREN, JavaDocSyntaxTokenType.DOC_TAG_VALUE_RPAREN,
-  JavaDocSyntaxTokenType.DOC_TAG_VALUE_DIV_TOKEN, JavaDocSyntaxTokenType.DOC_TAG_VALUE_SHARP_TOKEN,
+  JavaDocSyntaxTokenType.DOC_TAG_VALUE_SLASH, JavaDocSyntaxTokenType.DOC_TAG_VALUE_SHARP_TOKEN, JavaDocSyntaxTokenType.DOC_TAG_VALUE_DOUBLE_SHARP_TOKEN,
   JavaDocSyntaxTokenType.DOC_TAG_VALUE_LT, JavaDocSyntaxTokenType.DOC_TAG_VALUE_GT, JavaDocSyntaxTokenType.DOC_TAG_VALUE_COLON,
   JavaDocSyntaxTokenType.DOC_TAG_VALUE_QUOTE
 )
@@ -628,6 +717,13 @@ private val INLINE_TAG_BORDERS_SET: SyntaxElementTypeSet = syntaxElementTypeSetO
   JavaDocSyntaxTokenType.DOC_INLINE_TAG_START, JavaDocSyntaxTokenType.DOC_INLINE_TAG_END)
 
 private val SKIP_TOKENS: SyntaxElementTypeSet = syntaxElementTypeSetOf(JavaDocSyntaxTokenType.DOC_COMMENT_LEADING_ASTERISKS)
+
+private val COMMENT_DATA_TOKENS: SyntaxElementTypeSet = syntaxElementTypeSetOf(
+  JavaDocSyntaxTokenType.DOC_COMMENT_DATA,
+  JavaDocSyntaxTokenType.DOC_TAG_VALUE_SLASH,
+  JavaDocSyntaxTokenType.DOC_COMMA,
+  JavaDocSyntaxTokenType.DOC_SHARP, JavaDocSyntaxTokenType.DOC_DOUBLE_SHARP,
+)
 
 private const val SEE_TAG = "@see"
 private const val LINK_TAG = "@link"

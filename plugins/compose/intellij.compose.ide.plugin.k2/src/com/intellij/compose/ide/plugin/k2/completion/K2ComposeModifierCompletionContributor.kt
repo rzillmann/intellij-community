@@ -1,4 +1,20 @@
-// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+/*
+ * Copyright (C) 2020 The Android Open Source Project
+ * Modified 2025 by JetBrains s.r.o.
+ * Copyright (C) 2025 JetBrains s.r.o.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package com.intellij.compose.ide.plugin.k2.completion
 
 import com.intellij.codeInsight.completion.CompletionParameters
@@ -22,6 +38,7 @@ import org.jetbrains.kotlin.analysis.api.symbols.markers.KaNamedSymbol
 import org.jetbrains.kotlin.idea.base.analysis.api.utils.KtSymbolFromIndexProvider
 import org.jetbrains.kotlin.idea.completion.impl.k2.ImportStrategyDetector
 import org.jetbrains.kotlin.idea.completion.lookups.factories.KotlinFirLookupElementFactory
+import org.jetbrains.kotlin.name.Name
 import org.jetbrains.kotlin.psi.KtDotQualifiedExpression
 import org.jetbrains.kotlin.psi.KtFile
 import org.jetbrains.kotlin.psi.KtPsiFactory
@@ -127,6 +144,16 @@ internal class K2ComposeModifierCompletionContributor : ComposeModifierCompletio
     }
   }
 
+  private fun isModifierPrefixMatch(
+    prefixMatcher: PrefixMatcher,
+    name: Name
+  ): Boolean {
+    // The user types part of `Modifier` we still want to show _all_ our results for Modifier extensions
+    if ("Modifier".startsWith(prefixMatcher.prefix)) return true
+    // If the user types the name of some extension function on Modifier, we want to show it
+    return prefixMatcher.prefixMatches(name.asString())
+  }
+
   private fun KaSession.getExtensionFunctionsForModifier(
     nameExpression: KtSimpleNameExpression,
     originalPosition: PsiElement,
@@ -142,7 +169,7 @@ internal class K2ComposeModifierCompletionContributor : ComposeModifierCompletio
 
     return KtSymbolFromIndexProvider(file)
       .getExtensionCallableSymbolsByNameFilter(
-        { name -> prefixMatcher.prefixMatches(name.asString()) },
+        { name -> isModifierPrefixMatch(prefixMatcher, name) },
         listOf(receiverType),
       )
       .filter {

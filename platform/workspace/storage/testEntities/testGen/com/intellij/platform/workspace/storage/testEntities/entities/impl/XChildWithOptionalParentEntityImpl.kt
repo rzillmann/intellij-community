@@ -1,16 +1,7 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.platform.workspace.storage.testEntities.entities.impl
 
 import com.intellij.platform.workspace.storage.*
-import com.intellij.platform.workspace.storage.ConnectionId
-import com.intellij.platform.workspace.storage.EntitySource
-import com.intellij.platform.workspace.storage.EntityType
-import com.intellij.platform.workspace.storage.GeneratedCodeApiVersion
-import com.intellij.platform.workspace.storage.GeneratedCodeImplVersion
-import com.intellij.platform.workspace.storage.MutableEntityStorage
-import com.intellij.platform.workspace.storage.WorkspaceEntity
-import com.intellij.platform.workspace.storage.WorkspaceEntityInternalApi
-import com.intellij.platform.workspace.storage.annotations.Child
 import com.intellij.platform.workspace.storage.impl.EntityLink
 import com.intellij.platform.workspace.storage.impl.ModifiableWorkspaceEntityBase
 import com.intellij.platform.workspace.storage.impl.WorkspaceEntityBase
@@ -22,10 +13,12 @@ import com.intellij.platform.workspace.storage.instrumentation.EntityStorageInst
 import com.intellij.platform.workspace.storage.instrumentation.MutableEntityStorageInstrumentation
 import com.intellij.platform.workspace.storage.metadata.model.EntityMetadata
 import com.intellij.platform.workspace.storage.testEntities.entities.XChildWithOptionalParentEntity
+import com.intellij.platform.workspace.storage.testEntities.entities.XChildWithOptionalParentEntityBuilder
 import com.intellij.platform.workspace.storage.testEntities.entities.XParentEntity
+import com.intellij.platform.workspace.storage.testEntities.entities.XParentEntityBuilder
 
 @GeneratedCodeApiVersion(3)
-@GeneratedCodeImplVersion(6)
+@GeneratedCodeImplVersion(7)
 @OptIn(WorkspaceEntityInternalApi::class)
 internal class XChildWithOptionalParentEntityImpl(private val dataSource: XChildWithOptionalParentEntityData) : XChildWithOptionalParentEntity, WorkspaceEntityBase(
   dataSource) {
@@ -62,7 +55,7 @@ internal class XChildWithOptionalParentEntityImpl(private val dataSource: XChild
 
 
   internal class Builder(result: XChildWithOptionalParentEntityData?) : ModifiableWorkspaceEntityBase<XChildWithOptionalParentEntity, XChildWithOptionalParentEntityData>(
-    result), XChildWithOptionalParentEntity.Builder {
+    result), XChildWithOptionalParentEntityBuilder {
     internal constructor() : this(XChildWithOptionalParentEntityData())
 
     override fun applyToBuilder(builder: MutableEntityStorage) {
@@ -128,16 +121,16 @@ internal class XChildWithOptionalParentEntityImpl(private val dataSource: XChild
         changedProperty.add("childProperty")
       }
 
-    override var optionalParent: XParentEntity.Builder?
+    override var optionalParent: XParentEntityBuilder?
       get() {
         val _diff = diff
         return if (_diff != null) {
           @OptIn(EntityStorageInstrumentationApi::class)
-          ((_diff as MutableEntityStorageInstrumentation).getParentBuilder(OPTIONALPARENT_CONNECTION_ID, this) as? XParentEntity.Builder)
-          ?: (this.entityLinks[EntityLink(false, OPTIONALPARENT_CONNECTION_ID)] as? XParentEntity.Builder)
+          ((_diff as MutableEntityStorageInstrumentation).getParentBuilder(OPTIONALPARENT_CONNECTION_ID, this) as? XParentEntityBuilder)
+          ?: (this.entityLinks[EntityLink(false, OPTIONALPARENT_CONNECTION_ID)] as? XParentEntityBuilder)
         }
         else {
-          this.entityLinks[EntityLink(false, OPTIONALPARENT_CONNECTION_ID)] as? XParentEntity.Builder
+          this.entityLinks[EntityLink(false, OPTIONALPARENT_CONNECTION_ID)] as? XParentEntityBuilder
         }
       }
       set(value) {
@@ -178,7 +171,7 @@ internal class XChildWithOptionalParentEntityData : WorkspaceEntityData<XChildWi
 
   internal fun isChildPropertyInitialized(): Boolean = ::childProperty.isInitialized
 
-  override fun wrapAsModifiable(diff: MutableEntityStorage): WorkspaceEntity.Builder<XChildWithOptionalParentEntity> {
+  override fun wrapAsModifiable(diff: MutableEntityStorage): WorkspaceEntityBuilder<XChildWithOptionalParentEntity> {
     val modifiable = XChildWithOptionalParentEntityImpl.Builder(null)
     modifiable.diff = diff
     modifiable.id = createEntityId()
@@ -205,9 +198,9 @@ internal class XChildWithOptionalParentEntityData : WorkspaceEntityData<XChildWi
     return XChildWithOptionalParentEntity::class.java
   }
 
-  override fun createDetachedEntity(parents: List<WorkspaceEntity.Builder<*>>): WorkspaceEntity.Builder<*> {
+  override fun createDetachedEntity(parents: List<WorkspaceEntityBuilder<*>>): WorkspaceEntityBuilder<*> {
     return XChildWithOptionalParentEntity(childProperty, entitySource) {
-      this.optionalParent = parents.filterIsInstance<XParentEntity.Builder>().singleOrNull()
+      this.optionalParent = parents.filterIsInstance<XParentEntityBuilder>().singleOrNull()
     }
   }
 

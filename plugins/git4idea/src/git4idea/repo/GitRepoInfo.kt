@@ -22,10 +22,6 @@ data class GitRepoInfo(val currentBranch: GitLocalBranch?,
   val branchTrackInfosMap: Map<String, GitBranchTrackInfo> =
     branchTrackInfos.associateByTo(CollectionFactory.createCustomHashingStrategyMap(GitReference.BRANCH_NAME_HASHING_STRATEGY)) { it.localBranch.name }
 
-  val remoteBranches: Collection<GitRemoteBranch>
-    @Deprecated("")
-    get() = remoteBranchesWithHashes.keys
-
   val isOnBranch: Boolean
     get() = currentBranch != null &&
             state != Repository.State.DETACHED &&

@@ -1,5 +1,7 @@
 package com.intellij.grazie.text
 
+import com.intellij.grazie.text.RuleGroup.Companion.SENTENCE_END_PUNCTUATION
+import com.intellij.grazie.text.RuleGroup.Companion.UNLIKELY_OPENING_PUNCTUATION
 import org.jetbrains.annotations.ApiStatus
 import java.util.*
 
@@ -42,11 +44,6 @@ open class RuleGroup(rules: Set<String>) {
      */
     @JvmField
     val SENTENCE_BOUNDARY_PUNCTUATION = RuleGroup(SENTENCE_END_PUNCTUATION, UNLIKELY_OPENING_PUNCTUATION)
-
-    /** Rules for checking punctuation errors */
-    @JvmField
-    @Deprecated("use SENTENCE_BOUNDARY", ReplaceWith("SENTENCE_BOUNDARY_PUNCTUATION"))
-    val PUNCTUATION = SENTENCE_BOUNDARY_PUNCTUATION
 
     /** Rules that are usually disabled for literal strings */
     @JvmField

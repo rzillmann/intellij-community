@@ -64,6 +64,11 @@ public abstract class CommonNativeJvmKotlinKmpCompletionTestGenerated extends Ab
             runTest("../../completion/testData/basic/common/annotations/ArrayOf2.kt");
         }
 
+        @TestMetadata("BeforeLambda.kt")
+        public void testBeforeLambda() throws Exception {
+            runTest("../../completion/testData/basic/common/annotations/BeforeLambda.kt");
+        }
+
         @TestMetadata("ClassReference.kt")
         public void testClassReference() throws Exception {
             runTest("../../completion/testData/basic/common/annotations/ClassReference.kt");
@@ -543,6 +548,60 @@ public abstract class CommonNativeJvmKotlinKmpCompletionTestGenerated extends Ab
     }
 
     @RunWith(JUnit3RunnerWithInners.class)
+    @TestMetadata("../../completion/testData/basic/common/bracketOperators")
+    public static class BracketOperators extends AbstractKotlinKmpCompletionTest {
+        @java.lang.Override
+        @org.jetbrains.annotations.NotNull
+        public final KotlinPluginMode getPluginMode() {
+            return KotlinPluginMode.K2;
+        }
+
+        @java.lang.Override
+        public KMPTestPlatform getTestPlatform() {
+            return KMPTestPlatform.CommonNativeJvm;
+        }
+
+        private void runTest(String testDataFilePath) throws Exception {
+            KotlinTestUtils.runTest(this::doTest, this, testDataFilePath);
+        }
+
+        @TestMetadata("ExtensionGet.kt")
+        public void testExtensionGet() throws Exception {
+            runTest("../../completion/testData/basic/common/bracketOperators/ExtensionGet.kt");
+        }
+
+        @TestMetadata("ExtensionInvoke.kt")
+        public void testExtensionInvoke() throws Exception {
+            runTest("../../completion/testData/basic/common/bracketOperators/ExtensionInvoke.kt");
+        }
+
+        @TestMetadata("NotForImplicitReceiver.kt")
+        public void testNotForImplicitReceiver() throws Exception {
+            runTest("../../completion/testData/basic/common/bracketOperators/NotForImplicitReceiver.kt");
+        }
+
+        @TestMetadata("NotForSafeCall.kt")
+        public void testNotForSafeCall() throws Exception {
+            runTest("../../completion/testData/basic/common/bracketOperators/NotForSafeCall.kt");
+        }
+
+        @TestMetadata("SimpleGet.kt")
+        public void testSimpleGet() throws Exception {
+            runTest("../../completion/testData/basic/common/bracketOperators/SimpleGet.kt");
+        }
+
+        @TestMetadata("SimpleInvoke.kt")
+        public void testSimpleInvoke() throws Exception {
+            runTest("../../completion/testData/basic/common/bracketOperators/SimpleInvoke.kt");
+        }
+
+        @TestMetadata("SimpleSet.kt")
+        public void testSimpleSet() throws Exception {
+            runTest("../../completion/testData/basic/common/bracketOperators/SimpleSet.kt");
+        }
+    }
+
+    @RunWith(JUnit3RunnerWithInners.class)
     @TestMetadata("../../completion/testData/basic/common/callableReference")
     public static class CallableReference extends AbstractKotlinKmpCompletionTest {
         @java.lang.Override
@@ -630,6 +689,11 @@ public abstract class CommonNativeJvmKotlinKmpCompletionTestGenerated extends Ab
             runTest("../../completion/testData/basic/common/callableReference/JavaSyntheticPropertyReferenceTrueNegative3.kt");
         }
 
+        @TestMetadata("NestedClass.kt")
+        public void testNestedClass() throws Exception {
+            runTest("../../completion/testData/basic/common/callableReference/NestedClass.kt");
+        }
+
         @TestMetadata("NonEmptyQualifier.kt")
         public void testNonEmptyQualifier() throws Exception {
             runTest("../../completion/testData/basic/common/callableReference/NonEmptyQualifier.kt");
@@ -648,6 +712,80 @@ public abstract class CommonNativeJvmKotlinKmpCompletionTestGenerated extends Ab
         @TestMetadata("Unsupported.kt")
         public void testUnsupported() throws Exception {
             runTest("../../completion/testData/basic/common/callableReference/Unsupported.kt");
+        }
+    }
+
+    @RunWith(JUnit3RunnerWithInners.class)
+    @TestMetadata("../../completion/testData/basic/common/constructor")
+    public static class Constructor extends AbstractKotlinKmpCompletionTest {
+        @java.lang.Override
+        @org.jetbrains.annotations.NotNull
+        public final KotlinPluginMode getPluginMode() {
+            return KotlinPluginMode.K2;
+        }
+
+        @java.lang.Override
+        public KMPTestPlatform getTestPlatform() {
+            return KMPTestPlatform.CommonNativeJvm;
+        }
+
+        private void runTest(String testDataFilePath) throws Exception {
+            KotlinTestUtils.runTest(this::doTest, this, testDataFilePath);
+        }
+
+        @TestMetadata("AbstractConstructor.kt")
+        public void testAbstractConstructor() throws Exception {
+            runTest("../../completion/testData/basic/common/constructor/AbstractConstructor.kt");
+        }
+
+        @TestMetadata("DoNotOfferConstructorForClassifier.kt")
+        public void testDoNotOfferConstructorForClassifier() throws Exception {
+            runTest("../../completion/testData/basic/common/constructor/DoNotOfferConstructorForClassifier.kt");
+        }
+
+        @TestMetadata("InSecondaryConstructorBody.kt")
+        public void testInSecondaryConstructorBody() throws Exception {
+            runTest("../../completion/testData/basic/common/constructor/InSecondaryConstructorBody.kt");
+        }
+
+        @TestMetadata("InSecondaryConstructorDefaultParameter.kt")
+        public void testInSecondaryConstructorDefaultParameter() throws Exception {
+            runTest("../../completion/testData/basic/common/constructor/InSecondaryConstructorDefaultParameter.kt");
+        }
+
+        @TestMetadata("InSecondaryConstructorDelegationCall.kt")
+        public void testInSecondaryConstructorDelegationCall() throws Exception {
+            runTest("../../completion/testData/basic/common/constructor/InSecondaryConstructorDelegationCall.kt");
+        }
+
+        @TestMetadata("InSecondaryConstructorFirstDefaultParameter.kt")
+        public void testInSecondaryConstructorFirstDefaultParameter() throws Exception {
+            runTest("../../completion/testData/basic/common/constructor/InSecondaryConstructorFirstDefaultParameter.kt");
+        }
+
+        @TestMetadata("MultipleConstructors.kt")
+        public void testMultipleConstructors() throws Exception {
+            runTest("../../completion/testData/basic/common/constructor/MultipleConstructors.kt");
+        }
+
+        @TestMetadata("PreferConstructorInReturn.kt")
+        public void testPreferConstructorInReturn() throws Exception {
+            runTest("../../completion/testData/basic/common/constructor/PreferConstructorInReturn.kt");
+        }
+
+        @TestMetadata("PrivateConstructor.kt")
+        public void testPrivateConstructor() throws Exception {
+            runTest("../../completion/testData/basic/common/constructor/PrivateConstructor.kt");
+        }
+
+        @TestMetadata("SingleConstructor.kt")
+        public void testSingleConstructor() throws Exception {
+            runTest("../../completion/testData/basic/common/constructor/SingleConstructor.kt");
+        }
+
+        @TestMetadata("SubclassConstructor.kt")
+        public void testSubclassConstructor() throws Exception {
+            runTest("../../completion/testData/basic/common/constructor/SubclassConstructor.kt");
         }
     }
 
@@ -1424,40 +1562,6 @@ public abstract class CommonNativeJvmKotlinKmpCompletionTestGenerated extends Ab
     }
 
     @RunWith(JUnit3RunnerWithInners.class)
-    @TestMetadata("../../completion/testData/basic/common/getOperator")
-    public static class GetOperator extends AbstractKotlinKmpCompletionTest {
-        @java.lang.Override
-        @org.jetbrains.annotations.NotNull
-        public final KotlinPluginMode getPluginMode() {
-            return KotlinPluginMode.K2;
-        }
-
-        @java.lang.Override
-        public KMPTestPlatform getTestPlatform() {
-            return KMPTestPlatform.CommonNativeJvm;
-        }
-
-        private void runTest(String testDataFilePath) throws Exception {
-            KotlinTestUtils.runTest(this::doTest, this, testDataFilePath);
-        }
-
-        @TestMetadata("Extension.kt")
-        public void testExtension() throws Exception {
-            runTest("../../completion/testData/basic/common/getOperator/Extension.kt");
-        }
-
-        @TestMetadata("NotForSafeCall.kt")
-        public void testNotForSafeCall() throws Exception {
-            runTest("../../completion/testData/basic/common/getOperator/NotForSafeCall.kt");
-        }
-
-        @TestMetadata("Simple.kt")
-        public void testSimple() throws Exception {
-            runTest("../../completion/testData/basic/common/getOperator/Simple.kt");
-        }
-    }
-
-    @RunWith(JUnit3RunnerWithInners.class)
     @TestMetadata("../../completion/testData/basic/common/highOrderFunctions")
     public static class HighOrderFunctions extends AbstractKotlinKmpCompletionTest {
         @java.lang.Override
@@ -1739,11 +1843,6 @@ public abstract class CommonNativeJvmKotlinKmpCompletionTestGenerated extends Ab
             KotlinTestUtils.runTest(this::doTest, this, testDataFilePath);
         }
 
-        @TestMetadata("KTIJ-32210.kt")
-        public void testKTIJ_32210() throws Exception {
-            runTest("../../completion/testData/basic/common/lambdaSignature/KTIJ-32210.kt");
-        }
-
         @TestMetadata("ParameterName1.kt")
         public void testParameterName1() throws Exception {
             runTest("../../completion/testData/basic/common/lambdaSignature/ParameterName1.kt");
@@ -1792,6 +1891,11 @@ public abstract class CommonNativeJvmKotlinKmpCompletionTestGenerated extends Ab
         @TestMetadata("ParameterType5.kt")
         public void testParameterType5() throws Exception {
             runTest("../../completion/testData/basic/common/lambdaSignature/ParameterType5.kt");
+        }
+
+        @TestMetadata("ParameterTypeWithOuterTypeQualifier.kt")
+        public void testParameterTypeWithOuterTypeQualifier() throws Exception {
+            runTest("../../completion/testData/basic/common/lambdaSignature/ParameterTypeWithOuterTypeQualifier.kt");
         }
     }
 
@@ -1856,6 +1960,11 @@ public abstract class CommonNativeJvmKotlinKmpCompletionTestGenerated extends Ab
         @TestMetadata("CompactTypeNames.kt")
         public void testCompactTypeNames() throws Exception {
             runTest("../../completion/testData/basic/common/namedArguments/CompactTypeNames.kt");
+        }
+
+        @TestMetadata("CompanionObjectInvoke.kt")
+        public void testCompanionObjectInvoke() throws Exception {
+            runTest("../../completion/testData/basic/common/namedArguments/CompanionObjectInvoke.kt");
         }
 
         @TestMetadata("ForEmptyParametersFunction.kt")
@@ -2189,6 +2298,11 @@ public abstract class CommonNativeJvmKotlinKmpCompletionTestGenerated extends Ab
             runTest("../../completion/testData/basic/common/override/PreferImplementToOverride.kt");
         }
 
+        @TestMetadata("PreferImplementToOverrideK2.kt")
+        public void testPreferImplementToOverrideK2() throws Exception {
+            runTest("../../completion/testData/basic/common/override/PreferImplementToOverrideK2.kt");
+        }
+
         @TestMetadata("SecondConstructorParameter.kt")
         public void testSecondConstructorParameter() throws Exception {
             runTest("../../completion/testData/basic/common/override/SecondConstructorParameter.kt");
@@ -2452,6 +2566,31 @@ public abstract class CommonNativeJvmKotlinKmpCompletionTestGenerated extends Ab
             runTest("../../completion/testData/basic/common/primaryConstructor/previousParameter.kt");
         }
 
+        @TestMetadata("propertyDefaultValue_fromBaseClass.kt")
+        public void testPropertyDefaultValue_fromBaseClass() throws Exception {
+            runTest("../../completion/testData/basic/common/primaryConstructor/propertyDefaultValue_fromBaseClass.kt");
+        }
+
+        @TestMetadata("propertyDefaultValue_fromBody.kt")
+        public void testPropertyDefaultValue_fromBody() throws Exception {
+            runTest("../../completion/testData/basic/common/primaryConstructor/propertyDefaultValue_fromBody.kt");
+        }
+
+        @TestMetadata("propertyDefaultValue_fromCompanionObject.kt")
+        public void testPropertyDefaultValue_fromCompanionObject() throws Exception {
+            runTest("../../completion/testData/basic/common/primaryConstructor/propertyDefaultValue_fromCompanionObject.kt");
+        }
+
+        @TestMetadata("propertyDefaultValue_fromConstructor.kt")
+        public void testPropertyDefaultValue_fromConstructor() throws Exception {
+            runTest("../../completion/testData/basic/common/primaryConstructor/propertyDefaultValue_fromConstructor.kt");
+        }
+
+        @TestMetadata("propertyDefaultValue_outerExtensions.kt")
+        public void testPropertyDefaultValue_outerExtensions() throws Exception {
+            runTest("../../completion/testData/basic/common/primaryConstructor/propertyDefaultValue_outerExtensions.kt");
+        }
+
         @TestMetadata("propertyType.kt")
         public void testPropertyType() throws Exception {
             runTest("../../completion/testData/basic/common/primaryConstructor/propertyType.kt");
@@ -2708,6 +2847,11 @@ public abstract class CommonNativeJvmKotlinKmpCompletionTestGenerated extends Ab
         @TestMetadata("PreferSealedHierarchyNested.kt")
         public void testPreferSealedHierarchyNested() throws Exception {
             runTest("../../completion/testData/basic/common/sealedHierarchy/PreferSealedHierarchyNested.kt");
+        }
+
+        @TestMetadata("SealedExpectedType.kt")
+        public void testSealedExpectedType() throws Exception {
+            runTest("../../completion/testData/basic/common/sealedHierarchy/SealedExpectedType.kt");
         }
     }
 
@@ -3237,6 +3381,21 @@ public abstract class CommonNativeJvmKotlinKmpCompletionTestGenerated extends Ab
             runTest("../../completion/testData/basic/common/AfterIntSeparatedWithComments.kt");
         }
 
+        @TestMetadata("AlwaysCompleteNonSubPackages.kt")
+        public void testAlwaysCompleteNonSubPackages() throws Exception {
+            runTest("../../completion/testData/basic/common/AlwaysCompleteNonSubPackages.kt");
+        }
+
+        @TestMetadata("AlwaysCompleteTopLevelPackagesInImport.kt")
+        public void testAlwaysCompleteTopLevelPackagesInImport() throws Exception {
+            runTest("../../completion/testData/basic/common/AlwaysCompleteTopLevelPackagesInImport.kt");
+        }
+
+        @TestMetadata("AlwaysCompleteTopLevelPackagesInPackageStatement.kt")
+        public void testAlwaysCompleteTopLevelPackagesInPackageStatement() throws Exception {
+            runTest("../../completion/testData/basic/common/AlwaysCompleteTopLevelPackagesInPackageStatement.kt");
+        }
+
         @TestMetadata("ambiguousSuperMethod.kt")
         public void testAmbiguousSuperMethod() throws Exception {
             runTest("../../completion/testData/basic/common/ambiguousSuperMethod.kt");
@@ -3317,6 +3476,11 @@ public abstract class CommonNativeJvmKotlinKmpCompletionTestGenerated extends Ab
             runTest("../../completion/testData/basic/common/ConsiderExtensionType.kt");
         }
 
+        @TestMetadata("ContextParameter.kt")
+        public void testContextParameter() throws Exception {
+            runTest("../../completion/testData/basic/common/ContextParameter.kt");
+        }
+
         @TestMetadata("CoroutineContextReleaseCoroutines.kt")
         public void testCoroutineContextReleaseCoroutines() throws Exception {
             runTest("../../completion/testData/basic/common/CoroutineContextReleaseCoroutines.kt");
@@ -3335,6 +3499,11 @@ public abstract class CommonNativeJvmKotlinKmpCompletionTestGenerated extends Ab
         @TestMetadata("DoWhile.kt")
         public void testDoWhile() throws Exception {
             runTest("../../completion/testData/basic/common/DoWhile.kt");
+        }
+
+        @TestMetadata("DontIncreaseInvocationCountIfSomethingFound.kt")
+        public void testDontIncreaseInvocationCountIfSomethingFound() throws Exception {
+            runTest("../../completion/testData/basic/common/DontIncreaseInvocationCountIfSomethingFound.kt");
         }
 
         @TestMetadata("DontPreferNothingType.kt")
@@ -3637,29 +3806,14 @@ public abstract class CommonNativeJvmKotlinKmpCompletionTestGenerated extends Ab
             runTest("../../completion/testData/basic/common/InPropertyInitializer.kt");
         }
 
-        @TestMetadata("InSecondaryConstructorBody.kt")
-        public void testInSecondaryConstructorBody() throws Exception {
-            runTest("../../completion/testData/basic/common/InSecondaryConstructorBody.kt");
-        }
-
-        @TestMetadata("InSecondaryConstructorDefaultParameter.kt")
-        public void testInSecondaryConstructorDefaultParameter() throws Exception {
-            runTest("../../completion/testData/basic/common/InSecondaryConstructorDefaultParameter.kt");
-        }
-
-        @TestMetadata("InSecondaryConstructorDelegationCall.kt")
-        public void testInSecondaryConstructorDelegationCall() throws Exception {
-            runTest("../../completion/testData/basic/common/InSecondaryConstructorDelegationCall.kt");
-        }
-
-        @TestMetadata("InSecondaryConstructorFirstDefaultParameter.kt")
-        public void testInSecondaryConstructorFirstDefaultParameter() throws Exception {
-            runTest("../../completion/testData/basic/common/InSecondaryConstructorFirstDefaultParameter.kt");
-        }
-
         @TestMetadata("InTypeAnnotation.kt")
         public void testInTypeAnnotation() throws Exception {
             runTest("../../completion/testData/basic/common/InTypeAnnotation.kt");
+        }
+
+        @TestMetadata("IncreaseInvocationCountIfNothingFound.kt")
+        public void testIncreaseInvocationCountIfNothingFound() throws Exception {
+            runTest("../../completion/testData/basic/common/IncreaseInvocationCountIfNothingFound.kt");
         }
 
         @TestMetadata("InfixCall.kt")
@@ -3677,6 +3831,16 @@ public abstract class CommonNativeJvmKotlinKmpCompletionTestGenerated extends Ab
             runTest("../../completion/testData/basic/common/InnerClass.kt");
         }
 
+        @TestMetadata("InnerClassWithParameters.kt")
+        public void testInnerClassWithParameters() throws Exception {
+            runTest("../../completion/testData/basic/common/InnerClassWithParameters.kt");
+        }
+
+        @TestMetadata("InnerClassWithParameters2.kt")
+        public void testInnerClassWithParameters2() throws Exception {
+            runTest("../../completion/testData/basic/common/InnerClassWithParameters2.kt");
+        }
+
         @TestMetadata("InnerInBaseClass.kt")
         public void testInnerInBaseClass() throws Exception {
             runTest("../../completion/testData/basic/common/InnerInBaseClass.kt");
@@ -3687,9 +3851,39 @@ public abstract class CommonNativeJvmKotlinKmpCompletionTestGenerated extends Ab
             runTest("../../completion/testData/basic/common/InsideAnonymousClass.kt");
         }
 
-        @TestMetadata("InsideAnonymousObject.kt")
-        public void testInsideAnonymousObject() throws Exception {
-            runTest("../../completion/testData/basic/common/InsideAnonymousObject.kt");
+        @TestMetadata("InsideAnonymousObjectPrivate.kt")
+        public void testInsideAnonymousObjectPrivate() throws Exception {
+            runTest("../../completion/testData/basic/common/InsideAnonymousObjectPrivate.kt");
+        }
+
+        @TestMetadata("InsideAnonymousObjectProtected.kt")
+        public void testInsideAnonymousObjectProtected() throws Exception {
+            runTest("../../completion/testData/basic/common/InsideAnonymousObjectProtected.kt");
+        }
+
+        @TestMetadata("InsideAnonymousObjectPublic.kt")
+        public void testInsideAnonymousObjectPublic() throws Exception {
+            runTest("../../completion/testData/basic/common/InsideAnonymousObjectPublic.kt");
+        }
+
+        @TestMetadata("InsideLocalClassAndAnonymousObject.kt")
+        public void testInsideLocalClassAndAnonymousObject() throws Exception {
+            runTest("../../completion/testData/basic/common/InsideLocalClassAndAnonymousObject.kt");
+        }
+
+        @TestMetadata("InsideLocalClassPrivate.kt")
+        public void testInsideLocalClassPrivate() throws Exception {
+            runTest("../../completion/testData/basic/common/InsideLocalClassPrivate.kt");
+        }
+
+        @TestMetadata("InsideLocalClassProtected.kt")
+        public void testInsideLocalClassProtected() throws Exception {
+            runTest("../../completion/testData/basic/common/InsideLocalClassProtected.kt");
+        }
+
+        @TestMetadata("InsideLocalClassPublic.kt")
+        public void testInsideLocalClassPublic() throws Exception {
+            runTest("../../completion/testData/basic/common/InsideLocalClassPublic.kt");
         }
 
         @TestMetadata("InterfaceNameBeforeRunBug.kt")
@@ -3837,6 +4031,11 @@ public abstract class CommonNativeJvmKotlinKmpCompletionTestGenerated extends Ab
             runTest("../../completion/testData/basic/common/NestedClassesOnDefaultObjectLiteral.kt");
         }
 
+        @TestMetadata("NoClassMembersHighInvocationCount.kt")
+        public void testNoClassMembersHighInvocationCount() throws Exception {
+            runTest("../../completion/testData/basic/common/NoClassMembersHighInvocationCount.kt");
+        }
+
         @TestMetadata("NoClassNameDuplication.kt")
         public void testNoClassNameDuplication() throws Exception {
             runTest("../../completion/testData/basic/common/NoClassNameDuplication.kt");
@@ -3907,6 +4106,11 @@ public abstract class CommonNativeJvmKotlinKmpCompletionTestGenerated extends Ab
             runTest("../../completion/testData/basic/common/NoTopLevelCompletionInQualifiedUserTypes.kt");
         }
 
+        @TestMetadata("NoTopLevelPackagesIfDisabled.kt")
+        public void testNoTopLevelPackagesIfDisabled() throws Exception {
+            runTest("../../completion/testData/basic/common/NoTopLevelPackagesIfDisabled.kt");
+        }
+
         @TestMetadata("ObjectInTypePosition.kt")
         public void testObjectInTypePosition() throws Exception {
             runTest("../../completion/testData/basic/common/ObjectInTypePosition.kt");
@@ -3937,9 +4141,9 @@ public abstract class CommonNativeJvmKotlinKmpCompletionTestGenerated extends Ab
             runTest("../../completion/testData/basic/common/parameterDefaultValueInFunction.kt");
         }
 
-        @TestMetadata("PreferConstructorInReturn.kt")
-        public void testPreferConstructorInReturn() throws Exception {
-            runTest("../../completion/testData/basic/common/PreferConstructorInReturn.kt");
+        @TestMetadata("PreferExceptionsInCatch.kt")
+        public void testPreferExceptionsInCatch() throws Exception {
+            runTest("../../completion/testData/basic/common/PreferExceptionsInCatch.kt");
         }
 
         @TestMetadata("PreferLessParameters.kt")
@@ -4082,6 +4286,11 @@ public abstract class CommonNativeJvmKotlinKmpCompletionTestGenerated extends Ab
             runTest("../../completion/testData/basic/common/TypeArgOfOwnerClass.kt");
         }
 
+        @TestMetadata("TypeArgumentPriority.kt")
+        public void testTypeArgumentPriority() throws Exception {
+            runTest("../../completion/testData/basic/common/TypeArgumentPriority.kt");
+        }
+
         @TestMetadata("TypeParamAsTypeArg.kt")
         public void testTypeParamAsTypeArg() throws Exception {
             runTest("../../completion/testData/basic/common/TypeParamAsTypeArg.kt");
@@ -4124,6 +4333,21 @@ public abstract class CommonNativeJvmKotlinKmpCompletionTestGenerated extends Ab
 
         private void runTest(String testDataFilePath) throws Exception {
             KotlinTestUtils.runTest(this::doTest, this, testDataFilePath);
+        }
+
+        @TestMetadata("ContextParameter.kt")
+        public void testContextParameter() throws Exception {
+            runTest("../../completion/testData/basic/common/variableNameAndType/ContextParameter.kt");
+        }
+
+        @TestMetadata("ContextParameterOnProperty.kt")
+        public void testContextParameterOnProperty() throws Exception {
+            runTest("../../completion/testData/basic/common/variableNameAndType/ContextParameterOnProperty.kt");
+        }
+
+        @TestMetadata("ContextReceiver.kt")
+        public void testContextReceiver() throws Exception {
+            runTest("../../completion/testData/basic/common/variableNameAndType/ContextReceiver.kt");
         }
 
         @TestMetadata("Lateinit.kt")

@@ -15,7 +15,6 @@ import com.intellij.openapi.externalSystem.test.javaProject
 import com.intellij.openapi.externalSystem.util.ExternalSystemApiUtil
 import com.intellij.openapi.module.LanguageLevelUtil
 import com.intellij.openapi.module.ModuleManager
-import com.intellij.platform.externalSystem.testFramework.Module
 import com.intellij.openapi.projectRoots.JavaSdk
 import com.intellij.openapi.projectRoots.ProjectJdkTable
 import com.intellij.openapi.projectRoots.impl.SdkConfigurationUtil
@@ -26,8 +25,10 @@ import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VfsUtilCore
 import com.intellij.openapi.vfs.newvfs.impl.VfsRootAccess
 import com.intellij.platform.externalSystem.testFramework.ExternalSystemProjectTestCase
-import com.intellij.platform.externalSystem.testFramework.ExternalSystemTestCase.collectRootsInside
+import com.intellij.platform.externalSystem.testFramework.Module
+import com.intellij.platform.externalSystem.testFramework.NioExternalSystemTestCase
 import com.intellij.platform.externalSystem.testFramework.toDataNode
+import com.intellij.platform.testFramework.assertion.moduleAssertion.ContentRootAssertions
 import com.intellij.pom.java.LanguageLevel
 import com.intellij.testFramework.IdeaTestUtil
 import com.intellij.util.PathUtil
@@ -36,6 +37,7 @@ import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.entry
 import org.junit.Test
 import java.io.File
+import kotlin.io.path.Path
 
 class ExternalSystemProjectTest : ExternalSystemProjectTestCase() {
 
@@ -445,13 +447,32 @@ class ExternalSystemProjectTest : ExternalSystemProjectTestCase() {
   }
 
   @Test
+  fun `test no content root in a module without content roots during a subsequent refresh`() {
+    val contentRoot = "$projectPath/some/root"
+    applyProjectModel(
+      project {
+        module {
+          contentRoot(contentRoot)
+        }
+      }
+    )
+    ContentRootAssertions.assertContentRoots(project, "module", Path(contentRoot))
+    applyProjectModel(
+      project {
+        module { }
+      }
+    )
+    ContentRootAssertions.assertContentRoots(project, "module")
+  }
+
+  @Test
   fun `test project SDK configuration import`() {
     val myJdkName = "My JDK"
     val myJdkHome = IdeaTestUtil.requireRealJdkHome()
 
     val allowedRoots = mutableListOf<String>()
     allowedRoots.add(myJdkHome)
-    allowedRoots.addAll(collectRootsInside(myJdkHome))
+    allowedRoots.addAll(NioExternalSystemTestCase.collectRootsInside(myJdkHome))
     VfsRootAccess.allowRootAccess(testRootDisposable, *allowedRoots.toTypedArray())
 
     runWriteAction {

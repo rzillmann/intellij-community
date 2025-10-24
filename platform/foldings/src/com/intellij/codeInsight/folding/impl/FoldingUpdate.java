@@ -36,11 +36,13 @@ import com.intellij.util.containers.ContainerUtil;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.VisibleForTesting;
 
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 
+@ApiStatus.Internal
 public final class FoldingUpdate {
   private static final Logger LOG = Logger.getInstance(FoldingUpdate.class);
 
@@ -232,7 +234,8 @@ public final class FoldingUpdate {
     return true;
   }
 
-  static List<RegionInfo> getFoldingsFor(@NotNull PsiFile file, boolean quick) {
+  @VisibleForTesting
+  public static List<RegionInfo> getFoldingsFor(@NotNull PsiFile file, boolean quick) {
     if (file instanceof PsiCompiledFile) {
       file = ((PsiCompiledFile)file).getDecompiledPsiFile();
     }
@@ -338,6 +341,7 @@ public final class FoldingUpdate {
     public final PsiElement element;
     final String signature;
     final boolean collapsedByDefault;
+    final boolean keepExpandedOnFirstCollapseAll;
 
     private RegionInfo(@NotNull FoldingDescriptor descriptor,
                        @NotNull PsiElement psiElement,
@@ -346,6 +350,7 @@ public final class FoldingUpdate {
       element = psiElement;
       Boolean hardCoded = descriptor.isCollapsedByDefault();
       collapsedByDefault = hardCoded == null ? FoldingPolicy.isCollapsedByDefault(descriptor, foldingBuilder) : hardCoded;
+      keepExpandedOnFirstCollapseAll = FoldingPolicy.keepExpandedOnFirstCollapseAll(descriptor, foldingBuilder);
       signature = createSignature(psiElement);
     }
 

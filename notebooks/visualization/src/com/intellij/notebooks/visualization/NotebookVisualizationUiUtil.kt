@@ -1,5 +1,7 @@
 package com.intellij.notebooks.visualization
 
+import com.intellij.notebooks.jupyter.core.jupyter.CellType
+import com.intellij.notebooks.visualization.NotebookCellLines.Companion.get
 import com.intellij.openapi.editor.Document
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.LogicalPosition
@@ -10,12 +12,23 @@ import com.intellij.util.SmartList
 import com.intellij.util.containers.ContainerUtil
 import com.intellij.util.keyFMap.KeyFMap
 import java.awt.Graphics
+import java.awt.Graphics2D
 import javax.swing.JComponent
 import kotlin.math.max
 import kotlin.reflect.KProperty
 
 infix fun IntRange.hasIntersectionWith(other: IntRange): Boolean =
   !(first > other.last || last < other.first)
+
+inline fun Graphics.useG2D(handler: (Graphics2D) -> Unit) {
+  val g2d = this.create() as Graphics2D
+  try {
+    handler(g2d)
+  }
+  finally {
+    g2d.dispose()
+  }
+}
 
 inline fun <T, G : Graphics> G.use(handler: (g: G) -> T): T =
   try {
@@ -45,19 +58,24 @@ fun Document.getLineText(line: Int): String =
   getText(TextRange(getLineStartOffset(line), getLineEndOffset(line)))
 
 fun Editor.getCell(line: Int): NotebookCellLines.Interval =
-  NotebookCellLines.get(this).intervalsIterator(line).next()
+  get(this).intervalsIterator(line).next()
 
 fun Editor.getCells(lines: IntRange): List<NotebookCellLines.Interval> =
-  NotebookCellLines.get(this).getCells(lines).toList()
+  get(this).getCells(lines).toList()
 
 fun Editor.getCellByOrdinal(ordinal: Int): NotebookCellLines.Interval =
-  NotebookCellLines.get(this).intervals[ordinal]
+  get(this).intervals[ordinal]
 
 fun Editor.safeGetCellByOrdinal(ordinal: Int): NotebookCellLines.Interval? =
-  NotebookCellLines.get(this).intervals.getOrNull(ordinal)
+  get(this).intervals.getOrNull(ordinal)
 
 fun Editor.getCellByOffset(offset: Int): NotebookCellLines.Interval =
   getCell(line = document.getLineNumber(offset))
+
+fun Editor.isEmpty(): Boolean {
+  val intervals = get(this).intervals
+  return intervals.size == 1 && intervals.first().getContentText(this).isEmpty()
+}
 
 fun NotebookCellLines.getCells(lines: IntRange): Sequence<NotebookCellLines.Interval> =
   intervalsIterator(lines.first).asSequence().takeWhile { it.lines.first <= lines.last }
@@ -65,7 +83,7 @@ fun NotebookCellLines.getCells(lines: IntRange): Sequence<NotebookCellLines.Inte
 fun makeMarkersFromIntervals(document: Document, intervals: Iterable<NotebookCellLines.Interval>): List<NotebookCellLinesLexer.Marker> {
   val markers = ArrayList<NotebookCellLinesLexer.Marker>()
 
-  fun addMarker(line: Int, type: NotebookCellLines.CellType, data: KeyFMap) {
+  fun addMarker(line: Int, type: CellType, data: KeyFMap) {
     val startOffset = document.getLineStartOffset(line)
     val endOffset =
       if (line + 1 < document.lineCount) document.getLineStartOffset(line + 1)

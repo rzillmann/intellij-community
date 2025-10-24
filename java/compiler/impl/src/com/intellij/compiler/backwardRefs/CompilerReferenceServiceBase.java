@@ -50,10 +50,7 @@ import it.unimi.dsi.fastutil.ints.IntCollection;
 import it.unimi.dsi.fastutil.ints.IntOpenHashSet;
 import it.unimi.dsi.fastutil.ints.IntSet;
 import kotlin.collections.ArraysKt;
-import org.jetbrains.annotations.ApiStatus;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
-import org.jetbrains.annotations.TestOnly;
+import org.jetbrains.annotations.*;
 import org.jetbrains.jps.backwardRefs.CompilerRef;
 import org.jetbrains.jps.backwardRefs.NameEnumerator;
 import org.jetbrains.jps.backwardRefs.index.CompilerReferenceIndex;
@@ -195,11 +192,7 @@ public abstract class CompilerReferenceServiceBase<Reader extends CompilerRefere
         if (basePath != null) {
           File file = new File(basePath);
           FileAttributes.CaseSensitivity sensitivity = FileSystemUtil.readParentCaseSensitivity(file);
-          return switch (sensitivity) {
-            case UNKNOWN -> SystemInfo.isFileSystemCaseSensitive;
-            case SENSITIVE -> true;
-            case INSENSITIVE -> false;
-          };
+          return sensitivity.toBooleanWithDefault(SystemInfo.isFileSystemCaseSensitive);
         }
       }
     }
@@ -711,7 +704,9 @@ public abstract class CompilerReferenceServiceBase<Reader extends CompilerRefere
 
   // should not be used in production code
   @NotNull
-  DirtyScopeHolder getDirtyScopeHolder() {
+  @ApiStatus.Internal
+  @VisibleForTesting
+  public DirtyScopeHolder getDirtyScopeHolder() {
     return myDirtyScopeHolder;
   }
 
@@ -788,11 +783,6 @@ public abstract class CompilerReferenceServiceBase<Reader extends CompilerRefere
     AN_EXCEPTION,
     COMPILATION_STARTED,
     SHUTDOWN
-  }
-
-  protected enum IndexOpenReason {
-    COMPILATION_FINISHED,
-    UP_TO_DATE_CACHE
   }
 
   @FunctionalInterface

@@ -1,15 +1,13 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 @file:JvmName("ModuleExtensions")
 
 package com.intellij.platform.workspace.jps.entities
 
 import com.intellij.platform.workspace.storage.EntitySource
 import com.intellij.platform.workspace.storage.EntityType
-import com.intellij.platform.workspace.storage.GeneratedCodeApiVersion
 import com.intellij.platform.workspace.storage.MutableEntityStorage
 import com.intellij.platform.workspace.storage.WorkspaceEntity
-import com.intellij.platform.workspace.storage.annotations.Child
-import com.intellij.platform.workspace.storage.impl.containers.toMutableWorkspaceList
+import com.intellij.platform.workspace.storage.annotations.Parent
 import org.jetbrains.annotations.ApiStatus.Internal
 import org.jetbrains.annotations.NonNls
 
@@ -26,18 +24,23 @@ interface ModuleCustomImlDataEntity : WorkspaceEntity {
    */
   val customModuleOptions: Map<@NonNls String, @NonNls String>
 
+  @Parent
   val module: ModuleEntity
 
   //region generated code
-  @GeneratedCodeApiVersion(3)
-  interface Builder : WorkspaceEntity.Builder<ModuleCustomImlDataEntity> {
-    override var entitySource: EntitySource
-    var rootManagerTagCustomData: String?
-    var customModuleOptions: Map<String, String>
-    var module: ModuleEntity.Builder
+  @Deprecated(message = "Use ModuleCustomImlDataEntityBuilder instead")
+  interface Builder : ModuleCustomImlDataEntityBuilder {
+    @Deprecated(message = "Use new API instead")
+    fun getModule(): ModuleEntity.Builder = module as ModuleEntity.Builder
+
+    @Deprecated(message = "Use new API instead")
+    fun setModule(value: ModuleEntity.Builder) {
+      module = value
+    }
   }
 
   companion object : EntityType<ModuleCustomImlDataEntity, Builder>() {
+    @Deprecated(message = "Use new API instead")
     @JvmOverloads
     @JvmStatic
     @JvmName("create")
@@ -45,19 +48,14 @@ interface ModuleCustomImlDataEntity : WorkspaceEntity {
       customModuleOptions: Map<String, String>,
       entitySource: EntitySource,
       init: (Builder.() -> Unit)? = null,
-    ): Builder {
-      val builder = builder()
-      builder.customModuleOptions = customModuleOptions
-      builder.entitySource = entitySource
-      init?.invoke(builder)
-      return builder
-    }
+    ): Builder = ModuleCustomImlDataEntityType.compatibilityInvoke(customModuleOptions, entitySource, init)
   }
   //endregion
 
 }
 
 //region generated code
+@Deprecated(message = "Use new API instead")
 @Internal
 fun MutableEntityStorage.modifyModuleCustomImlDataEntity(
   entity: ModuleCustomImlDataEntity,
@@ -68,7 +66,7 @@ fun MutableEntityStorage.modifyModuleCustomImlDataEntity(
 //endregion
 
 @get:Internal
-val ModuleEntity.customImlData: @Child ModuleCustomImlDataEntity?
+val ModuleEntity.customImlData: ModuleCustomImlDataEntity?
   by WorkspaceEntity.extension()
 
 /**
@@ -77,19 +75,25 @@ val ModuleEntity.customImlData: @Child ModuleCustomImlDataEntity?
  */
 @Internal
 interface ModuleGroupPathEntity : WorkspaceEntity {
+  @Parent
   val module: ModuleEntity
 
   val path: List<@NonNls String>
 
   //region generated code
-  @GeneratedCodeApiVersion(3)
-  interface Builder : WorkspaceEntity.Builder<ModuleGroupPathEntity> {
-    override var entitySource: EntitySource
-    var module: ModuleEntity.Builder
-    var path: MutableList<String>
+  @Deprecated(message = "Use ModuleGroupPathEntityBuilder instead")
+  interface Builder : ModuleGroupPathEntityBuilder {
+    @Deprecated(message = "Use new API instead")
+    fun getModule(): ModuleEntity.Builder = module as ModuleEntity.Builder
+
+    @Deprecated(message = "Use new API instead")
+    fun setModule(value: ModuleEntity.Builder) {
+      module = value
+    }
   }
 
   companion object : EntityType<ModuleGroupPathEntity, Builder>() {
+    @Deprecated(message = "Use new API instead")
     @JvmOverloads
     @JvmStatic
     @JvmName("create")
@@ -97,19 +101,14 @@ interface ModuleGroupPathEntity : WorkspaceEntity {
       path: List<String>,
       entitySource: EntitySource,
       init: (Builder.() -> Unit)? = null,
-    ): Builder {
-      val builder = builder()
-      builder.path = path.toMutableWorkspaceList()
-      builder.entitySource = entitySource
-      init?.invoke(builder)
-      return builder
-    }
+    ): Builder = ModuleGroupPathEntityType.compatibilityInvoke(path, entitySource, init)
   }
   //endregion
 
 }
 
 //region generated code
+@Deprecated(message = "Use new API instead")
 @Internal
 fun MutableEntityStorage.modifyModuleGroupPathEntity(
   entity: ModuleGroupPathEntity,
@@ -120,7 +119,7 @@ fun MutableEntityStorage.modifyModuleGroupPathEntity(
 //endregion
 
 @get:Internal
-val ModuleEntity.groupPath: @Child ModuleGroupPathEntity?
+val ModuleEntity.groupPath: ModuleGroupPathEntity?
   by WorkspaceEntity.extension()
 
 /**
@@ -128,6 +127,7 @@ val ModuleEntity.groupPath: @Child ModuleGroupPathEntity?
  */
 @Internal
 interface ExternalSystemModuleOptionsEntity : WorkspaceEntity {
+  @Parent
   val module: ModuleEntity
 
   val externalSystem: String?
@@ -139,38 +139,33 @@ interface ExternalSystemModuleOptionsEntity : WorkspaceEntity {
   val externalSystemModuleType: String?
 
   //region generated code
-  @GeneratedCodeApiVersion(3)
-  interface Builder : WorkspaceEntity.Builder<ExternalSystemModuleOptionsEntity> {
-    override var entitySource: EntitySource
-    var module: ModuleEntity.Builder
-    var externalSystem: String?
-    var externalSystemModuleVersion: String?
-    var linkedProjectPath: String?
-    var linkedProjectId: String?
-    var rootProjectPath: String?
-    var externalSystemModuleGroup: String?
-    var externalSystemModuleType: String?
+  @Deprecated(message = "Use ExternalSystemModuleOptionsEntityBuilder instead")
+  interface Builder : ExternalSystemModuleOptionsEntityBuilder {
+    @Deprecated(message = "Use new API instead")
+    fun getModule(): ModuleEntity.Builder = module as ModuleEntity.Builder
+
+    @Deprecated(message = "Use new API instead")
+    fun setModule(value: ModuleEntity.Builder) {
+      module = value
+    }
   }
 
   companion object : EntityType<ExternalSystemModuleOptionsEntity, Builder>() {
+    @Deprecated(message = "Use new API instead")
     @JvmOverloads
     @JvmStatic
     @JvmName("create")
     operator fun invoke(
       entitySource: EntitySource,
       init: (Builder.() -> Unit)? = null,
-    ): Builder {
-      val builder = builder()
-      builder.entitySource = entitySource
-      init?.invoke(builder)
-      return builder
-    }
+    ): Builder = ExternalSystemModuleOptionsEntityType.compatibilityInvoke(entitySource, init)
   }
   //endregion
 
 }
 
 //region generated code
+@Deprecated(message = "Use new API instead")
 @Internal
 fun MutableEntityStorage.modifyExternalSystemModuleOptionsEntity(
   entity: ExternalSystemModuleOptionsEntity,
@@ -181,7 +176,7 @@ fun MutableEntityStorage.modifyExternalSystemModuleOptionsEntity(
 //endregion
 
 @get:Internal
-val ModuleEntity.exModuleOptions: @Child ExternalSystemModuleOptionsEntity?
+val ModuleEntity.exModuleOptions: ExternalSystemModuleOptionsEntity?
   by WorkspaceEntity.extension()
 
 /**
@@ -189,18 +184,24 @@ val ModuleEntity.exModuleOptions: @Child ExternalSystemModuleOptionsEntity?
  */
 @Internal
 interface TestModulePropertiesEntity : WorkspaceEntity {
+  @Parent
   val module: ModuleEntity
   val productionModuleId: ModuleId
 
   //region generated code
-  @GeneratedCodeApiVersion(3)
-  interface Builder : WorkspaceEntity.Builder<TestModulePropertiesEntity> {
-    override var entitySource: EntitySource
-    var module: ModuleEntity.Builder
-    var productionModuleId: ModuleId
+  @Deprecated(message = "Use TestModulePropertiesEntityBuilder instead")
+  interface Builder : TestModulePropertiesEntityBuilder {
+    @Deprecated(message = "Use new API instead")
+    fun getModule(): ModuleEntity.Builder = module as ModuleEntity.Builder
+
+    @Deprecated(message = "Use new API instead")
+    fun setModule(value: ModuleEntity.Builder) {
+      module = value
+    }
   }
 
   companion object : EntityType<TestModulePropertiesEntity, Builder>() {
+    @Deprecated(message = "Use new API instead")
     @JvmOverloads
     @JvmStatic
     @JvmName("create")
@@ -208,18 +209,13 @@ interface TestModulePropertiesEntity : WorkspaceEntity {
       productionModuleId: ModuleId,
       entitySource: EntitySource,
       init: (Builder.() -> Unit)? = null,
-    ): Builder {
-      val builder = builder()
-      builder.productionModuleId = productionModuleId
-      builder.entitySource = entitySource
-      init?.invoke(builder)
-      return builder
-    }
+    ): Builder = TestModulePropertiesEntityType.compatibilityInvoke(productionModuleId, entitySource, init)
   }
   //endregion
 }
 
 //region generated code
+@Deprecated(message = "Use new API instead")
 @Internal
 fun MutableEntityStorage.modifyTestModulePropertiesEntity(
   entity: TestModulePropertiesEntity,
@@ -230,5 +226,5 @@ fun MutableEntityStorage.modifyTestModulePropertiesEntity(
 //endregion
 
 @get:Internal
-val ModuleEntity.testProperties: @Child TestModulePropertiesEntity?
+val ModuleEntity.testProperties: TestModulePropertiesEntity?
   by WorkspaceEntity.extension()

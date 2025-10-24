@@ -11,8 +11,10 @@ import com.intellij.python.hatch.*
 import com.intellij.python.hatch.cli.ENV_TYPE_VIRTUAL
 import com.intellij.python.hatch.cli.HatchEnvironment
 import com.intellij.python.hatch.cli.HatchEnvironments
+import com.intellij.python.hatch.runtime.HatchConstants
 import com.intellij.python.hatch.runtime.HatchRuntime
 import com.intellij.python.hatch.runtime.createHatchRuntime
+import com.intellij.python.pyproject.PY_PROJECT_TOML
 import com.jetbrains.python.PythonBinary
 import com.jetbrains.python.Result
 import com.jetbrains.python.errorProcessing.PyResult
@@ -30,12 +32,14 @@ internal class CliBasedHatchService private constructor(
   private val hatchRuntime: HatchRuntime,
 ) : HatchService {
   companion object {
-    suspend operator fun invoke(workingDirectoryPath: Path, hatchExecutablePath: Path?): PyResult<CliBasedHatchService> {
+    suspend operator fun invoke(workingDirectoryPath: Path?, hatchExecutablePath: Path? = null, hatchEnvironmentName: String? = null): PyResult<CliBasedHatchService> {
+      val envVars = hatchEnvironmentName?.let { mapOf(HatchConstants.AppEnvVars.ENV to it) } ?: emptyMap()
       val hatchRuntime = createHatchRuntime(
         hatchExecutablePath = hatchExecutablePath,
         workingDirectoryPath = workingDirectoryPath,
+        envVars = envVars
       ).getOr { return it }
-      return Result.success(CliBasedHatchService(workingDirectoryPath, hatchRuntime))
+      return Result.success(CliBasedHatchService(workingDirectoryPath!!, hatchRuntime))
     }
 
     private val concurrencyLimit = Semaphore(permits = 5)
@@ -51,7 +55,7 @@ internal class CliBasedHatchService private constructor(
 
   override fun getWorkingDirectoryPath(): Path = workingDirectoryPath
 
-  override suspend fun syncDependencies(envName: String): PyResult<String> {
+  override suspend fun syncDependencies(envName: String?): PyResult<String> {
     return withContext(Dispatchers.IO) {
       hatchRuntime.hatchCli().run(envName, "python", "--version")
     }
@@ -62,7 +66,7 @@ internal class CliBasedHatchService private constructor(
       when {
         workingDirectoryPath.resolve("hatch.toml").exists() -> true
         else -> {
-          val pyProjectTomlPath = workingDirectoryPath.resolve("pyproject.toml").takeIf { it.isRegularFile() }
+          val pyProjectTomlPath = workingDirectoryPath.resolve(PY_PROJECT_TOML).takeIf { it.isRegularFile() }
           val hatchRegex = """^\[tool\.hatch\..+]$""".toRegex(RegexOption.MULTILINE)
           pyProjectTomlPath?.readText()?.contains(hatchRegex) == true
         }
@@ -89,9 +93,12 @@ internal class CliBasedHatchService private constructor(
     return Result.success(available)
   }
 
+  override suspend fun findDefaultVirtualEnvironmentOrNull(): PyResult<HatchVirtualEnvironment?> =
+    findVirtualEnvironments().mapSuccess { envs -> envs.singleOrNull { it.hatchEnvironment == HatchEnvironment.DEFAULT } }
+
 
   override suspend fun createNewProject(projectName: String): PyResult<ProjectStructure> {
-    val eelApi = workingDirectoryPath.getEelDescriptor().upgrade()
+    val eelApi = workingDirectoryPath.getEelDescriptor().toEelApi()
     val tempDir = eelApi.fs.createTemporaryDirectory(EelFileSystemApi.CreateTemporaryEntryOptions.Builder().build()).getOr { failure ->
       return Result.failure(FileSystemOperationHatchError(failure.error))
     }
@@ -134,6 +141,7 @@ private fun HatchEnvironments.getAvailableVirtualHatchEnvironments(): List<Hatch
         HatchEnvironment(
           name = envName,
           type = type,
+          features = features,
           dependencies = dependencies,
           environmentVariables = environmentVariables,
           scripts = scripts,

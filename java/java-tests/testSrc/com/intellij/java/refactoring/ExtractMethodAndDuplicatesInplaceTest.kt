@@ -1,4 +1,4 @@
-// Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.java.refactoring
 
 import com.intellij.codeInsight.hint.HintManager
@@ -145,13 +145,15 @@ class ExtractMethodAndDuplicatesInplaceTest: LightJavaCodeInsightTestCase() {
   }
 
   fun testRuntimeCatchMayChangeSemantic1(){
-    assertThrows(RefactoringErrorHintException::class.java, JavaRefactoringBundle.message("extract.method.error.many.exits")) {
+    assertThrows(RefactoringErrorHintException::class.java,
+                 JavaRefactoringBundle.message("extract.method.error.exception")) {
       doTest()
     }
   }
 
   fun testRuntimeCatchMayChangeSemantic2(){
-    assertThrows(RefactoringErrorHintException::class.java, JavaRefactoringBundle.message("extract.method.error.many.exits")) {
+    assertThrows(RefactoringErrorHintException::class.java,
+                 JavaRefactoringBundle.message("extract.method.error.exception")) {
       doTest()
     }
   }
@@ -189,7 +191,8 @@ class ExtractMethodAndDuplicatesInplaceTest: LightJavaCodeInsightTestCase() {
   }
 
   fun testDisabledOnSwitchRules(){
-    assertThrows(RefactoringErrorHintException::class.java, RefactoringBundle.message("selected.block.should.represent.a.set.of.statements.or.an.expression")) {
+    assertThrows(RefactoringErrorHintException::class.java,
+                 RefactoringBundle.message("selected.block.should.represent.a.set.of.statements.or.an.expression")) {
       doTest()
     }
   }
@@ -288,6 +291,10 @@ class ExtractMethodAndDuplicatesInplaceTest: LightJavaCodeInsightTestCase() {
   }
 
   fun testLiteralDuplicates(){
+    doTest()
+  }
+
+  fun testSubExpressionWithCall() {
     doTest()
   }
 
@@ -441,6 +448,18 @@ class ExtractMethodAndDuplicatesInplaceTest: LightJavaCodeInsightTestCase() {
       nextTemplateVariable()
     }
     require(getActiveTemplate() != null)
+  }
+
+  fun testIntroduceObjectFailedWithLoop(){
+    assertThrows(RefactoringErrorHintException::class.java) {
+      doTest()
+    }
+  }
+
+  fun testIntroduceObjectFailedWithLoop2(){
+    assertThrows(RefactoringErrorHintException::class.java) {
+      doTest()
+    }
   }
 
   fun testIntroduceObjectFailedWithAssignment1(){
@@ -622,7 +641,7 @@ class ExtractMethodAndDuplicatesInplaceTest: LightJavaCodeInsightTestCase() {
     }
     ApplicationManager.getApplication().replaceService(HintManager::class.java, manager, testRootDisposable)
     block.invoke()
-    if (message != null) throw throw RefactoringErrorHintException(message)
+    if (message != null) throw RefactoringErrorHintException(message)
   }
 
   private fun startRefactoring(editor: Editor): TemplateState {

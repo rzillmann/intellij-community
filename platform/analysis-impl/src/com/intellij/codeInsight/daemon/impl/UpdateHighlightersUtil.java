@@ -3,8 +3,9 @@ package com.intellij.codeInsight.daemon.impl;
 
 import com.intellij.codeHighlighting.HighlightingPass;
 import com.intellij.codeInsight.daemon.GutterMark;
-import com.intellij.codeInsight.intention.preview.IntentionPreviewUtils;
-import com.intellij.codeInsight.multiverse.*;
+import com.intellij.codeInsight.multiverse.CodeInsightContext;
+import com.intellij.codeInsight.multiverse.CodeInsightContextHighlightingUtil;
+import com.intellij.codeInsight.multiverse.CodeInsightContextUtil;
 import com.intellij.lang.annotation.HighlightSeverity;
 import com.intellij.openapi.application.AccessToken;
 import com.intellij.openapi.diagnostic.Logger;
@@ -126,6 +127,11 @@ public final class UpdateHighlightersUtil {
   }
 
 
+  /**
+   * @deprecated please use {@link BackgroundUpdateHighlightersUtil#setHighlightersToEditor} instead for better responsiveness
+   */
+  @Deprecated
+  @RequiresEdt
   public static void setHighlightersToSingleEditor(@NotNull Project project,
                                                    @NotNull Editor editor,
                                                    int startOffset,
@@ -139,6 +145,11 @@ public final class UpdateHighlightersUtil {
     setHighlightersToEditor(project, document, startOffset, endOffset, highlights, colorsScheme, group, markup);
   }
 
+  /**
+   * @deprecated please use {@link BackgroundUpdateHighlightersUtil#setHighlightersToEditor} instead for better responsiveness
+   */
+  @Deprecated
+  @RequiresEdt
   public static void setHighlightersToEditor(@NotNull Project project,
                                              @NotNull Document document,
                                              int startOffset,
@@ -163,13 +174,13 @@ public final class UpdateHighlightersUtil {
     PsiFile psiFile;
     try (AccessToken ignore = SlowOperations.knownIssue("IDEA-341181, IDEA-301732, EA-823296")) {
       psiFile = PsiDocumentManager.getInstance(project).getPsiFile(document);
-      if (psiFile instanceof PsiCompiledFile) {
-        psiFile = ((PsiCompiledFile)psiFile).getDecompiledPsiFile();
+      if (psiFile instanceof PsiCompiledFile compiled) {
+        psiFile = compiled.getDecompiledPsiFile();
       }
     }
     if (psiFile != null) {
       DaemonCodeAnalyzerEx.getInstanceEx(project).cleanFileLevelHighlights(group, psiFile);
-      HighlightingSessionImpl.runInsideHighlightingSessionInEDT(psiFile, FileViewProviderUtil.getCodeInsightContext(psiFile), colorsScheme, ProperTextRange.create(startOffset, endOffset), false, session ->
+      HighlightingSessionImpl.runInsideHighlightingSessionInEDT(psiFile, CodeInsightContextUtil.getCodeInsightContext(psiFile), colorsScheme, ProperTextRange.create(startOffset, endOffset), false, session ->
         setHighlightersInRange(document, range, new ArrayList<>(infos), markup, group, session)
       );
     }
@@ -209,7 +220,7 @@ public final class UpdateHighlightersUtil {
           return true;
         }
         if (info.isFileLevelAnnotation()) {
-          codeAnalyzer.addFileLevelHighlight(group, info, psiFile, null);
+          codeAnalyzer.addFileLevelHighlight(group, info, psiFile, null, session.getCodeInsightContext());
           changed[0] = true;
           return true;
         }
@@ -305,7 +316,7 @@ public final class UpdateHighlightersUtil {
       info.updateQuickFixFields(document, range2markerCache, finalInfoRange);
     };
 
-    RangeHighlighterEx highlighter = infosToRemove == null ? null : (RangeHighlighterEx)infosToRemove.pickupHighlighterFromGarbageBin(infoStartOffset, infoEndOffset, layer);
+    RangeHighlighterEx highlighter = infosToRemove == null ? null : (RangeHighlighterEx)infosToRemove.pickupHighlighterFromGarbageBin(infoStartOffset, infoEndOffset, layer, info.getDescription());
     if (highlighter == null) {
       highlighter = markup.addRangeHighlighterAndChangeAttributes(null, infoStartOffset, infoEndOffset, layer,
                                                                   HighlighterTargetArea.EXACT_RANGE, false, changeAttributes);
@@ -398,13 +409,11 @@ public final class UpdateHighlightersUtil {
     int start = e.getOffset() - 1;
     int end = start + e.getOldLength();
 
-    List<HighlightInfo> toRemove = new ArrayList<>();
     DaemonCodeAnalyzerEx.processHighlights(document, project, null, start, end, info -> {
-      if (!info.needUpdateOnTyping()) return true;
-
-      RangeHighlighter highlighter = info.getHighlighter();
-      int highlighterStart = highlighter.getStartOffset();
-      int highlighterEnd = highlighter.getEndOffset();
+      RangeHighlighterEx highlighter = info.getHighlighter();
+      TextRange range = highlighter.getTextRange();
+      int highlighterStart = range.getStartOffset();
+      int highlighterEnd = range.getEndOffset();
       if (info.isAfterEndOfLine()) {
         if (highlighterStart < document.getTextLength()) {
           highlighterStart += 1;
@@ -414,21 +423,11 @@ public final class UpdateHighlightersUtil {
         }
       }
       if (!highlighter.isValid() || start < highlighterEnd && highlighterStart <= end) {
-        toRemove.add(info);
+        disableWhiteSpaceOptimization(document);
+        return false;
       }
       return true;
     });
-
-    for (HighlightInfo info : toRemove) {
-      RangeHighlighterEx highlighter = info.getHighlighter();
-      if (!highlighter.isValid() || info.type.equals(HighlightInfoType.WRONG_REF)) {
-        disposeWithFileLevelIgnoreErrorsInEDT(highlighter, project, info);
-      }
-    }
-
-    if (!toRemove.isEmpty()) {
-      disableWhiteSpaceOptimization(document);
-    }
   }
 
   @RequiresEdt
@@ -454,6 +453,9 @@ public final class UpdateHighlightersUtil {
   }
   // disposes highlighter, and schedules removal from the file-level component if this highlighter happened to be file-level
   static void disposeWithFileLevelIgnoreErrors(@NotNull HighlightInfo info, @NotNull HighlightingSession highlightingSession) {
+    if (LOG.isTraceEnabled()) {
+      LOG.trace("disposeWithFileLevelIgnoreErrors: " + info);
+    }
     if (info.isFileLevelAnnotation()) {
       ((HighlightingSessionImpl)highlightingSession).removeFileLevelHighlight(info);
     }
@@ -470,24 +472,6 @@ public final class UpdateHighlightersUtil {
       // in theory, rogue plugin might register a listener on range marker 'dispose', which can do nasty things, including throwing exceptions,
       // but in highlighting, range highlighters must be removed no matter what, to avoid sticky highlighters, so ignore these exceptions
       LOG.warn(e);
-    }
-  }
-
-  /**
-   * @deprecated Do not use. This method might break highlighting, left for binary compatibility only
-   */
-  @Deprecated(forRemoval = true)
-  @ApiStatus.Internal
-  public static void removeHighlightersWithExactRange(@NotNull Document document, @NotNull Project project, @NotNull Segment range) {
-    if (IntentionPreviewUtils.isIntentionPreviewActive()) return;
-    ThreadingAssertions.assertEventDispatchThread();
-    MarkupModel model = DocumentMarkupModel.forDocument(document, project, false);
-    if (model == null) return;
-
-    for (RangeHighlighter highlighter : model.getAllHighlighters()) {
-      if (TextRange.areSegmentsEqual(range, highlighter)) {
-        model.removeHighlighter(highlighter);
-      }
     }
   }
 }

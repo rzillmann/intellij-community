@@ -1,14 +1,17 @@
 // Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.intellij.plugins.markdown.ui.preview
 
-import com.intellij.CommonBundle
 import com.intellij.ide.DataManager
+import com.intellij.notification.Notification
+import com.intellij.notification.NotificationType
+import com.intellij.notification.Notifications
 import com.intellij.openapi.actionSystem.DataKey
 import com.intellij.openapi.actionSystem.ex.ActionUtil
 import com.intellij.openapi.actionSystem.impl.SimpleDataContext
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.application.readAction
 import com.intellij.openapi.application.writeIntentReadAction
+import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.editor.Document
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.event.DocumentEvent
@@ -18,7 +21,6 @@ import com.intellij.openapi.fileEditor.FileEditor
 import com.intellij.openapi.fileEditor.FileEditorState
 import com.intellij.openapi.fileEditor.TextEditorWithPreview
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.Key
@@ -27,6 +29,7 @@ import com.intellij.openapi.util.UserDataHolderBase
 import com.intellij.openapi.util.registry.Registry
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.ui.awt.RelativePoint
+import com.intellij.util.PlatformUtils
 import com.intellij.util.concurrency.annotations.RequiresEdt
 import com.intellij.util.ui.StartupUiUtil
 import com.intellij.util.ui.UIUtil
@@ -133,6 +136,7 @@ class MarkdownPreviewFileEditor(
   fun setMainEditor(editor: Editor) {
     check(mainEditor.value == null)
     mainEditor.value = editor
+    logger.info("MarkdownPreviewFileEditor: the main editor has been set")
     if (Registry.`is`("markdown.experimental.boundary.precise.scroll.enable")) {
       coroutineScope.launch { setupScrollHelper() }
     }
@@ -184,40 +188,60 @@ class MarkdownPreviewFileEditor(
 
   private fun retrievePanelProvider(settings: MarkdownSettings): MarkdownHtmlPanelProvider {
     val providerInfo = settings.previewPanelProviderInfo
-    var provider = MarkdownHtmlPanelProvider.createFromInfo(providerInfo)
-    if (provider.isAvailable() !== MarkdownHtmlPanelProvider.AvailabilityInfo.AVAILABLE) {
-      val defaultProvider = MarkdownHtmlPanelProvider.createFromInfo(MarkdownSettings.defaultProviderInfo)
-      Messages.showMessageDialog(
-        htmlPanelWrapper,
-        MarkdownBundle.message("dialog.message.tried.to.use.preview.panel.provider", providerInfo.name),
-        CommonBundle.getErrorTitle(),
-        Messages.getErrorIcon()
-      )
-      MarkdownSettings.getInstance(project).previewPanelProviderInfo = defaultProvider.providerInfo
-      provider = MarkdownHtmlPanelProvider.getProviders().find { p: MarkdownHtmlPanelProvider -> p.isAvailable() === MarkdownHtmlPanelProvider.AvailabilityInfo.AVAILABLE }!!
+    var preferredProvider = MarkdownHtmlPanelProvider.createFromInfo(providerInfo)
+    if (preferredProvider.isAvailable() !== MarkdownHtmlPanelProvider.AvailabilityInfo.AVAILABLE) {
+      val registeredProviders = MarkdownHtmlPanelProvider.getProviders()
+      val availableProvider = registeredProviders.firstOrNull { p: MarkdownHtmlPanelProvider -> p.isAvailable() === MarkdownHtmlPanelProvider.AvailabilityInfo.AVAILABLE }
+      if (availableProvider == null) {
+        logger.warn("Cannot find any available preview panel provider. Registered providers: ${registeredProviders.joinToString { it.providerInfo.name }}")
+      }
+      else {
+        logger.warn("Cannot use preview panel provider '${preferredProvider.providerInfo.name}'. Using the first one that is available: ${availableProvider.providerInfo.name}")
+        settings.previewPanelProviderInfo = availableProvider.providerInfo
+        preferredProvider = availableProvider
+      }
     }
     lastPanelProviderInfo = settings.previewPanelProviderInfo
-    return provider
+    return preferredProvider
   }
 
   @RequiresEdt
   private suspend fun updateHtml() {
-    val panel = this.panel ?: return
-    if (!file.isValid || isDisposed) {
+    logger.info("MarkdownPreviewFileEditor: updateHtml")
+    val panel = this.panel ?: run {
+      logger.warn("MarkdownPreviewFileEditor: panel is null, cannot update preview")
+      return
+    }
+
+    if (isDisposed) {
+      logger.warn("MarkdownPreviewFileEditor: cannot update preview for disposed file ${file.path}")
+      return
+    }
+
+    if (!file.isValid) {
+      logger.warn("MarkdownPreviewFileEditor: Cannot update preview for invalid file ${file.path}")
       return
     }
 
     val settings = MarkdownSettings.getInstance(project)
     val textPreprocessor = retrievePanelProvider(settings).sourceTextPreprocessor
     lastRenderedHtml = readAction {
-      textPreprocessor.preprocessText(project, document, file)
+      val text = textPreprocessor.preprocessText(project, document, file)
+      logger.info("MarkdownPreviewFileEditor: readAction finished")
+      text
     }
 
-    val editor = mainEditor.firstOrNull() ?: return
+    val editor = mainEditor.firstOrNull() ?: run {
+      logger.warn("MarkdownPreviewFileEditor: editor is null, cannot update preview")
+      return
+    }
+
     writeIntentReadAction {
       val offset = editor.caretModel.offset
       val line = editor.document.getLineNumber(offset)
+      logger.info("MarkdownPreviewFileEditor: setHtml length: ${lastRenderedHtml.length}, offset: $offset, line: $line")
       panel.setHtml(lastRenderedHtml, offset, line, file)
+      logger.info("MarkdownPreviewFileEditor: setHtml finished")
     }
   }
 
@@ -234,6 +258,7 @@ class MarkdownPreviewFileEditor(
 
   @RequiresEdt
   private suspend fun attachHtmlPanel() {
+    logger.info("MarkdownPreviewFileEditor: attachHtmlPanel")
     val settings = MarkdownSettings.getInstance(project)
     val panelProvider = retrievePanelProvider(settings)
     val panel = panelProvider.createHtmlPanel(project, file)
@@ -286,6 +311,8 @@ class MarkdownPreviewFileEditor(
   }
 
   companion object {
+    private val logger = thisLogger()
+
     val PREVIEW_BROWSER: Key<WeakReference<MarkdownHtmlPanel>> = Key.create("PREVIEW_BROWSER")
 
     internal val PREVIEW_POPUP_POINT: DataKey<RelativePoint> = DataKey.create("PREVIEW_POPUP_POINT")

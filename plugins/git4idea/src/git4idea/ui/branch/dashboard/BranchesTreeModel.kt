@@ -9,10 +9,11 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.NlsSafe
 import com.intellij.util.EventDispatcher
 import com.intellij.util.ThreeState
+import com.intellij.vcs.git.branch.GitInOutCountersInProject
+import com.intellij.vcs.git.ui.getText
 import git4idea.*
 import git4idea.branch.GitBranchIncomingOutgoingManager
 import git4idea.branch.GitRefType
-import git4idea.branch.IncomingOutgoingState
 import git4idea.i18n.GitBundle.message
 import git4idea.repo.GitRefUtil
 import git4idea.repo.GitRemote
@@ -24,7 +25,6 @@ import org.jetbrains.annotations.VisibleForTesting
 import java.util.*
 import java.util.concurrent.atomic.AtomicInteger
 import javax.swing.tree.DefaultMutableTreeNode
-import git4idea.ui.branch.getText
 
 internal data class RemoteInfo(val remoteName: String, val repository: GitRepository?)
 
@@ -42,7 +42,7 @@ internal data class BranchInfo(
   val branch: GitBranch,
   override val isCurrent: Boolean,
   override var isFavorite: Boolean,
-  var incomingOutgoingState: IncomingOutgoingState = IncomingOutgoingState.EMPTY,
+  var incomingOutgoingState: GitInOutCountersInProject = GitInOutCountersInProject.EMPTY,
   override val repositories: List<GitRepository>,
 ) : RefInfo {
   var isMy: ThreeState = ThreeState.UNSURE
@@ -77,7 +77,7 @@ sealed class BranchNodeDescriptor {
     override fun toString() = "ROOT"
   }
 
-  internal object Head : BranchNodeDescriptor(), LogNavigatable {
+  internal object Head : BranchNodeDescriptor() {
     override val displayName: @Nls String = message("group.Git.HEAD.Branch.Filter.title")
     override val children: List<BranchNodeDescriptor>
       get() = emptyList()
@@ -100,7 +100,7 @@ sealed class BranchNodeDescriptor {
     override fun toString(): String = "REMOTE:$displayName"
   }
 
-  internal sealed class Ref(val refInfo: RefInfo) : BranchNodeDescriptor(), LogNavigatable {
+  internal sealed class Ref(val refInfo: RefInfo) : BranchNodeDescriptor() {
     override val children: List<BranchNodeDescriptor>
       get() = emptyList()
   }
@@ -132,8 +132,6 @@ sealed class BranchNodeDescriptor {
   ) : BranchNodeDescriptor() {
     override fun toString(): String = "GROUP:$displayName"
   }
-
-  sealed interface LogNavigatable
 }
 
 internal class BranchTreeNode(nodeDescriptor: BranchNodeDescriptor) : DefaultMutableTreeNode(nodeDescriptor) {
@@ -164,6 +162,7 @@ interface BranchesTreeModel {
   interface Listener : EventListener {
     fun onTreeChange() {}
     fun onLoadingStateChange() {}
+    fun onTreeDataChange() {}
   }
 }
 
@@ -199,6 +198,10 @@ abstract class BranchesTreeModelBase : BranchesTreeModel {
   final override fun removeListener(listener: BranchesTreeModel.Listener) {
     listeners.removeListener(listener)
   }
+
+  fun onTreeDataChange() {
+    listeners.multicaster.onTreeDataChange()
+  }
 }
 
 @VisibleForTesting
@@ -233,7 +236,7 @@ internal object NodeDescriptorsModel {
           is BranchInfo -> {
             val incomingOutgoingState =
               if (refInfo.ref is GitLocalBranch) incomingOutgoingManager.getIncomingOutgoingState(repository, refInfo.ref)
-              else IncomingOutgoingState.EMPTY
+              else GitInOutCountersInProject.EMPTY
             refInfo.copy(isCurrent = repository.isCurrentBranch(refInfo.branchName), isFavorite = isFavorite, incomingOutgoingState = incomingOutgoingState)
           }
           is TagInfo -> {

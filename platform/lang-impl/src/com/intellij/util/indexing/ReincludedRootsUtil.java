@@ -102,11 +102,14 @@ public final class ReincludedRootsUtil {
       VirtualFileUrlManager fileUrlManager = WorkspaceModel.getInstance(project).getVirtualFileUrlManager();
       for (VirtualFile file : files) {
         WorkspaceFileSet fileSet = ReadAction.nonBlocking(() -> {
-          return workspaceFileIndex.findFileSet(file, true, true, true, true, true);
+          return workspaceFileIndex.findFileSet(file, true, true, true, true, true, true);
         }).expireWith(project).executeSynchronously();
 
         if (fileSet == null) {
           filesFromIndexableSetContributors.add(file);
+          continue;
+        }
+        if (!fileSet.getKind().isIndexable()) {
           continue;
         }
 
@@ -132,10 +135,12 @@ public final class ReincludedRootsUtil {
           continue;
         }
 
+
         if (WorkspaceFileSetRecognizer.INSTANCE.isFromAdditionalLibraryRootsProvider(fileSet)) {
           filesFromAdditionalLibraryRootsProviders.add(file);
           continue;
         }
+
 
         LibraryId libraryId = WorkspaceFileSetRecognizer.INSTANCE.getLibraryId(fileSet, entityStorage);
         if (libraryId != null) {

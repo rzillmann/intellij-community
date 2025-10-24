@@ -1,6 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
-@file:Suppress("ReplacePutWithAssignment", "ReplaceGetOrSet")
-
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.intellij.build.io
 
 import com.fasterxml.jackson.jr.ob.JSON
@@ -8,17 +6,15 @@ import com.intellij.openapi.util.io.FileUtilRt
 import io.opentelemetry.api.common.AttributeKey
 import io.opentelemetry.api.trace.Span
 import kotlinx.coroutines.*
-import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.channels.ClosedSendChannelException
-import kotlinx.coroutines.channels.toList
 import org.jetbrains.annotations.ApiStatus.Obsolete
 import org.jetbrains.intellij.build.telemetry.TraceManager.spanBuilder
 import org.jetbrains.intellij.build.telemetry.use
-import java.io.File
 import java.io.InputStream
+import java.lang.ProcessBuilder.Redirect
 import java.nio.charset.MalformedInputException
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.*
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
@@ -35,7 +31,8 @@ suspend fun runJava(mainClass: String,
                     javaExe: Path,
                     timeout: Duration = DEFAULT_TIMEOUT,
                     workingDir: Path? = null,
-                    customOutputFile: Path? = null,
+                    customOutput: Redirect? = null,
+                    customError: Redirect? = null,
                     onError: (() -> Unit)? = null) {
   val workingDir = workingDir ?: Path.of(System.getProperty("user.dir"))
   val useJsonOutput = jvmArgs.any { it == "-Dintellij.log.to.json.stdout=true" }
@@ -52,23 +49,35 @@ suspend fun runJava(mainClass: String,
     .use(Dispatchers.IO) { span ->
       val toDelete = ArrayList<Path>(3)
       var process: Process? = null
+      fun processRedirect(customRedirect: Redirect?, prefix: String): Pair<Path?, Redirect?> {
+        var outputFile: Path? = null
+        val outputRedirect = if (customRedirect != null) {
+          if (customRedirect != Redirect.DISCARD && (customRedirect.type() == Redirect.Type.WRITE || customRedirect.type() == Redirect.Type.APPEND)) {
+            customRedirect.file()?.parentFile?.let { Files.createDirectories(it.toPath()) }
+            outputFile = customRedirect.file()?.toPath()
+          }
+          customRedirect
+        }
+        else {
+          val file = Files.createTempFile(prefix, ".txt").also(toDelete::add).toFile()
+          outputFile = file.toPath()
+          Redirect.to(file)
+        }
+        return Pair(outputFile, outputRedirect)
+      }
+
       try {
         val classpathFile = Files.createTempFile("classpath-", ".txt").also(toDelete::add)
         val classPathStringBuilder = createClassPathFile(classPath, classpathFile)
-        val processArgs = createProcessArgs(javaExe = javaExe,
-                                            jvmArgs = jvmArgs,
-                                            classpathFile = classpathFile,
-                                            mainClass = mainClass,
-                                            args = args)
+        val processArgs = createProcessArgs(javaExe, jvmArgs, classpathFile, mainClass, args)
         span.setAttribute(AttributeKey.stringArrayKey("processArgs"), processArgs)
-        val errorOutputFile = Files.createTempFile("error-out-", ".txt").also(toDelete::add)
-        val outputFile = customOutputFile?.also { customOutputFile.parent?.let { Files.createDirectories(it) } }
-                         ?: Files.createTempFile("out-", ".txt").also(toDelete::add)
+        val (outputFile, outputRedirect) = processRedirect(customOutput, "out-")
+        val (errorOutputFile, errorRedirect) = processRedirect(customError, "error-out-")
         logFreeDiskSpace(workingDir, "before $commandLine")
         process = ProcessBuilder(processArgs)
           .directory(workingDir.toFile())
-          .redirectError(errorOutputFile.toFile())
-          .redirectOutput(outputFile.toFile())
+          .redirectError(errorRedirect)
+          .redirectOutput(outputRedirect)
           .start()
 
         span.setAttribute("pid", process.pid())
@@ -76,12 +85,13 @@ suspend fun runJava(mainClass: String,
         fun javaRunFailed(reason: String) {
           span.setAttribute("classPath", classPathStringBuilder.substring("-classpath".length))
           span.setAttribute("processArgs", processArgs.joinToString(separator = " "))
-          span.setAttribute("output", runCatching { Files.readString(outputFile) }.getOrNull() ?: "output file doesn't exist")
-          val errorOutput = runCatching { Files.readString(errorOutputFile) }.getOrNull()
-          val output = runCatching { Files.readString(outputFile) }.getOrNull()
-          val errorMessage = StringBuilder("Cannot execute $mainClass: $reason\n${processArgs.joinToString(separator = " ")}" +
-                                           "\n--- error output ---\n" +
-                                           "$errorOutput")
+          val output = runCatching { outputFile?.let(Files::readString) }.getOrNull()
+          span.setAttribute("output", output ?: "output file doesn't exist")
+          val errorOutput = runCatching { errorOutputFile?.let(Files::readString) }.getOrNull()
+          val errorMessage = StringBuilder(
+            "Cannot execute $mainClass: $reason\n${processArgs.joinToString(separator = " ")}" +
+            "\n--- error output ---\n" +
+            "$errorOutput")
           if (!useJsonOutput) {
             errorMessage.append("\n--- output ---\n$output\n")
           }
@@ -127,7 +137,11 @@ suspend fun runJava(mainClass: String,
     }
 }
 
-private fun checkOutput(outputFile: Path, span: Span, errorConsumer: (String) -> Unit) {
+private fun checkOutput(outputFile: Path?, span: Span, errorConsumer: (String) -> Unit) {
+  if (outputFile == null) {
+    span.setAttribute("output", "output file is null")
+    return
+  }
   val out = try {
     try {
       Files.readString(outputFile)
@@ -147,8 +161,8 @@ private fun checkOutput(outputFile: Path, span: Span, errorConsumer: (String) ->
     .forEach { line ->
       if (line.startsWith('{')) {
         val item = JSON.std.mapFrom(line)
-        val message = (item.get("message") as? String) ?: error("Missing field: 'message' in $line")
-        val level = (item.get("level") as? String) ?: error("Missing field: 'level' in $line")
+        val message = (item["message"] as? String) ?: error("Missing field: 'message' in $line")
+        val level = (item["level"] as? String) ?: error("Missing field: 'level' in $line")
         messages.append(message).append('\n')
         if (level == "SEVERE") {
           errorConsumer("Error reported from child process logger: $message")
@@ -182,7 +196,8 @@ private fun createClassPathFile(classPath: Collection<String>, classpathFile: Pa
   classPathStringBuilder.append("-classpath").append('\n')
   for (s in classPath) {
     appendArg(s, classPathStringBuilder)
-    classPathStringBuilder.append(File.pathSeparator)
+    @Suppress("IO_FILE_USAGE")
+    classPathStringBuilder.append(java.io.File.pathSeparator)
   }
   classPathStringBuilder.setLength(classPathStringBuilder.length - 1)
   Files.writeString(classpathFile, classPathStringBuilder)
@@ -193,13 +208,7 @@ private fun createClassPathFile(classPath: Collection<String>, classpathFile: Pa
 @Obsolete
 fun runProcessBlocking(args: List<String>, workingDir: Path? = null, timeoutMillis: Long = DEFAULT_TIMEOUT.inWholeMilliseconds) {
   runBlocking {
-    runProcess(
-      args = args,
-      workingDir = workingDir,
-      timeout = timeoutMillis.milliseconds,
-      additionalEnvVariables = emptyMap(),
-      inheritOut = false,
-    )
+    runProcess(args, workingDir, timeoutMillis.milliseconds)
   }
 }
 
@@ -235,7 +244,7 @@ suspend fun runProcess(
                 builder.redirectErrorStream(inheritErrToOut)
               }
             }.start()
-          val outputChannel = Channel<String>(capacity = Channel.UNLIMITED)
+          val outputLines = Collections.synchronizedList(ArrayList<String>())
           if (!inheritOut) {
             launch(Dispatchers.Default) {
               withTimeout(timeout) {
@@ -243,11 +252,7 @@ suspend fun runProcess(
                   span.addEvent(it)
                   stdOutConsumer(it)
                   if (attachStdOutToException) {
-                    try {
-                      outputChannel.send(it)
-                    }
-                    catch (_: ClosedSendChannelException) {
-                    }
+                    outputLines += it
                   }
                 }
               }
@@ -257,11 +262,7 @@ suspend fun runProcess(
                 process.errorStream.consume(process) {
                   span.addEvent(it)
                   stdErrConsumer(it)
-                  try {
-                    outputChannel.send(it)
-                  }
-                  catch (_: ClosedSendChannelException) {
-                  }
+                  outputLines += it
                 }
               }
             }
@@ -279,16 +280,13 @@ suspend fun runProcess(
           }
           catch (e: TimeoutCancellationException) {
             throw e.apply {
-              addSuppressed(RuntimeException("Process '$commandLine' (pid=$pid) failed to complete in $timeout" + toLines(outputChannel)))
+              addSuppressed(RuntimeException("Process '$commandLine' (pid=$pid) failed to complete in $timeout" + merge(outputLines)))
             }
-          }
-          finally {
-            outputChannel.close()
           }
 
           val exitCode = process.exitValue()
           if (exitCode != 0) {
-            throw RuntimeException("Process '$commandLine' (pid=$pid) finished with exitCode $exitCode" + toLines(outputChannel))
+            throw RuntimeException("Process '$commandLine' (pid=$pid) finished with exitCode $exitCode" + merge(outputLines))
           }
         }
         finally {
@@ -349,13 +347,6 @@ private suspend fun InputStream.consume(process: Process, consume: suspend (line
   }
 }
 
-private suspend fun toLines(channel: Channel<String>): String {
-  channel.close()
-  val lines = channel.toList()
-  return if (lines.any()) {
-    lines.joinToString(prefix = ":\n", separator = "\n")
-  }
-  else {
-    ""
-  }
+private fun merge(lines: List<String>): String = synchronized(lines) {
+  if (lines.any()) lines.joinToString(prefix = ":\n", separator = "\n") else ""
 }

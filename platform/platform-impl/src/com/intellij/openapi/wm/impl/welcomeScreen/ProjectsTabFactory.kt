@@ -6,7 +6,6 @@ import com.intellij.ide.IdeBundle
 import com.intellij.ide.RecentProjectListActionProvider
 import com.intellij.ide.RecentProjectsManager
 import com.intellij.ide.RecentProjectsManager.RecentProjectsChange
-import com.intellij.ide.RecentProjectsManagerBase
 import com.intellij.ide.dnd.DnDEvent
 import com.intellij.ide.dnd.DnDNativeTarget
 import com.intellij.ide.dnd.DnDSupport
@@ -35,21 +34,16 @@ import com.intellij.openapi.wm.impl.welcomeScreen.statistics.WelcomeScreenCounte
 import com.intellij.platform.ide.CoreUiCoroutineScopeHolder
 import com.intellij.ui.ExperimentalUI
 import com.intellij.ui.ScrollPaneFactory
-import com.intellij.ui.border.CustomLineBorder
-import com.intellij.ui.components.panels.Wrapper
 import com.intellij.ui.dsl.builder.*
 import com.intellij.ui.dsl.gridLayout.UnscaledGaps
+import com.intellij.ui.layout.ValueComponentPredicate
 import com.intellij.util.ui.JBUI
 import kotlinx.coroutines.launch
-import java.awt.BorderLayout
-import java.awt.Component
 import java.awt.Dimension
-import java.awt.Insets
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import java.util.function.Supplier
 import javax.swing.JComponent
-import javax.swing.JPanel
 import javax.swing.ScrollPaneConstants
 
 
@@ -62,15 +56,11 @@ internal class ProjectsTab(private val parentDisposable: Disposable) : DefaultWe
   IdeBundle.message("welcome.screen.projects.title"),
   WelcomeScreenEventCollector.TabType.TabNavProject
 ) {
-  private val projectsPanelWrapper: Wrapper = Wrapper()
-  private val recentProjectsPanel: JComponent = createRecentProjectsPanel()
-  private val emptyStatePanel: JComponent = createEmptyStatePanel()
-  private val notificationPanel: JComponent = WelcomeScreenComponentFactory.createNotificationToolbar(parentDisposable)
-  private var panelState: PanelState
+
+  private var isPanelEmptyPredicate: ValueComponentPredicate = ValueComponentPredicate(true)
+  private var notificationPanel: JComponent? = null
 
   init {
-    panelState = getCurrentState()
-    updateState(panelState)
     val connect = ApplicationManager.getApplication().messageBus.connect(parentDisposable)
     connect.subscribe(CloneableProjectsService.TOPIC, object : CloneProjectListener {
       override fun onCloneCanceled() {}
@@ -89,25 +79,35 @@ internal class ProjectsTab(private val parentDisposable: Disposable) : DefaultWe
         checkState()
       }
     })
+    checkState()
   }
 
   override fun buildComponent(): JComponent {
-    val recentPaths = RecentProjectsManagerBase.getInstanceEx().getRecentPaths()
-    WelcomeScreenCounterUsageCollector.reportWelcomeScreenShowed(recentPaths.size)
-    val promo = WelcomeScreenComponentFactory.getSinglePromotion(recentPaths.isEmpty())
+    val recentProjectsCount = RecentProjectListActionProvider.getInstance().countLocalProjects()
+    val providerRecentProjectsCount = RecentProjectListActionProvider.getInstance().countProjectsFromProviders()
+    WelcomeScreenCounterUsageCollector.reportWelcomeScreenShowed(recentProjectsCount, providerRecentProjectsCount)
+
+    val promo = WelcomeScreenComponentFactory.getSinglePromotion(recentProjectsCount == 0)
 
     return panel {
       customizeSpacingConfiguration(EmptySpacingConfiguration()) {
         row {
-          cell(projectsPanelWrapper)
+          val placeholder = placeholder()
             .align(Align.FILL)
+
+          val recentProjectsPanel = createRecentProjectsPanel()
+          val emptyStatePanel = createEmptyStatePanel()
+          isPanelEmptyPredicate.addListener { isEmpty ->
+            placeholder.component = if (isEmpty) emptyStatePanel else recentProjectsPanel
+          }
+          placeholder.component = if (isPanelEmptyPredicate.invoke()) emptyStatePanel else recentProjectsPanel
         }.resizableRow()
         row {
-          cell(notificationPanel)
+          notificationPanel = cell(WelcomeScreenComponentFactory.createNotificationToolbar(parentDisposable))
             .align(AlignX.RIGHT)
             .applyToComponent {
               putClientProperty(DslComponentProperty.VISUAL_PADDINGS, UnscaledGaps.EMPTY)
-            }
+            }.component
         }
         if (promo != null) {
           row {
@@ -126,22 +126,7 @@ internal class ProjectsTab(private val parentDisposable: Disposable) : DefaultWe
   }
 
   private fun checkState() {
-    val currentState = getCurrentState()
-    if (currentState == panelState) {
-      return
-    }
-    updateState(currentState)
-  }
-
-  private fun updateState(currentPanelState: PanelState) {
-    if (currentPanelState == PanelState.EMPTY) {
-      projectsPanelWrapper.setContent(emptyStatePanel)
-    }
-    else {
-      projectsPanelWrapper.setContent(recentProjectsPanel)
-    }
-    panelState = currentPanelState
-    projectsPanelWrapper.repaint()
+    isPanelEmptyPredicate.set(getCurrentState() == PanelState.EMPTY)
   }
 
   override fun updateComponent() {
@@ -155,44 +140,45 @@ internal class ProjectsTab(private val parentDisposable: Disposable) : DefaultWe
   }
 
   private fun createRecentProjectsPanel(): JComponent {
-    val recentProjectsPanel: JPanel = JBUI.Panels.simplePanel()
-      .withBorder(JBUI.Borders.empty(13, 12))
-      .withBackground(WelcomeScreenUIManager.getProjectsBackground())
     val recentProjectTree = createComponent(
-      parentDisposable, ProjectCollectors.all
+      parentDisposable, ProjectCollectors.all, disableSearchFieldBorder = false
     )
     recentProjectTree.selectLastOpenedProject()
-
     val treeComponent = recentProjectTree.component
-    val scrollPane = ScrollPaneFactory.createScrollPane(treeComponent, true)
-    scrollPane.horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
-    scrollPane.isOpaque = false
-    val projectsPanel = JBUI.Panels.simplePanel(scrollPane)
-      .andTransparent()
-      .withBorder(JBUI.Borders.emptyTop(10))
 
     val projectSearch = recentProjectTree.installSearchField()
     if (ExperimentalUI.isNewUI()) {
       projectSearch.textEditor.putClientProperty("JTextField.Search.Icon", AllIcons.Actions.Search)
     }
-    val northPanel: JPanel = JBUI.Panels.simplePanel()
-      .andTransparent()
-      .withBorder(object : CustomLineBorder(WelcomeScreenUIManager.getSeparatorColor(), JBUI.insetsBottom(1)) {
-        override fun getBorderInsets(c: Component): Insets {
-          return JBUI.insetsBottom(12)
-        }
-      })
+
     val actionsToolbar = createActionsToolbar()
-    actionsToolbar.targetComponent = scrollPane
-    val projectActionsPanel = actionsToolbar.component
-    northPanel.add(projectSearch, BorderLayout.CENTER)
-    northPanel.add(projectActionsPanel, BorderLayout.EAST)
-    recentProjectsPanel.add(northPanel, BorderLayout.NORTH)
-    recentProjectsPanel.add(projectsPanel, BorderLayout.CENTER)
+    actionsToolbar.targetComponent = treeComponent
 
-    initDnD(treeComponent)
+    return panel {
+      row {
+        cell(actionsToolbar.component)
+      }
+      row {
+        cell(projectSearch)
+          .customize(UnscaledGaps(left = 4, right = 4, top = 18, bottom = 4))
+          .align(Align.FILL)
+      }
 
-    return recentProjectsPanel
+      row {
+        val scrollPane = ScrollPaneFactory.createScrollPane(treeComponent, true)
+          .apply {
+            horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
+            isOpaque = false
+          }
+        cell(scrollPane)
+          .align(Align.FILL)
+      }.resizableRow()
+
+    }.andTransparent()
+      .apply {
+        border = JBUI.Borders.empty(13, 12)
+        initDnD(treeComponent)
+      }
   }
 
   private fun createEmptyStatePanel(): JComponent {

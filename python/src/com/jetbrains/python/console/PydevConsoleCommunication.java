@@ -35,6 +35,7 @@ import com.jetbrains.python.debugger.pydev.SetUserTypeRenderersCommand;
 import com.jetbrains.python.debugger.pydev.dataviewer.DataViewerCommandBuilder;
 import com.jetbrains.python.debugger.pydev.dataviewer.DataViewerCommandResult;
 import com.jetbrains.python.debugger.pydev.tables.PyDevCommandParameters;
+import com.jetbrains.python.debugger.pydev.tables.PyDevImageCommandParameters;
 import com.jetbrains.python.debugger.settings.PyDebuggerSettings;
 import com.jetbrains.python.debugger.variablesview.usertyperenderers.ConfigureTypeRenderersHyperLink;
 import com.jetbrains.python.debugger.variablesview.usertyperenderers.PyUserNodeRenderer;
@@ -45,6 +46,7 @@ import com.jetbrains.python.psi.PyElementGenerator;
 import com.jetbrains.python.tables.TableCommandParameters;
 import com.jetbrains.python.tables.TableCommandType;
 import org.apache.thrift.TException;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -365,6 +367,30 @@ public abstract class PydevConsoleCommunication extends AbstractConsoleCommunica
     }
   }
 
+  @ApiStatus.Internal
+  public String execRaw(String command) throws PyDebuggerException {
+    if (!isCommunicationClosed()) {
+      return executeBackgroundTask(
+        () -> {
+          try {
+            return getPythonConsoleBackendClient().execRaw(command);
+          }
+          catch (PythonUnhandledException e) {
+            throw new PyDebuggerException(e.traceback);
+          }
+          finally {
+            notifyCommandExecuted(false);
+          }
+        },
+        true,
+        createRuntimeMessage(PyBundle.message("console.getting.table.data")),
+        PyBundle.message("console.table.failed.to.load")
+      );
+    }
+    else {
+      return null;
+    }
+  }
   @Override
   public String execTableCommand(String command, TableCommandType commandType, TableCommandParameters tableCommandParameters) throws PyDebuggerException {
     if (!isCommunicationClosed()) {
@@ -380,6 +406,34 @@ public abstract class PydevConsoleCommunication extends AbstractConsoleCommunica
               format = String.valueOf(((PyDevCommandParameters)tableCommandParameters).getFormat());
             }
             return getPythonConsoleBackendClient().execTableCommand(command, commandType.name(), startIndex, endIndex, format);
+          }
+          catch (PythonTableException e) {
+            throw new PyDebuggerException(e.message);
+          }
+        },
+        true,
+        createRuntimeMessage(PyBundle.message("console.getting.table.data")),
+        PyBundle.message("console.table.failed.to.load")
+      );
+    }
+    else {
+      return null;
+    }
+  }
+
+  @Override
+  public String execTableImageCommand(String command, TableCommandType commandType, TableCommandParameters tableCommandParameters) throws PyDebuggerException {
+    if (!isCommunicationClosed()) {
+      return executeBackgroundTask(
+        () -> {
+          String offset = "";
+          String imageId = "";
+          try {
+            if (tableCommandParameters instanceof PyDevImageCommandParameters) {
+              offset = String.valueOf(((PyDevImageCommandParameters)tableCommandParameters).getOffset());
+              imageId = String.valueOf(((PyDevImageCommandParameters)tableCommandParameters).getImageId());
+            }
+            return getPythonConsoleBackendClient().execTableImageCommand(command, commandType.name(), offset, imageId);
           }
           catch (PythonTableException e) {
             throw new PyDebuggerException(e.message);

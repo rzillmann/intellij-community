@@ -12,32 +12,26 @@ import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.IntellijInternalApi
 import com.intellij.testFramework.common.timeoutRunBlocking
 import com.intellij.util.application
-import com.intellij.util.concurrency.ImplicitBlockingContextTest
 import com.intellij.util.concurrency.Semaphore
-import com.intellij.util.concurrency.runWithImplicitBlockingContextEnabled
 import kotlinx.coroutines.*
 import kotlinx.coroutines.future.asCompletableFuture
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.RepeatedTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
-import org.junit.jupiter.api.extension.ExtendWith
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.Continuation
 import kotlin.coroutines.resume
-import kotlin.random.Random
-import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.sync.Semaphore as KSemaphore
 
 private const val REPETITIONS: Int = 100
 
-@ExtendWith(ImplicitBlockingContextTest.Enabler::class)
 abstract class SuspendingReadActionTest : CancellableReadActionTests() {
 
 
   @RepeatedTest(REPETITIONS)
-  fun context(): Unit = runWithImplicitBlockingContextEnabled {
+  fun context(): Unit {
     timeoutRunBlocking {
       val rootJob = coroutineContext.job
       val application = ApplicationManager.getApplication()
@@ -74,12 +68,7 @@ abstract class SuspendingReadActionTest : CancellableReadActionTests() {
           val suspendingJob = Cancellation.currentJob()!!
           assertReadActionWithoutCurrentJob(suspendingJob) // TODO consider explicitly turning off RA inside runBlockingCancellable
           withContext(Dispatchers.Default) {
-            if (isLockStoredInContext) {
-              assertNestedContext(coroutineContext.job)
-            }
-            else {
-              assertEmptyContext(coroutineContext.job)
-            }
+            assertNestedContext(coroutineContext.job)
           }
           assertReadActionWithoutCurrentJob(suspendingJob)
         }
@@ -241,17 +230,13 @@ class NonBlockingSuspendingReadActionTest : SuspendingReadActionTest() {
           throw assertThrows<CannotReadException> {
             runBlockingCancellable {
               throw assertThrows<CannotReadException> {
-                blockingContext {
-                  throw assertThrows<CannotReadException> {
-                    runBlockingCancellable {
+                throw assertThrows<CannotReadException> {
+                  runBlockingCancellable {
+                    throw assertThrows<CannotReadException> {
                       throw assertThrows<CannotReadException> {
-                        blockingContext {
-                          throw assertThrows<CannotReadException> {
-                            runBlockingCancellable {
-                              waitForPendingWrite().up()
-                              awaitCancellation()
-                            }
-                          }
+                        runBlockingCancellable {
+                          waitForPendingWrite().up()
+                          awaitCancellation()
                         }
                       }
                     }
@@ -424,7 +409,7 @@ class BlockingSuspendingReadActionTest : SuspendingReadActionTest() {
   fun `current job`(): Unit = timeoutRunBlocking {
     val coroutineJob = coroutineContext.job
     readActionBlocking {
-      assertSame(coroutineJob, Cancellation.currentJob()?.parent?.parent)
+      assertSame(coroutineJob, Cancellation.currentJob()?.parent)
     }
   }
 

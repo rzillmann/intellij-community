@@ -88,6 +88,9 @@ interface PartialLocalLineStatusTracker : LineStatusTracker<LocalRange> {
 
   fun addListener(listener: Listener, disposable: Disposable)
 
+  @ApiStatus.Internal
+  fun addListener(listener: LineStatusTrackerListener, disposable: Disposable)
+
   open class ListenerAdapter : Listener
 
   /**
@@ -112,20 +115,6 @@ abstract class PartialCommitHelper(val content: String) {
 }
 
 class PartialCommitContent(val vcsContent: CharSequence, val currentContent: CharSequence, val rangesToCommit: List<LocalRange>)
-
-enum class ExclusionState { ALL_INCLUDED, ALL_EXCLUDED, PARTIALLY, NO_CHANGES }
-
-class LocalRange internal constructor(line1: Int, line2: Int, vcsLine1: Int, vcsLine2: Int, innerRanges: List<InnerRange>?,
-                                      override val clientIds: List<ClientId>,
-                                      val changelistId: String, val exclusionState: RangeExclusionState)
-  : Range(line1, line2, vcsLine1, vcsLine2, innerRanges), LocalLineStatusTrackerImpl.LstLocalRange {
-  init {
-    if (exclusionState is RangeExclusionState.Partial) {
-      exclusionState.validate(vcsLine2 - vcsLine1, line2 - line1)
-    }
-  }
-}
-
 
 @ApiStatus.Internal
 class ChangelistsLocalLineStatusTracker internal constructor(project: Project,
@@ -351,9 +340,10 @@ class ChangelistsLocalLineStatusTracker internal constructor(project: Project,
 
   private inner class MyUndoDocumentListener : DocumentListener {
     override fun beforeDocumentChange(event: DocumentEvent) {
+      if (project.isDisposed) return
       if (hasUndoInCommand) return
       if (undoManager.isUndoOrRedoInProgress) return
-      if (CommandProcessor.getInstance().currentCommand == null) return
+      if (!CommandProcessor.getInstance().isCommandInProgress) return
       hasUndoInCommand = true
 
       registerUndoAction(true)
@@ -374,13 +364,13 @@ class ChangelistsLocalLineStatusTracker internal constructor(project: Project,
     }
 
     override fun undoTransparentActionStarted() {
-      if (CommandProcessor.getInstance().currentCommand == null) {
+      if (!CommandProcessor.getInstance().isCommandInProgress) {
         hasUndoInCommand = false
       }
     }
 
     override fun undoTransparentActionFinished() {
-      if (CommandProcessor.getInstance().currentCommand == null) {
+      if (!CommandProcessor.getInstance().isCommandInProgress) {
         hasUndoInCommand = false
       }
     }
@@ -760,6 +750,25 @@ class ChangelistsLocalLineStatusTracker internal constructor(project: Project,
   }
 
   @RequiresEdt
+  @ApiStatus.Internal
+  fun recreateBlocks(map: Map<Range, LocalChangeList>) {
+    changeListManager.executeUnderDataLock {
+      val rangesToBlockData = map.entries.associate { (range, changelist) ->
+        if (changeListManager.getChangeList(changelist.id) == null) return@executeUnderDataLock
+        val newMarker = ChangeListMarker(changelist)
+        com.intellij.diff.util.Range(range.vcsLine1, range.vcsLine2, range.line1, range.line2) to ChangeListBlockData(marker = newMarker) as DocumentTracker.BlockData
+      }
+
+      documentTracker.writeLock {
+        documentTracker.recreateBlocks(rangesToBlockData)
+        dropExistingUndoActions()
+        updateHighlighters()
+        updateAffectedChangeLists()
+      }
+    }
+  }
+
+  @RequiresEdt
   private fun moveToChangelist(condition: (Block) -> Boolean, changelist: LocalChangeList) {
     changeListManager.executeUnderDataLock {
       if (changeListManager.getChangeList(changelist.id) == null) return@executeUnderDataLock
@@ -1017,6 +1026,9 @@ class ChangelistsLocalLineStatusTracker internal constructor(project: Project,
     eventDispatcher.addListener(listener, disposable)
   }
 
+  override fun addListener(listener: LineStatusTrackerListener, disposable: Disposable) {
+    listeners.addListener(listener, disposable)
+  }
 
   internal class FullState(virtualFile: VirtualFile,
                            ranges: List<RangeState>,

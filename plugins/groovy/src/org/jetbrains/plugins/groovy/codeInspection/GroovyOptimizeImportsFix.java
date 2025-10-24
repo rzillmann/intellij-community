@@ -4,7 +4,6 @@ package org.jetbrains.plugins.groovy.codeInspection;
 import com.intellij.codeInsight.CodeInsightWorkspaceSettings;
 import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer;
 import com.intellij.codeInsight.daemon.impl.DaemonCodeAnalyzerEx;
-import com.intellij.codeInsight.daemon.impl.DaemonCodeAnalyzerImpl;
 import com.intellij.codeInsight.daemon.impl.DaemonListeners;
 import com.intellij.codeInsight.daemon.impl.HighlightInfoType;
 import com.intellij.codeInsight.intention.IntentionAction;
@@ -43,17 +42,17 @@ public final class GroovyOptimizeImportsFix implements IntentionAction {
   }
 
   @Override
-  public void invoke(@NotNull Project project, Editor editor, PsiFile file) throws IncorrectOperationException {
-    final Runnable optimize = new GroovyImportOptimizer().processFile(file);
-    invokeOnTheFlyImportOptimizer(optimize, file, editor);
+  public void invoke(@NotNull Project project, Editor editor, PsiFile psiFile) throws IncorrectOperationException {
+    final Runnable optimize = new GroovyImportOptimizer().processFile(psiFile);
+    invokeOnTheFlyImportOptimizer(optimize, psiFile, editor);
   }
 
   @Override
-  public @NotNull IntentionPreviewInfo generatePreview(@NotNull Project project, @NotNull Editor editor, @NotNull PsiFile file) {
-    String originalText = file.getText();
-    final Runnable optimize = new GroovyImportOptimizer().processFile(file);
+  public @NotNull IntentionPreviewInfo generatePreview(@NotNull Project project, @NotNull Editor editor, @NotNull PsiFile psiFile) {
+    String originalText = psiFile.getText();
+    final Runnable optimize = new GroovyImportOptimizer().processFile(psiFile);
     optimize.run();
-    String newText = file.getText();
+    String newText = psiFile.getText();
     return new IntentionPreviewInfo.CustomDiff(GroovyFileType.GROOVY_FILE_TYPE, originalText, newText);
   }
 
@@ -73,8 +72,8 @@ public final class GroovyOptimizeImportsFix implements IntentionAction {
   }
 
   @Override
-  public boolean isAvailable(@NotNull Project project, Editor editor, PsiFile file) {
-    return file instanceof GroovyFile && (!onTheFly || timeToOptimizeImports((GroovyFile)file, editor));
+  public boolean isAvailable(@NotNull Project project, Editor editor, PsiFile psiFile) {
+    return psiFile instanceof GroovyFile && (!onTheFly || timeToOptimizeImports((GroovyFile)psiFile, editor));
   }
 
   private boolean timeToOptimizeImports(GroovyFile myFile, Editor editor) {
@@ -95,10 +94,9 @@ public final class GroovyOptimizeImportsFix implements IntentionAction {
       }
     }
 
-    DaemonCodeAnalyzerImpl codeAnalyzer = (DaemonCodeAnalyzerImpl)DaemonCodeAnalyzer.getInstance(myFile.getProject());
-    if (!codeAnalyzer.isHighlightingAvailable(myFile)) return false;
-
-    if (!codeAnalyzer.isErrorAnalyzingFinished(myFile)) return false;
+    if (!DaemonCodeAnalyzer.getInstance(myFile.getProject()).isHighlightingAvailable(myFile)) {
+      return false;
+    }
     Document myDocument = PsiDocumentManager.getInstance(myFile.getProject()).getDocument(myFile);
     boolean errors = containsErrorsPreventingOptimize(myFile, myDocument);
 

@@ -1,5 +1,5 @@
 ; Installation pages headers
-LangString choose_install_location  ${LANG_JAPANESE} "  インストール場所の選択"
+LangString choose_install_location ${LANG_JAPANESE} "  インストール場所の選択"
 LangString choose_start_menu_folder ${LANG_JAPANESE} "  スタートメニューフォルダーの選択"
 LangString installing_product ${LANG_JAPANESE} "  イントール中"
 
@@ -34,6 +34,6 @@ LangString uninstall_previous_installations_silent ${LANG_JAPANESE} "サイレ�
 LangString uninstaller_relocated ${LANG_JAPANESE} "アンインストールする際に ${MUI_PRODUCT} のインストールフォルダーが検出されませんでした。uninstall.exe がインストールフォルダーから移動された可能性があります。"
 LangString choose_empty_folder ${LANG_JAPANESE} "$INSTDIR が空ではありません。$\n空のフォルダーを選択してください。"
 LangString application_running ${LANG_JAPANESE} "${MUI_PRODUCT} が動作中です。アプリケーションを閉じた後に OK をクリックしてアンインストールを再試行するか、キャンセルを押して中断してください。"
-LangString not_supported_32bit_win_version ${LANG_JAPANESE} "${MUI_PRODUCT} は Microsoft Windows 32 ビットバージョンをサポートしていません。"
-LangString path_var_too_long ${LANG_JAPANESE} "PATH の長さが 8192 バイトを超えています。$\nインストーラーは PATH を更新できません。"
+LangString unsupported_win_version ${LANG_JAPANESE} "この ${MUI_PRODUCT} ビルドには、Windows 10 1607 以降が必要です。"
+LangString arch_mismatch ${LANG_JAPANESE} "この ${MUI_PRODUCT} ビルドには、$R1 バージョンの Windows が必要です。"  ; $R1 = x64 or ARM64
 LangString out_of_disk_space ${LANG_JAPANESE} "エラー: ディスク空き容量が不足しています！"

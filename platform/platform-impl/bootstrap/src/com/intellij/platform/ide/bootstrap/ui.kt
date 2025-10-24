@@ -12,7 +12,6 @@ import com.intellij.ide.ui.laf.createBaseLaF
 import com.intellij.idea.AppExitCodes
 import com.intellij.openapi.application.ex.ApplicationInfoEx
 import com.intellij.openapi.application.impl.AWTExceptionHandler
-import com.intellij.openapi.application.impl.RawSwingDispatcher
 import com.intellij.openapi.application.setUserInteractiveQosForEdt
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.util.SystemInfoRt
@@ -24,6 +23,7 @@ import com.intellij.ui.icons.CoreIconManager
 import com.intellij.ui.isWindowIconAlreadyExternallySet
 import com.intellij.ui.scale.JBUIScale
 import com.intellij.ui.updateAppWindowIcon
+import com.intellij.util.ui.RawSwingDispatcher
 import com.intellij.util.ui.StartupUiUtil
 import com.intellij.util.ui.accessibility.ScreenReader
 import kotlinx.coroutines.*
@@ -72,8 +72,8 @@ internal suspend fun configureCssUiDefaults() {
     span("html style patching") {
       // create a separate copy for each case
       val globalStyleSheet = createGlobalStyleSheet()
-      uiDefaults.put("javax.swing.JLabel.userStyleSheet", globalStyleSheet)
-      uiDefaults.put("HTMLEditorKit.jbStyleSheet", globalStyleSheet)
+      uiDefaults["javax.swing.JLabel.userStyleSheet"] = globalStyleSheet
+      uiDefaults["HTMLEditorKit.jbStyleSheet"] = globalStyleSheet
     }
   }
 }
@@ -109,8 +109,8 @@ private suspend fun initLafAndScale(isHeadless: Boolean, preloadFontJob: Job?) {
   }
 }
 
-internal fun CoroutineScope.scheduleInitAwtToolkit(lockSystemDirsJob: Job, busyThread: Thread): Job {
-  val task = launch {
+internal fun scheduleInitAwtToolkit(scope: CoroutineScope, lockSystemDirsJob: Job, busyThread: Thread): Job {
+  val task = scope.launch {
     // this should happen before UI initialization - if we're not going to show the UI (in case another IDE instance is already running),
     // we shouldn't initialize AWT toolkit to avoid unnecessary focus stealing and space switching on macOS.
     if (SystemInfoRt.isMac) {
@@ -159,12 +159,10 @@ private suspend fun initAwtToolkit(busyThread: Thread) {
   }
 }
 
-internal fun CoroutineScope.scheduleInitIdeEventQueue(initAwtToolkit: Job, isHeadless: Boolean): Job {
-  return launch {
-    initAwtToolkit.join()
-    withContext(RawSwingDispatcher) {
-      replaceIdeEventQueue(isHeadless)
-    }
+internal fun scheduleInitIdeEventQueue(scope: CoroutineScope, initAwtToolkit: Job, isHeadless: Boolean): Job = scope.launch {
+  initAwtToolkit.join()
+  withContext(RawSwingDispatcher) {
+    replaceIdeEventQueue(isHeadless)
   }
 }
 
@@ -179,6 +177,7 @@ private suspend fun replaceIdeEventQueue(isHeadless: Boolean) {
 
   if (!isHeadless && System.getProperty("idea.check.swing.threading").toBoolean()) {
     span("repaint manager set") {
+      logger<RepaintManager>().info("Setting RepaintManager to AssertiveRepaintManager")
       RepaintManager.setCurrentManager(AssertiveRepaintManager())
     }
   }
@@ -218,12 +217,13 @@ fun checkHiDPISettings() {
 }
 
 // must happen after initUi
-internal fun CoroutineScope.scheduleUpdateFrameClassAndWindowIconAndPreloadSystemFonts(
+internal fun scheduleUpdateFrameClassAndWindowIconAndPreloadSystemFonts(
+  scope: CoroutineScope,
   initAwtToolkitJob: Job,
   initUiScale: Job,
   appInfoDeferred: Deferred<ApplicationInfoEx>,
 ) {
-  launch {
+  scope.launch {
     initAwtToolkitJob.join()
 
     if (StartupUiUtil.isXToolkit()) {

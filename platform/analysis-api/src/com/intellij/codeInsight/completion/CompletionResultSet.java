@@ -1,6 +1,7 @@
 // Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.codeInsight.completion;
 
+import com.intellij.codeInsight.completion.group.GroupedCompletionContributor;
 import com.intellij.codeInsight.lookup.LookupElement;
 import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.openapi.util.NlsContexts;
@@ -10,6 +11,7 @@ import com.intellij.util.Consumer;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.LinkedHashSet;
 
@@ -29,10 +31,12 @@ public abstract class CompletionResultSet implements Consumer<LookupElement> {
   private final java.util.function.Consumer<? super CompletionResult> consumer;
   protected final CompletionService myCompletionService = CompletionService.getCompletionService();
   @ApiStatus.Internal
-  public final CompletionContributor contributor;
+  public final @Nullable CompletionContributor contributor;
   private boolean myStopped;
 
-  protected CompletionResultSet(final PrefixMatcher prefixMatcher, java.util.function.Consumer<? super CompletionResult> consumer, CompletionContributor contributor) {
+  protected CompletionResultSet(@NotNull PrefixMatcher prefixMatcher,
+                                @NotNull java.util.function.Consumer<? super CompletionResult> consumer,
+                                @Nullable CompletionContributor contributor) {
     this.prefixMatcher = prefixMatcher;
     this.consumer = consumer;
     this.contributor = contributor;
@@ -59,14 +63,14 @@ public abstract class CompletionResultSet implements Consumer<LookupElement> {
   }
 
   public void startBatch() {
-    if (consumer instanceof BatchConsumer) {
-      ((BatchConsumer<?>)consumer).startBatch();
+    if (consumer instanceof BatchConsumer<?> batch) {
+      batch.startBatch();
     }
   }
 
   public void endBatch() {
-    if (consumer instanceof BatchConsumer) {
-      ((BatchConsumer<?>)consumer).endBatch();
+    if (consumer instanceof BatchConsumer<?> batch) {
+      batch.endBatch();
     }
   }
 
@@ -102,6 +106,12 @@ public abstract class CompletionResultSet implements Consumer<LookupElement> {
   @Contract(pure = true)
   public abstract @NotNull CompletionResultSet withPrefixMatcher(@NotNull String prefix);
 
+  /**
+   * Creates a new CompletionResultSet with the given relevance sorter. Previously contributed results are not affected.
+   *
+   * @param sorter a new relevance sorter
+   * @return a new result set with the given sorter installed
+   */
   @Contract(pure = true)
   public abstract @NotNull CompletionResultSet withRelevanceSorter(@NotNull CompletionSorter sorter);
 
@@ -122,12 +132,24 @@ public abstract class CompletionResultSet implements Consumer<LookupElement> {
     return myStopped;
   }
 
+  /**
+   * Stops processing of completion candidates.
+   */
   public void stopHere() {
     myStopped = true;
   }
 
-  public LinkedHashSet<CompletionResult> runRemainingContributors(CompletionParameters parameters, final boolean passResult) {
-    final LinkedHashSet<CompletionResult> elements = new LinkedHashSet<>();
+  /**
+   * Runs all instances of {@link CompletionContributor} applicable to {@code parameters} starting from the current one (excluding it).
+   * These contributors won't be run again after this method returns.
+   *
+   * @param parameters the parameters for which the contributors are run.
+   * @param passResult whether the results should be passed to the current CompletionResultSet.
+   * @return the set of results from all run contributors.
+   */
+  public @NotNull LinkedHashSet<CompletionResult> runRemainingContributors(@NotNull CompletionParameters parameters,
+                                                                           boolean passResult) {
+    LinkedHashSet<CompletionResult> elements = new LinkedHashSet<>();
     runRemainingContributors(parameters, result -> {
       if (passResult) {
         passResult(result);
@@ -137,16 +159,37 @@ public abstract class CompletionResultSet implements Consumer<LookupElement> {
     return elements;
   }
 
-  public void runRemainingContributors(CompletionParameters parameters, Consumer<? super CompletionResult> consumer) {
+  /**
+   * Runs all instances of {@link CompletionContributor} applicable to {@code parameters} starting from the current one (excluding it).
+   * These contributors won't be run again after this method returns.
+   *
+   * @param parameters the parameters for which the contributors are run.
+   * @param consumer   the consumer for the results.
+   */
+  public void runRemainingContributors(@NotNull CompletionParameters parameters,
+                                       @NotNull Consumer<? super CompletionResult> consumer) {
     runRemainingContributors(parameters, consumer, true);
   }
 
-  public void runRemainingContributors(CompletionParameters parameters, Consumer<? super CompletionResult> consumer, final boolean stop) {
-    runRemainingContributors(parameters, consumer, stop, null);
-  }
-
-  public void runRemainingContributors(CompletionParameters parameters, Consumer<? super CompletionResult> consumer, final boolean stop,
-                                       CompletionSorter customSorter) {
+  /**
+   * Runs all instances of {@link CompletionContributor} applicable to {@code parameters} starting from the current one (excluding it).
+   *
+   * @param parameters the parameters for which the contributors are run.
+   * @param consumer   the consumer for the results.
+   * @param stop       if {@code false} is passed, no contributors will be run after the current contributor finishes.
+   * @deprecated use {@link #runRemainingContributors(CompletionParameters, Consumer)} instead.
+   * It never should be allowed to pass {@code false} as stop parameter.
+   */
+  @Deprecated
+  public void runRemainingContributors(@NotNull CompletionParameters parameters,
+                                       @NotNull Consumer<? super CompletionResult> consumer,
+                                       boolean stop) {
+    //grouped contributors are not allowed to be used in runRemainingContributors from other contributors
+    if (GroupedCompletionContributor.isGroupEnabledInApp() &&
+        contributor instanceof GroupedCompletionContributor groupedCompletionContributor &&
+        groupedCompletionContributor.groupIsEnabled(parameters)) {
+      return;
+    }
     if (stop) {
       stopHere();
     }
@@ -165,20 +208,20 @@ public abstract class CompletionResultSet implements Consumer<LookupElement> {
       public void consume(CompletionResult result) {
         consumer.consume(result);
       }
-    }, customSorter);
+    });
   }
 
   /**
    * Request that the completion contributors be run again when the user changes the prefix so that it becomes equal to the one given.
    */
-  public void restartCompletionOnPrefixChange(String prefix) {
+  public void restartCompletionOnPrefixChange(@NotNull String prefix) {
     restartCompletionOnPrefixChange(StandardPatterns.string().equalTo(prefix));
   }
 
   /**
    * Request that the completion contributors be run again when the user changes the prefix in a way satisfied by the given condition.
    */
-  public abstract void restartCompletionOnPrefixChange(ElementPattern<String> prefixCondition);
+  public abstract void restartCompletionOnPrefixChange(@NotNull ElementPattern<String> prefixCondition);
 
   /**
    * Request that the completion contributors be run again when the user changes the prefix in any way.

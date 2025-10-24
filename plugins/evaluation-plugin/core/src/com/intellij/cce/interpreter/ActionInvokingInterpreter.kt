@@ -22,10 +22,11 @@ class ActionInvokingInterpreter(private val invokersFactory: InvokersFactory,
       handler.onErrorOccurred(IllegalStateException("File ${fileActions.path} has been modified."), fileActions.sessionsCount)
       return emptyList()
     }
-    var shouldCompleteToken = filter.shouldCompleteToken()
+    var shouldCompleteToken = filter.shouldCompleteToken() && !handler.isStrictLimitExceeded()
     var currentSessionId: SessionId? = null
     var isCanceled = false
     val actions = fileActions.actions.reorder(order)
+      //.filter { it.sessionId.id == "1fcd6539-e40f-48a6-96b7-739f84f80969" }
     for (action in actions) {
       if (currentSessionId != action.sessionId) {
         fileOpener.closeOpenedFiles()
@@ -44,7 +45,7 @@ class ActionInvokingInterpreter(private val invokersFactory: InvokersFactory,
             sessionHandler(session)
           }
           isCanceled = handler.onSessionFinished(fileActions.path, fileActions.sessionsCount - sessions.size)
-          shouldCompleteToken = filter.shouldCompleteToken()
+          shouldCompleteToken = filter.shouldCompleteToken() && !handler.isStrictLimitExceeded()
         }
         is Rename -> actionsInvoker.rename(action.newName)
         is PrintText -> actionsInvoker.printText(action.text)

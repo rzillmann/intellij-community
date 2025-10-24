@@ -1,10 +1,20 @@
-// Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.psi.impl.source;
 
 import com.intellij.psi.tree.IElementType;
 import org.jetbrains.annotations.ApiStatus;
 
-@ApiStatus.Experimental
+
+/**
+ * @deprecated Use the new Java syntax library instead.
+ *             See {@link com.intellij.java.syntax.parser.JavaParser}
+ *             This class is planned to be removed.
+ *             Use {@link com.intellij.psi.impl.java.stubs.JavaStubElementTypes} and
+ *             {@link com.intellij.psi.impl.source.tree.JavaElementType} directly.
+ */
+@Deprecated
+@ApiStatus.ScheduledForRemoval
+@ApiStatus.Internal
 public abstract class AbstractBasicJavaDocElementTypeFactory {
   public static final class JavaDocElementTypeContainer {
     public final IElementType DOC_TAG;
@@ -39,6 +49,8 @@ public abstract class AbstractBasicJavaDocElementTypeFactory {
 
     public final IElementType DOC_MARKDOWN_REFERENCE_LINK;
 
+    public final IElementType DOC_MARKDOWN_REFERENCE_LABEL;
+
     public JavaDocElementTypeContainer(IElementType DOC_TAG,
                                        IElementType DOC_COMMENT,
                                        IElementType DOC_SNIPPET_TAG,
@@ -54,7 +66,8 @@ public abstract class AbstractBasicJavaDocElementTypeFactory {
                                        IElementType DOC_TYPE_HOLDER,
                                        IElementType DOC_PARAMETER_REF,
                                        IElementType DOC_MARKDOWN_CODE_BLOCK,
-                                       IElementType DOC_MARKDOWN_REFERENCE_LINK) {
+                                       IElementType DOC_MARKDOWN_REFERENCE_LINK,
+                                       IElementType DOC_MARKDOWN_REFERENCE_LABEL) {
       this.DOC_TAG = DOC_TAG;
       this.DOC_COMMENT = DOC_COMMENT;
       this.DOC_SNIPPET_TAG = DOC_SNIPPET_TAG;
@@ -71,6 +84,7 @@ public abstract class AbstractBasicJavaDocElementTypeFactory {
       this.DOC_PARAMETER_REF = DOC_PARAMETER_REF;
       this.DOC_MARKDOWN_CODE_BLOCK = DOC_MARKDOWN_CODE_BLOCK;
       this.DOC_MARKDOWN_REFERENCE_LINK = DOC_MARKDOWN_REFERENCE_LINK;
+      this.DOC_MARKDOWN_REFERENCE_LABEL = DOC_MARKDOWN_REFERENCE_LABEL;
     }
   }
 

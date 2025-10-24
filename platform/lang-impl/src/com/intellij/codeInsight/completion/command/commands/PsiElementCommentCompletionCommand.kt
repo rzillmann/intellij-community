@@ -5,8 +5,12 @@ import com.intellij.codeInsight.CodeInsightBundle
 import com.intellij.codeInsight.completion.command.CommandCompletionProviderContext
 import com.intellij.codeInsight.completion.command.HighlightInfoLookup
 import com.intellij.codeInsight.completion.command.getCommandContext
+import com.intellij.codeInsight.generation.CommentByBlockCommentHandler
+import com.intellij.codeInsight.generation.CommentByLineCommentHandler
+import com.intellij.codeInsight.intention.preview.IntentionPreviewInfo
 import com.intellij.idea.ActionsBundle
 import com.intellij.openapi.editor.Editor
+import com.intellij.openapi.editor.SelectionModel
 import com.intellij.openapi.editor.colors.EditorColors
 import com.intellij.psi.PsiComment
 import com.intellij.psi.PsiElement
@@ -16,8 +20,8 @@ import com.intellij.psi.util.PsiTreeUtil
 
 internal class PsiElementCommentByBlockCompletionCommandProvider : ActionCommandProvider(
   actionId = "CommentByBlockComment",
-  name = "Comment/uncomment by block comment",
-  i18nName = CodeInsightBundle.message("command.completion.psi.element.comment.block.text"),
+  synonyms = listOf("Comment/uncomment by block comment"),
+  presentableName = CodeInsightBundle.message("command.completion.psi.element.comment.block.text"),
   previewText = ActionsBundle.message("action.CommentByBlockComment.description")) {
   override fun isApplicable(offset: Int, psiFile: PsiFile, editor: Editor?): Boolean {
     if (!super.isApplicable(offset, psiFile, editor)) return false
@@ -29,9 +33,10 @@ internal class PsiElementCommentByBlockCompletionCommandProvider : ActionCommand
   override fun createCommand(context: CommandCompletionProviderContext): ActionCompletionCommand? {
     val element = getHighLevelContext(context.offset, context.psiFile) ?: return null
     val range = element.textRange ?: return null
+    val adjustedName = if (element is PsiComment) CodeInsightBundle.message("command.completion.psi.element.uncomment.block.text") else presentableName
     return object : ActionCompletionCommand(actionId = super.actionId,
-                                            name = super.name,
-                                            i18nName = super.i18nName,
+                                            synonyms = super.synonyms,
+                                            presentableActionName = adjustedName,
                                             icon = super.icon,
                                             priority = super.priority,
                                             previewText = super.previewText,
@@ -40,13 +45,29 @@ internal class PsiElementCommentByBlockCompletionCommandProvider : ActionCommand
       override fun execute(offset: Int, psiFile: PsiFile, editor: Editor?) {
         if (editor == null) return
         val selectionModel = editor.selectionModel
-        val highLevelContext = getHighLevelContext(offset, psiFile) ?: return
+        if (!highlight(offset, psiFile, selectionModel)) return
+        super.execute(offset, psiFile, editor)
+        selectionModel.removeSelection()
+      }
+
+      private fun highlight(
+        offset: Int,
+        psiFile: PsiFile,
+        selectionModel: SelectionModel,
+      ): Boolean {
+        val highLevelContext = getHighLevelContext(offset, psiFile) ?: return false
         val textRange = highLevelContext.textRange
         val startOffset = textRange.startOffset
         val endOffset = textRange.endOffset
         selectionModel.setSelection(startOffset, endOffset)
-        super.execute(offset, psiFile, editor)
-        selectionModel.removeSelection()
+        return true
+      }
+
+      override fun getPreview(): IntentionPreviewInfo {
+        val commentByBlockCommentHandler = CommentByBlockCommentHandler()
+        return tryToCalculateCommandCompletionPreview(commentByBlockCommentHandler, context,
+                                                      highlight = ({ offset, psiFile, selectionModel -> highlight(offset, psiFile, selectionModel) }),
+                                                      fallback = { super.getPreview() })
       }
     }
   }
@@ -54,8 +75,8 @@ internal class PsiElementCommentByBlockCompletionCommandProvider : ActionCommand
 
 internal class PsiElementCommentByLineCompletionCommandProvider : ActionCommandProvider(
   actionId = "CommentByLineComment",
-  name = "Comment by line comment",
-  i18nName = CodeInsightBundle.message("command.completion.psi.element.comment.line.text"),
+  synonyms = listOf("Comment by line comment"),
+  presentableName = CodeInsightBundle.message("command.completion.psi.element.comment.line.text"),
   previewText = ActionsBundle.message("action.CommentByLineComment.description")) {
   override fun isApplicable(offset: Int, psiFile: PsiFile, editor: Editor?): Boolean {
     if (!super.isApplicable(offset, psiFile, editor)) return false
@@ -78,8 +99,7 @@ internal class PsiElementCommentByLineCompletionCommandProvider : ActionCommandP
     val element = getHighLevelContext(context.offset, context.psiFile) ?: return null
     val range = element.textRange ?: return null
     return object : ActionCompletionCommand(actionId = super.actionId,
-                                            name = super.name,
-                                            i18nName = super.i18nName,
+                                            presentableActionName = super.presentableName,
                                             icon = super.icon,
                                             priority = super.priority,
                                             previewText = super.previewText,
@@ -88,7 +108,17 @@ internal class PsiElementCommentByLineCompletionCommandProvider : ActionCommandP
       override fun execute(offset: Int, psiFile: PsiFile, editor: Editor?) {
         if (editor == null) return
         val selectionModel = editor.selectionModel
-        val highLevelContext = getHighLevelContext(offset, psiFile) ?: return
+        if (!highlight(offset, psiFile, selectionModel)) return
+        super.execute(offset, psiFile, editor)
+        selectionModel.removeSelection()
+      }
+
+      private fun highlight(
+        offset: Int,
+        psiFile: PsiFile,
+        selectionModel: SelectionModel,
+      ): Boolean {
+        val highLevelContext = getHighLevelContext(offset, psiFile) ?: return false
         val textRange = highLevelContext.textRange
         var startOffset = textRange.startOffset
         val endOffset = textRange.endOffset
@@ -98,8 +128,14 @@ internal class PsiElementCommentByLineCompletionCommandProvider : ActionCommandP
           current = PsiTreeUtil.skipWhitespacesBackward(current)
         }
         selectionModel.setSelection(startOffset, endOffset)
-        super.execute(offset, psiFile, editor)
-        selectionModel.removeSelection()
+        return true
+      }
+
+      override fun getPreview(): IntentionPreviewInfo {
+        val handler = CommentByLineCommentHandler()
+        return tryToCalculateCommandCompletionPreview(handler, context,
+                                                      highlight = ({ offset, psiFile, selectionModel -> highlight(offset, psiFile, selectionModel) }),
+                                                      fallback = { super.getPreview() })
       }
     }
   }

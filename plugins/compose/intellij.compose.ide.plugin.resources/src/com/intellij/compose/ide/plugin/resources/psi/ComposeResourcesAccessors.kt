@@ -6,16 +6,20 @@ import com.intellij.openapi.application.runUndoTransparentWriteAction
 import com.intellij.openapi.application.writeAction
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.util.concurrency.annotations.RequiresWriteLock
-import java.nio.file.Files
 import java.nio.file.Path
 import java.util.*
+import kotlin.io.path.createFile
+import kotlin.io.path.exists
+import kotlin.io.path.invariantSeparatorsPathString
 
-private const val ITEMS_PER_FILE_LIMIT = 500
+private const val ITEMS_PER_FILE_LIMIT = 100
 private const val RESOURCE_ITEM_CLASS = "ResourceItem"
 private const val LANGUAGE_QUALIFIER = "LanguageQualifier"
 private const val REGION_QUALIFIER = "RegionQualifier"
 private const val THEME_QUALIFIER = "ThemeQualifier"
 private const val DENSITY_QUALIFIER = "DensityQualifier"
+private const val INTERNAL_RESOURCE_API = "InternalResourceApi"
+private const val COMPOSE_RESOURCES_FQN = "org.jetbrains.compose.resources"
 
 internal suspend fun getAccessorsSpecs(
   //type -> id -> items
@@ -23,6 +27,8 @@ internal suspend fun getAccessorsSpecs(
   packageName: String,
   sourceSetName: String,
   moduleDir: String,
+  isPublicResClass: Boolean,
+  nameOfResClass: String,
 ) {
 
 
@@ -33,11 +39,13 @@ internal suspend fun getAccessorsSpecs(
 
     chunks.forEachIndexed { index, ids ->
       getChunkFileSpec(
-        type,
-        type.accessorName.uppercaseFirstChar() + index + "." + sourceSetName + ".kt",
-        packageName,
-        moduleDir,
-        idToResources.subMap(ids.first(), true, ids.last(), true)
+        type = type,
+        fileName = type.accessorName.uppercaseFirstChar() + index + "." + sourceSetName + ".kt",
+        packageName = packageName,
+        moduleDir = moduleDir,
+        idToResources = idToResources.subMap(ids.first(), true, ids.last(), true),
+        isPublicResClass = isPublicResClass,
+        nameOfResClass = nameOfResClass,
       )
     }
   }
@@ -50,33 +58,37 @@ private suspend fun getChunkFileSpec(
   packageName: String,
   moduleDir: String,
   idToResources: Map<String, List<ResourceAccessorItem>>,
+  isPublicResClass: Boolean,
+  nameOfResClass: String,
 ) {
   val content = buildString {
     append("""
-        @file:OptIn(org.jetbrains.compose.resources.InternalResourceApi::class)
+        @file:OptIn($INTERNAL_RESOURCE_API::class)
 
         package $packageName
 
         import kotlin.OptIn
-        import org.jetbrains.compose.resources.${type.resourceName}
-        import org.jetbrains.compose.resources.$RESOURCE_ITEM_CLASS
-        import org.jetbrains.compose.resources.$LANGUAGE_QUALIFIER
-        import org.jetbrains.compose.resources.$REGION_QUALIFIER
-        import org.jetbrains.compose.resources.$THEME_QUALIFIER
-        import org.jetbrains.compose.resources.$DENSITY_QUALIFIER
+        import $COMPOSE_RESOURCES_FQN.$INTERNAL_RESOURCE_API
+        import $COMPOSE_RESOURCES_FQN.${type.resourceName}
+        import $COMPOSE_RESOURCES_FQN.$RESOURCE_ITEM_CLASS
+        import $COMPOSE_RESOURCES_FQN.$LANGUAGE_QUALIFIER
+        import $COMPOSE_RESOURCES_FQN.$REGION_QUALIFIER
+        import $COMPOSE_RESOURCES_FQN.$THEME_QUALIFIER
+        import $COMPOSE_RESOURCES_FQN.$DENSITY_QUALIFIER
         
       """.trimIndent())
     appendLine()
+    val visibilityModifier = if (isPublicResClass) "public" else "internal"
     idToResources.forEach { (resName, items) ->
       appendLine(
         buildString {
-          append("internal val Res.${type.accessorName}.${resName}: ${type.resourceName} get() = ")
+          append("$visibilityModifier val $nameOfResClass.${type.accessorName}.${resName}: ${type.resourceName} by lazy { ")
           append("${type.resourceName}(\"${type.typeName}:${resName}\", ${if (type.isStringType) "\"$resName\", " else ""}")
-          append(items.joinToString(prefix = "setOf(", postfix = "))") { item ->
+          append(items.joinToString(prefix = "setOf(", postfix = ")) }") { item ->
             buildString {
               append("${RESOURCE_ITEM_CLASS}(")
               append("setOf(${item.addQualifiers()}),")
-              append("\"${item.path}\",")
+              append("\"${item.path.invariantSeparatorsPathString}\",")
               append("${item.offset},")
               append(item.size)
               append(")")
@@ -101,14 +113,11 @@ private suspend fun getChunkFileSpec(
 @RequiresWriteLock
 private suspend fun writeAccessors(moduleDir: String, fileName: String, content: String): Unit = writeAction {
   val path = Path.of(moduleDir, fileName)
-  runUndoTransparentWriteAction {
-    Files.writeString(path, content)
-  }
-
-  path.toVirtualFile()?.let { virtualFile ->
-    virtualFile.refresh(false, false)
-    FileDocumentManager.getInstance().reloadFiles(virtualFile)
-  }
+  if (!path.exists()) path.createFile()
+  val documentManager = FileDocumentManager.getInstance()
+  val document = path.toVirtualFile()?.let { virtualFile -> documentManager.getDocument(virtualFile) } ?: return@writeAction
+  runUndoTransparentWriteAction { document.setText(content) }
+  documentManager.saveDocument(document)
 }
 
 

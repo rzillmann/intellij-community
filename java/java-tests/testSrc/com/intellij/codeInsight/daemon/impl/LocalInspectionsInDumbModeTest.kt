@@ -5,6 +5,7 @@ import com.intellij.codeInsight.daemon.DaemonAnalyzerTestCase
 import com.intellij.codeInsight.daemon.DaemonAnalyzerTestCase.CanChangeDocumentDuringHighlighting
 import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer
 import com.intellij.codeInspection.*
+import com.intellij.codeInspection.ex.InspectionProfileWrapper
 import com.intellij.codeInspection.ex.LocalInspectionToolWrapper
 import com.intellij.ide.highlighter.JavaFileType
 import com.intellij.lang.java.JavaLanguage
@@ -29,7 +30,9 @@ import java.util.concurrent.atomic.AtomicInteger
 @CanChangeDocumentDuringHighlighting
 class LocalInspectionsInDumbModeTest : DaemonAnalyzerTestCase() {
   override fun runTestRunnable(testRunnable: ThrowableRunnable<Throwable?>) {
-    DaemonProgressIndicator.runInDebugMode<Exception> { -> super.runTestRunnable(testRunnable) }
+    DaemonProgressIndicator.runInDebugMode<Exception> {
+      super.runTestRunnable(testRunnable)
+    }
   }
 
   fun testLocalInspectionInDumbMode() {
@@ -89,17 +92,17 @@ class LocalInspectionsInDumbModeTest : DaemonAnalyzerTestCase() {
 
     val unrelatedToolWrapper = createUnrelatedToolWrapper()
     enableInspectionTool(project, unrelatedToolWrapper, testRootDisposable)
-    LocalInspectionsPass.forceNoDuplicateCheckInTests(testRootDisposable)
-
-    @Language("JAVA")
-    val text = """
+    InspectionProfileWrapper.runWithNoDuplicateCheckInTests {
+      @Language("JAVA")
+      val text = """
       // comment
     """
-    configureByText(JavaFileType.INSTANCE, text)
+      configureByText(JavaFileType.INSTANCE, text)
 
-    doHighlightingInDumbMode()
+      doHighlightingInDumbMode()
 
-    assertFalse(unrelatedToolWrapper.isToolInstantiated())
+      assertFalse(unrelatedToolWrapper.isToolInstantiated())
+    }
   }
 
   fun testLocalInspectionDontInitializeUnrelatedTools() {
@@ -107,17 +110,17 @@ class LocalInspectionsInDumbModeTest : DaemonAnalyzerTestCase() {
 
     val unrelatedToolWrapper = createUnrelatedToolWrapper()
     enableInspectionTool(project, unrelatedToolWrapper, testRootDisposable)
-    LocalInspectionsPass.forceNoDuplicateCheckInTests(testRootDisposable)
-
-    @Language("JAVA")
-    val text = """
+    InspectionProfileWrapper.runWithNoDuplicateCheckInTests {
+      @Language("JAVA")
+      val text = """
       // comment
     """
-    configureByText(JavaFileType.INSTANCE, text)
+      configureByText(JavaFileType.INSTANCE, text)
 
-    doHighlighting()
+      doHighlighting()
 
-    assertFalse(unrelatedToolWrapper.isToolInstantiated())
+      assertFalse(unrelatedToolWrapper.isToolInstantiated())
+    }
   }
 
   fun testJavaSuppressor() {
@@ -157,7 +160,7 @@ class LocalInspectionsInDumbModeTest : DaemonAnalyzerTestCase() {
     val javaRedundantSuppressor = LanguageInspectionSuppressors.INSTANCE.allForLanguage(JavaLanguage.INSTANCE)
       .filterIsInstance<RedundantSuppressionDetector>()
       .firstOrNull()
-    assertNotNull(javaRedundantSuppressor)// Java Redundant Suppressor is expected to exist
+    assertNotNull(javaRedundantSuppressor) // Java Redundant Suppressor is expected to exist
 
     @Language("JAVA")
     val text = """

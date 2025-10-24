@@ -116,6 +116,7 @@ interface Editor {
   val layout: EditorLayout
 
   val composableTextRange: TextRange?
+  val timestamp: Long
 }
 
 interface MutableEditor : Editor {
@@ -149,6 +150,8 @@ interface EditorLayout {
 
 interface MutableEditorLayout : EditorLayout {
   fun unfold(affectedFolds: List<Interval<*, Fold>>)
+
+  fun toggleFolds(add: List<Interval<*, Fold>>, remove: List<Interval<*, Fold>>)
 }
 
 // Order is significant: the greater index, the more specific is the command type
@@ -192,3 +195,4 @@ interface MutableDocument : Document {
 }
 
 object EditorCommandKey : EditorMetaKey<EditorCommandType>
+

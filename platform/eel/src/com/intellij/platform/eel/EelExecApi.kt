@@ -1,15 +1,29 @@
 // Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.platform.eel
 
+import com.intellij.platform.eel.EelExecApi.ExecuteProcessOptions
+import com.intellij.platform.eel.channels.EelDelicateApi
+import com.intellij.platform.eel.channels.EelReceiveChannel
+import com.intellij.platform.eel.channels.EelSendChannel
 import com.intellij.platform.eel.path.EelPath
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
+import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.annotations.CheckReturnValue
+import java.util.*
 
 /**
  * Methods related to process execution: start a process, collect stdin/stdout/stderr of the process, etc.
  */
-interface EelExecApi {
-
+@ApiStatus.Experimental
+sealed interface EelExecApi {
+  @get:ApiStatus.Experimental
   val descriptor: EelDescriptor
+
+  @Throws(ExecuteProcessException::class)
+  @ThrowsChecked(ExecuteProcessException::class)
+  @ApiStatus.Experimental
+  suspend fun spawnProcess(@GeneratedBuilder generatedBuilder: ExecuteProcessOptions): EelProcess
 
   /**
    * Executes the process, returning either an [EelProcess] or an error provided by the remote operating system.
@@ -21,16 +35,37 @@ interface EelExecApi {
    * See [executeProcessBuilder]
    */
   @CheckReturnValue
-  suspend fun execute(@GeneratedBuilder generatedBuilder: ExecuteProcessOptions): EelResult<EelProcess, ExecuteProcessError>
+  @Deprecated("Use spawnProcess instead")
+  @ApiStatus.Internal
+  suspend fun execute(@GeneratedBuilder generatedBuilder: ExecuteProcessOptions): EelResult<EelProcess, ExecuteProcessError> {
+    data class Ok<P : EelProcess>(override val value: P) : EelResult.Ok<P>
+    data class Error(override val error: ExecuteProcessError) : EelResult.Error<ExecuteProcessError>
+    data class ExecuteProcessErrorImpl(override val errno: Int, override val message: String) : ExecuteProcessError
 
+    try {
+      return Ok(spawnProcess(generatedBuilder))
+    }
+    catch (e: ExecuteProcessException) {
+      return Error(ExecuteProcessErrorImpl(e.errno, e.message))
+    }
+  }
+
+  @ApiStatus.Experimental
   interface ExecuteProcessOptions {
+    @get:ApiStatus.Experimental
     val args: List<String> get() = listOf()
+
+    /**
+     * Scope this process is bound to. Once scope dies -- this process dies as well.
+     */
+    val scope: CoroutineScope? get() = null
 
     /**
      * By default, environment is always inherited, which may be unwanted. [ExecuteProcessOptions.env] allows
      * to alter some environment variables, it doesn't clear the variables from the parent. When the process should be started in an
      * environment like in a terminal, the response of [fetchLoginShellEnvVariables] should be put into [ExecuteProcessOptions.env].
      */
+    @get:ApiStatus.Experimental
     val env: Map<String, String> get() = mapOf()
 
     /**
@@ -40,12 +75,18 @@ interface EelExecApi {
      *
      * See `termcap(2)`, `terminfo(2)`, `ncurses(3X)` and ISBN `0937175226`.
      */
-    val ptyOrStdErrSettings: PtyOrStdErrSettings? get() = null
+    @get:ApiStatus.Experimental
+    val interactionOptions: InteractionOptions? get() = null
+
+    @Deprecated("Switch to interactionOptions", replaceWith = ReplaceWith("interactionOptions"))
+    @get:ApiStatus.Internal
+    val ptyOrStdErrSettings: PtyOrStdErrSettings? get() = interactionOptions
 
     /**
      * All argument, all paths, should be valid for the remote machine. F.i., if the IDE runs on Windows, but IJent runs on Linux,
      * [ExecuteProcessOptions.workingDirectory] is the path on the Linux host. There's no automatic path mapping in this interface.
      */
+    @get:ApiStatus.Experimental
     val workingDirectory: EelPath? get() = null
 
     // TODO: Use EelPath as soon as it will be merged
@@ -57,13 +98,58 @@ interface EelExecApi {
      * All argument, all paths, should be valid for the remote machine. F.i., if the IDE runs on Windows, but IJent runs on Linux,
      * [ExecuteProcessOptions.workingDirectory] is the path on the Linux host. There's no automatic path mapping in this interface.
      */
+    @get:ApiStatus.Experimental
     val exe: String
   }
 
   /**
-   * Gets the same environment variables on the remote machine as the user would get if they run the shell.
+   * Use [environmentVariables] instead.
+   *
+   * This method is still not deprecated only because it has an automatically refreshable cache inside.
+   * In contrast, [environmentVariables] only allows manually invalidating the cache.
    */
-  suspend fun fetchLoginShellEnvVariables(): Map<String, String>
+  @ApiStatus.Experimental
+  @ApiStatus.Obsolete
+  suspend fun fetchLoginShellEnvVariables(): Map<String, String> =
+    when (this) {
+      is EelExecPosixApi -> {
+        if (this is LocalEelExecApi) {
+          environmentVariables().minimal().eelIt().await()
+        }
+        else {
+          var now = 0L
+          // The previous implementation used the same timeout, and in the previous implementation it was chosen as a wild guess.
+          val cacheDuration = 10_000_000_000L
+          val expireAt = cacheForObsoleteEnvVarExpireAt.compute(descriptor) { _, expireAt ->
+            now = System.nanoTime()
+            if (expireAt != null && expireAt <= now) expireAt
+            else now + cacheDuration
+          }!!
+          environmentVariables().loginInteractive().onlyActual(expireAt <= now).eelIt().await()
+        }
+      }
+      is EelExecWindowsApi -> environmentVariables().eelIt().await()
+    }
+
+  /**
+   * Gets the same environment variables on the remote machine as the user would get.
+   *
+   * See also [EelExecPosixApi.PosixEnvironmentVariablesOptions].
+   */
+  @ApiStatus.Experimental
+  fun environmentVariables(@GeneratedBuilder opts: EnvironmentVariablesOptions): Deferred<Map<String, String>>
+
+  interface EnvironmentVariablesOptions {
+    /**
+     * The implementation MAY cache the environment variables by default because they rarely change in real life.
+     * By setting this value to `true`, the cache will be refreshed, and the result will contain the freshest environment variables.
+     *
+     * Makes sense only for remote Eels (via IJent)
+     * or with such [EelExecPosixApi.PosixEnvironmentVariablesOptions.mode] that invoke a shell.
+     * In other cases this option has no effect.
+     */
+    val onlyActual: Boolean get() = false
+  }
 
   /**
    * Finds executable files by name.
@@ -88,14 +174,88 @@ interface EelExecApi {
    * all of them are returned so that the preferable one can be chosen later.
    *
    */
+  @ApiStatus.Experimental
   suspend fun findExeFilesInPath(binaryName: String): List<EelPath>
 
+  /**
+   * Represents a callback script which can be called from command-line tools like `git`.
+   * The script passes its input data to the IDE and then passes back the answer.
+   *
+   * It's important to call [ExternalCliEntrypoint.delete] after the process which could call the script finishes
+   * to avoid resource leak.
+   */
+  @ApiStatus.Internal
+  interface ExternalCliEntrypoint {
+    /**
+     * Path to the callback script which can be passed to the tools like git.
+     */
+    val path: EelPath
+
+    /**
+     * Listens to the invocations of the script and lets [processor] to answer the cli requests.
+     * Never exits normally, so should be canceled externally when not needed.
+     */
+    suspend fun consumeInvocations(processor: suspend (ExternalCliProcess) -> Int): Nothing
+  }
+
+  @ApiStatus.Internal
+  interface ExternalCliProcess {
+    val workingDir: EelPath
+    val executableName: EelPath
+
+    /**
+     * Arguments passed to the script, `args[0]` is expected to be the name of the executable.
+     */
+    val args: List<String>
+
+    /**
+     * Only the environment variables which are mentioned explicitly in [ExecuteProcessOptions.env] are guaranteed to be here.
+     */
+    val environment: Map<String, String>
+    val pid: EelApi.Pid
+
+    val stdin: EelReceiveChannel
+    val stdout: EelSendChannel
+    val stderr: EelSendChannel
+
+    /**
+     * Stop the callback script with exit code [exitCode].
+     * Should be called exactly once, after calling it [stdin] [stdout] and [stderr] should not be used.
+     */
+    fun exit(exitCode: Int)
+  }
+
+  @ApiStatus.Internal
+  interface ExternalCliOptions {
+    val filePrefix: String
+    val envVariablesToCapture: List<String>
+  }
+
+  @ApiStatus.Internal
+  // TODO remove when local implementation will implement the api properly
+  interface LocalExternalCliOptions : ExternalCliOptions {
+    val mainClass: Class<*>
+    val useBatchFile: Boolean
+  }
+
+  // TODO Generate builder?
+  @CheckReturnValue
+  @ApiStatus.Internal
+  suspend fun createExternalCli(options: ExternalCliOptions): ExternalCliEntrypoint
+
+  @Deprecated("Use spawnProcess instead")
+  @ApiStatus.Internal
   interface ExecuteProcessError : EelError {
     val errno: Int
     val message: String
   }
 
+  @Deprecated("Switch to InteractionOptions", replaceWith = ReplaceWith("InteractionOptions"))
+  @ApiStatus.Internal
   sealed interface PtyOrStdErrSettings
+
+  @ApiStatus.Experimental
+  sealed interface InteractionOptions : PtyOrStdErrSettings
 
   /**
    * Runs a process with terminal (using `pty(7)`).
@@ -103,35 +263,144 @@ interface EelExecApi {
    *
    * Both `stderr` and `stdout` will be connected to this terminal, so `stderr` will be closed and merged with `stdout`
    * */
-  data class Pty(val columns: Int, val rows: Int, val echo: Boolean) : PtyOrStdErrSettings
+  @ApiStatus.Experimental
+  class Pty : InteractionOptions {
+    val columns: Int
+    val rows: Int
+
+    @ApiStatus.Internal
+    val echo: Boolean
+
+    @ApiStatus.Experimental
+    constructor(columns: Int, rows: Int) : this(columns, rows, true)
+
+    @ApiStatus.Internal
+    constructor(columns: Int, rows: Int, echo: Boolean) {
+      this.columns = columns
+      this.rows = rows
+      this.echo = echo
+    }
+  }
 
   /**
-   * Do not use pty, but redirect `stderr` to `stdout` much like `redirectErrorStream` in JVM
+   * Do not use pty, but redirect `stderr` to [to]
    */
-  data object RedirectStdErr : PtyOrStdErrSettings
+  @ApiStatus.Experimental
+  class RedirectStdErr(val to: RedirectTo) : InteractionOptions
+
+  @ApiStatus.Experimental
+  enum class RedirectTo {
+    /**
+     * `/dev/null`, much like `DISCARD` in JVM
+     */
+    NULL,
+
+    /**
+     * `stdout` much like `redirectErrorStream` in JVM
+     */
+    STDOUT
+  }
 }
 
+@ApiStatus.Experimental
+interface EelExecPosixApi : EelExecApi {
+  @ThrowsChecked(ExecuteProcessException::class)
+  @ApiStatus.Experimental
+  override suspend fun spawnProcess(@GeneratedBuilder generatedBuilder: ExecuteProcessOptions): EelPosixProcess
+
+  @ApiStatus.Experimental
+  override fun environmentVariables(
+    @GeneratedBuilder(PosixEnvironmentVariablesOptions::class) opts: EelExecApi.EnvironmentVariablesOptions,
+  ): Deferred<Map<String, String>>
+
+  interface PosixEnvironmentVariablesOptions : EelExecApi.EnvironmentVariablesOptions {
+    val mode: Mode get() = Mode.LOGIN_NON_INTERACTIVE
+
+    enum class Mode {
+      /**
+       * The fastest way to get environment variables. It doesn't call shell scripts written by users.
+       * At least, the environment variable `PATH` exists, but it may differ from what the user has in their `~/.profile` written.
+       * No guarantee for other environment variables.
+       */
+      MINIMAL,
+
+      /**
+       * This mode executes a shell process supposed to load various profile scripts:
+       * `~/.profile`, `~/.bashrc`, `~/.zshrc`, `/etc/profile` and so on.
+       *
+       * This mode may load not all environment variables, depending on what's written in user's configs
+       * because default `~/.bashrc` files in some distros like Debian and Ubuntu contain strings like `[ -z "$PS1" ] && return`.
+       * Often people put their adjustments at the bottom of the profile file, and therefore their code is not executed in the non-interactive mode.
+       */
+      LOGIN_NON_INTERACTIVE,
+
+      /**
+       *  **Use with caution, avoid when possible.**
+       *
+       * This mode executes a shell process supposed to load various profile scripts:
+       * `~/.profile`, `~/.bashrc`, `~/.zshrc`, `/etc/profile` and so on.
+       *
+       * The implementation launches an interactive shell session, so it reads all environment variables unlike [LOGIN_NON_INTERACTIVE].
+       *
+       * However, it's not conventional to run interactive shells without having an actual user interaction.
+       * And no way for user interaction is provided.
+       *
+       * Here are some real cases reported by our users. They're not exceptional cases but rather usual things.
+       * In these cases this mode led to inability to fetch environment variables or high CPU consumption:
+       * * `ssh-add` in `~/.bashrc` waits for a key passphrase, and the shell process hangs forever, IDE becomes unusable.
+       * * `~/.bashrc` starts `screen` or `tmux`, the shell process hangs forever.
+       * * `~/.bashrc` starts `ssh-agent`, and the operating system quickly becomes polluted with lots of unused SSH agents.
+       * * `~/.bashrc` calls `curl` to write the current weather, news, jokes, etc. CPU consumption grows, IDE works slower.
+       */
+      @EelDelicateApi
+      LOGIN_INTERACTIVE,
+    }
+  }
+}
+
+@ApiStatus.Experimental
+interface EelExecWindowsApi : EelExecApi {
+  @ThrowsChecked(ExecuteProcessException::class)
+  @ApiStatus.Experimental
+  override suspend fun spawnProcess(@GeneratedBuilder generatedBuilder: ExecuteProcessOptions): EelWindowsProcess
+}
+
+@ApiStatus.Experimental
 suspend fun EelExecApi.where(exe: String): EelPath? {
   return this.findExeFilesInPath(exe).firstOrNull()
 }
 
-fun EelExecApi.execute(exe: String, vararg args: String): EelExecApiHelpers.Execute =
-  execute(exe).args(*args)
+@ApiStatus.Experimental
+fun EelExecApi.spawnProcess(exe: EelPath, vararg args: String): EelExecApiHelpers.SpawnProcess =
+  spawnProcess(exe.toString()).args(*args)
+
+@ApiStatus.Experimental
+fun EelExecApi.spawnProcess(exe: String, vararg args: String): EelExecApiHelpers.SpawnProcess =
+  spawnProcess(exe).args(*args)
+
+@ApiStatus.Experimental
+fun EelExecPosixApi.spawnProcess(exe: String, vararg args: String): EelExecPosixApiHelpers.SpawnProcess =
+  spawnProcess(exe).args(*args)
+
+@ApiStatus.Experimental
+fun EelExecWindowsApi.spawnProcess(exe: String, vararg args: String): EelExecWindowsApiHelpers.SpawnProcess =
+  spawnProcess(exe).args(*args)
 
 /**
  * Path to a shell / command processor: `cmd.exe` on Windows and Bourne Shell (`sh`) on POSIX.
  * Second argument is the one you might provide to this shell to execute command and exit, i.e.: `cmd /C` or `sh -c`
  */
+@ApiStatus.Internal
 suspend fun EelExecApi.getShell(): Pair<EelPath, String> {
-  val (shell, cmdArg) = when (this.descriptor.platform) {
-    is EelPlatform.Windows -> {
+  val (shell, cmdArg) = when (this.descriptor.osFamily) {
+    EelOsFamily.Windows -> {
       val envs = fetchLoginShellEnvVariables()
       Pair(envs["ComSpec"] ?: run {
         val winRoot = envs.getOrDefault("SystemRoot", "c:\\Windows")
         "$winRoot\\system32\\cmd.exe"
       }, "/C")
     }
-    is EelPlatform.Posix -> {
+    EelOsFamily.Posix -> {
       // TODO: use `confstr(3)` to get `PATH` with posix tools.
       val sh = findExeFilesInPath("sh").firstOrNull()?.toString() ?: "/bin/sh"
       Pair(sh, "-c")
@@ -139,3 +408,9 @@ suspend fun EelExecApi.getShell(): Pair<EelPath, String> {
   }
   return Pair(EelPath.parse(shell, descriptor), cmdArg)
 }
+
+/** Hopefully, it's a temporary workaround. */
+@ApiStatus.Internal
+interface LocalEelExecApi
+
+private val cacheForObsoleteEnvVarExpireAt = Collections.synchronizedMap(WeakHashMap<EelDescriptor, Long>())

@@ -70,15 +70,15 @@ public final class GroovyDslAnnotator implements Annotator {
     }
 
     @Override
-    public boolean isAvailable(@NotNull Project project, Editor editor, PsiFile file) {
+    public boolean isAvailable(@NotNull Project project, Editor editor, PsiFile psiFile) {
       return true;
     }
 
     @Override
-    public void invoke(@NotNull Project project, Editor editor, PsiFile file) throws IncorrectOperationException {
+    public void invoke(@NotNull Project project, Editor editor, PsiFile psiFile) throws IncorrectOperationException {
       FileDocumentManager.getInstance().saveAllDocuments();
       GroovyDslFileIndex.activate(myVfile);
-      DaemonCodeAnalyzer.getInstance(project).restart();
+      DaemonCodeAnalyzer.getInstance(project).restart(this);
     }
 
     @Override

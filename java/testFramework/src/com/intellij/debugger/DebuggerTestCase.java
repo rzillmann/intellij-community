@@ -18,7 +18,6 @@ import com.intellij.debugger.ui.breakpoints.BreakpointManager;
 import com.intellij.debugger.ui.impl.watch.WatchItemDescriptor;
 import com.intellij.debugger.ui.tree.render.NodeRenderer;
 import com.intellij.execution.ExecutionException;
-import com.intellij.execution.Executor;
 import com.intellij.execution.configurations.*;
 import com.intellij.execution.executors.DefaultDebugExecutor;
 import com.intellij.execution.process.ProcessEvent;
@@ -35,12 +34,8 @@ import com.intellij.openapi.application.ex.ApplicationManagerEx;
 import com.intellij.openapi.compiler.CompilerManager;
 import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.fileEditor.ex.FileEditorManagerEx;
-import com.intellij.openapi.module.Module;
-import com.intellij.openapi.options.SettingsEditor;
-import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.util.Key;
-import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.psi.JavaPsiFacade;
 import com.intellij.psi.PsiClass;
 import com.intellij.psi.PsiDocumentManager;
@@ -66,6 +61,9 @@ import javax.swing.*;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 public abstract class DebuggerTestCase extends ExecutionWithDebuggerToolsTestCase {
   protected static final int DEFAULT_ADDRESS = 3456;
@@ -75,6 +73,7 @@ public abstract class DebuggerTestCase extends ExecutionWithDebuggerToolsTestCas
   private RunProfileState myRunnableState;
   private final List<ThrowableRunnable<Throwable>> myTearDownRunnables = new ArrayList<>();
   private CompilerManagerImpl myCompilerManager;
+  private final AtomicBoolean myProcessStarted = new AtomicBoolean();
 
   @Override
   protected void setUp() throws Exception {
@@ -124,6 +123,17 @@ public abstract class DebuggerTestCase extends ExecutionWithDebuggerToolsTestCas
     myTearDownRunnables.add(0, runnable);
   }
 
+  protected final <T> void restoreSettingAfterTest(Supplier<? extends T> getter, Consumer<? super T> setter) {
+    var oldValue = getter.get();
+    atDebuggerTearDown(() -> setter.accept(oldValue));
+  }
+
+  protected final <T> void setSettingForTest(Supplier<? extends T> getter, Consumer<? super T> setter, T newValue) {
+    var oldValue = getter.get();
+    setter.accept(newValue);
+    atDebuggerTearDown(() -> setter.accept(oldValue));
+  }
+
   @Override
   protected void initApplication() throws Exception {
     super.initApplication();
@@ -138,7 +148,7 @@ public abstract class DebuggerTestCase extends ExecutionWithDebuggerToolsTestCas
   protected void runTestRunnable(@NotNull ThrowableRunnable<Throwable> testRunnable) throws Throwable {
     super.runTestRunnable(testRunnable);
     if (getDebugProcess() != null) {
-      getDebugProcess().getProcessHandler().startNotify();
+      runProcess();
       waitProcess(getDebugProcess().getProcessHandler());
       waitForCompleted();
       //disposeSession(myDebuggerSession);
@@ -148,6 +158,12 @@ public abstract class DebuggerTestCase extends ExecutionWithDebuggerToolsTestCas
 
     throwExceptionsIfAny();
     checkTestOutput();
+  }
+
+  protected final void runProcess() {
+    if (getDebugProcess() != null && myProcessStarted.compareAndSet(false, true)) {
+      getDebugProcess().getProcessHandler().startNotify();
+    }
   }
 
   /**
@@ -189,7 +205,7 @@ public abstract class DebuggerTestCase extends ExecutionWithDebuggerToolsTestCas
 
     ExecutionEnvironment environment = new ExecutionEnvironmentBuilder(myProject, DefaultDebugExecutor.getDebugExecutorInstance())
       .runnerSettings(debuggerRunnerSettings)
-      .runProfile(new MockConfiguration(myProject))
+      .runProfile(new MockConfiguration(myProject, myModule))
       .build();
     myRunnableState = new JavaCommandLineState(environment) {
       @Override
@@ -205,7 +221,7 @@ public abstract class DebuggerTestCase extends ExecutionWithDebuggerToolsTestCas
     };
 
     myExecutionEnvironment = new ExecutionEnvironmentBuilder(myProject, DefaultDebugExecutor.getDebugExecutorInstance())
-      .runProfile(new MockConfiguration(myProject))
+      .runProfile(new MockConfiguration(myProject, myModule))
       .build();
     DefaultDebugEnvironment debugEnvironment =
       new DefaultDebugEnvironment(myExecutionEnvironment, myRunnableState, debugParameters, false);
@@ -257,7 +273,7 @@ public abstract class DebuggerTestCase extends ExecutionWithDebuggerToolsTestCas
 
     myExecutionEnvironment = new ExecutionEnvironmentBuilder(myProject, DefaultDebugExecutor.getDebugExecutorInstance())
       .runnerSettings(debuggerRunnerSettings)
-      .runProfile(new MockConfiguration(myProject))
+      .runProfile(new MockConfiguration(myProject, myModule))
       .build();
     myRunnableState = new JavaCommandLineState(myExecutionEnvironment) {
       @Override
@@ -331,7 +347,7 @@ public abstract class DebuggerTestCase extends ExecutionWithDebuggerToolsTestCas
   protected DebuggerSession attachVM(final RemoteConnection remoteConnection, final boolean pollConnection) {
     RemoteState remoteState = new RemoteStateState(myProject, remoteConnection);
     ExecutionEnvironment environment = new ExecutionEnvironmentBuilder(myProject, DefaultDebugExecutor.getDebugExecutorInstance())
-      .runProfile(new MockConfiguration(myProject))
+      .runProfile(new MockConfiguration(myProject, myModule))
       .build();
     DebuggerSession debuggerSession = null;
     try {
@@ -352,7 +368,7 @@ public abstract class DebuggerTestCase extends ExecutionWithDebuggerToolsTestCas
   protected void createBreakpoints(final String className) {
     final PsiFile psiFile = ReadAction.compute(() -> {
       PsiClass psiClass = JavaPsiFacade.getInstance(myProject).findClass(className, GlobalSearchScope.allScope(myProject));
-      assertNotNull(className, psiClass);
+      assertNotNull("Class for breakpoint installation not found " + className, psiClass);
       return psiClass.getContainingFile();
     });
 
@@ -495,7 +511,7 @@ public abstract class DebuggerTestCase extends ExecutionWithDebuggerToolsTestCas
         systemPrintln("  <hidden frames>");
       }
       else {
-        systemPrintln("  " + StringUtil.substringBeforeLast(getFramePresentation(f), ":"));
+        systemPrintln("  " + getFramePresentation(f));
       }
     });
     systemPrintln("^^^ stack trace ^^^");
@@ -550,57 +566,6 @@ public abstract class DebuggerTestCase extends ExecutionWithDebuggerToolsTestCas
     return debuggerSession;
   }
 
-  public class MockConfiguration implements ModuleRunConfiguration {
-    private final Project project;
-
-    public MockConfiguration(Project project) {
-      this.project = project;
-    }
-
-    @Override
-    public Module @NotNull [] getModules() {
-      return myModule == null ? Module.EMPTY_ARRAY : new Module[]{myModule};
-    }
-
-    @Override
-    public Icon getIcon() {
-      return null;
-    }
-
-    @Override
-    public ConfigurationFactory getFactory() {
-      return UnknownConfigurationType.getInstance();
-    }
-
-    @Override
-    public void setName(@NotNull String name) { }
-
-    @Override
-    public @NotNull SettingsEditor<? extends RunConfiguration> getConfigurationEditor() {
-      throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public Project getProject() {
-      return project;
-    }
-
-    @Override
-    public RunConfiguration clone() {
-      return null;
-    }
-
-    @Override
-    public RunProfileState getState(@NotNull Executor executor, @NotNull ExecutionEnvironment env) {
-      return null;
-    }
-
-    @Override
-    public @NotNull String getName() {
-      return "";
-    }
-  }
-
   protected void disableRenderer(NodeRenderer renderer) {
     setRendererEnabled(renderer, false);
   }
@@ -610,11 +575,11 @@ public abstract class DebuggerTestCase extends ExecutionWithDebuggerToolsTestCas
   }
 
   private void setRendererEnabled(NodeRenderer renderer, boolean state) {
-    boolean oldValue = renderer.isEnabled();
-    if (oldValue != state) {
-      atDebuggerTearDown(() -> renderer.setEnabled(oldValue));
-      renderer.setEnabled(state);
-    }
+    setSettingForTest(
+      renderer::isEnabled,
+      renderer::setEnabled,
+      state
+    );
   }
   protected void doWhenXSessionPaused(ThrowableRunnable runnable) {
     doWhenXSessionPaused(runnable, false);
@@ -665,6 +630,7 @@ public abstract class DebuggerTestCase extends ExecutionWithDebuggerToolsTestCas
     ApplicationManagerEx.setInStressTest(true);
     setRegistryPropertyForTest("debugger.track.instrumentation", "false");
     setRegistryPropertyForTest("debugger.evaluate.single.threaded.timeout", "-1");
+    setRegistryPropertyForTest("debugger.preload.types.async", "false");
     setRegistryPropertyForTest("debugger.preload.types.hierarchy", "false");
 
     boolean dfa = ViewsGeneralSettings.getInstance().USE_DFA_ASSIST;

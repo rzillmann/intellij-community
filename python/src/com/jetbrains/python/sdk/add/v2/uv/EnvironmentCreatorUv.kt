@@ -2,62 +2,173 @@
 package com.jetbrains.python.sdk.add.v2.uv
 
 import com.intellij.openapi.module.Module
+import com.intellij.openapi.observable.properties.AtomicBooleanProperty
 import com.intellij.openapi.observable.properties.ObservableMutableProperty
-import com.intellij.openapi.project.Project
+import com.intellij.openapi.observable.util.not
 import com.intellij.openapi.projectRoots.Sdk
-import com.intellij.util.text.nullize
+import com.intellij.openapi.ui.ComboBox
+import com.intellij.openapi.ui.validation.DialogValidationRequestor
+import com.intellij.platform.eel.LocalEelApi
+import com.intellij.python.pyproject.PY_PROJECT_TOML
+import com.intellij.python.pyproject.PyProjectToml
+import com.intellij.ui.dsl.builder.AlignX
+import com.intellij.ui.dsl.builder.Panel
+import com.intellij.ui.dsl.builder.bindItem
+import com.intellij.ui.dsl.gridLayout.UnscaledGaps
+import com.intellij.ui.dsl.listCellRenderer.textListCellRenderer
+import com.intellij.util.ui.AsyncProcessIcon
+import com.jetbrains.python.PyBundle.message
+import com.jetbrains.python.errorProcessing.ErrorSink
 import com.jetbrains.python.errorProcessing.PyResult
-import com.jetbrains.python.errorProcessing.asPythonResult
+import com.jetbrains.python.getOrNull
 import com.jetbrains.python.newProjectWizard.collector.PythonNewProjectWizardCollector
-import com.jetbrains.python.sdk.ModuleOrProject
-import com.jetbrains.python.sdk.add.v2.CustomNewEnvironmentCreator
+import com.jetbrains.python.sdk.add.v2.*
 import com.jetbrains.python.sdk.add.v2.PythonInterpreterSelectionMethod.SELECT_EXISTING
-import com.jetbrains.python.sdk.add.v2.PythonMutableTargetAddInterpreterModel
 import com.jetbrains.python.sdk.add.v2.PythonSupportedEnvironmentManagers.PYTHON
 import com.jetbrains.python.sdk.add.v2.PythonSupportedEnvironmentManagers.UV
-import com.jetbrains.python.sdk.add.v2.VenvExistenceValidationState
-import com.jetbrains.python.sdk.basePath
+import com.jetbrains.python.sdk.uv.impl.createUvCli
+import com.jetbrains.python.sdk.uv.impl.createUvLowLevel
 import com.jetbrains.python.sdk.uv.impl.setUvExecutable
-import com.jetbrains.python.sdk.uv.setupNewUvSdkAndEnvUnderProgress
+import com.jetbrains.python.sdk.uv.setupNewUvSdkAndEnv
 import com.jetbrains.python.statistics.InterpreterType
-import com.jetbrains.python.venvReader.tryResolvePath
+import com.jetbrains.python.util.ShowingMessageErrorSync
+import io.github.z4kn4fein.semver.Version
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.withContext
 import java.nio.file.Path
 import java.nio.file.Paths
 import kotlin.io.path.exists
+import kotlin.io.path.readText
 
+/**
+ * Creates a UV environment creator for the given model.
+ *
+ * @param module The module context for environment creation. Can be null when creating an interpreter
+ *               at the project level (not associated with a specific module). When null, the creator
+ *               will navigate to the generic Python existing environment selector instead of the
+ *               UV-specific selector if a .venv directory already exists.
+ */
+internal fun PythonMutableTargetAddInterpreterModel<PathHolder.Eel>.uvCreator(module: Module?): EnvironmentCreatorUv<PathHolder.Eel> =
+  EnvironmentCreatorUv(this, module, ShowingMessageErrorSync)
 
-internal class EnvironmentCreatorUv(
-  model: PythonMutableTargetAddInterpreterModel,
-  private val moduleOrProject: ModuleOrProject?,
-) : CustomNewEnvironmentCreator("uv", model) {
+internal class EnvironmentCreatorUv<P : PathHolder>(
+  model: PythonMutableTargetAddInterpreterModel<P>,
+  private val module: Module?,
+  errorSink: ErrorSink,
+) : CustomNewEnvironmentCreator<P>("uv", model, errorSink) {
   override val interpreterType: InterpreterType = InterpreterType.UV
-  override val executable: ObservableMutableProperty<String> = model.state.uvExecutable
-  override val installationVersion: String? = null
+  override val toolValidator: ToolValidator<P> = model.uvViewModel.toolValidator
+  private val executableFlow = MutableStateFlow(model.uvViewModel.uvExecutable.get())
+  private val pythonVersion: ObservableMutableProperty<Version?> = propertyGraph.property(null)
+  private lateinit var versionComboBox: ComboBox<Version?>
 
-  override fun onShown() {
-    // FIXME: validate base interpreters against pyprojecttoml version. See poetry
-    basePythonComboBox.setItems(model.baseInterpreters)
+  private val loading = AtomicBooleanProperty(false)
 
-    model.scope.launch(Dispatchers.IO + model.uiContext) {
-      model.myProjectPathFlows.projectPathWithDefault.collect {
-        val venvPath = it.resolve(".venv")
+  init {
+    toolValidator.backProperty.afterChange {
+      executableFlow.value = it
+    }
+  }
 
-        venvExistenceValidationState.set(
-          if (venvPath.exists())
-            VenvExistenceValidationState.Error(Paths.get(".venv"))
-          else
-            VenvExistenceValidationState.Invisible
-        )
+  override fun setupUI(panel: Panel, validationRequestor: DialogValidationRequestor) {
+    with(panel) {
+      row(message("sdk.create.python.version")) {
+        versionComboBox = comboBox(listOf<Version?>(null), textListCellRenderer {
+          it?.let { "${it.major}.${it.minor}" } ?: message("python.sdk.uv.default.version")
+        })
+          .bindItem(pythonVersion)
+          .enabledIf(loading.not())
+          .component
+
+        cell(AsyncProcessIcon("loader"))
+          .align(AlignX.LEFT)
+          .customize(UnscaledGaps(0))
+          .visibleIf(loading)
+      }
+
+      executablePath = validatablePathField(
+        fileSystem = model.fileSystem,
+        pathValidator = toolValidator,
+        validationRequestor = validationRequestor,
+        labelText = message("sdk.create.custom.venv.executable.path", "uv"),
+        missingExecutableText = message("sdk.create.custom.venv.missing.text", "uv"),
+        installAction = createInstallFix(errorSink)
+      )
+
+      row("") {
+        venvExistenceValidationAlert(validationRequestor) {
+          onVenvSelectExisting()
+        }
       }
     }
+  }
+
+  override fun onShown(scope: CoroutineScope) {
+    executablePath.initialize(scope)
+    model
+      .projectPathFlows
+      .projectPathWithDefault
+      .combine(executableFlow) { projectPath, executable -> projectPath to executable }
+      .onEach { (projectPath, executable) ->
+        val venvPath = projectPath.resolve(".venv")
+
+        withContext(Dispatchers.IO) {
+          venvExistenceValidationState.set(
+            if (venvPath.exists())
+              VenvExistenceValidationState.Error(Paths.get(".venv"))
+            else
+              VenvExistenceValidationState.Invisible
+          )
+        }
+
+        versionComboBox.removeAllItems()
+        versionComboBox.addItem(null)
+        versionComboBox.selectedItem = null
+
+        if (executable?.validationResult?.successOrNull == null) {
+          return@onEach
+        }
+
+        try {
+          loading.set(true)
+
+          val pyProjectTomlPath = projectPath.resolve(PY_PROJECT_TOML)
+
+          val pythonVersions = withContext(Dispatchers.IO) {
+            val versionRequest = if (pyProjectTomlPath.exists()) {
+              PyProjectToml.parse(pyProjectTomlPath.readText()).getOrNull()?.project?.requiresPython
+            }
+            else {
+              null
+            }
+
+            val cli = createUvCli((executable.pathHolder as PathHolder.Eel).path)
+            val uvLowLevel = createUvLowLevel(Path.of(""), cli)
+            uvLowLevel.listSupportedPythonVersions(versionRequest)
+              .getOr { return@withContext emptyList() }
+          }
+
+          pythonVersions.forEach {
+            versionComboBox.addItem(it)
+          }
+        }
+        finally {
+          loading.set(false)
+        }
+      }
+      .launchIn(scope)
+
   }
 
   override fun onVenvSelectExisting() {
     PythonNewProjectWizardCollector.logExistingVenvFixUsed()
 
-    if (moduleOrProject != null) {
+    if (module != null) {
       model.navigator.navigateTo(newMethod = SELECT_EXISTING, newManager = UV)
     }
     else {
@@ -65,22 +176,22 @@ internal class EnvironmentCreatorUv(
     }
   }
 
-  override fun savePathToExecutableToProperties(path: Path?) {
-    val savingPath = path ?: executable.get().nullize()?.let { Path.of(it) } ?: return
-    setUvExecutable(savingPath)
-  }
+  override suspend fun savePathToExecutableToProperties(pathHolder: PathHolder?) {
+    if ((model.fileSystem as? FileSystem.Eel)?.eelApi !is LocalEelApi) return
 
-  override suspend fun setupEnvSdk(project: Project, module: Module?, baseSdks: List<Sdk>, projectPath: String, homePath: String?, installPackages: Boolean): PyResult<Sdk> {
-    val workingDir = module?.basePath?.let { tryResolvePath(it) } ?: project.basePath?.let { tryResolvePath(it) }
-    if (workingDir == null) {
-      return Result.failure<Sdk>(Exception("working dir is not specified for uv environment setup")).asPythonResult()
+    val savingPath = (pathHolder as? PathHolder.Eel)?.path
+                     ?: (toolValidator.backProperty.get()?.pathHolder as? PathHolder.Eel)?.path
+    savingPath?.let {
+      setUvExecutable(it)
     }
-
-    val python = homePath?.let { Path.of(it) }
-    return setupNewUvSdkAndEnvUnderProgress(project, workingDir, baseSdks, python).asPythonResult()
   }
 
-  override suspend fun detectExecutable() {
-    model.detectUvExecutable()
+  override suspend fun setupEnvSdk(
+    moduleBasePath: Path,
+    baseSdks: List<Sdk>,
+    basePythonBinaryPath: P?,
+    installPackages: Boolean,
+  ): PyResult<Sdk> {
+    return setupNewUvSdkAndEnv(moduleBasePath, baseSdks, pythonVersion.get())
   }
 }

@@ -84,7 +84,8 @@ import static org.junit.Assume.assumeTrue;
  * To use JUnit 4, annotate your test subclass with {@code @RunWith(JUnit4.class)} or any other runner (like {@code Parametrized.class}).
  * <p>
  * For JUnit 5 support,
- * see the {@code intellij.platform.testFramework.junit5} module in {@code community/platform/testFramework/junit5}.
+ * see the {@code intellij.platform.testFramework.junit5} module in {@code community/platform/testFramework/junit5}
+ * and the showcase in {@code community/platform/testFramework/junit5/test/showcase}.
  * <h3>Caveats</h3>
  * If you're looking for JUnit 4 for Assume support and still have JUnit 3 tests,
  * consider using {@code @RunWith(JUnit38AssumeSupportRunner.class)}.
@@ -1217,10 +1218,10 @@ Most likely there was an uncaught exception in asynchronous execution that resul
     EdtTestUtil.runInEdtAndWait(() -> {
       Application app = ApplicationManager.getApplication();
       if (app != null && !app.isDisposed()) {
-        UIUtil.dispatchAllInvocationEvents();
+        PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue();
         TestApplicationKt.waitForAppLeakingThreads(app, timeout, timeUnit);
       }
-    });
+    }, false);
   }
 
   protected final class TestDisposable implements Disposable {
@@ -1244,7 +1245,7 @@ Most likely there was an uncaught exception in asynchronous execution that resul
     }
   }
 
-  protected void setRegistryPropertyForTest(@NotNull String property, @SuppressWarnings("SameParameterValue") @NotNull String value) {
+  public void setRegistryPropertyForTest(@NotNull String property, @SuppressWarnings("SameParameterValue") @NotNull String value) {
     RegistryValue registryValue = Registry.get(property);
     if (registryValue.isMultiValue()) {
       registryValue.setSelectedOption(value);

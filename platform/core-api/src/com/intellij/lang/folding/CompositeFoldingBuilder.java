@@ -13,6 +13,7 @@ import com.intellij.psi.PsiFile;
 import com.intellij.psi.util.PsiUtilCore;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.Unmodifiable;
 
 import java.util.*;
 
@@ -91,6 +92,12 @@ public class CompositeFoldingBuilder extends FoldingBuilderEx implements Possibl
     return mayUseBuilder(foldingDescriptor.getElement(), builder) && builder.isCollapsedByDefault(foldingDescriptor);
   }
 
+  @Override
+  public boolean keepExpandedOnFirstCollapseAll(@NotNull FoldingDescriptor foldingDescriptor) {
+    FoldingBuilder builder = ((FoldingDescriptorWrapper)foldingDescriptor).myBuilder;
+    return mayUseBuilder(foldingDescriptor.getElement(), builder) && builder.keepExpandedOnFirstCollapseAll(foldingDescriptor);
+  }
+
   private static boolean mayUseBuilder(@NotNull ASTNode node, @Nullable FoldingBuilder builder) {
     if (builder == null) return false;
     Project project = getProjectByNode(node);
@@ -155,7 +162,7 @@ public class CompositeFoldingBuilder extends FoldingBuilderEx implements Possibl
     }
 
     @Override
-    public @NotNull Set<Object> getDependencies() {
+    public @NotNull @Unmodifiable Set<Object> getDependencies() {
       return myFoldingDescriptor.getDependencies();
     }
 

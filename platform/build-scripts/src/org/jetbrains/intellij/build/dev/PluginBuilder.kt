@@ -10,6 +10,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.withContext
 import org.jetbrains.intellij.build.BuildContext
 import org.jetbrains.intellij.build.JvmArchitecture
+import org.jetbrains.intellij.build.LibcImpl
 import org.jetbrains.intellij.build.OsFamily
 import org.jetbrains.intellij.build.PluginBuildDescriptor
 import org.jetbrains.intellij.build.PluginBundlingRestrictions
@@ -55,7 +56,7 @@ internal suspend fun buildPlugins(
 
   val platform = platformLayout.await()
   val pluginEntries = spanBuilder("build plugins").setAttribute(AttributeKey.longKey("count"), plugins.size.toLong()).use {
-    val targetPlatform = SupportedDistribution(OsFamily.currentOs, JvmArchitecture.currentJvmArch)
+    val targetPlatform = SupportedDistribution(os = OsFamily.currentOs, arch = JvmArchitecture.currentJvmArch, libcImpl = LibcImpl.current(OsFamily.currentOs))
     buildPlugins(
       moduleOutputPatcher = moduleOutputPatcher,
       plugins = plugins,
@@ -66,16 +67,13 @@ internal suspend fun buildPlugins(
       searchableOptionSet = searchableOptionSet,
       os = null,
       pluginBuilt = { layout, pluginDirOrFile ->
-        val distEntries = ArrayList<DistributionFileEntry>()
         handleCustomPlatformSpecificAssets(
           layout = layout,
           targetPlatform = targetPlatform,
           context = context,
           pluginDir = pluginDirOrFile,
-          distEntries = distEntries,
           isDevMode = true,
         )
-        distEntries
       },
     )
   }

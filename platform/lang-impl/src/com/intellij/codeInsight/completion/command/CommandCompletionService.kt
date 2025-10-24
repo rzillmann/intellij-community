@@ -6,22 +6,21 @@ import com.intellij.codeInsight.completion.command.configuration.ApplicationComm
 import com.intellij.codeInsight.daemon.impl.HintRenderer
 import com.intellij.codeInsight.editorLineStripeHint.EditorLineStripeTextRenderer
 import com.intellij.codeInsight.highlighting.HighlightManager
-import com.intellij.codeInsight.hints.presentation.PresentationFactory
-import com.intellij.codeInsight.hints.presentation.PresentationRenderer
 import com.intellij.codeInsight.lookup.*
 import com.intellij.codeInsight.lookup.CharFilter.CUSTOM_DEFAULT_CHAR_FILTERS
 import com.intellij.codeInsight.lookup.impl.LookupCustomizer
 import com.intellij.codeInsight.lookup.impl.LookupImpl
 import com.intellij.codeInsight.template.impl.TemplateColors
+import com.intellij.codeInsight.template.postfix.completion.PostfixTemplateLookupElement
 import com.intellij.lang.Language
 import com.intellij.lang.LanguageExtension
 import com.intellij.lang.injection.InjectedLanguageManager
 import com.intellij.openapi.Disposable
-import com.intellij.openapi.application.runReadAction
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.Inlay
+import com.intellij.openapi.editor.InlayModel
 import com.intellij.openapi.editor.colors.CodeInsightColors
 import com.intellij.openapi.editor.colors.EditorColors
 import com.intellij.openapi.editor.impl.EditorHighlightingPredicate
@@ -41,6 +40,15 @@ import kotlinx.coroutines.CoroutineScope
 import org.jetbrains.annotations.ApiStatus
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.min
+
+private const val MAX_COUNT_TO_SHOW_HINT = 5
+
+/**
+ * Key representing whether this file is a copy for command completion analysis.
+ */
+@JvmField
+@ApiStatus.Internal
+val COMMAND_COMPLETION_COPY: Key<Boolean?> = Key.create<Boolean>("completion.command.copy.file")
 
 /**
  * Service class responsible for managing and providing functionality for command completion within a project.
@@ -82,13 +90,16 @@ internal class CommandCompletionService(
     val completionFactory = getFactory(language)
     val filterSuffix = completionFactory?.filterSuffix() ?: return
     val fullSuffix = completionFactory.suffix() + filterSuffix.toString()
-    val editor = InjectedLanguageEditorUtil.getTopLevelEditor(originalEditor)
+    val topLevelEditor = InjectedLanguageEditorUtil.getTopLevelEditor(originalEditor)
     if (!nonWrittenFiles) {
-      val index = findActualIndex(fullSuffix, editor.document.immutableCharSequence, lookup.lookupOriginalStart)
+      val document = topLevelEditor.document
+      val index = findActualIndex(fullSuffix, document.immutableCharSequence, lookup.lookupOriginalStart)
       val offsetOfFullIndex = lookup.lookupOriginalStart - index
+      val currentOffset = topLevelEditor.caretModel.offset
       if (index == 0 || offsetOfFullIndex < 0 ||
-          offsetOfFullIndex >= editor.document.textLength ||
-          !editor.document.immutableCharSequence.substring(offsetOfFullIndex, editor.caretModel.offset).startsWith(fullSuffix)) {
+          offsetOfFullIndex >= document.textLength ||
+          offsetOfFullIndex >= currentOffset ||
+          !document.immutableCharSequence.substring(offsetOfFullIndex, currentOffset).startsWith(fullSuffix)) {
         if (installed != true) return
         lookup.removeUserData(INSTALLED_ADDITIONAL_MATCHER_KEY)
         lookup.arranger.registerAdditionalMatcher { true }
@@ -102,7 +113,12 @@ internal class CommandCompletionService(
     if (installed == true) return
     lookup.putUserData(INSTALLED_ADDITIONAL_MATCHER_KEY, true)
     lookup.showIfMeaningless() // stop hiding
-    lookup.arranger.registerAdditionalMatcher(CommandCompletionLookupItemFilter)
+    if (completionFactory.supportFiltersWithDoublePrefix()) {
+      lookup.arranger.registerAdditionalMatcher(CommandCompletionLookupItemFilter)
+    }
+    else {
+      lookup.arranger.registerAdditionalMatcher(NotPostfixCompletionLookupItemFilter)
+    }
     lookup.arranger.prefixChanged(lookup)
     lookup.requestResize()
     lookup.refreshUi(false, true)
@@ -130,21 +146,36 @@ internal class CommandCompletionService(
     val completionService = lookup.project.service<CommandCompletionService>()
     val completionFactory = completionService.getFactory(psiFile.language) ?: return
     val fullSuffix = completionFactory.suffix() + completionFactory.filterSuffix().toString()
-    val editor = InjectedLanguageEditorUtil.getTopLevelEditor(editor)
-    val index = if (nonWrittenFiles) 0 else findActualIndex(fullSuffix, editor.document.immutableCharSequence, lookup.lookupOriginalStart)
+    val topLevelEditor = InjectedLanguageEditorUtil.getTopLevelEditor(editor)
+    val index = if (nonWrittenFiles) 0 else findActualIndex(fullSuffix, topLevelEditor.document.immutableCharSequence, lookup.lookupOriginalStart)
     val startOffset = lookup.lookupOriginalStart - index
-    val endOffset = editor.caretModel.offset
+    val endOffset = topLevelEditor.caretModel.offset
     if (endOffset - startOffset != 1) return
     if (lookup.items.none { it.`as`(CommandCompletionLookupElement::class.java) != null }) return
-    if (editor.inlayModel.getInlineElementsInRange(startOffset, endOffset).isNotEmpty()) return
+    if (topLevelEditor.inlayModel.getInlineElementsInRange(startOffset, endOffset).isNotEmpty()) return
     val applicationCommandCompletionService = ApplicationCommandCompletionService.getInstance()
     val state = applicationCommandCompletionService.state
-    if (state.showCounts > 5) return
+    if (state.showCounts > MAX_COUNT_TO_SHOW_HINT) return
     state.showCounts += 1
-    val inlineElement: Inlay<HintRenderer?> = editor.inlayModel.addInlineElement(endOffset, true, EditorLineStripeTextRenderer("      " + CodeInsightBundle.message("command.completion.filter.hint", completionFactory.filterSuffix())))
+    val inlineElement: Inlay<HintRenderer?> = topLevelEditor.inlayModel.addInlineElement(endOffset, true, EditorLineStripeTextRenderer("      " + CodeInsightBundle.message("command.completion.filter.hint", completionFactory.filterSuffix())))
                                               ?: return
     Disposer.register(lookup, inlineElement)
     Disposer.register(lookup) { lookup.removeUserData(INSTALLED_HINT) }
+
+    topLevelEditor.inlayModel.addListener(object : InlayModel.Listener {
+      override fun onAdded(inlay: Inlay<*>) {
+        if (inlay.offset >= endOffset) {
+          lookup.putUserData(INSTALLED_HINT_KEY, false)
+          val installedHint = lookup.removeUserData(INSTALLED_HINT)
+          if (state.showCounts > MAX_COUNT_TO_SHOW_HINT) {
+            state.showCounts = MAX_COUNT_TO_SHOW_HINT
+          }
+          if (installedHint != null) {
+            Disposer.dispose(installedHint)
+          }
+        }
+      }
+    }, lookup)
 
     lookup.putUserData(INSTALLED_HINT, inlineElement)
     lookup.putUserData(INSTALLED_HINT_KEY, true)
@@ -153,6 +184,12 @@ internal class CommandCompletionService(
   private object CommandCompletionLookupItemFilter : Condition<LookupElement> {
     override fun value(e: LookupElement?): Boolean {
       return e != null && e.`as`(CommandCompletionLookupElement::class.java) != null
+    }
+  }
+
+  private object NotPostfixCompletionLookupItemFilter : Condition<LookupElement> {
+    override fun value(e: LookupElement?): Boolean {
+      return e != null && e.`as`(PostfixTemplateLookupElement::class.java) == null
     }
   }
 }
@@ -166,7 +203,6 @@ private val SUPPRESS_PREDICATE_KEY = Key.create<EditorHighlightingPredicate>("co
 private val PROMPT_HIGHLIGHTING = Key.create<RangeHighlighter>("completion.command.prompt.highlighting")
 
 private val LOOKUP_HIGHLIGHTING = Key.create<List<RangeHighlighter>>("completion.command.lookup.highlighting")
-private val ICON_RENDER = Key.create<Inlay<PresentationRenderer?>>("completion.command.icon.render")
 private const val PROMPT_LAYER = HighlighterLayer.ERROR + 10
 
 @ApiStatus.Internal
@@ -193,7 +229,6 @@ internal class CommandCompletionListener : LookupManagerListener {
     if (newLookup !is LookupImpl) return
     val completionService = editor.project?.getService(CommandCompletionService::class.java)
     completionService?.addFilters(newLookup, nonWrittenFiles, psiFile, editor)
-    installLookupIntentionPreviewListener(newLookup)
     val highlightingListener = CommandCompletionHighlightingListener(topLevelEditor, newLookup, psiFile, nonWrittenFiles, completionService)
     newLookup.addLookupListener(highlightingListener)
     Disposer.register(newLookup, highlightingListener)
@@ -201,37 +236,32 @@ internal class CommandCompletionListener : LookupManagerListener {
 }
 
 private class CommandCompletionHighlightingListener(
-  val editor: EditorImpl,
+  val topLevelEditor: EditorImpl,
   val lookup: LookupImpl,
-  val psiFile: PsiFile,
+  val psiFile: PsiFile, //injected file
   val nonWrittenFiles: Boolean,
   val completionService: CommandCompletionService?,
 ) : LookupListener, Disposable {
 
-  private fun clearPromptHighlighting(editor: Editor?) {
+  private fun clearPromptHighlighting() {
     val installed = lookup.removeUserData(INSTALLED_PROMPT_KEY) ?: return
     if (!installed.get()) {
       return
     }
     val previousHighlighting = lookup.removeUserData(PROMPT_HIGHLIGHTING)
-    previousHighlighting?.let { editor?.markupModel?.removeHighlighter(it) }
-
-    (editor as? EditorImpl)?.removeHighlightingPredicate(SUPPRESS_PREDICATE_KEY)
+    previousHighlighting?.let { topLevelEditor.markupModel.removeHighlighter(it) }
+    topLevelEditor.removeHighlightingPredicate(SUPPRESS_PREDICATE_KEY)
   }
 
-  private fun clear(editor: Editor?) {
-    clearPromptHighlighting(editor)
-    val renderer = lookup.removeUserData(ICON_RENDER)
-    renderer?.let { Disposer.dispose(it) }
-
-    val project = editor?.project ?: return
-    val highlightManager = HighlightManager.getInstance(project)
+  private fun clear() {
+    clearPromptHighlighting()
+    val highlightManager = HighlightManager.getInstance(topLevelEditor.project ?: return)
     val previousLookupHighlighting = lookup.removeUserData(LOOKUP_HIGHLIGHTING)
-    previousLookupHighlighting?.forEach { t -> highlightManager.removeSegmentHighlighter(editor, t) }
+    previousLookupHighlighting?.forEach { t -> highlightManager.removeSegmentHighlighter(topLevelEditor, t) }
   }
 
   override fun uiRefreshed() {
-    completionService?.addFilters(lookup, nonWrittenFiles, psiFile, editor)
+    completionService?.addFilters(lookup, nonWrittenFiles, psiFile, topLevelEditor)
     val item = lookup.currentItemOrEmpty
     if (updateItem(item)) return
   }
@@ -239,60 +269,34 @@ private class CommandCompletionHighlightingListener(
   private fun updateItem(item: LookupElement?): Boolean {
     val element = item?.`as`(CommandCompletionLookupElement::class.java)
     if (element == null) {
-      clear(lookup.editor)
+      clear()
       return true
     }
 
     if (element.useLookupString) {
-      updatePromptHighlighting(lookup, element)
+      updatePromptHighlighting(element)
     }
     else {
-      clearPromptHighlighting(lookup.editor)
+      clearPromptHighlighting()
     }
-    updateHighlighting(lookup, element)
+    updateHighlighting(element)
     return false
   }
 
   override fun lookupCanceled(event: LookupEvent) {
-    val editor = runReadAction { event.lookup.editor }
-    clear(editor)
+    clear()
     super.lookupCanceled(event)
   }
 
-  private fun updateIcon(lookup: LookupImpl, element: CommandCompletionLookupElement) {
-    if (lookup.getUserData(INSTALLED_ADDITIONAL_MATCHER_KEY) != true) {
-      return
-    }
-    val renderer = lookup.getUserData(ICON_RENDER)
-    renderer?.let { Disposer.dispose(it) }
-    if (element.icon != null) {
-      val factory = PresentationFactory(editor)
-      val iconPresentation = factory.icon(element.icon)
-      val presentationRenderer = PresentationRenderer(iconPresentation)
-      val lookupEditor = InjectedLanguageEditorUtil.getTopLevelEditor(lookup.editor)
-      val inlay: Inlay<PresentationRenderer?>? =
-        if (nonWrittenFiles) {
-          lookupEditor.inlayModel.addInlineElement(0, false, presentationRenderer)
-        }
-        else {
-          lookupEditor.inlayModel.addInlineElement(element.hostStartOffset, true, presentationRenderer)
-        }
-      if (inlay != null) {
-        lookup.putUserData(ICON_RENDER, inlay)
-      }
-    }
-  }
-
-  private fun updatePromptHighlighting(lookup: LookupImpl, item: CommandCompletionLookupElement) {
+  private fun updatePromptHighlighting(item: CommandCompletionLookupElement) {
+    if (nonWrittenFiles) return
     val installed = ConcurrencyUtil.computeIfAbsent(lookup, INSTALLED_PROMPT_KEY) { AtomicBoolean(false) }
-    val startOffset = lookup.lookupOriginalStart - findActualIndex(item.suffix, editor.document.immutableCharSequence,
+    val startOffset = lookup.lookupOriginalStart - findActualIndex(item.suffix, topLevelEditor.document.immutableCharSequence,
                                                                    lookup.lookupOriginalStart)
-    val lookupEditor = InjectedLanguageEditorUtil.getTopLevelEditor(lookup.editor)
-    val endOffset = lookupEditor.caretModel.offset
+    val endOffset = topLevelEditor.caretModel.offset
     if (!installed.get()) {
-      editor.addHighlightingPredicate(SUPPRESS_PREDICATE_KEY, EditorHighlightingPredicate { highlighter ->
+      topLevelEditor.addHighlightingPredicate(SUPPRESS_PREDICATE_KEY, EditorHighlightingPredicate { highlighter ->
         val attributesKey = highlighter.textAttributesKey ?: return@EditorHighlightingPredicate true
-
         if (!(attributesKey == CodeInsightColors.ERRORS_ATTRIBUTES || attributesKey == CodeInsightColors.WRONG_REFERENCES_ATTRIBUTES || attributesKey == CodeInsightColors.GENERIC_SERVER_ERROR_OR_WARNING || attributesKey == CodeInsightColors.RUNTIME_ERROR)) {
           return@EditorHighlightingPredicate true
         }
@@ -301,36 +305,31 @@ private class CommandCompletionHighlightingListener(
       installed.set(true)
     }
     val previousHighlighting = lookup.getUserData(PROMPT_HIGHLIGHTING)
-    previousHighlighting?.let { lookupEditor.markupModel.removeHighlighter(it) }
-    val highlighter = lookupEditor.markupModel.addRangeHighlighter(TemplateColors.TEMPLATE_VARIABLE_ATTRIBUTES, startOffset, endOffset, PROMPT_LAYER, HighlighterTargetArea.EXACT_RANGE)
+    previousHighlighting?.let { topLevelEditor.markupModel.removeHighlighter(it) }
+    val highlighter = topLevelEditor.markupModel.addRangeHighlighter(TemplateColors.TEMPLATE_VARIABLE_ATTRIBUTES, startOffset, endOffset, PROMPT_LAYER, HighlighterTargetArea.EXACT_RANGE)
     lookup.putUserData(PROMPT_HIGHLIGHTING, highlighter)
   }
 
   override fun currentItemChanged(event: LookupEvent) {
-    val lookup = event.lookup
-    if (lookup !is LookupImpl) return
-    completionService?.setHint(lookup, editor, nonWrittenFiles)
+    completionService?.setHint(lookup, topLevelEditor, nonWrittenFiles)
     val item = event.item
-    if (updateItem(item)) return
-    val element = item?.`as`(CommandCompletionLookupElement::class.java) ?: return
-    updateIcon(lookup, element)
+    updateItem(item)
   }
 
-  private fun updateHighlighting(lookup: LookupImpl, element: CommandCompletionLookupElement) {
-    val project = editor.project ?: return
+  private fun updateHighlighting(element: CommandCompletionLookupElement) {
+    val project = topLevelEditor.project ?: return
     val highlightManager = HighlightManager.getInstance(project)
     val previousHighlighting = lookup.removeUserData(LOOKUP_HIGHLIGHTING)
-    previousHighlighting?.forEach { t -> highlightManager.removeSegmentHighlighter(editor, t) }
+    previousHighlighting?.forEach { t -> highlightManager.removeSegmentHighlighter(topLevelEditor, t) }
     val startOffset = lookup.lookupOriginalStart -
                       if (nonWrittenFiles) 0
-                      else findActualIndex(element.suffix, editor.document.immutableCharSequence,
+                      else findActualIndex(element.suffix, topLevelEditor.document.immutableCharSequence,
                                            lookup.lookupOriginalStart)
     val highlightInfo = element.highlighting ?: return
     val rangeHighlighters = mutableListOf<RangeHighlighter>()
-    val endOffset = min(highlightInfo.range.endOffset, startOffset)
-    if (highlightInfo.range.startOffset <= min(highlightInfo.range.endOffset, startOffset)) {
-      highlightManager.addRangeHighlight(editor, highlightInfo.range.startOffset, endOffset, EditorColors.SEARCH_RESULT_ATTRIBUTES, false, rangeHighlighters)
-      highlightManager.addRangeHighlight(editor, highlightInfo.range.startOffset, endOffset, highlightInfo.attributesKey, false, rangeHighlighters)
+    if (nonWrittenFiles || highlightInfo.range.startOffset <= min(highlightInfo.range.endOffset, startOffset)) {
+      highlightManager.addRangeHighlight(topLevelEditor, highlightInfo.range.startOffset, highlightInfo.range.endOffset, EditorColors.SEARCH_RESULT_ATTRIBUTES, false, rangeHighlighters)
+      highlightManager.addRangeHighlight(topLevelEditor, highlightInfo.range.startOffset, highlightInfo.range.endOffset, highlightInfo.attributesKey, false, rangeHighlighters)
     }
     if (rangeHighlighters.isNotEmpty()) {
       lookup.putUserData(LOOKUP_HIGHLIGHTING, rangeHighlighters)
@@ -338,7 +337,7 @@ private class CommandCompletionHighlightingListener(
   }
 
   override fun dispose() {
-    clear(lookup.editor)
+    clear()
   }
 }
 
@@ -396,11 +395,12 @@ internal class CommandCompletionLookupCustomizer : LookupCustomizer {
     val project = lookupImpl.project
     val service = project.service<CommandCompletionService>()
     val editor = lookupImpl.editor
-    val psiFile = PsiDocumentManager.getInstance(project).getPsiFile(editor.document) ?: return
+    val topLevelEditor = InjectedLanguageEditorUtil.getTopLevelEditor(editor)
+    val psiFile = PsiDocumentManager.getInstance(project).getPsiFile(topLevelEditor.document) ?: return
     val element: PsiElement? =
       //it is used only in backend in split mode, so it is allowed to be on EDT
       SlowOperations.knownIssue("IJPL-181979").use {
-        InjectedLanguageManager.getInstance(project).findInjectedElementAt(psiFile, editor.caretModel.offset)
+        InjectedLanguageManager.getInstance(project).findInjectedElementAt(psiFile, topLevelEditor.caretModel.offset)
       }
     val language = element?.language ?: psiFile.language
     val factory = service.getFactory(language)

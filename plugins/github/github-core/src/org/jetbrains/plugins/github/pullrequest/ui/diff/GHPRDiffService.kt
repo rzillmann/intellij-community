@@ -18,7 +18,6 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.serviceIfCreated
 import com.intellij.openapi.diff.impl.GenericDataProvider
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.vcs.FilePath
 import com.intellij.openapi.vcs.FileStatus
 import com.intellij.openapi.vcs.changes.ui.PresentableChange
@@ -76,16 +75,22 @@ class GHPRDiffService(private val project: Project, parentCs: CoroutineScope) {
       return AsyncDiffRequestProcessorFactory.createCombinedIn(cs, project, vmFlow, ::createDiffContext, ::getChangeDiffVmPresentation)
     }
 
-    private fun createDiffContext(vm: GHPRDiffViewModel): List<KeyValuePair<*>> = buildList {
-      add(KeyValuePair(GHPRDiffViewModel.KEY, vm))
-      add(KeyValuePair(DiffUserDataKeys.DATA_PROVIDER, GenericDataProvider().apply {
-        putData(GHPRDiffViewModel.DATA_KEY, vm)
-        putData(GHPRReviewViewModel.DATA_KEY, vm.reviewVm)
-      }))
-      add(KeyValuePair(DiffUserDataKeys.CONTEXT_ACTIONS,
-                       listOf(ImmutableToolbarLabelAction(CollaborationToolsBundle.message("review.diff.toolbar.label")),
-                              GHPRDiffReviewThreadsReloadAction(),
-                              ActionManager.getInstance().getAction("Github.PullRequest.Review.Submit"))))
+    private fun createDiffContext(vm: GHPRDiffViewModel): List<KeyValuePair<*>> {
+      val actionManager = ActionManager.getInstance()
+      return buildList {
+        add(KeyValuePair(GHPRDiffViewModel.KEY, vm))
+        add(KeyValuePair(DiffUserDataKeys.DATA_PROVIDER, GenericDataProvider().apply {
+          putData(GHPRDiffViewModel.DATA_KEY, vm)
+          putData(GHPRReviewViewModel.DATA_KEY, vm.reviewVm)
+        }))
+        add(KeyValuePair(DiffUserDataKeys.CONTEXT_ACTIONS, listOf(
+          ImmutableToolbarLabelAction(CollaborationToolsBundle.message("review.diff.toolbar.label")),
+          GHPRDiffReviewThreadsReloadAction(),
+          actionManager.getAction("Github.PullRequest.Review.Submit"),
+          actionManager.getAction("CodeReview.PreviousComment"),
+          actionManager.getAction("CodeReview.NextComment"),
+        )))
+      }
     }
 
     private fun getChangeDiffVmPresentation(changeVm: GHPRDiffChangeViewModel): PresentableChange =
@@ -132,10 +137,6 @@ private fun findDiffVm(project: Project, repository: GHRepositoryCoordinates): F
   } ?: flowOf(null)
 
 private fun GHPRConnectedProjectViewModel.getDiffViewModelFlow(pullRequest: GHPRIdentifier): Flow<GHPRDiffViewModel> = channelFlow {
-  val acquisitionDisposable = Disposer.newDisposable()
-  val vm = acquireDiffViewModel(pullRequest, acquisitionDisposable)
-  trySend(vm)
-  awaitClose {
-    Disposer.dispose(acquisitionDisposable)
-  }
+  send(acquireDiffViewModel(pullRequest, this))
+  awaitClose()
 }

@@ -20,13 +20,15 @@ import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 
 public class JavaFileElementType extends IFileElementType {
-  public static final int STUB_VERSION = 63;
+  public static final int STUB_VERSION = 66;
 
   public JavaFileElementType() {
     super("java.FILE", JavaLanguage.INSTANCE);
   }
 
   public static boolean isInSourceContent(@NotNull VirtualFile file) {
+    //RC: this is a bit hackish implementation: we rely on the fact that project's sources have languageLevel property
+    //    pushed for them, so if this property is present for a file => this file is under 'source' tree
     return ApplicationManager.getApplication().getService(InternalPersistentJavaLanguageLevelReaderService.class)
              .getPersistedLanguageLevel(file) != null;
   }

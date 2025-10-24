@@ -5,8 +5,7 @@ package fleet.multiplatform.shims
 import fleet.util.multiplatform.Actual
 import java.util.concurrent.ConcurrentHashMap as JavaConcurrentHashMap
 
-
-@Actual(linkedTo = "ConcurrentHashMap")
+@Actual
 internal fun <K, V> ConcurrentHashMapJvm(): ConcurrentHashMap<K, V> = MultiplatformConcurrentHashMap(JavaConcurrentHashMap())
 
 private class MultiplatformConcurrentHashMap<K, V>(val hashMap: JavaConcurrentHashMap<K, V>) : MutableMap<K, V> by hashMap, ConcurrentHashMap<K, V> {
@@ -20,6 +19,10 @@ private class MultiplatformConcurrentHashMap<K, V>(val hashMap: JavaConcurrentHa
 
   override fun computeIfAbsent(key: K, f: (K) -> V): V {
     return hashMap.computeIfAbsent(key, f)
+  }
+
+  override fun computeIfPresent(key: K, f: (K, V) -> V): V? {
+    return hashMap.computeIfPresent(key, f)
   }
 
   override fun compute(key: K, f: (K, V?) -> V?): V? {

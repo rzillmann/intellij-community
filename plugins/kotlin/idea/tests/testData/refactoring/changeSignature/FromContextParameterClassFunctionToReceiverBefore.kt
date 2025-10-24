@@ -4,27 +4,27 @@ class MyClass {
     val value: Int = 42
 
     context(para<caret>m1: String)
-    fun doSomething() {
-        println("Value: $value, Param: $param1")
+    fun doSomething(param: Int) {
+        println("Value: $value, Context Param: $param1, Param: $param")
         withContext()
     }
 
     fun inside(param: String) {
         with(param) {
-            doSomething()
+            doSomething(42)
         }
     }
 
     fun inside1(param: String) {
         with (param) {
-            doSomething()
+            doSomething(42)
         }
     }
 
     fun inside2(param: String, another: MyClass) {
         with (param) {
             with(another) {
-                doSomething()
+                doSomething(42)
             }
         }
     }
@@ -33,31 +33,36 @@ class MyClass {
 context(s: String)
 fun withContext() {}
 
+context(s: String)
+fun MyClass.withContext1() {
+    doSomething(42)
+}
+
 fun MyClass.foo() {
     with("param1") {
-        doSomething()
+        doSomething(42)
     }
 }
 
 fun String.bar(m: MyClass) {
-    with(m) { doSomething() }
+    with(m) { doSomething(42) }
 }
 
 class Bar {
     fun String.bar(m: MyClass) {
-        with(m) { doSomething() }
+        with(m) { doSomething(42) }
     }
 }
 
 fun usage() {
     val obj = MyClass()
     with ("test") {
-        with(obj) { doSomething() }
+        with(obj) { doSomething(42) }
     }
 
     with(obj) {
         with("inside with") {
-            doSomething()
+            doSomething(42)
         }
     }
 }

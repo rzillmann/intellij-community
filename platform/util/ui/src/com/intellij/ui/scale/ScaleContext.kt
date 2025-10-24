@@ -8,7 +8,6 @@ import java.awt.Graphics2D
 import java.awt.GraphicsConfiguration
 import java.lang.ref.WeakReference
 import java.util.concurrent.atomic.AtomicReference
-import java.util.function.Function
 
 /**
  * Extends [UserScaleContext] with the system scale, and is thus used for raster-based painting.
@@ -207,9 +206,6 @@ class ScaleContext : UserScaleContext {
   }
 
   override fun toString(): String = "$usrScale, $sysScale, $objScale, $pixScale"
-
-  @Deprecated("Use ScaleContextCache")
-  open class Cache<T>(dataProvider: Function<in ScaleContext, out T>) : ScaleContextCache<T>(dataProvider::apply)
 }
 
 /**

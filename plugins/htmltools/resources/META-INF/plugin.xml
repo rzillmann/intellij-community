@@ -1,14 +1,17 @@
-<idea-plugin>
+<idea-plugin allow-bundled-update="true">
   <id>HtmlTools</id>
   <name>HTML Tools</name>
 
   <description>Provides advanced features for HTML/CSS editing: inspections, quickfixes, smart navigation actions and more.</description>
 
   <category>HTML and XML</category>
-  <depends>com.intellij.modules.xml</depends>
   <vendor>JetBrains</vendor>
 
-  <depends>com.intellij.platform.images</depends>
+  <dependencies>
+    <plugin id="com.intellij.platform.images"/>
+    <module name="intellij.xml.impl"/>
+  </dependencies>
+
 
   <extensions defaultExtensionNs="com.intellij">
     <psi.referenceContributor implementation="com.intellij.htmltools.xml.util.HtmlReferenceContributor"/>
@@ -99,6 +102,11 @@
     </intentionAction>
 
     <gotoSymbolContributor implementation="com.intellij.htmltools.html.HtmlGotoSymbolProvider"/>
+
+    <polySymbols.inspectionToolMapping symbolNamespace="html" symbolKind="attributes" problemKind="DeprecatedSymbol"
+                                       toolShortName="HtmlDeprecatedAttribute"/>
+    <polySymbols.inspectionToolMapping symbolNamespace="html" symbolKind="elements" problemKind="DeprecatedSymbol"
+                                       toolShortName="HtmlDeprecatedTag"/>
   </extensions>
 
   <actions>

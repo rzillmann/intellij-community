@@ -8,16 +8,25 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.NlsContexts
 import com.intellij.platform.debugger.impl.frontend.evaluate.quick.FrontendXValueContainer
 import com.intellij.platform.debugger.impl.frontend.evaluate.quick.createFrontendXDebuggerEvaluator
-import com.intellij.platform.debugger.impl.frontend.storage.currentPresentation
+import com.intellij.platform.debugger.impl.rpc.*
 import com.intellij.ui.ColoredTextContainer
+import com.intellij.util.ThreeState
 import com.intellij.xdebugger.XSourcePosition
 import com.intellij.xdebugger.evaluation.XDebuggerEvaluator
 import com.intellij.xdebugger.frame.XCompositeNode
 import com.intellij.xdebugger.frame.XStackFrame
+import com.intellij.xdebugger.frame.XStackFrameUiPresentationContainer
 import com.intellij.xdebugger.impl.frame.XDebuggerFramesList
-import com.intellij.xdebugger.impl.rpc.*
+import com.intellij.xdebugger.impl.rpc.XStackFrameId
+import com.intellij.xdebugger.impl.rpc.sourcePosition
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
+import java.awt.Color
 
 internal class FrontendXStackFrame(
   val id: XStackFrameId,
@@ -28,7 +37,8 @@ internal class FrontendXStackFrame(
   private val equalityObject: XStackFrameEqualityObject?,
   private val evaluatorDto: XDebuggerEvaluatorDto,
   private val captionInfo: XStackFrameCaptionInfo,
-  canDrop: Boolean,
+  private val textPresentation: XStackFramePresentation,
+  canDrop: ThreeState,
 ) : XStackFrame(), XDebuggerFramesList.ItemWithSeparatorAbove {
   private val evaluator by lazy {
     createFrontendXDebuggerEvaluator(project, suspendContextLifetimeScope, evaluatorDto, id)
@@ -44,10 +54,14 @@ internal class FrontendXStackFrame(
   //  Is it worth it?
   val requiresCustomBackground: Boolean
     get() = customBackgroundInfo != null
-  val customBackgroundColor: java.awt.Color?
+  val customBackgroundColor: Color?
     get() = customBackgroundInfo?.backgroundColor?.color()
 
-  val canDropFlow = MutableStateFlow(if (canDrop) CanDropState.CAN_DROP else CanDropState.UNSURE)
+  val canDropFlow: MutableStateFlow<CanDropState> = MutableStateFlow(CanDropState.fromThreeState(canDrop))
+
+  // For speedsearch in the frame list. We can't use text presentation for that as it might differ from the UI presentation.
+  // Yet search shouldn't do any RPC to call customizePresentation on a backend counterpart.
+  private val currentUiPresentation = MutableStateFlow(XStackFrameUiPresentationContainer())
 
   override fun getSourcePosition(): XSourcePosition? {
     return sourcePosition?.sourcePosition()
@@ -63,22 +77,37 @@ internal class FrontendXStackFrame(
     return evaluatorDto.canEvaluateInDocument
   }
 
-  override fun getEvaluator(): XDebuggerEvaluator? = evaluator
+  override fun getEvaluator(): XDebuggerEvaluator = evaluator
 
-  override fun customizePresentation(component: ColoredTextContainer) {
-    // TODO[IJPL-177087]: what if presentation changes over time for the same backend stack frame?
-    //  Probably we should go for a different approach: store something that can trigger XDebuggerFramesList to repaint,
-    //  repurpose this method implementation to send a request to backend to customize presentation there
-    //  (probably via smth like BackendXStackFrameApi.customizePresentation which I removed in this commit),
-    //  collect changes here (like it was for BackendXStackFrameApi.customizePresentation),
-    //  and in this collection trigger XDebuggerFramesList.repaint.
-    //  ...
-    //  But maybe there are easier solutions
-    val (fragments, iconId, tooltipText) = suspendContextLifetimeScope.currentPresentation(id) ?: return
+  override fun customizeTextPresentation(component: ColoredTextContainer) {
+    val (fragments, iconId, tooltipText) = textPresentation
     component.setIcon(iconId?.icon())
     component.setToolTipText(tooltipText)
     for ((text, attributes) in fragments) {
       component.append(text, attributes.toSimpleTextAttributes())
+    }
+  }
+
+  override fun customizePresentation(component: ColoredTextContainer) {
+    currentUiPresentation.value.customizePresentation(component)
+  }
+
+  override fun customizePresentation(): Flow<XStackFrameUiPresentationContainer> {
+    return channelFlow {
+      suspendContextLifetimeScope.launch {
+        XExecutionStackApi.getInstance().computeUiPresentation(id).collectLatest { presentation ->
+          val presentation = XStackFrameUiPresentationContainer().apply {
+            setIcon(presentation.iconId?.icon())
+            setToolTipText(presentation.tooltipText)
+            presentation.fragments.forEach { (text, attributes) ->
+              append(text, attributes.toSimpleTextAttributes())
+            }
+          }
+          send(presentation)
+          currentUiPresentation.value = presentation
+        }
+      }
+      awaitClose()
     }
   }
 
@@ -98,16 +127,17 @@ internal class FrontendXStackFrame(
     return id.hashCode()
   }
 
-  /**
-  canDrop can depend on other frames in the stack,
-  and thus it can change after other stacks are loaded.
-  Hypothesis: canDrop can only change once and only from false to true,
-  ergo,
-  - if an RPC request returns true, then it's final -- CAN_DROP; no more recomputations
-  - if an RPC request returns false, we can't say if it's final or not -- UNSURE; should request more if necessary
-  - COMPUTING means that we haven't received a response yet; don't do more requests
-   */
-  internal enum class CanDropState(val canDrop: Boolean = false) {
-    UNSURE, COMPUTING, CAN_DROP(true)
+  internal enum class CanDropState(val state: ThreeState) {
+    UNSURE(ThreeState.UNSURE), COMPUTING(ThreeState.UNSURE), YES(ThreeState.YES), NO(ThreeState.NO);
+
+    companion object {
+      fun fromThreeState(state: ThreeState): CanDropState = when (state) {
+        ThreeState.YES -> YES
+        ThreeState.NO -> NO
+        ThreeState.UNSURE -> UNSURE
+      }
+
+      fun fromBoolean(value: Boolean): CanDropState = if (value) YES else NO
+    }
   }
 }

@@ -4,8 +4,6 @@ package com.intellij.util
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.application.asContextElement
-import com.intellij.ui.DocumentAdapter
-import com.intellij.util.ui.launchOnShow
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -15,36 +13,12 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.jetbrains.annotations.ApiStatus.Experimental
 import javax.swing.JTabbedPane
-import javax.swing.text.JTextComponent
 
-@Experimental
-fun JTextComponent.bindTextOnShow(textState: MutableStateFlow<String>, launchDebugName: String) {
-  launchOnShow(launchDebugName) {
-    bindTextIn(textState, this)
-  }
-}
-
-@Suppress("DuplicatedCode")
-@Experimental
-fun JTextComponent.bindTextIn(textState: MutableStateFlow<String>, coroutineScope: CoroutineScope) {
-  val listener = object: DocumentAdapter() {
-    override fun textChanged(e: javax.swing.event.DocumentEvent) {
-      textState.update { text }
-    }
-  }
-  coroutineScope.launch {
-    textState.collectLatest { textValue ->
-      withContext(Dispatchers.EDT + ModalityState.any().asContextElement()) {
-        document.removeDocumentListener(listener)
-        text = textValue
-        document.addDocumentListener(listener)
-      }
-    }
-  }
-}
 
 @Experimental
 fun JTabbedPane.bindSelectedTabIn(selectedTabState: MutableStateFlow<Int>, coroutineScope: CoroutineScope) {
+  selectedIndex = selectedTabState.value
+
   val changeListener = javax.swing.event.ChangeListener {
     val selectedIndex = selectedIndex
     if (selectedTabState.value != selectedIndex) {
@@ -54,7 +28,7 @@ fun JTabbedPane.bindSelectedTabIn(selectedTabState: MutableStateFlow<Int>, corou
 
   addChangeListener(changeListener)
 
-  coroutineScope.launch {
+  val job = coroutineScope.launch {
     selectedTabState.collectLatest { tabIndex ->
       withContext(Dispatchers.EDT + ModalityState.any().asContextElement()) {
         if (selectedIndex != tabIndex) {
@@ -64,5 +38,9 @@ fun JTabbedPane.bindSelectedTabIn(selectedTabState: MutableStateFlow<Int>, corou
         }
       }
     }
+  }
+
+  job.invokeOnCompletion {
+    removeChangeListener(changeListener)
   }
 }

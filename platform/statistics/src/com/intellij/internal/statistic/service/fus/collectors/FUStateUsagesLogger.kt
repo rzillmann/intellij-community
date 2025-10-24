@@ -11,14 +11,15 @@ import com.intellij.internal.statistic.eventLog.StatisticsEventLogProviderUtil.g
 import com.intellij.internal.statistic.eventLog.StatisticsEventLogger
 import com.intellij.internal.statistic.eventLog.fus.FeatureUsageLogger
 import com.intellij.internal.statistic.eventLog.fus.FeatureUsageStateEventTracker
+import com.intellij.internal.statistic.service.fus.collectors.FUStateUsagesLogger.Companion.logCollectorsMetrics
 import com.intellij.internal.statistic.updater.allowExecution
 import com.intellij.internal.statistic.utils.StatisticsUploadAssistant
 import com.intellij.internal.statistic.utils.getPluginInfo
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.diagnostic.logger
-import com.intellij.openapi.progress.blockingContext
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.waitForSmartMode
 import kotlinx.coroutines.*
@@ -57,11 +58,41 @@ class FUStateUsagesLogger private constructor(coroutineScope: CoroutineScope) : 
   companion object {
     fun getInstance(): FUStateUsagesLogger = ApplicationManager.getApplication().service()
 
-    internal suspend fun logMetricsOrError(
+    internal suspend fun <C : FeatureUsagesCollector> logCollectorsMetrics(
+      project: Project?,
+      getCollectors: () -> Collection<C>,
+      collectMetrics: suspend (C) -> Set<MetricEvent>,
+    ) {
+      coroutineScope {
+        if (!StatisticsUploadAssistant.isCollectAllowedOrForced()) {
+          return@coroutineScope
+        }
+
+        val recorderLoggers = HashMap<String, StatisticsEventLogger>()
+        for (usagesCollector in getCollectors()) {
+          if (!getPluginInfo(usagesCollector.javaClass).isDevelopedByJetBrains()) {
+            @Suppress("removal", "DEPRECATION")
+            LOG.warn("Skip '${usagesCollector.groupId}' because its registered in a third-party plugin")
+            continue
+          }
+
+          launch {
+            logMetricsOrError(
+              project = project,
+              recorderLoggers = recorderLoggers,
+              usagesCollector = usagesCollector,
+              metrics = { collectMetrics(usagesCollector) },
+            )
+          }
+        }
+      }
+    }
+
+    private suspend inline fun logMetricsOrError(
       project: Project?,
       recorderLoggers: MutableMap<String, StatisticsEventLogger>,
       usagesCollector: FeatureUsagesCollector,
-      metrics: suspend () -> Set<MetricEvent>,
+      metrics: () -> Set<MetricEvent>,
     ) {
       var group = usagesCollector.group
       if (group == null) {
@@ -82,6 +113,10 @@ class FUStateUsagesLogger private constructor(coroutineScope: CoroutineScope) : 
         logUsagesAsStateEvents(project = project, group = group, metrics = data, logger = logger)
       }
       catch (e: Throwable) {
+        if (Logger.shouldRethrow(e)) {
+          throw e
+        }
+
         if (project != null && project.isDisposed) {
           return
         }
@@ -111,15 +146,13 @@ class FUStateUsagesLogger private constructor(coroutineScope: CoroutineScope) : 
             val data = mergeWithEventData(groupData, metric.data)
             val eventData = data?.build() ?: emptyMap()
             launch {
-              blockingContext { logger.logAsync(group, metric.eventId, eventData, true) }.asDeferred().join()
+              logger.logAsync(group, metric.eventId, eventData, true).asDeferred().join()
             }
           }
         }
 
         launch {
-          blockingContext {
-            logger.logAsync(group, EventLogSystemEvents.STATE_COLLECTOR_INVOKED, FeatureUsageData(group.recorder).addProject(project).build(), true).join()
-          }
+          logger.logAsync(group, EventLogSystemEvents.STATE_COLLECTOR_INVOKED, FeatureUsageData(group.recorder).addProject(project).build(), true).join()
         }
       }
     }
@@ -167,30 +200,9 @@ class FUStateUsagesLogger private constructor(coroutineScope: CoroutineScope) : 
   }
 
   internal suspend fun logApplicationStates(onStartup: Boolean) {
-    coroutineScope {
-      if (!StatisticsUploadAssistant.isCollectAllowedOrForced()) {
-        return@coroutineScope
-      }
-
-      val recorderLoggers = HashMap<String, StatisticsEventLogger>()
-      val collectors = UsageCollectors.getApplicationCollectors(this@FUStateUsagesLogger, onStartup)
-      for (usagesCollector in collectors) {
-        if (!getPluginInfo(usagesCollector.javaClass).isDevelopedByJetBrains()) {
-          @Suppress("removal", "DEPRECATION")
-          LOG.warn("Skip '${usagesCollector.groupId}' because its registered in a third-party plugin")
-          continue
-        }
-
-        launch {
-          logMetricsOrError(
-            project = null,
-            recorderLoggers = recorderLoggers,
-            usagesCollector = usagesCollector,
-            metrics = usagesCollector::getMetricsAsync,
-          )
-        }
-      }
-    }
+    logCollectorsMetrics(project = null,
+                         getCollectors = { UsageCollectors.getApplicationCollectors(this@FUStateUsagesLogger, onStartup) },
+                         collectMetrics = { it.getMetricsAsync() })
   }
 }
 
@@ -219,24 +231,10 @@ class ProjectFUStateUsagesLogger(
     }
   }
 
-  private suspend fun logProjectState(): Unit = coroutineScope {
-    val recorderLoggers = HashMap<String, StatisticsEventLogger>()
-    for (usagesCollector in UsageCollectors.getProjectCollectors(this@ProjectFUStateUsagesLogger)) {
-      if (!getPluginInfo(usagesCollector.javaClass).isDevelopedByJetBrains()) {
-        @Suppress("removal", "DEPRECATION")
-        LOG.warn("Skip '${usagesCollector.groupId}' because its registered in a third-party plugin")
-        continue
-      }
-
-      launch {
-        FUStateUsagesLogger.logMetricsOrError(
-          project = project,
-          recorderLoggers = recorderLoggers,
-          usagesCollector = usagesCollector,
-          metrics = { usagesCollector.collect(project) },
-        )
-      }
-    }
+  private suspend fun logProjectState() {
+    logCollectorsMetrics(project = project,
+                         getCollectors = { UsageCollectors.getProjectCollectors(this@ProjectFUStateUsagesLogger) },
+                         collectMetrics = { it.collect(project) })
   }
 
   @Obsolete

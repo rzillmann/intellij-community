@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 @file:Suppress("ReplaceGetOrSet", "ReplaceNegatedIsEmptyWithIsNotEmpty", "PrivatePropertyName", "ReplacePutWithAssignment")
 
 package com.intellij.openapi.fileEditor.impl
@@ -7,6 +7,8 @@ import com.intellij.codeWithMe.ClientId
 import com.intellij.diagnostic.Activity
 import com.intellij.diagnostic.StartUpMeasurer
 import com.intellij.featureStatistics.fusCollectors.FileEditorCollector.EmptyStateCause
+import com.intellij.frontend.FrontendApplicationInfo
+import com.intellij.frontend.FrontendType
 import com.intellij.icons.AllIcons
 import com.intellij.ide.IdeEventQueue
 import com.intellij.ide.ui.UISettings
@@ -20,6 +22,7 @@ import com.intellij.openapi.components.serviceAsync
 import com.intellij.openapi.components.serviceOrNull
 import com.intellij.openapi.diagnostic.debug
 import com.intellij.openapi.diagnostic.logger
+import com.intellij.openapi.diagnostic.runAndLogException
 import com.intellij.openapi.editor.colors.CodeInsightColors
 import com.intellij.openapi.editor.colors.ColorKey
 import com.intellij.openapi.editor.colors.EditorColorsManager
@@ -32,7 +35,6 @@ import com.intellij.openapi.fileEditor.impl.text.FileEditorDropHandler
 import com.intellij.openapi.keymap.Keymap
 import com.intellij.openapi.keymap.KeymapManagerListener
 import com.intellij.openapi.keymap.KeymapUtil
-import com.intellij.openapi.progress.blockingContext
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.ProjectLocator
 import com.intellij.openapi.ui.Divider
@@ -41,11 +43,9 @@ import com.intellij.openapi.ui.Splitter
 import com.intellij.openapi.util.Iconable
 import com.intellij.openapi.util.Key
 import com.intellij.openapi.util.io.FileTooBigException
+import com.intellij.openapi.util.registry.Registry
 import com.intellij.openapi.vcs.FileStatusManager
-import com.intellij.openapi.vfs.VfsUtilCore
-import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.openapi.vfs.VirtualFileManager
-import com.intellij.openapi.vfs.VirtualFileWithoutContent
+import com.intellij.openapi.vfs.*
 import com.intellij.openapi.wm.FocusWatcher
 import com.intellij.openapi.wm.IdeFocusManager
 import com.intellij.openapi.wm.IdeFrame
@@ -80,7 +80,6 @@ import com.intellij.util.xmlb.jsonDomToXml
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import org.jdom.Element
-import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.annotations.ApiStatus.Internal
 import org.jetbrains.annotations.NonNls
 import java.awt.*
@@ -106,7 +105,7 @@ private const val IDE_FINGERPRINT: @NonNls String = "ideFingerprint"
 @DirtyUI
 open class EditorsSplitters internal constructor(
   @Internal val manager: FileEditorManagerImpl,
-  @JvmField internal val coroutineScope: CoroutineScope,
+  @Internal @JvmField val coroutineScope: CoroutineScope,
 ) : JPanel(BorderLayout()), UISettingsListener {
   companion object {
     const val SPLITTER_KEY: @NonNls String = "EditorsSplitters"
@@ -264,6 +263,17 @@ open class EditorsSplitters internal constructor(
     }
   }
 
+  internal var borderPainter: BorderPainter = DefaultBorderPainter()
+
+  override fun paintChildren(g: Graphics) {
+    super.paintChildren(g)
+    borderPainter.paintAfterChildren(this, g)
+  }
+
+  override fun isPaintingOrigin(): Boolean {
+    return borderPainter.isPaintingOrigin(this)
+  }
+
   fun writeExternal(element: Element) {
     writeExternal(element = element, delayedStates = emptyMap())
   }
@@ -289,7 +299,7 @@ open class EditorsSplitters internal constructor(
       removeAll()
     }
 
-    if (PlatformUtils.isJetBrainsClient()) {
+    if (PlatformUtils.isJetBrainsClient() && !shouldReopenEditorsOnJetBrainsClient()) {
       // Don't restore editors from local files on JetBrains Client, editors are opened from the backend
       return
     }
@@ -316,7 +326,7 @@ open class EditorsSplitters internal constructor(
 
   internal suspend fun createEditors(state: EditorSplitterState) {
     manager.project.putUserData(OPEN_FILES_ACTIVITY, StartUpMeasurer.startActivity(StartUpMeasurer.Activities.EDITOR_RESTORING_TILL_PAINT))
-    if (PlatformUtils.isJetBrainsClient()) {
+    if (PlatformUtils.isJetBrainsClient() && !shouldReopenEditorsOnJetBrainsClient()) {
       // Don't reopen editors from local files on JetBrains Client, it is done from the backend
       return
     }
@@ -330,6 +340,11 @@ open class EditorsSplitters internal constructor(
           InternalUICustomization.getInstance()?.installEditorBackground(it)
         },
       )
+  }
+
+  private fun shouldReopenEditorsOnJetBrainsClient(): Boolean {
+    val frontendType = FrontendApplicationInfo.getFrontendType()
+    return frontendType is FrontendType.Remote && frontendType.isController() && Registry.`is`("editor.rd.reopen.editors.on.frontend")
   }
 
   fun addSelectedEditorsTo(result: MutableCollection<FileEditor>) {
@@ -380,10 +395,6 @@ open class EditorsSplitters internal constructor(
     }
     _currentWindowFlow.value = window
   }
-
-  @ApiStatus.ScheduledForRemoval
-  @Deprecated("Use openFilesAsync(Boolean) instead", ReplaceWith("openFilesAsync(true)"))
-  fun openFilesAsync(): Job = openFilesAsync(requestFocus = true)
 
   fun openFilesAsync(requestFocus: Boolean): Job {
     return coroutineScope.launch {
@@ -479,7 +490,7 @@ open class EditorsSplitters internal constructor(
     val frame = getFrame() ?: return
     val file = currentCompositeFlow.value?.file
     if (file == null) {
-      withContext(Dispatchers.EDT) {
+      withContext(Dispatchers.UiWithModelAccess) {
         frame.setFileTitle(null, null)
       }
     }
@@ -491,7 +502,7 @@ open class EditorsSplitters internal constructor(
       catch (ignored: InvalidPathException) {
         null
       }
-      withContext(Dispatchers.EDT) {
+      withContext(Dispatchers.UiWithModelAccess) {
         frame.setFileTitle(title, ioFile)
       }
     }
@@ -799,7 +810,9 @@ open class EditorsSplitters internal constructor(
 
   @JvmOverloads
   @RequiresEdt
-  fun openInRightSplit(file: VirtualFile, requestFocus: Boolean = true): EditorWindow? {
+  fun openInRightSplit(file: VirtualFile, requestFocus: Boolean = true, forceFocus: Boolean = false): EditorWindow? = openInRightSplit(file, requestFocus, forceFocus, null)
+
+  internal fun openInRightSplit(file: VirtualFile, requestFocus: Boolean = true, forceFocus: Boolean = false, explicitlySetCompositeProvider: (() -> EditorComposite?)?): EditorWindow? {
     val window = currentWindow ?: return null
     val parent = window.component.parent
     if (parent is Splitter) {
@@ -810,13 +823,13 @@ open class EditorsSplitters internal constructor(
           manager.openFile(
             file = file,
             window = rightSplitWindow,
-            options = FileEditorOpenOptions(requestFocus = requestFocus, waitForCompositeOpen = false),
+            options = FileEditorOpenOptions(requestFocus = requestFocus, waitForCompositeOpen = false, forceFocus = forceFocus, explicitlyOpenCompositeProvider = explicitlySetCompositeProvider),
           )
           return rightSplitWindow
         }
       }
     }
-    return window.split(orientation = JSplitPane.HORIZONTAL_SPLIT, forceSplit = true, virtualFile = file, focusNew = requestFocus)
+    return window.split(orientation = JSplitPane.HORIZONTAL_SPLIT, forceSplit = true, virtualFile = file, focusNew = requestFocus, forceFocus = forceFocus, explicitlySetCompositeProvider = explicitlySetCompositeProvider)
   }
 }
 
@@ -963,7 +976,7 @@ private class UiBuilder(private val splitters: EditorsSplitters, private val isL
       )
     }
     else {
-      val splitter = withContext(Dispatchers.ui(UiDispatcherKind.RELAX)) {
+      val splitter = withContext(Dispatchers.UiWithModelAccess) {
         val splitter = createSplitter(
           isVertical = splitState.isVertical,
           proportion = splitState.proportion,
@@ -1008,7 +1021,7 @@ private class UiBuilder(private val splitters: EditorsSplitters, private val isL
 
     val windowCoroutineScope = splitters.coroutineScope.childScope("EditorWindow")
 
-    val windowDeferred = windowCoroutineScope.async(Dispatchers.EDT + ModalityState.any().asContextElement()) {
+    val windowDeferred = windowCoroutineScope.async(Dispatchers.UI + ModalityState.any().asContextElement()) {
       splitters.insideChange++
       val editorWindow = EditorWindow(owner = splitters, coroutineScope = windowCoroutineScope)
       editorWindow.component.isFocusable = false
@@ -1036,7 +1049,7 @@ private class UiBuilder(private val splitters: EditorsSplitters, private val isL
       }
     }.mapNotNull { it.getCompleted() }
 
-    span("file opening in EDT", Dispatchers.EDT) {
+    span("file opening in EDT", Dispatchers.UiWithModelAccess) {
       var window: EditorWindow? = null
       val windowAddedDeferred = CompletableDeferred<Unit>()
       try {
@@ -1087,20 +1100,19 @@ private fun computeFileEntry(
   // do not expose `file` variable to avoid using it instead of `fileProvider`
   val fileProviderDeferred = compositeCoroutineScope.async(start = if (fileEntry.currentInTab) CoroutineStart.DEFAULT else CoroutineStart.LAZY) {
     // https://youtrack.jetbrains.com/issue/IJPL-157845/Incorrect-encoding-of-file-during-project-opening
-    if (notFullyPreparedFile !is VirtualFileWithoutContent && !notFullyPreparedFile.isCharsetSet) {
-      blockingContext {
-        ProjectLocator.withPreferredProject(notFullyPreparedFile, fileEditorManager.project).use {
-          try {
-            notFullyPreparedFile.contentsToByteArray(true)
-          }
-          catch (e: CancellationException) {
-            throw e
-          }
-          catch (ignore: FileTooBigException) {
-          }
-          catch (e: Throwable) {
-            LOG.error(e)
-          }
+    // In the case of the JetBrains client, it's better to avoid a blocking protocol call inside [VirtualFile.contentsToByteArray]
+    if (!PlatformUtils.isJetBrainsClient() && notFullyPreparedFile !is VirtualFileWithoutContent && !notFullyPreparedFile.isCharsetSet) {
+      ProjectLocator.withPreferredProject(notFullyPreparedFile, fileEditorManager.project).use {
+        try {
+          notFullyPreparedFile.contentsToByteArray(true)
+        }
+        catch (e: CancellationException) {
+          throw e
+        }
+        catch (ignore: FileTooBigException) {
+        }
+        catch (e: Throwable) {
+          LOG.error(e)
         }
       }
     }
@@ -1109,12 +1121,18 @@ private fun computeFileEntry(
 
   val fileProvider = suspend { fileProviderDeferred.await() }
 
-  val model = fileEditorManager.createEditorCompositeModelOnStartup(
-    compositeCoroutineScope = compositeCoroutineScope,
-    fileProvider = fileProvider,
-    fileEntry = fileEntry,
-    isLazy = !fileEntry.currentInTab && isLazyComposite,
-  )
+  // In the case of the JetBrains client, the model isn't used since the editor composite is requested from the backend
+  val model = if (PlatformUtils.isJetBrainsClient()) {
+    emptyFlow()
+  }
+  else {
+    fileEditorManager.createEditorCompositeModelOnStartup(
+      compositeCoroutineScope = compositeCoroutineScope,
+      fileProvider = fileProvider,
+      fileEntry = fileEntry,
+      isLazy = !fileEntry.currentInTab && isLazyComposite,
+    )
+  }
 
   val tabTitleTask = compositeCoroutineScope.async(start = CoroutineStart.LAZY) {
     EditorTabPresentationUtil.getEditorTabTitleAsync(fileEditorManager.project, fileProvider())
@@ -1259,7 +1277,25 @@ internal data class FileToOpen(
 )
 
 private fun resolveFileOrLogError(fileEntry: FileEntry, virtualFileManager: VirtualFileManager): VirtualFile? {
-  val file = virtualFileManager.findFileByUrl(fileEntry.url) ?: virtualFileManager.refreshAndFindFileByUrl(fileEntry.url)
+  val fileIdAdapter = FileIdAdapter.getInstance()
+
+  // In the case of the JetBrains client, it's better to get the file by its ID to avoid a blocking protocol call inside
+  // [VirtualFileManager.findFileByUrl]
+  val file = if (PlatformUtils.isJetBrainsClient() && fileEntry.id != null) {
+    if (fileEntry.managingFsCreationTimestamp != null) {
+      fileIdAdapter.getFileWithTimestamp(fileEntry.id, fileEntry, fileEntry.managingFsCreationTimestamp)
+    } else {
+      fileIdAdapter.getFile(fileEntry.id, fileEntry)
+    }
+  }
+  else if (PlatformUtils.isJetBrainsClient() && fileEntry.protocol != null) {
+    fileIdAdapter.getFile(fileEntry.protocol, VirtualFileManager.extractPath(fileEntry.url), fileEntry)
+  }
+  else {
+    LOG.runAndLogException {
+      virtualFileManager.findFileByUrl(fileEntry.url) ?: virtualFileManager.refreshAndFindFileByUrl(fileEntry.url)
+    }
+  }
   if (file != null && file.isValid) {
     return file
   }

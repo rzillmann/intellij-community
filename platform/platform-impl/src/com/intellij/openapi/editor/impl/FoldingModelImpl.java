@@ -4,7 +4,6 @@ package com.intellij.openapi.editor.impl;
 import com.intellij.codeWithMe.ClientId;
 import com.intellij.diagnostic.Dumpable;
 import com.intellij.openapi.Disposable;
-import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.editor.*;
 import com.intellij.openapi.editor.colors.EditorColors;
@@ -33,7 +32,6 @@ import org.jetbrains.annotations.TestOnly;
 import java.awt.*;
 import java.util.*;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
 
@@ -63,7 +61,6 @@ public final class FoldingModelImpl extends InlayModel.SimpleAdapter
   private final EditorScrollingPositionKeeper myScrollingPositionKeeper;
   private final List<FoldingListener> myListeners = ContainerUtil.createLockFreeCopyOnWriteList();
   private final Set<CustomFoldRegionImpl> myAffectedCustomRegions = new HashSet<>();
-  private final AtomicBoolean myIsZombieRaised = new AtomicBoolean();
 
   private TextAttributes myFoldTextAttributes;
   private boolean myIsFoldingEnabled = true;
@@ -202,7 +199,7 @@ public final class FoldingModelImpl extends InlayModel.SimpleAdapter
 
   @Override
   public @Nullable FoldRegion getFoldRegion(int startOffset, int endOffset) {
-    assertReadAccess();
+    EditorThreading.assertInteractionAllowed();
     return myFoldTree.getRegionAt(startOffset, endOffset);
   }
 
@@ -213,13 +210,13 @@ public final class FoldingModelImpl extends InlayModel.SimpleAdapter
 
   @Override
   public @NotNull List<@NotNull FoldRegion> getRegionsOverlappingWith(int startOffset, int endOffset) {
-    assertReadAccess();
+    EditorThreading.assertInteractionAllowed();
     return myFoldTree.fetchOverlapping(startOffset, endOffset);
   }
 
   @Override
   public FoldRegion @NotNull [] getAllFoldRegions() {
-    assertReadAccess();
+    EditorThreading.assertInteractionAllowed();
     return myFoldTree.fetchAllRegions();
   }
 
@@ -245,7 +242,7 @@ public final class FoldingModelImpl extends InlayModel.SimpleAdapter
 
   @Override
   public boolean isOffsetCollapsed(int offset) {
-    assertReadAccess();
+    EditorThreading.assertInteractionAllowed();
     return getCollapsedRegionAtOffset(offset) != null;
   }
 
@@ -257,12 +254,6 @@ public final class FoldingModelImpl extends InlayModel.SimpleAdapter
   @Override
   public @Nullable TextAttributes getPlaceholderAttributes() {
     return myFoldTextAttributes;
-  }
-
-  @SuppressWarnings("removal")
-  @Override
-  public void runBatchFoldingOperation(@NotNull Runnable operation, boolean moveCaret) {
-    runBatchFoldingOperation(operation, false, moveCaret, true);
   }
 
   @Override
@@ -284,7 +275,7 @@ public final class FoldingModelImpl extends InlayModel.SimpleAdapter
 
   @Override
   public boolean hasDocumentRegionChangedFor(@NotNull FoldRegion region) {
-    assertReadAccess();
+    EditorThreading.assertInteractionAllowed();
     return region instanceof FoldRegionImpl && ((FoldRegionImpl)region).hasDocumentRegionChanged();
   }
 
@@ -412,11 +403,6 @@ public final class FoldingModelImpl extends InlayModel.SimpleAdapter
       }
     }
     return endOffset;
-  }
-
-  @ApiStatus.Internal
-  public AtomicBoolean getIsZombieRaised() {
-    return myIsZombieRaised;
   }
 
   void refreshSettings() {
@@ -688,7 +674,7 @@ public final class FoldingModelImpl extends InlayModel.SimpleAdapter
   }
 
   private boolean isOffsetInsideCollapsedRegion(int offset) {
-    assertReadAccess();
+    EditorThreading.assertInteractionAllowed();
     FoldRegion region = getCollapsedRegionAtOffset(offset);
     return region != null && region.getStartOffset() < offset;
   }
@@ -831,6 +817,12 @@ public final class FoldingModelImpl extends InlayModel.SimpleAdapter
     }
   }
 
+  public void onFoldInitializationStatusChanged(boolean initInProgress) {
+    for (FoldingListener listener : myListeners) {
+      listener.onFoldInitializationStatusChanged(initInProgress);
+    }
+  }
+
   @Override
   public String toString() {
     return dumpState();
@@ -844,10 +836,6 @@ public final class FoldingModelImpl extends InlayModel.SimpleAdapter
 
   private static void assertIsDispatchThreadForEditor() {
     ThreadingAssertions.assertEventDispatchThread();
-  }
-
-  private static void assertReadAccess() {
-    ApplicationManager.getApplication().assertReadAccessAllowed();
   }
 
   private final class MyMarkerTree extends HardReferencingRangeMarkerTree<FoldRegionImpl> {
@@ -886,7 +874,7 @@ public final class FoldingModelImpl extends InlayModel.SimpleAdapter
 
     @ApiStatus.Internal
     @Override
-    public void collectAffectedMarkersAndShiftSubtrees(
+    protected void collectAffectedMarkersAndShiftSubtrees(
       @Nullable IntervalNode<FoldRegionImpl> root,
       int start,
       int end,
@@ -919,7 +907,7 @@ public final class FoldingModelImpl extends InlayModel.SimpleAdapter
 
     @ApiStatus.Internal
     @Override
-    public void fireBeforeRemoved(@NotNull FoldRegionImpl markerEx) {
+    protected void fireBeforeRemoved(@NotNull FoldRegionImpl markerEx) {
       if (markerEx.getUserData(DO_NOT_NOTIFY) == null) {
         beforeFoldRegionDisposed(markerEx);
       }
@@ -941,20 +929,20 @@ public final class FoldingModelImpl extends InlayModel.SimpleAdapter
       }
 
       @Override
-      public void onRemoved() {
+      protected void onRemoved() {
         for (Supplier<? extends FoldRegionImpl> getter : intervals) {
           removeRegionFromGroup(getter.get());
         }
       }
 
       @Override
-      public void addIntervalsFrom(@NotNull IntervalTreeImpl.IntervalNode<FoldRegionImpl> otherNode) {
+      protected void addIntervalsFrom(@NotNull IntervalTreeImpl.IntervalNode<FoldRegionImpl> otherNode) {
         FoldRegionImpl region = getRegion(this);
         FoldRegionImpl otherRegion = getRegion(otherNode);
         if (otherRegion.mySizeBeforeUpdate > region.mySizeBeforeUpdate) {
           setNode(region, null);
           removeRegionFromGroup(region);
-          removeIntervalInternal(0);
+          removeIntervalInternal(0, region);
           super.addIntervalsFrom(otherNode);
         }
         else {

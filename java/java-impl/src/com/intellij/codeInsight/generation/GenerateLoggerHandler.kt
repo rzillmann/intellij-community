@@ -27,13 +27,13 @@ import com.intellij.refactoring.util.CommonRefactoringUtil
 import com.intellij.ui.logging.JvmLoggingSettingsStorage
 import org.jetbrains.java.generate.GenerationUtil
 
-class GenerateLoggerHandler : CodeInsightActionHandler {
-  override fun invoke(project: Project, editor: Editor, file: PsiFile) {
+public class GenerateLoggerHandler : CodeInsightActionHandler {
+  override fun invoke(project: Project, editor: Editor, psiFile: PsiFile) {
     GenerateLoggerStatisticsCollector.logActionInvoked(project)
 
-    val currentElement = file.findElementAt(editor.caretModel.offset) ?: return
+    val currentElement = psiFile.findElementAt(editor.caretModel.offset) ?: return
 
-    val module = ModuleUtil.findModuleForFile(file)
+    val module = ModuleUtil.findModuleForFile(psiFile)
     val availableLoggers = JvmLogger.findSuitableLoggers(module)
 
     val places = JvmLogger.getPossiblePlacesForLogger(currentElement, availableLoggers)

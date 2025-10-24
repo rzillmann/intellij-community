@@ -26,7 +26,7 @@ private val testSnapshotDir = Path.of(getCommunityPath(), "platform/platform-tes
 
 private const val TEST_PLUGIN_ID = "plugin"
 
-@TestDataPath("\$CONTENT_ROOT/testSnapshots/plugin-validator")
+@TestDataPath($$"$CONTENT_ROOT/testSnapshots/plugin-validator")
 class PluginModelValidatorTest {
   @Rule
   @JvmField
@@ -148,11 +148,169 @@ class PluginModelValidatorTest {
       referencedPluginIdsOfExternalPlugins = setOf("com.intellij.modules.lang")
     ))
     assertThat(result.errors.joinToString { it.message!! }).isEqualTo("""
-      Old format must be not used for a module but `depends` tag is used (
+      Element 'depends' has no effect in a content module descriptor (
+        referencedDescriptorFile=intellij.plugin.module/intellij.plugin.module.xml
+      ), Old format must be not used for a module but `depends` tag is used (
         descriptorFile=intellij.plugin.module/intellij.plugin.module.xml,
         depends=DependsElement(pluginId=com.intellij.modules.lang)
       )
     """.trimIndent())
+  }
+
+  @Test
+  fun `dependencies from required to optional are not allowed`() {
+    val project = JpsElementFactory.getInstance().createModel().project
+    createModuleWithXml(
+      name = "intellij.plugin",
+      project = project,
+      sourceRoot = root / "plugin",
+      content = """
+            <idea-plugin>
+               <id>intellij.plugin</id>
+               <content>
+                  <module name="intellij.optional.module"/>
+                  <module name="intellij.required.module" loading="required"/>
+               </content>
+            </idea-plugin>
+      """)
+    createContentModule(project, "intellij.optional.module", "<idea-plugin/>")
+    createContentModule(project, "intellij.required.module", """
+      <idea-plugin>
+        <dependencies>
+          <module name="intellij.optional.module"/>
+        </dependencies>
+      </idea-plugin>
+      """.trimIndent())
+    val result = validatePluginModel(project)
+    assertThat(result.errorsAsString()).contains("""
+      The content module 'intellij.required.module' is registered as 'required', but it depends on the module 'intellij.optional.module' which is declared as optional
+    """.trimIndent())
+  }
+  
+  @Test
+  fun `dependencies from embedded to optional are not allowed`() {
+    val project = JpsElementFactory.getInstance().createModel().project
+    createModuleWithXml(
+      name = "intellij.plugin",
+      project = project,
+      sourceRoot = root / "plugin",
+      content = """
+            <idea-plugin>
+               <id>intellij.plugin</id>
+               <content>
+                  <module name="intellij.optional.module"/>
+                  <module name="intellij.embedded.module" loading='embedded'/>
+               </content>
+            </idea-plugin>
+      """)
+    createContentModule(project, "intellij.optional.module", "<idea-plugin/>")
+    createContentModule(project, "intellij.embedded.module", """
+      <idea-plugin>
+        <dependencies>
+          <module name="intellij.optional.module"/>
+        </dependencies>
+      </idea-plugin>
+      """.trimIndent())
+    val result = validatePluginModel(project)
+    assertThat(result.errorsAsString()).contains("""
+      The content module 'intellij.embedded.module' is registered as 'embedded', but it depends on the module 'intellij.optional.module' which is declared as optional
+    """.trimIndent())
+  }
+
+  @Test
+  fun `dependencies on private modules from other plugins are not allowed`() {
+    val project = JpsElementFactory.getInstance().createModel().project
+    createModuleWithXml(
+      name = "intellij.plugin1",
+      project = project,
+      sourceRoot = root / "plugin1",
+      content = """
+        |<idea-plugin>
+        |   <id>intellij.plugin1</id>
+        |   <content>
+        |      <module name="intellij.private.module"/>
+        |   </content>
+        |</idea-plugin>      
+      """.trimMargin(),
+    )
+    createContentModule(project, "intellij.private.module", """<idea-plugin/>""")
+    createModuleWithXml(
+      name = "intellij.plugin2",
+      project = project,
+      sourceRoot = root / "plugin2",
+      content = """
+        |<idea-plugin>
+        |   <id>intellij.plugin2</id>
+        |   <content>
+        |      <module name="intellij.module2"/>
+        |   </content>
+        |</idea-plugin>""".trimMargin())
+    createContentModule(project, "intellij.module2", """
+      |<idea-plugin>
+      |  <dependencies>
+      |    <module name="intellij.private.module"/>
+      |  </dependencies>
+      |</idea-plugin>
+    """.trimMargin())
+    val result = validatePluginModel(project)
+    assertThat(result.errorsAsString()).contains("""
+      |Module 'intellij.private.module' has 'private' (default) visibility in 'intellij.plugin1' but it is used as a dependency in 
+      |a plugin 'intellij.plugin2'.
+      |Use 'internal' or 'public' visibility instead by adding 'visibility' attribute to the root tag of intellij.private.module.xml
+    """.trimMargin())
+  }
+
+  @Test
+  fun `dependencies on internal modules from other namespace are not allowed`() {
+    val project = JpsElementFactory.getInstance().createModel().project
+    createModuleWithXml(
+      name = "intellij.plugin1",
+      project = project,
+      sourceRoot = root / "plugin1",
+      content = """
+        |<idea-plugin>
+        |   <id>intellij.plugin1</id>
+        |   <content namespace="jetbrains">
+        |      <module name="intellij.internal.module"/>
+        |   </content>
+        |</idea-plugin>      
+      """.trimMargin(),
+    )
+    createContentModule(project, "intellij.internal.module", """<idea-plugin visibility="internal"/>""")
+    createModuleWithXml(
+      name = "intellij.plugin2",
+      project = project,
+      sourceRoot = root / "plugin2",
+      content = """
+        |<idea-plugin>
+        |   <id>intellij.plugin2</id>
+        |   <content>
+        |      <module name="intellij.module2"/>
+        |   </content>
+        |</idea-plugin>""".trimMargin())
+    createContentModule(project, "intellij.module2", """
+      |<idea-plugin>
+      |  <dependencies>
+      |    <module name="intellij.internal.module"/>
+      |  </dependencies>
+      |</idea-plugin>
+    """.trimMargin())
+    val result = validatePluginModel(project)
+    assertThat(result.errorsAsString()).contains("""
+      |Module 'intellij.internal.module' has 'internal' visibility in 'intellij.plugin1' with namespace 'jetbrains' but it is used as a dependency in 
+      |a plugin 'intellij.plugin2' without namespace.
+      |Use 'public' visibility in 'intellij.internal.module.xml' or set the namespace to 'jetbrains' in 'intellij.plugin2' plugin
+    """.trimMargin())
+  }
+
+  private fun createContentModule(project: JpsProject, name: String, @Language("xml") content: String) {
+    createModuleWithXml(
+      name = name,
+      project = project,
+      sourceRoot = root / name,
+      path = name,
+      content = content,
+    )
   }
 
   private fun produceDependencyAndDependentPlugins(mutator: (String) -> String = { it }): JpsProject {

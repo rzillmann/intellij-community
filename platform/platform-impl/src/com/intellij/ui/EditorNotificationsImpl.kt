@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 @file:Suppress("ReplaceGetOrSet", "ReplacePutWithAssignment")
 @file:OptIn(FlowPreview::class)
 
@@ -8,12 +8,14 @@ import com.intellij.codeInsight.intention.IntentionActionProvider
 import com.intellij.codeInsight.intention.IntentionActionWithOptions
 import com.intellij.diagnostic.PluginException
 import com.intellij.ide.impl.runUnderModalProgressIfIsEdt
+import com.intellij.ide.plugins.DynamicPluginListener
+import com.intellij.ide.plugins.IdeaPluginDescriptor
+import com.intellij.idea.AppMode
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.*
 import com.intellij.openapi.application.impl.NonBlockingReadActionImpl
+import com.intellij.openapi.components.serviceAsync
 import com.intellij.openapi.diagnostic.logger
-import com.intellij.openapi.extensions.ExtensionPointListener
-import com.intellij.openapi.extensions.PluginDescriptor
 import com.intellij.openapi.extensions.impl.ExtensionPointImpl
 import com.intellij.openapi.fileEditor.*
 import com.intellij.openapi.fileEditor.impl.FileEditorManagerImpl
@@ -33,6 +35,7 @@ import com.intellij.psi.PsiFile
 import com.intellij.refactoring.listeners.RefactoringElementAdapter
 import com.intellij.refactoring.listeners.RefactoringElementListener
 import com.intellij.refactoring.listeners.RefactoringElementListenerProvider
+import com.intellij.ui.EditorNotifications.getInstance
 import com.intellij.util.concurrency.annotations.RequiresEdt
 import com.intellij.util.containers.CollectionFactory
 import com.intellij.util.ui.UIUtil
@@ -56,15 +59,13 @@ private val PENDING_UPDATE: Key<Boolean> = Key.create("pending.notification.upda
 private val FILE_LEVEL_INTENTIONS: Key<List<IntentionActionWithOptions>> = Key.create("file.level.intentions")
 
 @ApiStatus.Internal
-class EditorNotificationsImpl(private val project: Project,
-                              coroutineScope: CoroutineScope) : EditorNotifications(), Disposable {
-
+class EditorNotificationsImpl(private val project: Project, coroutineScope: CoroutineScope) : EditorNotifications(), Disposable {
   /**
    * The scope passed in constructor can be a project scope,
    * for example, in [com.intellij.httpClient.http.request.utils.prepareEditorNotifications].
    * Since it's canceled in [dispose], we have to create a child.
    */
-  private val coroutineScope: CoroutineScope = coroutineScope.childScope("EditorNotificationsImpl")
+  private val coroutineScope = coroutineScope.childScope("EditorNotificationsImpl")
   private val updateAllRequests = MutableSharedFlow<Unit>(replay=1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
 
   private val fileToUpdateNotificationJob = CollectionFactory.createConcurrentWeakMap<VirtualFile, Job>()
@@ -98,23 +99,23 @@ class EditorNotificationsImpl(private val project: Project,
       }
     })
     connection.subscribe(AdditionalLibraryRootsListener.TOPIC, AdditionalLibraryRootsListener { _, _, _, _ -> updateAllNotifications() })
-    EditorNotificationProvider.EP_NAME.getPoint(project)
-      .addExtensionPointListener(object : ExtensionPointListener<EditorNotificationProvider> {
-        override fun extensionAdded(extension: EditorNotificationProvider, pluginDescriptor: PluginDescriptor) {
-          updateAllNotifications()
-        }
+    connection.subscribe(DynamicPluginListener.TOPIC, object : DynamicPluginListener {
+      override fun pluginLoaded(pluginDescriptor: IdeaPluginDescriptor) {
+        updateAllNotifications()
+      }
 
-        override fun extensionRemoved(extension: EditorNotificationProvider, pluginDescriptor: PluginDescriptor) {
-          updateNotifications(extension)
-        }
-      }, false, null)
+      override fun pluginUnloaded(pluginDescriptor: IdeaPluginDescriptor, isUpdate: Boolean) {
+        updateAllNotifications()
+      }
+    })
 
     updateAllRequestFlowJob = coroutineScope.launch {
       updateAllRequests
         .debounce(100.milliseconds)
         .collectLatest {
+          val fileEditorManager = project.serviceAsync<FileEditorManager>()
           withContext(Dispatchers.EDT) {
-            doUpdateAllNotifications()
+            doUpdateAllNotifications(fileEditorManager)
           }
         }
     }
@@ -136,7 +137,7 @@ class EditorNotificationsImpl(private val project: Project,
   fun completeAsyncTasks() {
     NonBlockingReadActionImpl.waitForAsyncTaskCompletion()
     @Suppress("DEPRECATION")
-    runUnderModalProgressIfIsEdt {
+    runUnderModalProgressIfIsEdt(project) {
       val parentJob = coroutineScope.coroutineContext[Job]!!
       while (true) {
         // process all events in EDT
@@ -163,8 +164,9 @@ class EditorNotificationsImpl(private val project: Project,
   @Deprecated("Deprecated in Java")
   override fun updateNotifications(provider: EditorNotificationProvider) {
     // TODO: run [updateEditors] instead to check for the new notifications
-    for (file in FileEditorManager.getInstance(project).openFilesWithRemotes) {
-      for (editor in getEditors(file).toList()) {
+    val fileEditorManager = FileEditorManager.getInstance(project)
+    for (file in fileEditorManager.openFilesWithRemotes) {
+      for (editor in getEditors(file, fileEditorManager).toList()) {
         updateNotification(fileEditor = editor, provider = provider, component = null)
       }
     }
@@ -172,10 +174,9 @@ class EditorNotificationsImpl(private val project: Project,
 
   override fun updateNotifications(file: VirtualFile) {
     coroutineScope.launch(Dispatchers.EDT + ModalityState.any().asContextElement()) {
-      writeIntentReadAction {
-        if (file.isValid) {
-          doUpdateNotifications(file)
-        }
+      if (file.isValid) {
+        val fileEditorManager = project.serviceAsync<FileEditorManager>()
+        doUpdateNotifications(file, fileEditorManager)
       }
     }
   }
@@ -183,7 +184,7 @@ class EditorNotificationsImpl(private val project: Project,
   override fun scheduleUpdateNotifications(editor: TextEditor) {
     ((editor as? TextEditorImpl)?.asyncLoader?.coroutineScope ?: coroutineScope).launch(Dispatchers.EDT + ModalityState.any().asContextElement()) {
       if (editor.isValid) {
-        if (ApplicationManager.getApplication().isHeadlessEnvironment || UIUtil.isShowing(editor.component)) {
+        if (ApplicationManager.getApplication().isHeadlessEnvironment || AppMode.isRemoteDevHost() || UIUtil.isShowing(editor.component)) {
           updateEditors(file = editor.file, fileEditors = listOf(editor))
         }
         else {
@@ -194,8 +195,8 @@ class EditorNotificationsImpl(private val project: Project,
   }
 
   @RequiresEdt
-  private fun doUpdateNotifications(file: VirtualFile) {
-    var editors = getEditors(file)
+  private fun doUpdateNotifications(file: VirtualFile, fileEditorManager: FileEditorManager) {
+    var editors = getEditors(file, fileEditorManager)
     if (!ApplicationManager.getApplication().isHeadlessEnvironment) {
       editors = editors.filter { fileEditor ->
         val visible = UIUtil.isShowing(fileEditor.component)
@@ -208,25 +209,28 @@ class EditorNotificationsImpl(private val project: Project,
     updateEditors(file = file, fileEditors = editors.toList())
   }
 
-  private fun getEditors(file: VirtualFile): Sequence<FileEditor> {
-    return FileEditorManager.getInstance(project).getAllEditorList(file).asSequence().filter { it !is TextEditor || isEditorLoaded(it.editor) }
+  private fun getEditors(file: VirtualFile, fileEditorManager: FileEditorManager): Sequence<FileEditor> {
+    return fileEditorManager.getAllEditorList(file).asSequence().filter { it !is TextEditor || isEditorLoaded(it.editor) }
   }
 
   private fun updateEditors(file: VirtualFile, fileEditors: List<FileEditor>) {
-    if (fileEditors.isEmpty()) return
+    if (fileEditors.isEmpty()) {
+      return
+    }
 
+    // we use ugly `project.isDisposed` because a light project is not disposed in tests
     val job = coroutineScope.launch(start = CoroutineStart.LAZY) {
       // delay for debouncing
       delay(100)
 
-      // Please don't remove this readAction {} here, it's needed for checking of validity of injected files,
-      // and many unpleasant exceptions appear in case if validity check is not wrapped.
-      if (!readAction { file.isValid }) {
+      // light project is not disposed in tests
+      if (project.isDisposed) {
         return@launch
       }
 
-      // light project is not disposed in tests
-      if (project.isDisposed) {
+      // Please don't remove this readAction {} here, it's necessary for checking of validity of injected files,
+      // and many unpleasant exceptions appear in case if the validity check is not wrapped.
+      if (!readAction { file.isValid }) {
         return@launch
       }
 
@@ -234,13 +238,12 @@ class EditorNotificationsImpl(private val project: Project,
       val point = EditorNotificationProvider.EP_NAME.getPoint(project) as ExtensionPointImpl<EditorNotificationProvider>
       for (adapter in point.sortedAdapters.toTypedArray()) {
         coroutineContext.ensureActive()
+        if (project.isDisposed) {
+          return@launch
+        }
 
         try {
-          if (project.isDisposed) {
-            return@launch
-          }
           val provider = adapter.createInstance<EditorNotificationProvider>(project) ?: continue
-
           coroutineContext.ensureActive()
 
           val result = readAction {
@@ -254,12 +257,12 @@ class EditorNotificationsImpl(private val project: Project,
           } ?: continue
 
           val componentProvider = result.orElse(null)
-          withContext(Dispatchers.EDT + ModalityState.any().asContextElement()) {
-            writeIntentReadAction {
-              if (!file.isValid) {
-                return@writeIntentReadAction
-              }
-              for (fileEditor in fileEditors) {
+          withContext(Dispatchers.UiWithModelAccess + ModalityState.any().asContextElement()) {
+            if (!file.isValid || project.isDisposed) {
+              return@withContext
+            }
+            for (fileEditor in fileEditors) {
+              runReadAction {
                 updateNotification(fileEditor = fileEditor, provider = provider, component = componentProvider?.apply(fileEditor))
               }
             }
@@ -268,7 +271,15 @@ class EditorNotificationsImpl(private val project: Project,
         catch (_: IndexNotReadyException) {
         }
         catch (e: CancellationException) {
-          throw e
+          if (coroutineContext.isActive) {
+            // light project where scope is not canceled for a temporarily disposed project
+            @Suppress("IncorrectCancellationExceptionHandling")
+            logger<EditorNotificationsImpl>().debug("Ignore cancellation exception (error=${e}, project=$project)")
+            break
+          }
+          else {
+            throw e
+          }
         }
         catch (e: Exception) {
           val pluginException = if (e is PluginException) e else PluginException(e, adapter.pluginDescriptor.pluginId)
@@ -331,7 +342,8 @@ class EditorNotificationsImpl(private val project: Project,
     }
 
     if (ApplicationManager.getApplication().isUnitTestMode) {
-      doUpdateAllNotifications()
+      val fileEditorManager = FileEditorManager.getInstance(project) ?: throw IllegalStateException("No FileEditorManager for $project")
+      doUpdateAllNotifications(fileEditorManager)
     }
     else {
       check(updateAllRequests.tryEmit(Unit))
@@ -339,30 +351,29 @@ class EditorNotificationsImpl(private val project: Project,
   }
 
   @RequiresEdt
-  private fun doUpdateAllNotifications() {
-    val fileEditorManager = FileEditorManager.getInstance(project) ?: throw IllegalStateException("No FileEditorManager for $project")
+  private fun doUpdateAllNotifications(fileEditorManager: FileEditorManager) {
     for (file in fileEditorManager.openFilesWithRemotes) {
-      doUpdateNotifications(file)
+      doUpdateNotifications(file, fileEditorManager)
     }
   }
+}
 
-  internal class RefactoringListenerProvider : RefactoringElementListenerProvider {
-    override fun getListener(element: PsiElement): RefactoringElementListener? {
-      if (element !is PsiFile) {
-        return null
+private class RefactoringListenerProvider : RefactoringElementListenerProvider {
+  override fun getListener(element: PsiElement): RefactoringElementListener? {
+    if (element !is PsiFile) {
+      return null
+    }
+
+    return object : RefactoringElementAdapter() {
+      override fun elementRenamedOrMoved(newElement: PsiElement) {
+        if (newElement is PsiFile) {
+          val vFile = newElement.getContainingFile().virtualFile ?: return
+          getInstance(element.getProject()).updateNotifications(vFile)
+        }
       }
 
-      return object : RefactoringElementAdapter() {
-        override fun elementRenamedOrMoved(newElement: PsiElement) {
-          if (newElement is PsiFile) {
-            val vFile = newElement.getContainingFile().virtualFile ?: return
-            getInstance(element.getProject()).updateNotifications(vFile)
-          }
-        }
-
-        override fun undoElementMovedOrRenamed(newElement: PsiElement, oldQualifiedName: String) {
-          elementRenamedOrMoved(newElement)
-        }
+      override fun undoElementMovedOrRenamed(newElement: PsiElement, oldQualifiedName: String) {
+        elementRenamedOrMoved(newElement)
       }
     }
   }

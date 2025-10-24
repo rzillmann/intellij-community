@@ -1,4 +1,4 @@
-// Copyright 2000-2021 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license that can be found in the LICENSE file.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.openapi.diff.impl.patch.apply;
 
 import com.intellij.codeInsight.actions.VcsFacade;
@@ -12,6 +12,7 @@ import com.intellij.openapi.vcs.FilePath;
 import com.intellij.openapi.vcs.changes.CommitContext;
 import com.intellij.openapi.vcs.changes.patch.ApplyPatchForBaseRevisionTexts;
 import com.intellij.openapi.vfs.VirtualFile;
+import com.intellij.openapi.vfs.transformer.TextPresentationTransformers;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -36,15 +37,17 @@ public final class ApplyTextFilePatch extends ApplyFilePatchBase<TextFilePatch> 
       throw new IOException("Failed to set contents for updated file " + fileToPatch.getPath());
     }
 
-    GenericPatchApplier.AppliedPatch appliedPatch = GenericPatchApplier.apply(document.getText(), myPatch.getHunks());
+    String documentText = document.getText();
+    String fileTextPersistent = TextPresentationTransformers.toPersistent(documentText, fileToPatch).toString();
+    GenericPatchApplier.AppliedPatch appliedPatch = GenericPatchApplier.apply(fileTextPersistent, myPatch.getHunks());
+
     if (appliedPatch != null) {
       if (appliedPatch.status == ApplyPatchStatus.ALREADY_APPLIED) {
         return new Result(appliedPatch.status);
       }
 
       if (appliedPatch.status == ApplyPatchStatus.SUCCESS) {
-        VcsFacade.getInstance().runHeavyModificationTask(project, document, () -> document.setText(appliedPatch.patchedText));
-        FileDocumentManager.getInstance().saveDocument(document);
+        updateDocumentContent(project, document, appliedPatch.patchedText);
         return new Result(appliedPatch.status);
       }
     }
@@ -77,7 +80,17 @@ public final class ApplyTextFilePatch extends ApplyFilePatchBase<TextFilePatch> 
       catch (IllegalArgumentException ignore) {
       }
     }
-    document.setText(myPatch.getSingleHunkPatchText());
-    FileDocumentManager.getInstance().saveDocument(document);
+
+    String patchText = myPatch.getSingleHunkPatchText();
+    updateDocumentContent(project, document, patchText);
+  }
+
+  private static void updateDocumentContent(@NotNull Project project,
+                                            @NotNull Document document,
+                                            @NotNull String patchedText) {
+    VcsFacade.getInstance().runHeavyModificationTask(project, document, () -> {
+      document.setText(patchedText);
+      FileDocumentManager.getInstance().saveDocument(document);
+    });
   }
 }

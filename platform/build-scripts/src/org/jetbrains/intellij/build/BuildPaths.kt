@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.intellij.build
 
 import org.jetbrains.intellij.build.dependencies.BuildDependenciesCommunityRoot
@@ -38,14 +38,20 @@ class BuildPaths(
   companion object {
     @JvmStatic
     val ULTIMATE_HOME: Path by lazy {
-      IdeaProjectLoaderUtil.guessUltimateHome(this::class.java) ?: error(
-        "Could not detect ultimate home folder from class: ${BuildPaths::class.java.name}")
+      IdeaProjectLoaderUtil.guessUltimateHome()
+    }
+
+    /**
+     * Path to the Ultimate repository root or null if it is the Community repository.
+     */
+    @JvmStatic
+    val MAYBE_ULTIMATE_HOME: Path? by lazy {
+      IdeaProjectLoaderUtil.maybeUltimateHome()
     }
 
     @JvmStatic
     val COMMUNITY_ROOT: BuildDependenciesCommunityRoot by lazy {
-      IdeaProjectLoaderUtil.guessCommunityHome(this::class.java) ?: error(
-        "Could not detect community home folder from class: ${BuildPaths::class.java.name}")
+      IdeaProjectLoaderUtil.guessCommunityHome()
     }
   }
 

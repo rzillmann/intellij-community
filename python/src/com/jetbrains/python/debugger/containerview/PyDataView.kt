@@ -40,7 +40,6 @@ class PyDataView(private val project: Project) : DumbAware {
   private lateinit var contentManager: ContentManager
 
   fun init(toolWindow: ToolWindow) {
-    toolWindow.stripeTitle = PyBundle.message("debugger.data.view.title")
     toolWindow.helpId = HELP_ID
     toolWindow.isAvailable = true
 
@@ -118,7 +117,7 @@ class PyDataView(private val project: Project) : DumbAware {
   fun updateTabs(handler: ProcessHandler) {
     saveSelectedInfo()
     contentManager.contents.forEach { content ->
-      val panel: PyDataViewerCommunityPanel = getPanel(content.component).component as PyDataViewerCommunityPanel
+      val panel: PyDataViewerAbstractPanel = getPanel(content.component).component
       val accessor = panel.dataViewerModel.frameAccessor
       if (accessor !is PyDebugProcess) {
         return@forEach
@@ -232,7 +231,7 @@ class PyDataView(private val project: Project) : DumbAware {
   companion object {
     private const val DATA_VIEWER_ID = "SciView"
 
-    const val COLORED_BY_DEFAULT: String = "python.debugger.dataView.coloredByDefault"
+    const val COLORED_BY_DEFAULT: String = "datagrid.heatmap.switchedByDefault"
     const val AUTO_RESIZE: String = "python.debugger.dataView.autoresize"
     private const val HELP_ID = "reference.toolWindows.PyDataView"
 

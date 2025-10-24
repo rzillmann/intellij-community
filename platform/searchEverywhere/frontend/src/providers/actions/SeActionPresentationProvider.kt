@@ -5,6 +5,7 @@ import com.intellij.ide.actions.ApplyIntentionAction
 import com.intellij.ide.actions.searcheverywhere.PromoAction
 import com.intellij.ide.ui.UISettings
 import com.intellij.ide.ui.icons.rpcId
+import com.intellij.ide.ui.icons.rpcIdOrNull
 import com.intellij.ide.ui.search.BooleanOptionDescription
 import com.intellij.ide.ui.search.OptionDescription
 import com.intellij.ide.util.gotoByName.GotoActionModel
@@ -18,11 +19,15 @@ import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.application.asContextElement
 import com.intellij.openapi.keymap.KeymapUtil
 import com.intellij.openapi.util.NlsSafe
+import com.intellij.openapi.util.text.StringUtil
 import com.intellij.platform.searchEverywhere.SeActionItemPresentation
+import com.intellij.platform.searchEverywhere.SeExtendedInfo
 import com.intellij.platform.searchEverywhere.SeItemPresentation
 import com.intellij.platform.searchEverywhere.SeOptionActionItemPresentation
 import com.intellij.platform.searchEverywhere.SeRunnableActionItemPresentation
 import com.intellij.platform.searchEverywhere.SeRunnableActionItemPresentation.Promo
+import com.intellij.platform.searchEverywhere.providers.SeLog
+import com.intellij.platform.searchEverywhere.providers.SeLog.ITEM_EMIT
 import com.intellij.util.text.nullize
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -30,10 +35,10 @@ import org.jetbrains.annotations.ApiStatus
 
 @ApiStatus.Internal
 object SeActionPresentationProvider {
-  suspend fun get(matchedValue: GotoActionModel.MatchedValue): SeItemPresentation {
+  suspend fun get(matchedValue: GotoActionModel.MatchedValue, extendedInfo: SeExtendedInfo?, isMultiSelectionSupported: Boolean): SeItemPresentation {
     val value = matchedValue.value
     if (value is GotoActionModel.ActionWrapper) {
-      var presentation = SeRunnableActionItemPresentation(commonData = SeActionItemPresentation.Common(text = ""))
+      var presentation = SeRunnableActionItemPresentation(commonData = SeActionItemPresentation.Common(text = "", extendedInfo = extendedInfo), isMultiSelectionSupported = isMultiSelectionSupported)
 
       val anAction = value.action
       val actionPresentation = value.presentation
@@ -54,8 +59,8 @@ object SeActionPresentationProvider {
 
       if (UISettings.getInstance().showIconsInMenus) {
         presentation = presentation.run {
-          copy(iconId = actionPresentation.icon?.rpcId(),
-               selectedIconId = actionPresentation.selectedIcon?.rpcId())
+          copy(iconId = actionPresentation.icon?.rpcIdOrNull(),
+               selectedIconId = actionPresentation.selectedIcon?.rpcIdOrNull())
         }
       }
 
@@ -79,16 +84,19 @@ object SeActionPresentationProvider {
       val decoratedText = withContext(Dispatchers.EDT + ModalityState.any().asContextElement()) {
         ActionPresentationDecorator.decorateTextIfNeeded(anAction, actionPresentation.text)
       }
+      val displayText = if (decoratedText.startsWith("<html>")) StringUtil.removeHtmlTags(decoratedText) else decoratedText
 
       presentation = presentation.run {
-        copy(commonData = commonData.copy(text = decoratedText))
+        copy(commonData = commonData.copy(text = displayText))
       }
 
       return presentation
     }
     else if (value is OptionDescription) {
       val hit = GotoActionModel.GotoActionListCellRenderer.calcHit(value)
-      var presentation = SeOptionActionItemPresentation(commonData = SeActionItemPresentation.Common(text = hit))
+      val displayText = if (hit.startsWith("<html>")) StringUtil.removeHtmlTags(hit) else hit
+
+      var presentation = SeOptionActionItemPresentation(commonData = SeActionItemPresentation.Common(text = displayText, extendedInfo = extendedInfo), isMultiSelectionSupported = isMultiSelectionSupported)
 
       (value as? BooleanOptionDescription)?.isOptionEnabled.let {
         presentation = presentation.run {
@@ -103,6 +111,8 @@ object SeActionPresentationProvider {
       return presentation
     }
 
-    return SeRunnableActionItemPresentation(SeActionItemPresentation.Common(text = "Unknown item"))
+    SeLog.log(ITEM_EMIT) { "Couldn't generate an action presentation. Unknown item: $matchedValue" }
+    @Suppress("HardCodedStringLiteral")
+    return SeRunnableActionItemPresentation(SeActionItemPresentation.Common(text = "Unknown item"), isMultiSelectionSupported = isMultiSelectionSupported)
   }
 }

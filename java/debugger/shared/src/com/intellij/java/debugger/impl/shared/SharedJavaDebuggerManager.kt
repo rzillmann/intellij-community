@@ -6,7 +6,7 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
 import com.intellij.platform.util.coroutines.childScope
-import com.intellij.xdebugger.impl.FrontendXDebuggerManagerListener
+import com.intellij.xdebugger.impl.XDebuggerManagerProxyListener
 import com.intellij.xdebugger.impl.frame.XDebugManagerProxy
 import com.intellij.xdebugger.impl.frame.XDebugSessionProxy
 import com.intellij.xdebugger.impl.rpc.XDebugSessionId
@@ -14,11 +14,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
-import org.jetbrains.annotations.ApiStatus
 
 @Service(Service.Level.PROJECT)
-@ApiStatus.Internal
-class SharedJavaDebuggerManager(private val project: Project, private val cs: CoroutineScope) {
+internal class SharedJavaDebuggerManager(private val project: Project, private val cs: CoroutineScope) {
   private val synchronousExecutor = Channel<suspend () -> Unit>(capacity = Integer.MAX_VALUE)
   private val debugSessions = hashMapOf<XDebugSessionId, SharedJavaDebuggerSession>()
 
@@ -38,7 +36,7 @@ class SharedJavaDebuggerManager(private val project: Project, private val cs: Co
         }
       }
     }
-    project.messageBus.connect(cs).subscribe(FrontendXDebuggerManagerListener.TOPIC, object : FrontendXDebuggerManagerListener {
+    project.messageBus.connect(cs).subscribe(XDebuggerManagerProxyListener.TOPIC, object : XDebuggerManagerProxyListener {
       override fun sessionStopped(session: XDebugSessionProxy) {
         synchronousExecutor.trySend {
           debugSessions.remove(session.id)?.close()

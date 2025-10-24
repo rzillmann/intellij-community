@@ -4,38 +4,38 @@ package com.intellij.ide.browsers
 import com.intellij.ide.IdeBundle
 import com.intellij.openapi.extensions.BaseExtensionPointName
 import com.intellij.openapi.options.BoundCompositeConfigurable
-import com.intellij.openapi.options.Configurable.NoScroll
 import com.intellij.openapi.options.Configurable.WithEpDependencies
 import com.intellij.openapi.options.SearchableConfigurable
 import com.intellij.openapi.options.UnnamedConfigurable
 import com.intellij.openapi.options.ex.ConfigurableWrapper
 import com.intellij.openapi.ui.DialogPanel
+import com.intellij.ui.dsl.builder.panel
 
 class BrowserSettings : BoundCompositeConfigurable<UnnamedConfigurable>(
   IdeBundle.message("browsers.settings"),
   "reference.settings.ide.settings.web.browsers"
-), SearchableConfigurable, NoScroll, WithEpDependencies {
-  private var myPanel: BrowserSettingsPanel? = null
+), SearchableConfigurable, WithEpDependencies {
+  private var browserSettings = BrowserSettingsConfigurable()
 
   override fun getId(): String = helpTopic!!
 
   override fun createPanel(): DialogPanel {
-    if (myPanel == null) {
-      myPanel = BrowserSettingsPanel {
-        configurables.forEach {
-          appendDslConfigurable(it)
-        }
+    return panel {
+      configurables.forEach {
+        appendDslConfigurable(it)
       }
     }
-    return myPanel!!.component
   }
 
   fun selectBrowser(browser: WebBrowser) {
     createPanel()
-    myPanel!!.selectBrowser(browser)
+    browserSettings.selectBrowser(browser)
   }
 
-  override fun createConfigurables(): List<UnnamedConfigurable> = ConfigurableWrapper.createConfigurables<UnnamedConfigurable>(BrowserSettingsConfigurableEP.EP_NAME)
+  override fun createConfigurables(): List<UnnamedConfigurable> = buildList {
+    add(browserSettings)
+    addAll(ConfigurableWrapper.createConfigurables(BrowserSettingsConfigurableEP.EP_NAME))
+  }
 
   override fun getDependencies(): Collection<BaseExtensionPointName<*>?> = listOf(BrowserSettingsConfigurableEP.EP_NAME)
 }

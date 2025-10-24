@@ -173,8 +173,6 @@
   <action id="GuiDesigner.EditGroup"/>
   <action id="HighlightUsagesInFile"/>    <!-- TODO -->
   <action id="IDEtalk.Rename"/>
-  <action id="Images.ShowThumbnails"/>
-  <action id="Images.Thumbnails.ToggleRecursive"/>
   <action id="ImplementMethods"/>
   <action id="IncrementalSearch">
     <keyboard-shortcut first-keystroke="meta J"/>
@@ -331,6 +329,7 @@
   <action id="Vcs.RollbackChangedLines">
     <keyboard-shortcut first-keystroke="control shift alt Z"/>
   </action>
+  <action id="ChangesView.ShowCommitOptions"/>
   <action id="ChangesView.Revert">
     <keyboard-shortcut first-keystroke="control shift alt Z"/>
   </action>

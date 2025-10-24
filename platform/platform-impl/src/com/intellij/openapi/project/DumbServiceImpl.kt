@@ -1,10 +1,7 @@
-// Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.openapi.project
 
-import com.intellij.icons.AllIcons
-import com.intellij.ide.IdeBundle
 import com.intellij.openapi.Disposable
-import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.application.*
 import com.intellij.openapi.application.impl.ApplicationImpl
 import com.intellij.openapi.components.service
@@ -12,7 +9,6 @@ import com.intellij.openapi.diagnostic.debug
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.progress.ProgressManager
-import com.intellij.openapi.progress.blockingContext
 import com.intellij.openapi.progress.runBlockingMaybeCancellable
 import com.intellij.openapi.progress.util.PingProgress
 import com.intellij.openapi.project.MergingQueueGuiExecutor.ExecutorStateListener
@@ -35,7 +31,6 @@ import com.intellij.util.application
 import com.intellij.util.concurrency.ThreadingAssertions
 import com.intellij.util.concurrency.annotations.RequiresBlockingContext
 import com.intellij.util.indexing.IndexingBundle
-import com.intellij.util.ui.DeprecationStripePanel
 import com.intellij.util.ui.EDT
 import com.intellij.util.ui.EdtInvocationManager
 import kotlinx.coroutines.*
@@ -183,15 +178,13 @@ open class DumbServiceImpl @NonInjectable @VisibleForTesting constructor(
     // we assume that queueStartupActivitiesRequiredForSmartMode will be invoked to advance DUMB > SMART
   }
 
-  internal suspend fun queueStartupActivitiesRequiredForSmartMode() {
+  internal fun queueStartupActivitiesRequiredForSmartMode() {
     if (!initialDumbTaskRequiredForSmartModeSubmitted.compareAndSet(false, true)) {
       return
     }
 
     val task = InitialDumbTaskRequiredForSmartMode(project)
-    blockingContext {
-      queueTask(task)
-    }
+    queueTask(task)
   }
 
   override fun cancelTask(task: DumbModeTask) {
@@ -211,7 +204,7 @@ open class DumbServiceImpl @NonInjectable @VisibleForTesting constructor(
     guiDumbTaskRunner.suspendAndRun(activityName, activity)
   }
 
-  override suspend fun suspendIndexingAndRun(activityName: @NlsContexts.ProgressText String, activity: suspend () -> Unit) {
+  override suspend fun suspendIndexingAndRun(activityName: @NlsContexts.ProgressText String, activity: suspend CoroutineScope.() -> Unit) {
     guiDumbTaskRunner.guiSuspender().suspendAndRun(activityName, activity)
   }
 
@@ -229,11 +222,10 @@ open class DumbServiceImpl @NonInjectable @VisibleForTesting constructor(
     LOG.info("[$project]: running dumb task without visible indicator: $debugReason")
 
     suspend fun incrementCounter() {
-      blockingContext { // because we need correct modality
-        // Because we need to avoid additional dispatch. UNDISPATCHED coroutine is not a solution, because
-        // multiple UNDISPATCHED coroutines in the same (EDT) thread ends up in some strange state (as revealed by unit tests)
-        incrementDumbCounter(trace = Throwable())
-      }
+      // we need correct modality
+      // Because we need to avoid additional dispatch. UNDISPATCHED coroutine is not a solution, because
+      // multiple UNDISPATCHED coroutines in the same (EDT) thread ends up in some strange state (as revealed by unit tests)
+      incrementDumbCounter(trace = Throwable())
     }
 
     if (EDT.isCurrentThreadEdt()) {
@@ -251,9 +243,7 @@ open class DumbServiceImpl @NonInjectable @VisibleForTesting constructor(
     finally {
       // in the case of cancellation, this block won't execute if NonCancellable is omitted
       withContext(Dispatchers.EDT + NonCancellable) {
-        blockingContext {
-          decrementDumbCounter()
-        }
+        decrementDumbCounter()
         LOG.info("[$project]: finished dumb task without visible indicator: $debugReason")
       }
     }
@@ -273,6 +263,9 @@ open class DumbServiceImpl @NonInjectable @VisibleForTesting constructor(
       })
       if (enteredDumb) {
         LOG.info("enter dumb mode [${project.name}]")
+        if (LOG.isDebugEnabled) {
+          LOG.debug("dumb mode [${project.name}] trace", trace)
+        }
         dumbModeStartTrace = trace
         try {
           publishDumbModeChangedEvent()
@@ -404,9 +397,7 @@ open class DumbServiceImpl @NonInjectable @VisibleForTesting constructor(
     }.invokeOnCompletion {
       if (!dumbModeCounterWillBeDecrementedFromOnFinish) {
         scope.launch(modality.asContextElement() + Dispatchers.EDT) {
-          blockingContext {
-            launcher.cancel()
-          }
+          launcher.cancel()
         }
       }
     }
@@ -437,7 +428,7 @@ open class DumbServiceImpl @NonInjectable @VisibleForTesting constructor(
       val ideFrame = WindowManager.getInstance().getIdeFrame(myProject)
       if (ideFrame != null) {
         val statusBar = ideFrame.statusBar as StatusBarEx?
-        statusBar?.notifyProgressByBalloon(MessageType.WARNING, message)
+        statusBar?.notifyProgressByBalloon(MessageType.INFO, message)
       }
     }
   }
@@ -551,29 +542,6 @@ open class DumbServiceImpl @NonInjectable @VisibleForTesting constructor(
       }
     })
     return wrapper
-  }
-
-  override fun wrapWithSpoiler(dumbAwareContent: JComponent, updateRunnable: Runnable, parentDisposable: Disposable): JComponent {
-    //TODO replace with a proper mockup implementation
-    val stripePanel = DeprecationStripePanel(IdeBundle.message("dumb.mode.results.might.be.incomplete"), AllIcons.General.Warning)
-      .withAlternativeAction(IdeBundle.message("dumb.mode.spoiler.wrapper.reload.text"), object : DumbAwareAction() {
-        override fun actionPerformed(e: AnActionEvent) {
-          updateRunnable.run()
-        }
-      })
-    stripePanel.isVisible = isDumb
-    project.messageBus.connect(parentDisposable).subscribe(DUMB_MODE, object : DumbModeListener {
-      override fun enteredDumbMode() {
-        stripePanel.isVisible = true
-        updateRunnable.run()
-      }
-
-      override fun exitDumbMode() {
-        stripePanel.isVisible = false
-        updateRunnable.run()
-      }
-    })
-    return stripePanel.wrap(dumbAwareContent)
   }
 
   override fun smartInvokeLater(runnable: Runnable) {

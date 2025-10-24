@@ -1,8 +1,8 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.intellij.build.impl.plugins
 
 import com.intellij.openapi.util.text.StringUtil
-import org.jetbrains.annotations.ApiStatus
+import org.jetbrains.annotations.ApiStatus.Internal
 import org.jetbrains.intellij.build.BuildContext
 import org.jetbrains.intellij.build.impl.PluginLayout
 import java.nio.file.Files
@@ -18,7 +18,7 @@ import kotlin.io.path.useLines
  * @see [org.jetbrains.intellij.build.ProductModulesLayout.buildAllCompatiblePlugins]
  * @see [org.jetbrains.intellij.build.ProductModulesLayout.pluginModulesToPublish]
  */
-@ApiStatus.Internal
+@Internal
 class PluginAutoPublishList(private val context: BuildContext) : Predicate<PluginLayout> {
   private val expectedFile: Path = context.paths.communityHomeDir.resolve("../build/plugins-autoupload.txt")
 
@@ -48,10 +48,10 @@ class PluginAutoPublishList(private val context: BuildContext) : Predicate<Plugi
 
     val includeInAllProducts = config.contains(mainModuleName)
     val includeInProduct = config.contains("+$productCode:$mainModuleName")
-    val excludedFromProduct = config.contains("-$productCode:$mainModuleName")
+    val excludedFromProduct = config.contains("-$productCode:$mainModuleName") || config.contains("-$productCode:*")
 
     if (includeInProduct && (excludedFromProduct || includeInAllProducts)) {
-      context.messages.error("Unsupported rules combination: " + config.filter {
+      context.messages.logErrorAndThrow("Unsupported rules combination: " + config.filter {
         it == mainModuleName || it.endsWith(":$mainModuleName")
       })
     }

@@ -24,10 +24,10 @@ import com.intellij.platform.diagnostic.telemetry.TelemetryManager;
 import com.intellij.platform.diagnostic.telemetry.TracerLevel;
 import com.intellij.platform.diagnostic.telemetry.helpers.TraceKt;
 import com.intellij.util.ExceptionUtil;
-import com.intellij.util.Java11Shim;
 import com.intellij.util.SystemProperties;
 import com.intellij.util.concurrency.AppExecutorUtil;
 import com.intellij.util.containers.ConcurrentLongObjectMap;
+import com.intellij.util.containers.Java11Shim;
 import com.intellij.util.ui.EDT;
 import io.opentelemetry.api.trace.Span;
 import org.jetbrains.annotations.*;
@@ -61,10 +61,10 @@ public class CoreProgressManager extends ProgressManager implements Disposable {
   private static final Map<ProgressIndicator, Set<Thread>> threadsUnderIndicator = new HashMap<>(); // guarded by threadsUnderIndicator
   // the active indicator for the thread id
   private static final ConcurrentLongObjectMap<ProgressIndicator> currentIndicators =
-    Java11Shim.Companion.getINSTANCE().createConcurrentLongObjectMap();
+    Java11Shim.Companion.createConcurrentLongObjectMap();
   // top-level indicators for the thread id
   private static final ConcurrentLongObjectMap<ProgressIndicator> threadTopLevelIndicators =
-    Java11Shim.Companion.getINSTANCE().createConcurrentLongObjectMap();
+    Java11Shim.Companion.createConcurrentLongObjectMap();
   // threads which are running under canceled indicator
   private static final Set<Thread> threadsUnderCanceledIndicator = new HashSet<>(); // guarded by threadsUnderIndicator
 
@@ -154,29 +154,60 @@ public class CoreProgressManager extends ProgressManager implements Disposable {
   @Override
   protected void doCheckCanceled() throws ProcessCanceledException {
     if (isInNonCancelableSection()) {
-      CheckCanceledBehavior behavior = ourCheckCanceledBehavior;
-      if (behavior != CheckCanceledBehavior.NONE) {
-        ProgressIndicator indicator = behavior == CheckCanceledBehavior.INDICATOR_PLUS_HOOKS ? getProgressIndicator() : null;
-        runCheckCanceledHooks(indicator);
+      try {
+        CheckCanceledBehavior behavior = ourCheckCanceledBehavior;
+        if (behavior != CheckCanceledBehavior.NONE) {
+          ProgressIndicator indicator = behavior == CheckCanceledBehavior.INDICATOR_PLUS_HOOKS ? getProgressIndicator() : null;
+          runCheckCanceledHooks(indicator);
+        }
+      }
+      finally {
+        fireNonCancellableEvent();
       }
       return;
     }
 
-    Cancellation.ensureActive();
+    try {
+      Cancellation.ensureActive();
+    }
+    catch (ProcessCanceledException e) {
+      fireCanceledByJobEvent();
+      throw e;
+    }
 
     CheckCanceledBehavior behavior = ourCheckCanceledBehavior;
-    if (behavior == CheckCanceledBehavior.NONE) return;
+    if (behavior == CheckCanceledBehavior.NONE) {
+      fireCheckCanceledNone();
+      return;
+    }
 
     if (behavior == CheckCanceledBehavior.INDICATOR_PLUS_HOOKS) {
       ProgressIndicator progress = getProgressIndicator();
+      fireCanceledByIndicatorEvent(progress);
       if (progress != null) {
         progress.checkCanceled();
       }
     }
     else {
       runCheckCanceledHooks(null);
+      fireCheckCanceledOnlyHooks();
     }
   }
+
+  @ApiStatus.Internal
+  protected void fireNonCancellableEvent() { }
+
+  @ApiStatus.Internal
+  protected void fireCanceledByJobEvent() { }
+
+  @ApiStatus.Internal
+  protected void fireCanceledByIndicatorEvent(@Nullable ProgressIndicator indicator) { }
+
+  @ApiStatus.Internal
+  protected void fireCheckCanceledNone() { }
+
+  @ApiStatus.Internal
+  protected void fireCheckCanceledOnlyHooks() { }
 
   @Override
   public boolean hasProgressIndicator() {
@@ -250,41 +281,14 @@ public class CoreProgressManager extends ProgressManager implements Disposable {
     return  ((TitledIndicator)progress).getTitle();
   }
 
-  private static void logProcessIndicator(@Nullable ProgressIndicator progress, Boolean started) {
+  private static void logProcessIndicator(@Nullable ProgressIndicator progress, boolean started) {
     String progressText = getProgressIndicatorText(progress);
-    if (progressText == null) return;
     if (ApplicationManagerEx.isInIntegrationTest()) {
-      LOG.info("Progress indicator:" + (started ? "started" : "finished") + ":" + progressText);
-      if (System.getProperty("idea.performanceReport.projectName") != null) { //in startup tests only
-        ApplicationManager.getApplication().executeOnPooledThread((Runnable)() -> {
-          long timestamp = System.currentTimeMillis();
-
-          if (started) {
-            if (progressTimestamps.size() > 20) {
-              progressTimestamps.clear();
-            }
-            progressTimestamps.put(progressText, timestamp);
-            throw new RuntimeException("Progress Indicator Test Stats:\n" +
-                                       "started\n" +
-                                       "message: " + progressText);
-          }
-          else {
-            long lengthMillis = -1;
-            Long start = progressTimestamps.remove(progressText);
-            if (start != null) {
-              lengthMillis = timestamp - start;
-            }
-            throw new RuntimeException("Progress Indicator Test Stats:\n" +
-                                       "finished" + "\n" +
-                                       "message: " + progressText + "\n" +
-                                       "millis: " + lengthMillis);
-          }
-        });
+      if (progressText != null) {
+        LOG.info("Progress indicator:" + (started ? "started" : "finished") + ":" + progressText);
       }
     }
   }
-
-  private static final Map<String, Long> progressTimestamps = new ConcurrentHashMap<>();
 
   private static @Nullable Span startProcessSpan(@Nullable ProgressIndicator progress) {
     String progressText = getProgressIndicatorText(progress);
@@ -518,6 +522,7 @@ public class CoreProgressManager extends ProgressManager implements Disposable {
     return runProcessWithProgressAsynchronously(task, progressIndicator, continuation, progressIndicator.getModalityState());
   }
 
+  @ApiStatus.Internal
   @Deprecated
   protected void startTask(@NotNull Task task, @NotNull ProgressIndicator indicator, @Nullable Runnable continuation) {
     try {
@@ -1040,6 +1045,7 @@ public class CoreProgressManager extends ProgressManager implements Disposable {
    * @deprecated This method incorrectly prefers {@link com.intellij.openapi.application.ModalityKt#currentThreadContextModality}.
    * Use {@link ModalityState#defaultModalityState()}.
    */
+  @ApiStatus.Internal
   @Deprecated
   public static @NotNull ModalityState getCurrentThreadProgressModality() {
     ModalityState contextModality = currentThreadContextModality();

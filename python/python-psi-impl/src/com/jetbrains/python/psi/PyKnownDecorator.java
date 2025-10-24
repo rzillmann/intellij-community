@@ -131,6 +131,8 @@ public class PyKnownDecorator {
   public final static PyKnownDecorator TYPING_DEPRECATED = new PyKnownDecorator("typing_extensions.deprecated");
   public final static PyKnownDecorator TYPING_NO_TYPE_CHECK = new PyKnownDecorator("typing.no_type_check");
   public final static PyKnownDecorator TYPING_NO_TYPE_CHECK_EXT = new PyKnownDecorator("typing_extensions.no_type_check");
+  public final static PyKnownDecorator TYPING_DATACLASS_TRANSFORM = new PyKnownDecorator("typing.dataclass_transform");
+  public final static PyKnownDecorator TYPING_DATACLASS_TRANSFORM_EXT = new PyKnownDecorator("typing_extensions.dataclass_transform");
 
   public final static PyKnownDecorator WARNING_DEPRECATED = new PyKnownDecorator("warnings.deprecated");
 
@@ -154,6 +156,8 @@ public class PyKnownDecorator {
   public final static PyKnownDecorator PYTEST_FIXTURES_FIXTURE = new PyKnownDecorator("_pytest.fixtures.fixture");
   public final static PyKnownDecorator ENUM_MEMBER = new PyKnownDecorator(PyNames.TYPE_ENUM_MEMBER);
   public final static PyKnownDecorator ENUM_NONMEMBER = new PyKnownDecorator(PyNames.TYPE_ENUM_NONMEMBER);
+
+  public final static PyKnownDecorator DISJOINT_BASE_EXT = new PyKnownDecorator("typing_extensions.disjoint_base");
 
   /**
    * Mutable properties support __set__ and __delete__

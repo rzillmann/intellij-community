@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.java.decompiler
 
 import com.intellij.JavaTestUtil
@@ -11,6 +11,7 @@ import com.intellij.ide.highlighter.ArchiveFileType
 import com.intellij.ide.highlighter.JavaClassFileType
 import com.intellij.ide.structureView.StructureViewBuilder
 import com.intellij.ide.structureView.impl.java.JavaAnonymousClassesNodeProvider
+import com.intellij.ide.structureView.impl.java.KindSorter
 import com.intellij.ide.structureView.newStructureView.StructureViewComponent
 import com.intellij.lang.java.JavaLanguage
 import com.intellij.openapi.application.PluginPathManager
@@ -174,7 +175,7 @@ class IdeaDecompilerTest : LightJavaCodeInsightFixtureTestCase() {
 
   fun testHighlighting() {
     myFixture.setReadEditorMarkupModel(true)
-    IdentifierHighlighterPassFactory.doWithHighlightingEnabled(project, testRootDisposable, Runnable {
+    IdentifierHighlighterPassFactory.doWithIdentifierHighlightingEnabled(project, Runnable {
       myFixture.openFileInEditor(getTestFile("Navigation.class"))
       myFixture.editor.caretModel.moveToOffset(offset(8, 14))  // m2(): usage, declaration
       assertEquals(2, highlightUnderCaret().size)
@@ -196,7 +197,7 @@ class IdeaDecompilerTest : LightJavaCodeInsightFixtureTestCase() {
   fun testNameHighlightingInsideCompiledFile() {
     myFixture.setReadEditorMarkupModel(true)
     myFixture.openFileInEditor(getTestFile("NamesHighlightingInsideCompiledFile.class"))
-    IdentifierHighlighterPassFactory.doWithHighlightingEnabled(project, testRootDisposable, Runnable {
+    IdentifierHighlighterPassFactory.doWithIdentifierHighlightingEnabled(project, Runnable {
       val infos = myFixture.doHighlighting()
       assertTrue(infos.toString(), infos.all { info: HighlightInfo -> info.severity === HighlightInfoType.SYMBOL_TYPE_SEVERITY })
       assertEquals(68, infos.size)
@@ -206,7 +207,7 @@ class IdeaDecompilerTest : LightJavaCodeInsightFixtureTestCase() {
   fun testNameHighlightingInsideCompiledModuleFile() {
     myFixture.setReadEditorMarkupModel(true)
     myFixture.openFileInEditor(getTestFile("module-info.class"))
-    IdentifierHighlighterPassFactory.doWithHighlightingEnabled(project, testRootDisposable, Runnable {
+    IdentifierHighlighterPassFactory.doWithIdentifierHighlightingEnabled(project, Runnable {
       val infos = myFixture.doHighlighting()
         .filter { it.severity === HighlightInfoType.SYMBOL_TYPE_SEVERITY }
       assertEquals(5, infos.size)
@@ -225,7 +226,7 @@ class IdeaDecompilerTest : LightJavaCodeInsightFixtureTestCase() {
     val testFile = getTestFile("RecordHighlighting.class")
     testFile.parent.children; testFile.parent.refresh(false, true)  // inner classes
     myFixture.openFileInEditor(testFile)
-    IdentifierHighlighterPassFactory.doWithHighlightingEnabled(project, testRootDisposable, Runnable {
+    IdentifierHighlighterPassFactory.doWithIdentifierHighlightingEnabled(project, Runnable {
       val infos = myFixture.doHighlighting()
         .filter { it.severity === HighlightInfoType.SYMBOL_TYPE_SEVERITY }
       val texts = infos.map { it.text }.toSet()
@@ -239,7 +240,7 @@ class IdeaDecompilerTest : LightJavaCodeInsightFixtureTestCase() {
   }
 
   private fun highlightUnderCaret(): List<HighlightInfo> {
-    IdentifierHighlighterPassFactory.waitForIdentifierHighlighting()
+    IdentifierHighlighterPassFactory.waitForIdentifierHighlighting(editor)
     return myFixture.doHighlighting().filter { it.severity === HighlightInfoType.ELEMENT_UNDER_CARET_SEVERITY }
   }
 
@@ -321,6 +322,7 @@ class IdeaDecompilerTest : LightJavaCodeInsightFixtureTestCase() {
     val builder = StructureViewBuilder.getProvider().getStructureViewBuilder(JavaClassFileType.INSTANCE, file, project)!!
     val svc = builder.createStructureView(editor, project) as StructureViewComponent
     Disposer.register(myFixture.testRootDisposable, svc)
+    svc.setActionActive(KindSorter.ID, true)
     svc.setActionActive(JavaAnonymousClassesNodeProvider.ID, true)
     PlatformTestUtil.expandAll(svc.tree)
     PlatformTestUtil.assertTreeEqual(svc.tree, s.trimIndent())

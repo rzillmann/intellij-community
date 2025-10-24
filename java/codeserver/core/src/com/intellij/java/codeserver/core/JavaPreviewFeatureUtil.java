@@ -86,11 +86,7 @@ public final class JavaPreviewFeatureUtil {
     if (element instanceof PsiJavaCodeReferenceElement refElement) {
       PsiElement resolved = refElement.resolve();
       if (resolved instanceof PsiModifierListOwner owner) {
-        PsiAnnotation annotation = getPreviewFeatureAnnotationInternal(owner);
-        JavaFeature feature = fromPreviewFeatureAnnotation(annotation);
-        if (feature == null) return null;
-        if (isParticipating(refElement, owner)) return null;
-        return new PreviewFeatureUsage(feature, refElement, owner, annotation);
+        return getPreviewFeatureUsage(refElement, owner);
       }
     }
     else if (element instanceof PsiRequiresStatement requiresStatement) {
@@ -120,6 +116,18 @@ public final class JavaPreviewFeatureUtil {
       }
     }
     return null;
+  }
+
+  /**
+   * @see #getPreviewFeatureUsage(PsiElement)
+   */
+  public static @Nullable PreviewFeatureUsage getPreviewFeatureUsage(@NotNull PsiJavaCodeReferenceElement refElement,
+                                                                     @NotNull PsiModifierListOwner owner) {
+    PsiAnnotation annotation = getPreviewFeatureAnnotationInternal(owner);
+    JavaFeature feature = fromPreviewFeatureAnnotation(annotation);
+    if (feature == null) return null;
+    if (isParticipating(refElement, owner)) return null;
+    return new PreviewFeatureUsage(feature, refElement, owner, annotation);
   }
 
   /**
@@ -177,11 +185,8 @@ public final class JavaPreviewFeatureUtil {
 
     PsiReferenceExpression referenceExpression = tryCast(feature.getDetachedValue(), PsiReferenceExpression.class);
     if (referenceExpression == null) return null;
-
-    PsiEnumConstant enumConstant = tryCast(referenceExpression.resolve(), PsiEnumConstant.class);
-    if (enumConstant == null) return null;
-
-    return JavaFeature.convertFromPreviewFeatureName(enumConstant.getName());
+    var referenceName = referenceExpression.getReferenceName();
+    return referenceName == null ? null : JavaFeature.convertFromPreviewFeatureName(referenceName);
   }
 
   @Contract(value = "null -> null", pure = true)

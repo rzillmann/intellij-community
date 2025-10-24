@@ -1,9 +1,9 @@
 ### auto-generated section `build intellij.python.syntax` start
-load("@rules_jvm//:jvm.bzl", "jvm_library", "jvm_resources")
+load("@rules_jvm//:jvm.bzl", "jvm_library", "resourcegroup")
 
-jvm_resources(
+resourcegroup(
   name = "syntax_resources",
-  files = glob(["resources/**/*"]),
+  srcs = glob(["resources/**/*"]),
   strip_prefix = "resources"
 )
 
@@ -11,10 +11,13 @@ jvm_library(
   name = "syntax",
   module_name = "intellij.python.syntax",
   visibility = ["//visibility:public"],
-  srcs = glob(["src/**/*.kt", "src/**/*.java"], allow_empty = True),
+  srcs = glob(["src/**/*.kt", "src/**/*.java", "src/**/*.form"], allow_empty = True),
+  resources = [":syntax_resources"],
   deps = [
     "//platform/analysis-api:analysis",
+    "//platform/code-style-api:codeStyle",
     "//platform/core-api:core",
+    "//platform/projectModel-api:projectModel",
     "//python/python-parser:parser",
     "//platform/editor-ui-api:editor-ui",
     "//python/python-syntax-core:syntax-core",
@@ -24,8 +27,10 @@ jvm_library(
     "//platform/editor-ui-ex:editor-ex",
     "//platform/core-ui",
     "//platform/code-style-impl:codeStyle-impl",
-    "@lib//:fastutil-min",
-  ],
-  runtime_deps = [":syntax_resources"]
+    "//libraries/fastutil",
+    "//libraries/guava",
+    "//libraries/kotlinx/serialization/core",
+    "//platform/core-impl",
+  ]
 )
 ### auto-generated section `build intellij.python.syntax` end

@@ -171,8 +171,12 @@ abstract class KtModuleByModuleInfoBase(moduleInfo: ModuleInfo): KaModuleBase() 
 
 @ApiStatus.Internal
 @K1ModeProjectStructureApi
-open class KtSourceModuleByModuleInfo(private val moduleInfo: ModuleSourceInfo) : KtModuleByModuleInfoBase(moduleInfo), KaSourceModule {
+open class KtSourceModuleByModuleInfo(
+    private val moduleInfo: ModuleSourceInfo,
+) : KtModuleByModuleInfoBase(moduleInfo), KaSourceModuleWithKind {
     val ideaModule: Module get() = moduleInfo.module
+
+    override val kind: KaSourceModuleKind get() = moduleInfo.sourceModuleKind
 
     override val name: String get() = ideaModule.name
 
@@ -348,7 +352,7 @@ class KtNativeKlibLibraryModuleByModuleInfo(
     val forwardDeclarationsScope: GlobalSearchScope?
         get() {
             val libraryEntityId = (libraryInfo.library as? LibraryBridge)?.libraryId ?: return null
-            return createForwardDeclarationScope(libraryEntityId, this, project)
+            return createForwardDeclarationScope(libraryEntityId, project)
         }
 }
 

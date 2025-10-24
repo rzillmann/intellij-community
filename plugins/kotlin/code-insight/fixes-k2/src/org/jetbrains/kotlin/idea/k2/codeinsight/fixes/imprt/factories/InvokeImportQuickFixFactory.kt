@@ -1,18 +1,19 @@
 // Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.kotlin.idea.k2.codeinsight.fixes.imprt.factories
 
-import com.intellij.openapi.util.TextRange
+import org.jetbrains.kotlin.analysis.api.KaExperimentalApi
 import org.jetbrains.kotlin.analysis.api.KaSession
+import org.jetbrains.kotlin.analysis.api.analyze
 import org.jetbrains.kotlin.analysis.api.diagnostics.KaDiagnosticWithPsi
 import org.jetbrains.kotlin.analysis.api.fir.diagnostics.KaFirDiagnostic
+import org.jetbrains.kotlin.analysis.api.types.KaErrorType
 import org.jetbrains.kotlin.idea.base.analysis.api.utils.KtSymbolFromIndexProvider
-import org.jetbrains.kotlin.idea.base.psi.textRangeIn
+import org.jetbrains.kotlin.idea.codeinsight.utils.qualifiedCalleeExpressionTextRangeInThis
 import org.jetbrains.kotlin.idea.k2.codeinsight.fixes.imprt.*
 import org.jetbrains.kotlin.name.Name
 import org.jetbrains.kotlin.psi.KtCallExpression
 import org.jetbrains.kotlin.psi.KtExpression
 import org.jetbrains.kotlin.psi.KtPsiFactory
-import org.jetbrains.kotlin.psi.psiUtil.getPossiblyQualifiedCallExpression
 import org.jetbrains.kotlin.psi.psiUtil.getQualifiedExpressionForSelectorOrThis
 import org.jetbrains.kotlin.util.OperatorNameConventions
 
@@ -33,6 +34,7 @@ internal object InvokeImportQuickFixFactory : AbstractImportQuickFixFactory() {
         val invokeCall = invokeCallReceiver.getCallExpressionForCallee() ?: return null
         val qualifiedInvokeCall = invokeCall.getQualifiedExpressionForSelectorOrThis()
 
+        @OptIn(KaExperimentalApi::class)
         val invokeReceiverType = when (diagnostic) {
             is KaFirDiagnostic.FunctionExpected -> {
                 diagnostic.type
@@ -52,7 +54,12 @@ internal object InvokeImportQuickFixFactory : AbstractImportQuickFixFactory() {
                 */
 
                 val invokeCallReceiverCopy = qualifiedInvokeCall.copyQualifiedCalleeExpression() ?: return null
-                invokeCallReceiverCopy.expressionType
+
+                val invokeCallReceiverTypePointer = analyze(invokeCallReceiverCopy) {
+                    invokeCallReceiverCopy.expressionType?.createPointer()
+                }
+
+                invokeCallReceiverTypePointer?.restore()
             }
 
             is KaFirDiagnostic.UnresolvedReferenceWrongReceiver -> {
@@ -62,6 +69,8 @@ internal object InvokeImportQuickFixFactory : AbstractImportQuickFixFactory() {
 
             else -> null
         } ?: return null
+
+        if (invokeReceiverType is KaErrorType) return null
 
         return ImportContextWithFixedReceiverType(
             psiElement,
@@ -109,25 +118,3 @@ private fun KtExpression.copyQualifiedCalleeExpression(): KtExpression? {
 
     return calleeExpressionFragment.getContentElement()
 }
-
-/**
- * For [KtExpression] representing a possibly qualified function call,
- * returns an absolute [TextRange] which represents only the callee expression with a possible qualifier.
- *
- * Some examples:
- * - `foo(...)` -> `foo`
- * - `foo.bar(...)` -> `foo.bar`
- * - `foo.baz(...).bar { ... }` -> `foo.baz(...).bar`
- * - `(<complex expression>)(...)` -> `(<complex expression>)`
- */
-private val KtExpression.qualifiedCalleeExpressionTextRangeInThis: TextRange?
-    get() {
-        val possiblyQualifiedCall = this
-
-        val callExpression = possiblyQualifiedCall.getPossiblyQualifiedCallExpression() ?: return null
-        val calleeExpression = callExpression.calleeExpression ?: return null
-
-        val calleeExpressionEnd = calleeExpression.textRangeIn(possiblyQualifiedCall).endOffset
-
-        return TextRange.create(0, calleeExpressionEnd)
-    }

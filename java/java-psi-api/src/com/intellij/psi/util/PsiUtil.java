@@ -880,7 +880,7 @@ public final class PsiUtil extends PsiUtilCore {
     PsiClass aClass = result.getElement();
     if (aClass == null) return type;
     PsiClassType updatedType = getSubstitutorWithWildcardsCaptured(context, result);
-    return updatedType == null ? type : updatedType;
+    return updatedType == null ? type : updatedType.withNullability(type.getNullability());
   }
 
   /**
@@ -1632,66 +1632,4 @@ public final class PsiUtil extends PsiUtilCore {
     final PsiCaseLabelElementList list = label.getCaseLabelElementList();
     return list != null && list.getElements().length == 1;
   }
-
-  //<editor-fold desc="Deprecated stuff">
-  /**
-   * @deprecated  use {@link #isAvailable(JavaFeature, PsiElement)} instead to check whether a particular feature is available, rather 
-   * than to check against a language level; if you still need an explicit language level check, just inline the method call.
-   */
-  @ApiStatus.ScheduledForRemoval
-  @Deprecated
-  public static boolean isLanguageLevel10OrHigher(@NotNull PsiElement element) {
-    return getLanguageLevel(element).isAtLeast(LanguageLevel.JDK_10);
-  }
-
-  /**
-   * @deprecated use {@link #isAvailable(JavaFeature, PsiElement)} instead to check whether a particular feature is available, rather
-   * than to check against a language level; if you still need an explicit language level check, just inline the method call.
-   */
-  @ApiStatus.ScheduledForRemoval
-  @Deprecated
-  public static boolean isLanguageLevel11OrHigher(@NotNull PsiElement element) {
-    return getLanguageLevel(element).isAtLeast(LanguageLevel.JDK_11);
-  }
-
-  /**
-   * @deprecated use {@link #isAvailable(JavaFeature, PsiElement)} instead to check whether a particular feature is available, rather
-   * than to check against a language level; if you still need an explicit language level check, just inline the method call.
-   */
-  @ApiStatus.ScheduledForRemoval
-  @Deprecated
-  public static boolean isLanguageLevel14OrHigher(@NotNull PsiElement element) {
-    return getLanguageLevel(element).isAtLeast(LanguageLevel.JDK_14);
-  }
-
-  /**
-   * @deprecated use {@link #isAvailable(JavaFeature, PsiElement)} instead to check whether a particular feature is available, rather
-   * than to check against a language level; if you still need an explicit language level check, just inline the method call.
-   */
-  @ApiStatus.ScheduledForRemoval
-  @Deprecated
-  public static boolean isLanguageLevel16OrHigher(@NotNull PsiElement element) {
-    return getLanguageLevel(element).isAtLeast(LanguageLevel.JDK_16);
-  }
-
-  /**
-   * @deprecated use {@link #isAvailable(JavaFeature, PsiElement)} instead to check whether a particular feature is available, rather
-   * than to check against a language level; if you still need an explicit language level check, just inline the method call.
-   */
-  @ApiStatus.ScheduledForRemoval
-  @Deprecated
-  public static boolean isLanguageLevel17OrHigher(@NotNull PsiElement element) {
-    return getLanguageLevel(element).isAtLeast(LanguageLevel.JDK_17);
-  }
-
-  /**
-   * @deprecated use {@link #isAvailable(JavaFeature, PsiElement)} instead to check whether a particular feature is available, rather
-   * than to check against a language level; if you still need an explicit language level check, just inline the method call.
-   */
-  @ApiStatus.ScheduledForRemoval
-  @Deprecated
-  public static boolean isLanguageLevel18OrHigher(@NotNull PsiElement element) {
-    return getLanguageLevel(element).isAtLeast(LanguageLevel.JDK_18);
-  }
-  //</editor-fold>
 }

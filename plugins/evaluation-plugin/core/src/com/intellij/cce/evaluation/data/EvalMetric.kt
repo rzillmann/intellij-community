@@ -1,5 +1,6 @@
 package com.intellij.cce.evaluation.data
 
+import com.intellij.cce.metric.DataMetric
 import com.intellij.cce.metric.Metric
 
 data class EvalMetric(
@@ -19,6 +20,27 @@ data class EvalMetric(
       it.addLookup(props.lookup)
     }
     return buildMetric().evaluate(listOf(session)).toDouble()
+  }
+
+  companion object {
+    fun <T> fromIndicators(
+      name: String,
+      data: EvalDataDescription<*, T>,
+      showByDefault: Boolean = true,
+      showInCard: Boolean = showByDefault
+    ): EvalMetric {
+      fun value(t: T, props: DataProps): Double = if (data.problemIndicators.any { it.check(props, t) }) 0.0 else 1.0
+      return EvalMetric(1.0, showInCard = showInCard) { DataMetric(data, ::value, name, showByDefault = showByDefault) }
+    }
+
+    fun <T> fromIndicators(data: EvalDataDescription<*, T>): EvalMetric {
+      return fromIndicators(data.name, data)
+    }
+
+    fun fromDoubleIndicators(data: EvalDataDescription<*, Double>): EvalMetric {
+      val name = data.name
+      return EvalMetric(0.0) { DataMetric(data, { value, _ -> value }, name) }
+    }
   }
 }
 

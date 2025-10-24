@@ -1,8 +1,14 @@
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag", "int_flag")
 load("@rules_java//java:defs.bzl", "java_import")
 load("@rules_kotlin//kotlin:core.bzl", _kt_kotlinc_options = "kt_kotlinc_options")
-load("@rules_kotlin//kotlin:jvm.bzl", "kt_jvm_import", "kt_jvm_library")
-load("//:jvm.bzl", "jvm_import", "jvm_provided_library", "kt_kotlinc_options")
+load("@rules_kotlin//kotlin:jvm.bzl", "kt_jvm_import")
+load("//:jvm.bzl", "jvm_import", "jvm_provided_library", "kt_javac_options", "kt_kotlinc_options")
+
+label_flag(
+    name = "default-javac-opts",
+    build_setting_default = ":default-javac-opts-value",
+    visibility = ["//visibility:public"],
+)
 
 label_flag(
     name = "default-kotlinc-opts",
@@ -11,9 +17,37 @@ label_flag(
 )
 
 label_flag(
-    name = "worker-impl",
-    build_setting_default = "//src/misc:worker-jvm",
-    # build_setting_default = "//src/misc:worker-native",
+    name = "resource-packager",
+    build_setting_default = "//src/misc:worker-jvm_deploy.jar",
+    visibility = ["//visibility:public"],
+)
+
+label_flag(
+    name = "resource-packager-jvm_flags",
+    build_setting_default = "//src/misc:worker-jvm-jvm_flags",
+    visibility = ["//visibility:public"],
+)
+
+label_flag(
+    name = "jvm-builder",
+    build_setting_default = "//jvm-inc-builder:jvm-inc-builder_deploy.jar",
+    visibility = ["//visibility:public"],
+)
+
+label_flag(
+    name = "jvm-builder-jvm_flags",
+    build_setting_default = "//jvm-inc-builder:jvm-inc-builder-jvm_flags",
+    visibility = ["//visibility:public"],
+)
+
+# used by _jvm_builder_launcher attribute in jvm_library rule and _worker_launcher attribute in jvm_resources rule
+exports_files(
+  ["rules/impl/MemoryLauncher.java"],
+  visibility = ["//visibility:private"],
+)
+
+kt_javac_options(
+    name = "default-javac-opts-value",
     visibility = ["//visibility:public"],
 )
 
@@ -22,9 +56,9 @@ kt_kotlinc_options(
     visibility = ["//visibility:public"],
 )
 
-# --@rules_jvm//:kt_trace
+# --@rules_jvm//:trace
 bool_flag(
-    name = "kt_trace",
+    name = "trace",
     build_setting_default = False,
 )
 
@@ -42,29 +76,40 @@ int_flag(
 _kt_kotlinc_options(
     name = "rules_jvm_bootstrap_kotlinc_options",
     include_stdlibs = "none",
-    visibility = [
-        "//src:__subpackages__",
-        "//zip:__pkg__",
-    ],
+    jvm_target = "17",
+    visibility = ["//visibility:public"],  # used by @community//:monorepo-jvm-builder (@community//fleet/compiler-plugins/expects:expects-compiler-plugin, etc.)
+    x_jdk_release = "17",
 )
 
-# java_import(
-#     name = "jps",
-#     jars = ["jps-build-standalone.jar"],
-#     visibility = [
-#       "//src/jps-builder:__subpackages__",
-#       "//src/jps-shadow:__subpackages__",
-#     ],
-# )
 jvm_import(
     name = "jps",
     jar = "@jps-standalone_http//file",
     source_jar = "@jps-standalone_http//file",
     visibility = [
+        "//dependency-graph:__subpackages__",
+        "//jps-builders-6:__subpackages__",
+        "//jvm-inc-builder:__subpackages__",
         "//src/jps-shadow:__subpackages__",
         "//src/jvm-builder:__subpackages__",
         "//src/jvm-builder-core:__subpackages__",
         "//src/kotlin/kotlin-builder:__subpackages__",
+        "//src/tmh:__subpackages__",
+    ],
+)
+
+jvm_import(
+    name = "netty-transport-jps",
+    jar = "@netty-transport-jps_http//file",
+    visibility = [
+        "//jps-builders-6:__subpackages__",
+    ],
+)
+
+jvm_import(
+    name = "netty-codec-jps",
+    jar = "@netty-codec-jps_http//file",
+    visibility = [
+        "//jps-builders-6:__subpackages__",
     ],
 )
 
@@ -74,28 +119,23 @@ jvm_import(
     visibility = ["//visibility:public"],
 )
 
-# jvm_import(
-#     name = "kotlin-compiler",
-#     jar = "@kotlin-compiler//file",
-#     source_jar = "@kotlin-compiler-sources//file",
-#     visibility = ["//visibility:public"],
-#     runtime_deps = [
-#         "@lib//:jetbrains-annotations",
-#         "@lib//:kotlinx-coroutines-core"
-#     ],
-# )
+jvm_import(
+    name = "javax-annotation-api",
+    jar = "@javax_annotation-api-1_3_2_http//file",
+    visibility = ["//visibility:public"],
+)
 
 alias(
     name = "kotlin-compiler",
     actual = "@kotlin-compiler_http//:kotlin-compiler",
     visibility = ["//visibility:public"],
 )
-# java_import(
-#     name = "kotlin-compiler",
-#     jars = ["kotlin-compiler.jar"],
-#     srcjar = "@kotlin-compiler-sources//file",
-#     visibility = ["//visibility:public"],
-# )
+
+jvm_import(
+    name = "kotlin-compiler-for-wasmjs",
+    jar = "@kotlin-compiler-for-wasmjs_http//file",
+    visibility = ["//visibility:public"],
+)
 
 jvm_provided_library(
     name = "kotlin-compiler-provided",
@@ -290,6 +330,13 @@ jvm_import(
 )
 
 jvm_import(
+    name = "kotlin-reflect",
+    jar = "@kotlin-reflect//file",
+    source_jar = "@kotlin-reflect-sources//file",
+    visibility = ["//visibility:public"],
+)
+
+jvm_import(
     name = "kotlinx-collections-immutable",
     jar = "@kotlinx-collections-immutable-jvm//file",
     source_jar = "@kotlinx-collections-immutable-jvm-sources//file",
@@ -424,23 +471,6 @@ jvm_import(
 )
 
 jvm_import(
-    name = "netty-common",
-    jar = "@netty-common//file",
-    source_jar = "@netty-common-sources//file",
-    visibility = ["//visibility:public"],
-)
-
-jvm_import(
-    name = "netty-buffer",
-    jar = "@netty-buffer//file",
-    source_jar = "@netty-buffer-sources//file",
-    visibility = ["//visibility:public"],
-    runtime_deps = [
-        ":netty-common",
-    ],
-)
-
-jvm_import(
     name = "collection",
     jar = "@collection-jvm//file",
     source_jar = "@collection-jvm-sources//file",
@@ -451,13 +481,6 @@ jvm_import(
     name = "kotlinx-coroutines-core",
     jar = "@kotlinx-coroutines-core-jvm//file",
     source_jar = "@kotlinx-coroutines-core-jvm-sources//file",
-    visibility = ["//visibility:public"],
-)
-
-jvm_import(
-    name = "expects-compiler-plugin",
-    jar = "@expects-compiler-plugin//file",
-    source_jar = "@expects-compiler-plugin-sources//file",
     visibility = ["//visibility:public"],
 )
 
@@ -473,6 +496,29 @@ jvm_import(
     jar = "@intellij-deps-fastutil//file",
     source_jar = "@intellij-deps-fastutil-sources//file",
     visibility = ["//visibility:public"],
+)
+
+jvm_import(
+    name = "intellij-deps-fastutil-for-patched-kotlin",
+    jar = "@intellij-deps-fastutil-for-patched-kotlin//file",
+    visibility = ["//visibility:public"],
+)
+
+jvm_import(
+    name = "netty-common",
+    jar = "@netty-common//file",
+    source_jar = "@netty-common-sources//file",
+    visibility = ["//visibility:public"],
+)
+
+jvm_import(
+    name = "netty-buffer",
+    jar = "@netty-buffer//file",
+    source_jar = "@netty-buffer-sources//file",
+    visibility = ["//visibility:public"],
+    runtime_deps = [
+        ":netty-common",
+    ],
 )
 
 ### auto-generated section `libraries` end

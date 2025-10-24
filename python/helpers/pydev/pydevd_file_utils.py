@@ -32,7 +32,7 @@ r'''
     @note: all the paths with breakpoints must be translated (otherwise they won't be found in the server)
 
     @note: to enable remote debugging in the target machine (pydev extensions in the eclipse installation)
-        import pydevd;pydevd.settrace(host, stdoutToServer, stderrToServer, port, suspend)
+        import pydevd;pydevd.settrace(host, stdout_to_server, stderr_to_server, port, suspend)
 
         see parameter docs on pydevd.py
 
@@ -556,7 +556,7 @@ def _is_int(filename):
 
 def is_real_file(filename):
     # Check for Jupyter cells
-    return not _is_int(filename) and not filename.startswith("<ipython-input")
+    return not _is_int(filename) and (isinstance(filename, str) and not filename.startswith("<ipython-input"))
 
 
 def is_jupyter_cell(frame):
@@ -611,19 +611,25 @@ def get_abs_path_real_path_and_base_from_frame(frame):
 
 
 def get_fullname(mod_name):
-    if IS_PY3K:
-        import pkgutil
-    else:
-        from _pydev_imps import _pydev_pkgutil_old as pkgutil
     try:
+        import importlib.util
+
+        spec = importlib.util.find_spec(mod_name)
+        if spec is not None and spec.origin is not None:
+            return spec.origin
+    except ImportError:
+        pass
+
+    if not IS_PY3K:
+        from _pydev_imps import _pydev_pkgutil_old as pkgutil
+
         loader = pkgutil.get_loader(mod_name)
-    except:
-        return None
-    if loader is not None:
-        for attr in ("get_filename", "_get_filename"):
-            meth = getattr(loader, attr, None)
-            if meth is not None:
-                return meth(mod_name)
+        if loader is not None:
+            for attr in ("get_filename", "_get_filename"):
+                meth = getattr(loader, attr, None)
+                if meth is not None:
+                    return meth(mod_name)
+
     return None
 
 

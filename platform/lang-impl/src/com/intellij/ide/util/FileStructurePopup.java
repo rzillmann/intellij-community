@@ -73,10 +73,7 @@ import com.intellij.util.ui.*;
 import com.intellij.util.ui.tree.TreeUtil;
 import com.intellij.xml.util.XmlStringUtil;
 import kotlin.Unit;
-import org.jetbrains.annotations.NonNls;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
-import org.jetbrains.annotations.TestOnly;
+import org.jetbrains.annotations.*;
 import org.jetbrains.concurrency.AsyncPromise;
 import org.jetbrains.concurrency.Promise;
 import org.jetbrains.concurrency.Promises;
@@ -88,10 +85,11 @@ import java.awt.*;
 import java.awt.datatransfer.DataFlavor;
 import java.awt.datatransfer.Transferable;
 import java.awt.event.*;
-import java.util.List;
 import java.util.*;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiPredicate;
+import java.util.function.Consumer;
 
 /**
  * @author Konstantin Bulenkov
@@ -131,12 +129,24 @@ public final class FileStructurePopup implements Disposable, TreeActionsOwner {
   private boolean myCanClose = true;
   private boolean myDisposed;
 
+  @Nullable
+  private final Consumer<AbstractTreeNode<?>> myCallbackAfterNavigation;
+
   public FileStructurePopup(@NotNull Project project,
                             @NotNull FileEditor fileEditor,
                             @NotNull StructureViewModel treeModel) {
+    this(project, fileEditor, treeModel, null);
+  }
+
+  @ApiStatus.Internal
+  public FileStructurePopup(@NotNull Project project,
+                            @NotNull FileEditor fileEditor,
+                            @NotNull StructureViewModel treeModel,
+                            @Nullable Consumer<AbstractTreeNode<?>> callbackAfterNavigation) {
     myProject = project;
     myFileEditor = fileEditor;
     myTreeModel = treeModel;
+    myCallbackAfterNavigation = callbackAfterNavigation;
 
     //Stop code analyzer to speed up the EDT
     DaemonCodeAnalyzer.getInstance(myProject).disableUpdateByTimer(this);
@@ -183,6 +193,7 @@ public final class FileStructurePopup implements Disposable, TreeActionsOwner {
     myTree = new MyTree(myAsyncTreeModel);
     StructureViewComponent.registerAutoExpandListener(myTree, myTreeModel);
     PopupUtil.applyNewUIBackground(myTree);
+    myTree.getAccessibleContext().setAccessibleName(LangBundle.message("file.structure.tree.accessible.name"));
 
     ModelListener modelListener = () -> rebuild(false);
     myTreeModel.addModelListener(modelListener);
@@ -476,7 +487,9 @@ public final class FileStructurePopup implements Disposable, TreeActionsOwner {
     int checkBoxCount = fileStructureNodeProviders.size() + fileStructureFilters.size();
     JPanel panel = new JPanel(new BorderLayout());
     panel.setPreferredSize(JBUI.size(540, 500));
-    JPanel chkPanel = new JPanel(new GridLayout(0, checkBoxCount > 0 && checkBoxCount % 4 == 0 ? checkBoxCount / 2 : 3,
+    var cols = checkBoxCount > 0 && checkBoxCount % 4 == 0 ? checkBoxCount / 2 : 3;
+    var singleRow = checkBoxCount <= cols;
+    JPanel chkPanel = new JPanel(new GridLayout(0, cols,
                                                 JBUIScale.scale(UIUtil.DEFAULT_HGAP), 0));
     chkPanel.setOpaque(false);
 
@@ -520,7 +533,9 @@ public final class FileStructurePopup implements Disposable, TreeActionsOwner {
 
     topPanel.setBackground(JBUI.CurrentTheme.Popup.toolbarPanelColor());
     Dimension prefSize = topPanel.getPreferredSize();
-    prefSize.height = JBUI.CurrentTheme.Popup.toolbarHeight();
+    if (singleRow) {
+      prefSize.height = JBUI.CurrentTheme.Popup.toolbarHeight();
+    }
     topPanel.setPreferredSize(prefSize);
     topPanel.setBorder(JBUI.Borders.emptyLeft(UIUtil.DEFAULT_HGAP));
 
@@ -571,6 +586,7 @@ public final class FileStructurePopup implements Disposable, TreeActionsOwner {
     label.setBorder(JBUI.Borders.empty(0, 4));
     label.setHorizontalAlignment(SwingConstants.RIGHT);
     label.setVerticalAlignment(SwingConstants.CENTER);
+    label.getAccessibleContext().setAccessibleName(LangBundle.message("file.structure.settings.accessible.name"));
 
     List<AnAction> sorters = createSorters();
     new ClickListener() {
@@ -691,6 +707,9 @@ public final class FileStructurePopup implements Disposable, TreeActionsOwner {
       if (selectedNode != null) {
         if (selectedNode.canNavigateToSource()) {
           selectedNode.navigate(true);
+          if (myCallbackAfterNavigation != null) {
+            myCallbackAfterNavigation.accept(selectedNode);
+          }
           myPopup.cancel();
           succeeded.set(true);
         }

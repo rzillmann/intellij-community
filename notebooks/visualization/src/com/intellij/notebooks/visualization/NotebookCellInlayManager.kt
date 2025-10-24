@@ -11,7 +11,6 @@ import com.intellij.notebooks.visualization.ui.endInlay.EditorNotebookEndInlayPr
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.runInEdt
-import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.FoldRegion
 import com.intellij.openapi.editor.colors.EditorColorsListener
@@ -32,7 +31,6 @@ import java.awt.Point
 
 class NotebookCellInlayManager private constructor(
   val editor: EditorImpl,
-  private val shouldCheckInlayOffsets: Boolean,
   val notebook: EditorNotebook,
 ) : Disposable, NotebookIntervalPointerFactory.ChangeListener {
 
@@ -40,11 +38,22 @@ class NotebookCellInlayManager private constructor(
 
   private var initialized = false
 
-  val cells: List<EditorCell> get() = notebook.cells
+  val cells: List<EditorCell>
+    get() = notebook.cells
 
-  val endNotebookInlays: List<EditorNotebookEndInlay> = EditorNotebookEndInlayProvider.create(this)
+  var endNotebookInlays: List<EditorNotebookEndInlay> = EditorNotebookEndInlayProvider.create(this)
 
   internal val views: MutableMap<EditorCell, EditorCellView> = mutableMapOf()
+
+  fun refresh() {
+    endNotebookInlays.forEach { Disposer.dispose(it) }
+    endNotebookInlays = EditorNotebookEndInlayProvider.create(this)
+
+    for (cell in cells) {
+      disposeCellView(cell)
+      updateCellVisibility(cell, cell.isUnfolded.get())
+    }
+  }
 
   private val cellViewEventListeners = EventDispatcher.create(EditorCellViewEventListener::class.java)
 
@@ -127,7 +136,6 @@ class NotebookCellInlayManager private constructor(
     setupFoldingListener()
     setupSelectionUI()
 
-
     notebook.addCellEventsListener(this, object : EditorCellEventListener {
       override fun onEditorCellEvents(events: List<EditorCellEvent>) {
         updateUI(events)
@@ -138,11 +146,40 @@ class NotebookCellInlayManager private constructor(
   }
 
   fun getCellByPoint(point: Point): EditorCell? {
-    val visualLine = editor.xyToLogicalPosition(point)
-    val cur = cells.firstOrNull { it.interval.lines.contains(visualLine.line) }
-    return cur
-
+    val index = cells.binarySearch { comparePointWithCell(point, it) }
+    return cells.getOrNull(index)
   }
+
+  private fun comparePointWithCell(point: Point, cell: EditorCell): Int {
+    val cellView = cell.view
+    return if (cellView == null) {
+      comparePointWithCellByLogicalLine(point, cell)
+    }
+    else {
+      comparePointWithCellByCellView(point, cellView)
+    }
+  }
+
+  private fun comparePointWithCellByCellView(point: Point, cell: EditorCellView): Int {
+    val bounds = cell.calculateBounds()
+    if (bounds.contains(point))
+      return 0
+    if (bounds.y >= point.y)
+      return 1
+    else
+      return -1
+  }
+
+  private fun comparePointWithCellByLogicalLine(point: Point, cell: EditorCell): Int {
+    val line = editor.xyToLogicalPosition(point).line
+
+    return when {
+      line < cell.interval.lines.first -> 1
+      line >= cell.interval.lines.last + 1 -> -1
+      else -> return 0
+    }
+  }
+
   private fun updateUI(events: List<EditorCellEvent>) {
     update {
       for (event in events) {
@@ -180,7 +217,7 @@ class NotebookCellInlayManager private constructor(
     cell: EditorCell,
     ctx: UpdateContext,
   ) {
-    val view = EditorCellView(editor, notebookCellLines, cell, this)
+    val view = EditorCellView(cell)
     Disposer.register(cell, view)
     view.updateCellFolding(ctx)
     views[cell] = view
@@ -214,7 +251,6 @@ class NotebookCellInlayManager private constructor(
     }
   }
 
-
   private fun setupFoldingListener() {
     val foldingModel = editor.foldingModel
     foldingModel.addListener(object : FoldingListener {
@@ -241,7 +277,7 @@ class NotebookCellInlayManager private constructor(
         this.changedRegions.clear()
         val removedRegions = removedRegions.filter { editor.foldingModel.getCollapsedRegionAtOffset(it.startOffset) == null }
         this.removedRegions.clear()
-        update { ctx ->
+        update {
           changedRegions.forEach { region ->
             editorCells(region).forEach {
               it.isUnfolded.set(region.isExpanded)
@@ -290,7 +326,6 @@ class NotebookCellInlayManager private constructor(
   companion object {
     fun install(
       editor: EditorImpl,
-      shouldCheckInlayOffsets: Boolean,
       editorNotebookPostprocessors: List<EditorNotebookPostprocessor> = listOf(),
     ): NotebookCellInlayManager {
       EditorEmbeddedComponentContainer(editor as EditorEx)
@@ -299,7 +334,6 @@ class NotebookCellInlayManager private constructor(
       val notebook = createNotebook(editor, editorNotebookPostprocessors)
       val notebookCellInlayManager = NotebookCellInlayManager(
         editor,
-        shouldCheckInlayOffsets,
         notebook
       ).also { Disposer.register(editor.disposable, it) }
 
@@ -351,11 +385,20 @@ class NotebookCellInlayManager private constructor(
             change.subsequentPointers.forEach {
               addCell(it.pointer)
             }
+            //After insert we need fix ranges of previous cell
+            change.subsequentPointers.forEach {
+              val prevCell = getCellOrNull(it.interval.ordinal - 1)
+              prevCell?.checkAndRebuildInlays()
+            }
           }
           is NotebookIntervalPointersEvent.OnRemoved -> {
             change.subsequentPointers.reversed().forEach {
               val index = it.interval.ordinal
               removeCell(index)
+              // Next cell becomes first and needs to update the AboveCellDelimiterPanel size.
+              if(index == 0) {
+                getCellOrNull(0)?.checkAndRebuildInlays()
+              }
             }
           }
           is NotebookIntervalPointersEvent.OnSwapped -> {
@@ -366,34 +409,16 @@ class NotebookCellInlayManager private constructor(
             secondCell.intervalPointer = first
             firstCell.update(ctx)
             secondCell.update(ctx)
+            firstCell.checkAndRebuildInlays()
+            secondCell.checkAndRebuildInlays()
+            getCellOrNull(firstCell.interval.ordinal - 1)?.checkAndRebuildInlays()
+            getCellOrNull(secondCell.interval.ordinal - 1)?.checkAndRebuildInlays()
           }
         }
       }
       event.changes.filterIsInstance<NotebookIntervalPointersEvent.OnInserted>().forEach { change ->
         fixInlaysOffsetsAfterNewCellInsert(change, ctx)
       }
-    }
-
-    checkInlayOffsets()
-  }
-
-  private fun checkInlayOffsets() {
-    if (!shouldCheckInlayOffsets) return
-
-    val inlaysOffsets = buildSet {
-      for (cell in notebook.cells) {
-        add(editor.document.getLineStartOffset(cell.interval.lines.first))
-        add(editor.document.getLineEndOffset(cell.interval.lines.last))
-      }
-    }
-
-    val wronglyPlacedInlays = notebook.cells.asSequence()
-      .mapNotNull { it.view }
-      .flatMap { it.getInlays() }
-      .filter { it.offset !in inlaysOffsets }
-      .toSet()
-    if (wronglyPlacedInlays.isNotEmpty()) {
-      thisLogger().error("Expected offsets: $inlaysOffsets. Wrongly placed offsets: ${wronglyPlacedInlays.map { it.offset }} of inlays $wronglyPlacedInlays, for file = '${editor.virtualFile?.name}'")
     }
   }
 
@@ -447,9 +472,5 @@ class NotebookCellInlayManager private constructor(
 
   fun getCell(pointer: NotebookIntervalPointer): EditorCell {
     return getCell(pointer.get()!!)
-  }
-
-  internal fun getInputFactories(): Sequence<NotebookCellInlayController.InputFactory> {
-    return NotebookCellInlayController.InputFactory.EP_NAME.extensionList.asSequence()
   }
 }

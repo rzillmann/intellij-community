@@ -38,10 +38,15 @@ import javax.swing.ListCellRenderer
 
 private val LOG = Logger.getInstance(FileSearchEverywhereContributor::class.java)
 
-open class FileSearchEverywhereContributor(event: AnActionEvent) : AbstractGotoSEContributor(
-  event), EssentialContributor, SearchEverywherePreviewProvider {
+open class FileSearchEverywhereContributor(event: AnActionEvent, contributorModules: List<SearchEverywhereContributorModule>?) : AbstractGotoSEContributor(
+  event, contributorModules), EssentialContributor, SearchEverywherePreviewProvider, FilesTabSEContributor {
   private val modelForRenderer: GotoFileModel
   private val filter: PersistentSearchEverywhereContributorFilter<FileTypeRef>
+
+  @Internal
+  override val navigationHandler: SearchEverywhereNavigationHandler = FileSearchEverywhereNavigationContributionHandler(project)
+
+  constructor(event: AnActionEvent) : this(event, null)
 
   init {
     val project = event.getRequiredData(CommonDataKeys.PROJECT)
@@ -110,17 +115,6 @@ open class FileSearchEverywhereContributor(event: AnActionEvent) : AbstractGotoS
     return consumer.process(FoundItemDescriptor(element, degree))
   }
 
-  override suspend fun createSourceNavigationRequest(element: PsiElement, file: VirtualFile, searchText: String): NavigationRequest? {
-    val navigationRequests = serviceAsync<NavigationRequests>()
-    return readAction {
-      navigationRequests.sourceNavigationRequest(project = project, file = file, offset = -1, elementRange = null)
-    }
-  }
-
-  final override suspend fun triggerLineOrColumnFeatureUsed(extendedNavigatable: Navigatable) {
-    serviceAsync<FeatureUsageTracker>().triggerFeatureUsed("navigation.goto.file.line")
-  }
-
   override fun getDataForItem(element: Any, dataId: String): Any? {
     if (CommonDataKeys.PSI_FILE.`is`(dataId) && element is PsiFile) {
       return element
@@ -148,5 +142,19 @@ open class FileSearchEverywhereContributor(event: AnActionEvent) : AbstractGotoS
 class FileSearchEverywhereContributorFactory : SearchEverywhereContributorFactory<Any?> {
   override fun createContributor(initEvent: AnActionEvent): SearchEverywhereContributor<Any?> {
     return PSIPresentationBgRendererWrapper.wrapIfNecessary(FileSearchEverywhereContributor(initEvent))
+  }
+}
+
+@Internal
+class FileSearchEverywhereNavigationContributionHandler(project: Project): SearchEverywhereNavigationHandler(project) {
+  override suspend fun createSourceNavigationRequest(project: Project, element: PsiElement, file: VirtualFile, searchText: String, offset: Int): NavigationRequest? {
+    val navigationRequests = serviceAsync<NavigationRequests>()
+    return readAction {
+      navigationRequests.sourceNavigationRequest(project = project, file = file, offset = -1, elementRange = null)
+    }
+  }
+
+  override suspend fun triggerLineOrColumnFeatureUsed(extendedNavigatable: Navigatable) {
+    serviceAsync<FeatureUsageTracker>().triggerFeatureUsed("navigation.goto.file.line")
   }
 }

@@ -11,33 +11,28 @@ import com.intellij.util.applyIf
 import org.jetbrains.kotlin.analysis.api.KaSession
 import org.jetbrains.kotlin.analysis.api.analyze
 import org.jetbrains.kotlin.analysis.api.base.KaConstantValue
+import org.jetbrains.kotlin.analysis.api.components.evaluate
+import org.jetbrains.kotlin.analysis.api.components.expressionType
+import org.jetbrains.kotlin.analysis.api.components.isCharType
 import org.jetbrains.kotlin.analysis.api.resolution.singleFunctionCallOrNull
 import org.jetbrains.kotlin.analysis.api.resolution.symbol
 import org.jetbrains.kotlin.analysis.api.types.KaType
-import org.jetbrains.kotlin.config.LanguageFeature
-import org.jetbrains.kotlin.idea.base.projectStructure.languageVersionSettings
 import org.jetbrains.kotlin.idea.base.psi.copied
 import org.jetbrains.kotlin.idea.base.psi.getSingleUnwrappedStatementOrThis
 import org.jetbrains.kotlin.idea.base.resources.KotlinBundle
 import org.jetbrains.kotlin.idea.codeInsight.inspections.shared.ConvertTwoComparisonsToRangeCheckInspection.Context
+import org.jetbrains.kotlin.idea.codeInsight.inspections.shared.utils.canUseRangeUntil
+import org.jetbrains.kotlin.idea.codeInsight.inspections.shared.utils.isFloatingPointType
+import org.jetbrains.kotlin.idea.codeInsight.inspections.shared.utils.isIntegralType
+import org.jetbrains.kotlin.idea.codeInsight.inspections.shared.utils.isSignedIntegralType
+import org.jetbrains.kotlin.idea.codeInsight.inspections.shared.utils.isUnsignedIntegralType
 import org.jetbrains.kotlin.idea.codeinsight.api.applicable.inspections.KotlinApplicableInspectionBase
 import org.jetbrains.kotlin.idea.codeinsight.api.applicable.inspections.KotlinModCommandQuickFix
-import org.jetbrains.kotlin.idea.codeinsights.impl.base.isOptInSatisfied
 import org.jetbrains.kotlin.idea.codeinsights.impl.base.isSimplifiableTo
 import org.jetbrains.kotlin.idea.codeinsights.impl.base.renderAsEscapeSequence
 import org.jetbrains.kotlin.lexer.KtTokens
-import org.jetbrains.kotlin.name.ClassId
 import org.jetbrains.kotlin.name.StandardClassIds
-import org.jetbrains.kotlin.psi.KtBinaryExpression
-import org.jetbrains.kotlin.psi.KtConstantExpression
-import org.jetbrains.kotlin.psi.KtElement
-import org.jetbrains.kotlin.psi.KtExpression
-import org.jetbrains.kotlin.psi.KtNameReferenceExpression
-import org.jetbrains.kotlin.psi.KtNamedFunction
-import org.jetbrains.kotlin.psi.KtPsiFactory
-import org.jetbrains.kotlin.psi.KtVisitorVoid
-import org.jetbrains.kotlin.psi.binaryExpressionVisitor
-import org.jetbrains.kotlin.psi.createExpressionByPattern
+import org.jetbrains.kotlin.psi.*
 import org.jetbrains.kotlin.psi.psiUtil.getStrictParentOfType
 import org.jetbrains.kotlin.util.OperatorNameConventions
 
@@ -153,23 +148,7 @@ internal class ConvertTwoComparisonsToRangeCheckInspection : KotlinApplicableIns
         }
     }
 
-    context(KaSession)
-    private val KaType.isSignedIntegralType: Boolean
-        get() = isIntType || isLongType || isShortType || isByteType
-
-    context(KaSession)
-    private val KaType.isUnsignedIntegralType: Boolean
-        get() = isUIntType || isULongType || isUShortType || isUByteType
-
-    context(KaSession)
-    private val KaType.isIntegralType: Boolean
-        get() = isSignedIntegralType || isUnsignedIntegralType
-
-    context(KaSession)
-    private val KaType.isFloatingPointType: Boolean
-        get() = isFloatType || isDoubleType
-
-    context(KaSession)
+    context(_: KaSession)
     private fun KtExpression.renderConstantPlusOne(expressionType: KaType): String? {
         val constant = evaluate() ?: return null
 
@@ -202,7 +181,7 @@ internal class ConvertTwoComparisonsToRangeCheckInspection : KotlinApplicableIns
         }
     }
 
-    context(KaSession)
+    context(_: KaSession)
     private fun KtExpression.adjustLowerBoundForExclusive(): String? {
         val type = expressionType ?: return null
         if (!type.isIntegralType && !type.isCharType) return null
@@ -217,19 +196,10 @@ internal class ConvertTwoComparisonsToRangeCheckInspection : KotlinApplicableIns
             .text
     }
 
-    context(KaSession)
+    context(_: KaSession)
     private fun KtExpression.asDoubleConstantExpression(): KtExpression? {
         val constantVal = evaluate()?.value as? Number ?: return null
         return KtPsiFactory(project).createExpression(constantVal.toDouble().toString())
-    }
-
-    context(KaSession)
-    private fun KtElement.canUseRangeUntil(): Boolean {
-        if (!languageVersionSettings.supportsFeature(LanguageFeature.RangeUntilOperator)) return false
-        return isOptInSatisfied(
-            symbol = findClassLike(OPEN_END_RANGE_CLASS_ID) ?: return false,
-            annotationClassId = EXPERIMENTAL_STDLIB_API_CLASS_ID
-        )
     }
 
     override fun KaSession.prepareContext(element: KtBinaryExpression): Context? {
@@ -328,11 +298,6 @@ internal class ConvertTwoComparisonsToRangeCheckInspection : KotlinApplicableIns
         context: Context
     ): KotlinModCommandQuickFix<KtBinaryExpression> =
         ConvertTwoComparisonsToRangeCheckQuickFix(context)
-
-    companion object {
-        val OPEN_END_RANGE_CLASS_ID = ClassId.fromString("kotlin/ranges/OpenEndRange")
-        val EXPERIMENTAL_STDLIB_API_CLASS_ID = ClassId.fromString("kotlin/ExperimentalStdlibApi")
-    }
 }
 
 internal class ConvertTwoComparisonsToRangeCheckQuickFix(private val context: Context) : KotlinModCommandQuickFix<KtBinaryExpression>() {

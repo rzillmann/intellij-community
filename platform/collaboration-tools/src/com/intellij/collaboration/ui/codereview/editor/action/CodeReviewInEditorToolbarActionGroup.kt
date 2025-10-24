@@ -9,6 +9,7 @@ import com.intellij.icons.AllIcons
 import com.intellij.ide.HelpTooltip
 import com.intellij.lang.annotation.HighlightSeverity
 import com.intellij.openapi.actionSystem.*
+import com.intellij.openapi.actionSystem.ex.ActionUtil
 import com.intellij.openapi.actionSystem.impl.ActionButton
 import com.intellij.openapi.project.DumbAware
 import com.intellij.openapi.project.DumbAwareAction
@@ -35,14 +36,11 @@ class CodeReviewInEditorToolbarActionGroup(private val vm: CodeReviewInEditorVie
   override fun getChildren(e: AnActionEvent?): Array<AnAction> =
     arrayOf(updateAction, Separator.create(), disableReviewAction, hideResolvedAction, showAllAction)
 
-  override fun displayTextInToolbar(): Boolean = true
-
-  override fun useSmallerFontForTextInToolbar(): Boolean = true
-
   init {
     with(templatePresentation) {
       isPopupGroup = true
-      putClientProperty(ActionButton.HIDE_DROPDOWN_ICON, true)
+      putClientProperty(ActionUtil.HIDE_DROPDOWN_ICON, true)
+      putClientProperty(ActionUtil.USE_SMALL_FONT_IN_TOOLBAR, true)
       description = CollaborationToolsBundle.message("review.editor.mode.description.title")
       val tooltip = HelpTooltip()
         .setTitle(CollaborationToolsBundle.message("review.editor.mode.description.title"))
@@ -57,10 +55,12 @@ class CodeReviewInEditorToolbarActionGroup(private val vm: CodeReviewInEditorVie
     with(e.presentation) {
       if (shown) {
         text = CollaborationToolsBundle.message("review.editor.mode.title")
+        putClientProperty(ActionUtil.SHOW_TEXT_IN_TOOLBAR, true)
         icon = if (synced) null else getWarningIcon()
       }
       else {
         text = null
+        putClientProperty(ActionUtil.SHOW_TEXT_IN_TOOLBAR, false)
         icon = AllIcons.Actions.Preview
       }
     }

@@ -1,16 +1,14 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.platform.workspace.storage.testEntities.entities.impl
 
-import com.intellij.platform.workspace.storage.*
 import com.intellij.platform.workspace.storage.ConnectionId
 import com.intellij.platform.workspace.storage.EntitySource
-import com.intellij.platform.workspace.storage.EntityType
 import com.intellij.platform.workspace.storage.GeneratedCodeApiVersion
 import com.intellij.platform.workspace.storage.GeneratedCodeImplVersion
+import com.intellij.platform.workspace.storage.WorkspaceEntityBuilder
 import com.intellij.platform.workspace.storage.MutableEntityStorage
 import com.intellij.platform.workspace.storage.WorkspaceEntity
 import com.intellij.platform.workspace.storage.WorkspaceEntityInternalApi
-import com.intellij.platform.workspace.storage.annotations.Child
 import com.intellij.platform.workspace.storage.impl.EntityLink
 import com.intellij.platform.workspace.storage.impl.ModifiableWorkspaceEntityBase
 import com.intellij.platform.workspace.storage.impl.WorkspaceEntityBase
@@ -22,11 +20,14 @@ import com.intellij.platform.workspace.storage.instrumentation.EntityStorageInst
 import com.intellij.platform.workspace.storage.instrumentation.MutableEntityStorageInstrumentation
 import com.intellij.platform.workspace.storage.metadata.model.EntityMetadata
 import com.intellij.platform.workspace.storage.testEntities.entities.AttachedEntityToNullableParent
+import com.intellij.platform.workspace.storage.testEntities.entities.AttachedEntityToNullableParentBuilder
 import com.intellij.platform.workspace.storage.testEntities.entities.AttachedEntityToParent
+import com.intellij.platform.workspace.storage.testEntities.entities.AttachedEntityToParentBuilder
 import com.intellij.platform.workspace.storage.testEntities.entities.MainEntityToParent
+import com.intellij.platform.workspace.storage.testEntities.entities.MainEntityToParentBuilder
 
 @GeneratedCodeApiVersion(3)
-@GeneratedCodeImplVersion(6)
+@GeneratedCodeImplVersion(7)
 @OptIn(WorkspaceEntityInternalApi::class)
 internal class MainEntityToParentImpl(private val dataSource: MainEntityToParentData) : MainEntityToParent, WorkspaceEntityBase(
   dataSource) {
@@ -69,7 +70,7 @@ internal class MainEntityToParentImpl(private val dataSource: MainEntityToParent
 
 
   internal class Builder(result: MainEntityToParentData?) : ModifiableWorkspaceEntityBase<MainEntityToParent, MainEntityToParentData>(
-    result), MainEntityToParent.Builder {
+    result), MainEntityToParentBuilder {
     internal constructor() : this(MainEntityToParentData())
 
     override fun applyToBuilder(builder: MutableEntityStorage) {
@@ -135,16 +136,16 @@ internal class MainEntityToParentImpl(private val dataSource: MainEntityToParent
         changedProperty.add("x")
       }
 
-    override var child: AttachedEntityToParent.Builder?
+    override var child: AttachedEntityToParentBuilder?
       get() {
         val _diff = diff
         return if (_diff != null) {
           @OptIn(EntityStorageInstrumentationApi::class)
-          ((_diff as MutableEntityStorageInstrumentation).getOneChildBuilder(CHILD_CONNECTION_ID, this) as? AttachedEntityToParent.Builder)
-          ?: (this.entityLinks[EntityLink(true, CHILD_CONNECTION_ID)] as? AttachedEntityToParent.Builder)
+          ((_diff as MutableEntityStorageInstrumentation).getOneChildBuilder(CHILD_CONNECTION_ID, this) as? AttachedEntityToParentBuilder)
+          ?: (this.entityLinks[EntityLink(true, CHILD_CONNECTION_ID)] as? AttachedEntityToParentBuilder)
         }
         else {
-          this.entityLinks[EntityLink(true, CHILD_CONNECTION_ID)] as? AttachedEntityToParent.Builder
+          this.entityLinks[EntityLink(true, CHILD_CONNECTION_ID)] as? AttachedEntityToParentBuilder
         }
       }
       set(value) {
@@ -171,17 +172,17 @@ internal class MainEntityToParentImpl(private val dataSource: MainEntityToParent
         changedProperty.add("child")
       }
 
-    override var childNullableParent: AttachedEntityToNullableParent.Builder?
+    override var childNullableParent: AttachedEntityToNullableParentBuilder?
       get() {
         val _diff = diff
         return if (_diff != null) {
           @OptIn(EntityStorageInstrumentationApi::class)
           ((_diff as MutableEntityStorageInstrumentation).getOneChildBuilder(CHILDNULLABLEPARENT_CONNECTION_ID,
-                                                                             this) as? AttachedEntityToNullableParent.Builder)
-          ?: (this.entityLinks[EntityLink(true, CHILDNULLABLEPARENT_CONNECTION_ID)] as? AttachedEntityToNullableParent.Builder)
+                                                                             this) as? AttachedEntityToNullableParentBuilder)
+          ?: (this.entityLinks[EntityLink(true, CHILDNULLABLEPARENT_CONNECTION_ID)] as? AttachedEntityToNullableParentBuilder)
         }
         else {
-          this.entityLinks[EntityLink(true, CHILDNULLABLEPARENT_CONNECTION_ID)] as? AttachedEntityToNullableParent.Builder
+          this.entityLinks[EntityLink(true, CHILDNULLABLEPARENT_CONNECTION_ID)] as? AttachedEntityToNullableParentBuilder
         }
       }
       set(value) {
@@ -218,7 +219,7 @@ internal class MainEntityToParentData : WorkspaceEntityData<MainEntityToParent>(
 
   internal fun isXInitialized(): Boolean = ::x.isInitialized
 
-  override fun wrapAsModifiable(diff: MutableEntityStorage): WorkspaceEntity.Builder<MainEntityToParent> {
+  override fun wrapAsModifiable(diff: MutableEntityStorage): WorkspaceEntityBuilder<MainEntityToParent> {
     val modifiable = MainEntityToParentImpl.Builder(null)
     modifiable.diff = diff
     modifiable.id = createEntityId()
@@ -245,7 +246,7 @@ internal class MainEntityToParentData : WorkspaceEntityData<MainEntityToParent>(
     return MainEntityToParent::class.java
   }
 
-  override fun createDetachedEntity(parents: List<WorkspaceEntity.Builder<*>>): WorkspaceEntity.Builder<*> {
+  override fun createDetachedEntity(parents: List<WorkspaceEntityBuilder<*>>): WorkspaceEntityBuilder<*> {
     return MainEntityToParent(x, entitySource) {
     }
   }

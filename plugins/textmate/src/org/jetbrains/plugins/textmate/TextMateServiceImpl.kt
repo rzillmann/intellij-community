@@ -2,6 +2,7 @@
 
 package org.jetbrains.plugins.textmate
 
+import com.intellij.ide.plugins.PluginManagerCore
 import com.intellij.notification.Notification
 import com.intellij.notification.NotificationAction
 import com.intellij.notification.NotificationType
@@ -15,6 +16,7 @@ import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.IntellijInternalApi
 import com.intellij.openapi.util.text.StringUtil
 import com.intellij.openapi.util.text.Strings
+import com.intellij.util.progress.lockMaybeCancellable
 import kotlinx.coroutines.CoroutineScope
 import org.jetbrains.annotations.NonNls
 import org.jetbrains.annotations.TestOnly
@@ -31,9 +33,8 @@ import org.jetbrains.plugins.textmate.language.preferences.*
 import org.jetbrains.plugins.textmate.language.syntax.TextMateSyntaxTableBuilder
 import org.jetbrains.plugins.textmate.language.syntax.TextMateSyntaxTableCore
 import org.jetbrains.plugins.textmate.language.syntax.highlighting.TextMateTextAttributesAdapter
-import org.jetbrains.plugins.textmate.language.syntax.selector.TextMateSelectorCachingWeigher
-import org.jetbrains.plugins.textmate.language.syntax.selector.TextMateSelectorWeigher
 import org.jetbrains.plugins.textmate.language.syntax.selector.TextMateSelectorWeigherImpl
+import org.jetbrains.plugins.textmate.language.syntax.selector.caching
 import org.jetbrains.plugins.textmate.plist.JsonOrXmlPlistReader
 import org.jetbrains.plugins.textmate.plist.JsonPlistReader
 import org.jetbrains.plugins.textmate.plist.XmlPlistReader
@@ -53,7 +54,8 @@ class TextMateServiceImpl(private val myScope: CoroutineScope) : TextMateService
   private var isInitialized = false
   private val registrationLock = ReentrantLock()
 
-  private val globalCachingSelectorWeigher: TextMateSelectorWeigher = TextMateSelectorCachingWeigher(TextMateSelectorWeigherImpl())
+  private val globalCachingSelectorWeigher = TextMateSelectorWeigherImpl().caching()
+
   private val customHighlightingColors = HashMap<CharSequence, TextMateTextAttributesAdapter>()
   private var extensionMapping: Map<TextMateFileNameMatcher, CharSequence> = java.util.Map.of()
   private val syntaxTable = AtomicReference(TextMateSyntaxTableCore(emptyMap()))
@@ -160,6 +162,7 @@ class TextMateServiceImpl(private val myScope: CoroutineScope) : TextMateService
     extensionMapping = java.util.Map.of()
     customHighlightingColors.clear()
     syntaxTable.set(TextMateSyntaxTableCore(emptyMap()))
+    globalCachingSelectorWeigher.clearCache()
     preferenceRegistry.set(PreferencesRegistryImpl(globalCachingSelectorWeigher))
     snippetRegistry.set(SnippetsRegistryImpl(globalCachingSelectorWeigher, emptyMap()))
     shellVariablesRegistry.set(ShellVariablesRegistryImpl(globalCachingSelectorWeigher, emptyMap()))
@@ -194,7 +197,7 @@ class TextMateServiceImpl(private val myScope: CoroutineScope) : TextMateService
     ensureInitialized()
     val scopeName = extensionMapping.get(TextMateFileNameMatcher.Name(fileName.toString().lowercase()))
     if (!scopeName.isNullOrEmpty()) {
-      return TextMateLanguageDescriptor(scopeName, syntaxTable.get().getSyntax(scopeName))
+      return syntaxTable.get().getLanguageDescriptor(scopeName)
     }
 
     val extensionsIterator = fileNameExtensions(fileName).iterator()
@@ -214,7 +217,7 @@ class TextMateServiceImpl(private val myScope: CoroutineScope) : TextMateService
 
     ensureInitialized()
     val scopeName = extensionMapping.get(TextMateFileNameMatcher.Extension(StringUtil.toLowerCase(extension.toString())))
-    return if (scopeName.isNullOrBlank()) null else TextMateLanguageDescriptor(scopeName, syntaxTable.get().getSyntax(scopeName))
+    return if (scopeName.isNullOrBlank()) null else syntaxTable.get().getLanguageDescriptor(scopeName)
   }
 
   override fun getFileNameMatcherToScopeNameMapping(): Map<TextMateFileNameMatcher, CharSequence> {
@@ -239,7 +242,7 @@ class TextMateServiceImpl(private val myScope: CoroutineScope) : TextMateService
 
   private fun ensureInitialized() {
     if (!isInitialized) {
-      registrationLock.lock()
+      registrationLock.lockMaybeCancellable()
       try {
         if (isInitialized) return
         registerBundles(fireEvents = false)
@@ -352,7 +355,7 @@ class TextMateServiceImpl(private val myScope: CoroutineScope) : TextMateService
       for (fileNameMatcher in grammar.fileNameMatchers) {
         if (fileNameMatcher is TextMateFileNameMatcher.Name) {
           val newName = fileNameMatcher.fileName.lowercase()
-          extensionMapping.put(fileNameMatcher.copy(newName), rootScopeName)
+          extensionMapping.put(fileNameMatcher.copy(fileName = newName), rootScopeName)
         }
         else {
           extensionMapping.put(fileNameMatcher, rootScopeName)
@@ -375,7 +378,8 @@ class TextMateServiceImpl(private val myScope: CoroutineScope) : TextMateService
 }
 
 private val bundledBundlePath: Path
-  get() = PluginPathManager.getPluginHome("textmate").toPath().resolve("lib/bundles").normalize()
+  get() = PluginPathManager.getPluginHome(if (PluginManagerCore.isRunningFromSources()) "textmate" else "textmate-plugin")
+    .toPath().resolve("lib/bundles").normalize()
 
 private fun fireFileTypesChangedEvent(reason: @NonNls String, update: Runnable) {
   ApplicationManager.getApplication().invokeLater(

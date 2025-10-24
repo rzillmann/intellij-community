@@ -5,14 +5,14 @@ import fleet.util.multiplatform.Actual
 import kotlinx.browser.window
 
 // todo: define client's os
-@Actual("getName")
+@Actual
 internal fun getNameWasmJs(): String = osName
 
-@Actual("getVersion")
+@Actual
 internal fun getVersionWasmJs(): String = ""
 
-@Actual("getArch")
-internal fun getArchWasmJs(): String = "wasm"
+@Actual
+internal fun getArchWasmJs(): String = Os.WASM_ARCH
 
 private val osName: String by lazy {
   window.navigator.userAgent

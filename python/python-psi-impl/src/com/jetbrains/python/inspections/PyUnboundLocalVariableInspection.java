@@ -15,7 +15,7 @@ import com.intellij.psi.PsiPolyVariantReference;
 import com.intellij.psi.util.PsiTreeUtil;
 import com.jetbrains.python.PyPsiBundle;
 import com.jetbrains.python.codeInsight.controlflow.ControlFlowCache;
-import com.jetbrains.python.codeInsight.controlflow.PyDataFlow;
+import com.jetbrains.python.codeInsight.controlflow.PyDataFlowKt;
 import com.jetbrains.python.codeInsight.controlflow.ReadWriteInstruction;
 import com.jetbrains.python.codeInsight.controlflow.ScopeOwner;
 import com.jetbrains.python.codeInsight.dataflow.scope.Scope;
@@ -67,7 +67,7 @@ public final class PyUnboundLocalVariableInspection extends PyInspection {
       if (PsiTreeUtil.getParentOfType(node, PyImportStatementBase.class) != null) {
         return;
       }
-      if (PyDataFlow.isUnreachable(node, myTypeEvalContext)) {
+      if (PyDataFlowKt.isUnreachableForInspection(node, myTypeEvalContext)) {
         return;
       }
       final String name = node.getReferencedName();
@@ -114,6 +114,10 @@ public final class PyUnboundLocalVariableInspection extends PyInspection {
         }
         final PsiPolyVariantReference ref = node.getReference(getResolveContext());
         final PsiElement resolved = ref.resolve();
+        // type parameter list is not included in CFG
+        if (resolved instanceof PyTypeParameter) {
+          return;
+        }
         final boolean isBuiltin = PyBuiltinCache.getInstance(node).isBuiltin(resolved);
         if (owner instanceof PyClass) {
           if (isBuiltin || ScopeUtil.getDeclarationScopeOwner(owner, name) != null) {

@@ -1,10 +1,7 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.codeInspection.dataFlow;
 
-import com.intellij.codeInsight.AnnotationUtil;
-import com.intellij.codeInsight.Nullability;
-import com.intellij.codeInsight.NullabilityAnnotationInfo;
-import com.intellij.codeInsight.NullableNotNullManager;
+import com.intellij.codeInsight.*;
 import com.intellij.codeInsight.daemon.impl.analysis.JavaGenericsUtil;
 import com.intellij.codeInspection.dataFlow.interpreter.RunnerResult;
 import com.intellij.codeInspection.dataFlow.interpreter.StandardDataFlowInterpreter;
@@ -37,6 +34,8 @@ import com.intellij.openapi.util.Ref;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.psi.*;
 import com.intellij.psi.controlFlow.ControlFlowUtil;
+import com.intellij.psi.impl.light.LightCompactConstructorParameter;
+import com.intellij.psi.impl.light.LightRecordField;
 import com.intellij.psi.search.LocalSearchScope;
 import com.intellij.psi.search.searches.DeepestSuperMethodsSearch;
 import com.intellij.psi.search.searches.ReferencesSearch;
@@ -81,14 +80,36 @@ public final class DfaPsiUtil {
    *                   or variable type), if known.
    * @param owner method or variable to get its nullability
    * @return nullability of the owner; {@link Nullability#UNKNOWN} is both parameters are null.
+   * @deprecated behaves like {@link #getElementNullabilityForWrite(PsiType, PsiModifierListOwner)}. 
+   * Use either {@link #getElementNullabilityForWrite(PsiType, PsiModifierListOwner)} 
+   * or {@link #getElementNullabilityForRead(PsiType, PsiModifierListOwner)} instead.
    */
+  @Deprecated
   public static @NotNull Nullability getElementNullability(@Nullable PsiType resultType, @Nullable PsiModifierListOwner owner) {
     return getElementNullability(resultType, owner, false);
   }
 
   /**
-   * Returns nullability of variable or method. This method takes into account various sources of nullability information,
+   * Returns nullability of variable when it's expected to write to it, or nullability of method 
+   * when it's expected to return a value from it.
+   * For method parameter, it's expected that either the method is called (so the parameter is written by a call),
+   * or the parameter is modified inside the method, like a local variable.
+   * This method takes into account various sources of nullability information, 
    * like method annotations, type annotations, container annotations, inferred annotations, or external annotations.
+   *
+   * @param resultType concrete type of particular variable access or method call (an instantiation of generic method return type, 
+   *                   or variable type), if known.
+   * @param owner method or variable to get its nullability
+   * @return nullability of the owner; {@link Nullability#UNKNOWN} is both parameters are null.
+   */
+  public static @NotNull Nullability getElementNullabilityForWrite(@Nullable PsiType resultType, @Nullable PsiModifierListOwner owner) {
+    return getElementNullability(resultType, owner, false);
+  }
+
+  /**
+   * Returns nullability of variable or method, when it's expected to read from it. 
+   * This method takes into account various sources of nullability information, like method annotations, 
+   * type annotations, container annotations, inferred annotations, or external annotations.
    * Automatic inference of method parameter nullability is ignored, which is useful when analyzing the method body (as it's
    * inferred from method body as well, so both analyses may produce conflicting results).
    *
@@ -97,15 +118,14 @@ public final class DfaPsiUtil {
    * @param owner method or variable to get its nullability
    * @return nullability of the owner; {@link Nullability#UNKNOWN} is both parameters are null.
    */
-  public static @NotNull Nullability getElementNullabilityIgnoringParameterInference(@Nullable PsiType resultType,
-                                                                            @Nullable PsiModifierListOwner owner) {
+  public static @NotNull Nullability getElementNullabilityForRead(@Nullable PsiType resultType, @Nullable PsiModifierListOwner owner) {
     return getElementNullability(resultType, owner, true);
   }
 
   private static @NotNull Nullability getElementNullability(@Nullable PsiType resultType,
                                                             @Nullable PsiModifierListOwner owner,
-                                                            boolean ignoreParameterNullabilityInference) {
-    if (owner == null) return getTypeNullability(resultType);
+                                                            boolean forRead) {
+    if (owner == null) return getTypeNullability(resultType, forRead);
 
     if (resultType instanceof PsiPrimitiveType) {
       return Nullability.UNKNOWN;
@@ -116,18 +136,20 @@ public final class DfaPsiUtil {
     }
 
     // Annotation manager requires index
-    if (DumbService.isDumb(owner.getProject())) return Nullability.UNKNOWN;
-    NullabilityAnnotationInfo fromAnnotation = getNullabilityFromAnnotation(owner, ignoreParameterNullabilityInference);
+    Project project = owner.getProject();
+    if (DumbService.isDumb(project)) return Nullability.UNKNOWN;
+    NullabilityAnnotationInfo fromAnnotation = getNullabilityFromAnnotation(owner, forRead);
     if (fromAnnotation != null) {
-      if (fromAnnotation.getNullability() != Nullability.NOT_NULL &&
-          owner instanceof PsiMethod method) {
-        PsiType type = method.getReturnType();
-        PsiAnnotationOwner annotationOwner = fromAnnotation.getAnnotation().getOwner();
-        if (PsiUtil.resolveClassInClassTypeOnly(type) instanceof PsiTypeParameter &&
-            annotationOwner instanceof PsiType && annotationOwner != type) {
-          // Nullable/Unknown from type hierarchy: should check the instantiation, as it could be more concrete
-          Nullability fromType = getNullabilityFromType(resultType, owner);
-          if (fromType != null) return fromType;
+      if (resultType != null && fromAnnotation.getNullability() != Nullability.NOT_NULL) {
+        PsiType type = PsiUtil.getTypeByPsiElement(owner);
+        if (type != null) {
+          PsiAnnotationOwner annotationOwner = fromAnnotation.getAnnotation().getOwner();
+          if (PsiUtil.resolveClassInClassTypeOnly(type) instanceof PsiTypeParameter tp &&
+              annotationOwner instanceof PsiType && annotationOwner != type &&
+              !tp.equals(PsiUtil.resolveClassInClassTypeOnly(resultType))) {
+            // Nullable/Unknown from type hierarchy: should check the instantiation, as it could be more concrete
+            return getTypeNullability(resultType, forRead);
+          }
         }
       }
       return fromAnnotation.getNullability();
@@ -152,9 +174,9 @@ public final class DfaPsiUtil {
     Nullability fromType = getNullabilityFromType(resultType, owner);
     if (fromType != null) return fromType;
 
-    if (owner instanceof PsiMethod method && method.getParameterList().isEmpty()) {
+    if (owner instanceof PsiMethod method && method.getParameterList().isEmpty() && forRead) {
       PsiField field = PropertyUtil.getFieldOfGetter(method);
-      if (field != null && getElementNullability(resultType, field) == Nullability.NULLABLE) {
+      if (field != null && getElementNullabilityForRead(resultType, field) == Nullability.NULLABLE) {
         return Nullability.NULLABLE;
       }
     }
@@ -163,14 +185,14 @@ public final class DfaPsiUtil {
   }
 
   private static @Nullable Nullability getNullabilityFromType(@Nullable PsiType resultType, @NotNull PsiModifierListOwner owner) {
-    Nullability fromType = getTypeNullability(resultType);
-    if (fromType != Nullability.UNKNOWN) {
-      if (fromType == Nullability.NOT_NULL && hasNullContract(owner)) {
-        return Nullability.UNKNOWN;
-      }
-      return fromType;
+    if (resultType == null) return null;
+    TypeNullability typeNullability = resultType.getNullability();
+    if (typeNullability.equals(TypeNullability.UNKNOWN)) return null;
+    Nullability fromType = typeNullability.nullability();
+    if (fromType == Nullability.NOT_NULL && hasNullContract(owner)) {
+      return Nullability.UNKNOWN;
     }
-    return null;
+    return fromType;
   }
 
   private static boolean hasNullContract(@NotNull PsiModifierListOwner owner) {
@@ -237,55 +259,35 @@ public final class DfaPsiUtil {
     return JavaGenericsUtil.getCollectionItemType(iteratedType, iteratedValue.getResolveScope());
   }
 
+  private static @NotNull Nullability getTypeNullability(@Nullable PsiType type, boolean forRead) {
+    if (type == null) return Nullability.UNKNOWN;
+    if (type instanceof PsiCapturedWildcardType captured) {
+      if (!forRead) {
+        TypeNullability nullability = captured.getLowerBound().getNullability();
+        if (nullability.source() instanceof NullabilitySource.ExtendsBound) {
+          PsiElement context = captured.getContext();
+          NullableNotNullManager manager = NullableNotNullManager.getInstance(context.getProject());
+          if (manager != null) {
+            NullabilityAnnotationInfo defaultNullability = manager.findDefaultTypeUseNullability(context);
+            if (defaultNullability != null && defaultNullability.getNullability() == Nullability.NOT_NULL) {
+              return Nullability.NOT_NULL;
+            }
+          }
+        }
+        return nullability.nullability();
+      }
+    }
+    return type.getNullability().nullability();
+  }
 
   public static @NotNull Nullability getTypeNullability(@Nullable PsiType type) {
-    NullabilityAnnotationInfo info = getTypeNullabilityInfo(type);
-    return info == null ? Nullability.UNKNOWN : info.getNullability();
+    if (type == null) return Nullability.UNKNOWN;
+    return type.getNullability().nullability();
   }
 
   public static @Nullable NullabilityAnnotationInfo getTypeNullabilityInfo(@Nullable PsiType type) {
     if (type == null || type instanceof PsiPrimitiveType) return null;
-
-    Ref<NullabilityAnnotationInfo> result = Ref.create(null);
-    boolean local = type instanceof PsiClassType classType &&
-                    classType.getPsiContext() instanceof PsiJavaCodeReferenceElement ref &&
-                    ref.getParent() instanceof PsiTypeElement typeElement &&
-                    typeElement.getParent() instanceof PsiLocalVariable;
-    InheritanceUtil.processSuperTypes(type, true, eachType -> {
-      result.set(getTypeOwnNullability(eachType, local));
-      return result.get() == null &&
-             (!(type instanceof PsiClassType) || PsiUtil.resolveClassInClassTypeOnly(type) instanceof PsiTypeParameter);
-    });
-    return result.get();
-  }
-
-  private static @Nullable NullabilityAnnotationInfo getTypeOwnNullability(@NotNull PsiType eachType, boolean local) {
-    for (PsiAnnotation annotation : eachType.getAnnotations()) {
-      String qualifiedName = annotation.getQualifiedName();
-      NullableNotNullManager nnn = NullableNotNullManager.getInstance(annotation.getProject());
-      Optional<Nullability> optionalNullability = nnn.getAnnotationNullability(qualifiedName);
-      if (optionalNullability.isPresent()) {
-        Nullability nullability = optionalNullability.get();
-        if (nullability == Nullability.NULLABLE && shouldIgnoreAnnotation(annotation)) continue;
-        return new NullabilityAnnotationInfo(annotation, nullability, false);
-      }
-    }
-    if (eachType instanceof PsiClassType classType && !local) {
-      PsiElement context = classType.getPsiContext();
-      if (context != null) {
-        NullableNotNullManager manager = NullableNotNullManager.getInstance(context.getProject());
-        NullabilityAnnotationInfo typeUseNullability = manager.findDefaultTypeUseNullability(context);
-        if (typeUseNullability != null) {
-          return typeUseNullability;
-        }
-        PsiClass declaration = PsiUtil.resolveClassInClassTypeOnly(classType);
-        if (declaration instanceof PsiTypeParameter typeParameter && typeParameter.getExtendsList().getReferenceElements().length == 0) {
-          // If there's no bound, we assume an implicit `extends Object` bound, which is subject to default annotation if any.
-          return manager.findDefaultTypeUseNullability(declaration);
-        }
-      }
-    }
-    return null;
+    return type.getNullability().toNullabilityAnnotationInfo();
   }
 
   private static boolean shouldIgnoreAnnotation(PsiAnnotation annotation) {
@@ -311,11 +313,16 @@ public final class DfaPsiUtil {
       PsiParameter parameter = sam.getParameterList().getParameter(index);
       if (parameter != null) {
         PsiType parameterType = type.resolveGenerics().getSubstitutor().substitute(parameter.getType());
-        NullabilityAnnotationInfo info = getTypeNullabilityInfo(GenericsUtil.eliminateWildcards(parameterType, false, true));
-        if (info != null) {
-          return info.getNullability();
+        if (parameterType instanceof PsiWildcardType wildcardType) {
+          parameterType = wildcardType.getBound();
         }
-        return getElementNullability(null, parameter);
+        if (parameterType != null) {
+          TypeNullability typeNullability = parameterType.getNullability();
+          if (!typeNullability.equals(TypeNullability.UNKNOWN)) {
+            return typeNullability.nullability();
+          }
+        }
+        return getElementNullabilityForWrite(null, parameter);
       }
     }
     return Nullability.UNKNOWN;
@@ -440,7 +447,14 @@ public final class DfaPsiUtil {
     });
   }
 
-  public static List<PsiExpression> findAllConstructorInitializers(PsiField field) {
+  /**
+   * Finds all initializers of the specified field inside constructors and class/instance initializers.
+   * Includes the field's own initializer, if any.
+   *
+   * @param field  the field find initializers for
+   * @return the initializers found.
+   */
+  public static @NotNull List<PsiExpression> findAllConstructorInitializers(@NotNull PsiField field) {
     final List<PsiExpression> result = ContainerUtil.createLockFreeCopyOnWriteList();
     ContainerUtil.addIfNotNull(result, field.getInitializer());
 
@@ -451,32 +465,50 @@ public final class DfaPsiUtil {
     return result;
   }
 
-  private static MultiMap<PsiField, PsiExpression> getAllConstructorFieldInitializers(final PsiClass psiClass) {
+  /**
+   * Finds all initializers of the specified record component.
+   * This includes the right-side of assignments in a compact constructor to the implicit parameter
+   * corresponding to the specified component.
+   * Since a record component is implicitly final, all of its initializers will be inside a constructor (when the code is compilable).
+   *
+   * @param component  the record component to find initializers for
+   * @return the initializers found.
+   */
+  static @NotNull List<PsiExpression> findAllConstructorInitializers(@NotNull PsiRecordComponent component) {
+    PsiClass containingClass = component.getContainingClass();
+    return containingClass == null || containingClass instanceof PsiCompiledElement
+           ? Collections.emptyList()
+           : new ArrayList<>(getAllConstructorFieldInitializers(containingClass).get(component));
+  }
+
+  private static MultiMap<PsiVariable, PsiExpression> getAllConstructorFieldInitializers(PsiClass psiClass) {
     if (psiClass instanceof PsiCompiledElement) {
       return MultiMap.empty();
     }
 
     return CachedValuesManager.getCachedValue(psiClass, new CachedValueProvider<>() {
       @Override
-      public @NotNull Result<MultiMap<PsiField, PsiExpression>> compute() {
+      public @NotNull Result<MultiMap<PsiVariable, PsiExpression>> compute() {
         final Set<String> fieldNames = new HashSet<>();
         for (PsiField field : psiClass.getFields()) {
           ContainerUtil.addIfNotNull(fieldNames, field.getName());
         }
 
-        final MultiMap<PsiField, PsiExpression> result = new MultiMap<>();
+        final MultiMap<PsiVariable, PsiExpression> result = new MultiMap<>();
         JavaRecursiveElementWalkingVisitor visitor = new JavaRecursiveElementWalkingVisitor() {
           @Override
           public void visitAssignmentExpression(@NotNull PsiAssignmentExpression assignment) {
             super.visitAssignmentExpression(assignment);
-            PsiExpression lExpression = assignment.getLExpression();
             PsiExpression rExpression = assignment.getRExpression();
             if (rExpression != null &&
-                lExpression instanceof PsiReferenceExpression &&
-                fieldNames.contains(((PsiReferenceExpression)lExpression).getReferenceName())) {
-              PsiElement target = ((PsiReferenceExpression)lExpression).resolve();
-              if (target instanceof PsiField && ((PsiField)target).getContainingClass() == psiClass) {
-                result.putValue((PsiField)target, rExpression);
+                assignment.getLExpression() instanceof PsiReferenceExpression ref &&
+                fieldNames.contains(ref.getReferenceName())) {
+              PsiElement target = ref.resolve();
+              if (target instanceof PsiField field && field.getContainingClass() == psiClass) {
+                result.putValue(field instanceof LightRecordField f ? f.getRecordComponent() : field, rExpression);
+              }
+              else if (target instanceof LightCompactConstructorParameter parameter) {
+                result.putValue(parameter.getRecordComponent(), rExpression);
               }
             }
           }

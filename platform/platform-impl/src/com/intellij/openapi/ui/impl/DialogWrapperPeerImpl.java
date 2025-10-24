@@ -12,6 +12,7 @@ import com.intellij.openapi.actionSystem.ex.ActionUtil;
 import com.intellij.openapi.application.AccessToken;
 import com.intellij.openapi.application.Application;
 import com.intellij.openapi.application.ApplicationManager;
+import com.intellij.openapi.application.WriteIntentReadAction;
 import com.intellij.openapi.application.impl.LaterInvocator;
 import com.intellij.openapi.command.CommandProcessor;
 import com.intellij.openapi.command.CommandProcessorEx;
@@ -38,6 +39,7 @@ import com.intellij.openapi.wm.impl.ProjectFrameHelper;
 import com.intellij.openapi.wm.impl.customFrameDecorations.header.CustomFrameDialogContent;
 import com.intellij.openapi.wm.impl.customFrameDecorations.header.CustomHeader;
 import com.intellij.platform.ide.bootstrap.SplashManagerKt;
+import com.intellij.platform.locking.impl.IntelliJLockingUtil;
 import com.intellij.reference.SoftReference;
 import com.intellij.ui.*;
 import com.intellij.ui.components.JBLayeredPane;
@@ -45,13 +47,18 @@ import com.intellij.ui.mac.foundation.Foundation;
 import com.intellij.ui.mac.foundation.ID;
 import com.intellij.ui.mac.foundation.MacUtil;
 import com.intellij.ui.mac.touchbar.TouchbarSupport;
-import com.intellij.ui.scale.JBUIScale;
 import com.intellij.util.IJSwingUtilities;
 import com.intellij.util.ObjectUtils;
 import com.intellij.util.SlowOperations;
+import com.intellij.util.concurrency.annotations.RequiresEdt;
 import com.intellij.util.containers.JBIterable;
 import com.intellij.util.ui.*;
+import kotlin.Pair;
 import kotlin.Unit;
+import kotlin.coroutines.EmptyCoroutineContext;
+import kotlin.jvm.functions.Function0;
+import kotlinx.coroutines.EventLoop;
+import kotlinx.coroutines.ThreadLocalEventLoop;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -65,6 +72,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Consumer;
 
 public class DialogWrapperPeerImpl extends DialogWrapperPeer {
   @SuppressWarnings("LoggerInitializedWithForeignClass")
@@ -427,9 +435,30 @@ public class DialogWrapperPeerImpl extends DialogWrapperPeer {
     @SuppressWarnings("deprecation") boolean changeModalityState = appStarted && myDialog.isModal() && !isProgressDialog();
     Project project = myProject;
 
+    Consumer<Runnable> lockContextWrapper;
+    Function0<Unit> lockCleanup;
+
     if (changeModalityState) {
       commandProcessor.enterModal();
       LaterInvocator.enterModal(myDialog);
+
+      var pair = ApplicationManager.getApplication().isWriteAccessAllowed()
+                 ? new Pair<>(EmptyCoroutineContext.INSTANCE, emptyFunction)
+                 : IntelliJLockingUtil.getGlobalThreadingSupport().getPermitAsContextElement(ThreadContext.currentThreadContext(), true);
+      lockContextWrapper = (r) -> {
+        ThreadContext.installThreadContext(pair.getFirst(), true, () -> {
+          r.run();
+          return Unit.INSTANCE;
+        });
+      };
+      lockCleanup = pair.getSecond();
+    }
+    else {
+      lockContextWrapper = (r) -> ThreadContext.resetThreadContext(() -> {
+        r.run();
+        return null;
+      });
+      lockCleanup = emptyFunction;
     }
 
     if (appStarted) {
@@ -452,17 +481,37 @@ public class DialogWrapperPeerImpl extends DialogWrapperPeer {
 
     CompletableFuture<Void> result = new CompletableFuture<>();
     SplashManagerKt.hideSplash();
-    try (
-      AccessToken ignore = SlowOperations.startSection(SlowOperations.RESET)
+    try ( // numbered in the order of invocation (which is reverse)
+      AccessToken ignore5 = AccessToken.create(() -> {
+        if (changeModalityState) {
+          LaterInvocator.leaveModal(myDialog);
+        }
+      });
+      AccessToken ignore4 = AccessToken.create(() -> {
+        if (changeModalityState) {
+          commandProcessor.leaveModal();
+        }
+      });
+      AccessToken ignore3 = AccessToken.create(() -> {
+        lockCleanup.invoke();
+      });
+      AccessToken ignore2 = SlowOperations.startSection(SlowOperations.RESET);
+      AccessToken ignore1 = resetCoroutinesEventLoop()
     ) {
-      myDialog.show();
+      lockContextWrapper.accept(() -> {
+        if (!isProgressDialog() &&
+            ApplicationManager.getApplication() != null &&
+            !ApplicationManager.getApplication().isReadAccessAllowed()) {
+          WriteIntentReadAction.run((Runnable)() -> {
+            myDialog.show();
+          });
+        }
+        else {
+          myDialog.show();
+        }
+      });
     }
     finally {
-      if (changeModalityState) {
-        commandProcessor.leaveModal();
-        LaterInvocator.leaveModal(myDialog);
-      }
-
       myDialog.getFocusManager().doWhenFocusSettlesDown(() -> result.complete(null));
     }
 
@@ -473,6 +522,8 @@ public class DialogWrapperPeerImpl extends DialogWrapperPeer {
     return result;
   }
 
+  private static final Function0<Unit> emptyFunction = () -> Unit.INSTANCE;
+
   //hopefully this whole code will go away
   private void hidePopupsIfNeeded() {
     if (!SystemInfoRt.isMac) {
@@ -481,6 +532,20 @@ public class DialogWrapperPeerImpl extends DialogWrapperPeer {
 
     StackingPopupDispatcher.getInstance().hidePersistentPopups();
     myDisposeActions.add(() -> StackingPopupDispatcher.getInstance().restorePersistentPopups());
+  }
+
+  @RequiresEdt
+  private static AccessToken resetCoroutinesEventLoop() {
+    EventLoop currentEventLoop = ThreadLocalEventLoop.INSTANCE.currentOrNull$kotlinx_coroutines_core();
+    ThreadLocalEventLoop.INSTANCE.resetEventLoop$kotlinx_coroutines_core();
+    return new AccessToken() {
+      @Override
+      public void finish() {
+        if (currentEventLoop != null) {
+          ThreadLocalEventLoop.INSTANCE.resetEventLoop$kotlinx_coroutines_core();
+        }
+      }
+    };
   }
 
   private final class AnCancelAction extends AnAction implements DumbAware {
@@ -867,24 +932,13 @@ public class DialogWrapperPeerImpl extends DialogWrapperPeer {
         LOG.warn("The dialog wrapper for " + dialogWrapper.getTitle() + " is already disposed");
         return;
       }
-      try (AccessToken ignore = ThreadContext.resetThreadContext()) {
-        super.show();
-      }
+      super.show();
     }
 
     private void logMonitorConfiguration() {
       var ideFrame = WindowManager.getInstance().getFrame(CommonDataKeys.PROJECT.getData(DataManager.getInstance().getDataContext(this)));
-      GraphicsEnvironment ge = GraphicsEnvironment.getLocalGraphicsEnvironment();
-      for (GraphicsDevice device : ge.getScreenDevices()) {
-        DisplayMode displayMode = device.getDisplayMode();
-        GraphicsConfiguration gc = device.getDefaultConfiguration();
-        float scale = JBUIScale.sysScale(gc);
-        Rectangle bounds = ScreenUtil.getScreenRectangle(gc);
-        LOG.debug(String.format("%s (%dx%d scaled at %.02f with insets %s)%s%s",
-                                bounds, displayMode.getWidth(), displayMode.getHeight(), scale, ScreenUtil.getScreenInsets(gc),
-                                (device == ge.getDefaultScreenDevice() ? ", default" : ""),
-                                (ideFrame != null && device == ideFrame.getGraphicsConfiguration().getDevice() ? ", IDE frame" : "")
-        ));
+      for (String message : ScreenUtil.loggableMonitorConfiguration(ideFrame)) {
+        LOG.debug(message);
       }
     }
 
@@ -933,9 +987,10 @@ public class DialogWrapperPeerImpl extends DialogWrapperPeer {
     @Override
     @SuppressWarnings("deprecation")
     public void hide() {
-      try (@NotNull AccessToken ignored = ThreadContext.resetThreadContext()) {
+      ThreadContext.resetThreadContext(() -> {
         super.hide();
-      }
+        return null;
+      });
     }
 
     @Override
@@ -955,6 +1010,9 @@ public class DialogWrapperPeerImpl extends DialogWrapperPeer {
 
       final BufferStrategy strategy = getBufferStrategy();
       if (strategy != null) {
+        if (!EDT.isCurrentThreadEdt()) {
+          LOG.error("Component dispose must be called on EDT", new Throwable());
+        }
         strategy.dispose();
       }
       super.dispose();
@@ -987,6 +1045,9 @@ public class DialogWrapperPeerImpl extends DialogWrapperPeer {
         // actually, it's a bad idea to globally enable this for dialog graphics since renderers, for example, may not
         // inherit graphics so rendering hints won't be applied and trees or lists may render ugly.
         UISettings.setupAntialiasing(g);
+      }
+      if (!EDT.isCurrentThreadEdt()) {
+        LOG.error("paint must be called on EDT", new Throwable());
       }
 
       super.paint(g);
@@ -1225,4 +1286,5 @@ public class DialogWrapperPeerImpl extends DialogWrapperPeer {
   public void setAutoRequestFocus(boolean b) {
     UIUtil.setAutoRequestFocus((JDialog)myDialog, b);
   }
+  
 }

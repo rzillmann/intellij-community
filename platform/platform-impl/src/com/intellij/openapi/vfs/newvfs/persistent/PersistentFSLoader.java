@@ -5,19 +5,20 @@ import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.util.NotNullLazyValue;
 import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.vfs.PersistentFSConstants;
-import com.intellij.openapi.vfs.newvfs.persistent.dev.content.CompressingAlgo;
-import com.intellij.openapi.vfs.newvfs.persistent.dev.content.ContentHashEnumeratorOverDurableEnumerator;
-import com.intellij.openapi.vfs.newvfs.persistent.dev.content.ContentStorageAdapter;
-import com.intellij.openapi.vfs.newvfs.persistent.dev.content.VFSContentStorageOverMMappedFile;
-import com.intellij.openapi.vfs.newvfs.persistent.dev.enumerator.DurableStringEnumerator;
+import com.intellij.openapi.vfs.newvfs.persistent.mapped.content.CompressingAlgo;
+import com.intellij.openapi.vfs.newvfs.persistent.mapped.content.ContentHashEnumeratorOverDurableEnumerator;
+import com.intellij.openapi.vfs.newvfs.persistent.mapped.content.ContentStorageAdapter;
+import com.intellij.openapi.vfs.newvfs.persistent.mapped.content.VFSContentStorageOverMMappedFile;
 import com.intellij.openapi.vfs.newvfs.persistent.recovery.VFSRecoverer;
 import com.intellij.openapi.vfs.newvfs.persistent.recovery.VFSRecoveryInfo;
 import com.intellij.platform.util.io.storages.StorageFactory;
 import com.intellij.platform.util.io.storages.blobstorage.StreamlinedBlobStorageHelper;
 import com.intellij.platform.util.io.storages.blobstorage.StreamlinedBlobStorageOverMMappedFile;
+import com.intellij.platform.util.io.storages.enumerator.DurableStringEnumerator;
 import com.intellij.platform.util.io.storages.mmapped.MMappedFileStorageFactory;
 import com.intellij.util.ExceptionUtil;
 import com.intellij.util.concurrency.SequentialTaskExecutor;
+import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.hash.ContentHashEnumerator;
 import com.intellij.util.io.*;
 import com.intellij.util.io.blobstorage.SpaceAllocationStrategy;
@@ -47,6 +48,7 @@ import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutorService;
 import java.util.function.Function;
 
+import static com.intellij.openapi.vfs.newvfs.persistent.PersistentFSHeaders.Flags.FLAGS_DEFRAGMENTATION_REQUESTED;
 import static com.intellij.openapi.vfs.newvfs.persistent.PersistentFSRecordAccessor.hasDeletedFlag;
 import static com.intellij.openapi.vfs.newvfs.persistent.VFSInitException.ErrorCategory.*;
 import static com.intellij.platform.util.io.storages.mmapped.MMappedFileStorageFactory.IfNotPageAligned.EXPAND_FILE;
@@ -72,35 +74,39 @@ public final class PersistentFSLoader {
   private static final StorageLockContext PERSISTENT_FS_STORAGE_CONTEXT = new StorageLockContext(false, true);
 
   /**
-   * We want the 'main exception' to be 1) IOException 2) with +/- descriptive message.
+   * We want the 'main exception' to be
+   * 1) an IOException
+   * 2) with a +/- descriptive message.
    * So:
-   * => We look for such an exception among .exceptions, and if there is one -> use it as the main one
-   * => Otherwise we create IOException with the first non-empty error message among .exceptions
-   * In both cases, we attach all other exceptions to .suppressed list of the main exception
+   * => We look for such an exception among all exceptions reported, and if there is one -> use it as the _main_ exception
+   * => Otherwise we create IOException with the first non-empty error message among all exceptions reported
+   * And in both cases, we attach all the exceptions (but main) to the main exception's .suppressed list
    */
   private static final @NotNull Function<List<? extends Throwable>, IOException> ASYNC_EXCEPTIONS_REPORTER = exceptions -> {
-    IOException mainIoException = (IOException)exceptions.stream()
-      .map(ex -> {
-        //unwrap CompletionException from async processing
-        return ex instanceof CompletionException ? ex.getCause() : ex;
-      })
-      .filter(e -> e instanceof IOException)
-      .findFirst().orElse(null);
+    List<Throwable> unwrappedExceptions = ContainerUtil.map(
+      exceptions,
+      //unwrap CompletionException from async processing:
+      ex -> (ex instanceof CompletionException ? ex.getCause() : ex)
+    );
+    IOException mainIoException = (IOException)ContainerUtil.find(
+      unwrappedExceptions,
+      e -> e instanceof IOException
+    );
 
     if (mainIoException != null && !mainIoException.getMessage().isEmpty()) {
-      for (Throwable exception : exceptions) {
+      for (Throwable exception : unwrappedExceptions) {
         if (exception != mainIoException) {
           mainIoException.addSuppressed(exception);
         }
       }
     }
     else {
-      String nonEmptyErrorMessage = exceptions.stream()
+      String nonEmptyErrorMessage = unwrappedExceptions.stream()
         .map(e -> ExceptionUtil.getNonEmptyMessage(e, ""))
         .filter(message -> !message.isBlank())
         .findFirst().orElse("<Error message not found>");
       mainIoException = new IOException(nonEmptyErrorMessage);
-      for (Throwable exception : exceptions) {
+      for (Throwable exception : unwrappedExceptions) {
         mainIoException.addSuppressed(exception);
       }
     }
@@ -349,6 +355,9 @@ public final class PersistentFSLoader {
     if (errorsAccumulated > 0) {
       addProblem(HAS_ERRORS_IN_PREVIOUS_SESSION, "VFS accumulated " + errorsAccumulated + " errors in last session");
     }
+    if (recordsStorage.getFlag(FLAGS_DEFRAGMENTATION_REQUESTED)) {
+      addProblem(DEFRAGMENTATION_REQUESTED, "VFS defragmentation requested");
+    }
 
     if (attributesEnumerator.isEmpty() && !attributesStorage.isEmpty()) {
       addProblem(ATTRIBUTES_STORAGE_CORRUPTED, "Attributes enumerator is empty, while attributesStorage is !empty");
@@ -361,14 +370,14 @@ public final class PersistentFSLoader {
     boolean contentHashesStorageHasErrors = false;
     boolean attributesStorageHasErrors = false;
 
-    //Try to resolve few nameId/contentId/attributeRefId against apt enumerators/storages -- which is quite
+    //Try to resolve a few nameId / contentId / attributeRefId against apt enumerators/storages -- which is quite
     // likely fails if storages/enumerators' files are corrupted anyhow, hence serves as a self-check heuristic.
     //Check _every_ fileId is quite slow, but it is definitely worth checking _some_.
     // So a tradeoff:
-    // If there were _no_ signs of corruption -- check only fileId(=)2, 4, 8...) -> always < 32 checks, given fileId
-    // is int32.
-    // If _any_ signs of corruption arises during quick-scan (or even before it) -> fallback to full scan, check
-    // _every_ fileId.
+    // - If there were _no_ signs of corruption -- check only fileId(=2, 4, 8...) -> strictly < 32 checks, given
+    //   fileId is int32.
+    // - If _any_ signs of corruption arises during quick-scan (or even before it) -> fallback to full scan, check
+    //   _every_ fileId.
     if (problemsDuringLoad.isEmpty()) {
       for (int fileId = FSRecords.MIN_REGULAR_FILE_ID; fileId <= maxAllocatedID; fileId *= 2) {
         if (!nameStorageHasErrors) {
@@ -522,7 +531,7 @@ public final class PersistentFSLoader {
     //MAYBE RC: remove .mmap suffix, and use namesFile directly? Suffix was needed during transition from regular to mmapped impls,
     //          and long unused
     Path namesPathEx = Path.of(namesFile + ".mmap");
-    return DurableStringEnumerator.openAsync(namesPathEx, executorService);
+    return DurableStringEnumerator.openAsync(namesPathEx, executorService::async);
   }
 
   public @NotNull VFSContentStorage createContentStorage(@NotNull Path contentsHashesFile,
@@ -751,7 +760,9 @@ public final class PersistentFSLoader {
     VFSInitException recoveryFailed = (cause == null) ?
                                       new VFSInitException(category, message) :
                                       new VFSInitException(category, message, cause);
-    triedToRecover.forEach(recoveryFailed::addSuppressed);
+    for (VFSInitException attemptedToRecover : triedToRecover) {
+      recoveryFailed.addSuppressed(attemptedToRecover);
+    }
     problemsDuringLoad.add(recoveryFailed);
 
     LOG.warn("[VFS load problem]: " +

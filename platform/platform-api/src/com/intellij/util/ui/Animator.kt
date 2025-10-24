@@ -1,17 +1,14 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.util.ui
 
 import com.intellij.codeWithMe.ClientId
 import com.intellij.openapi.Disposable
-import com.intellij.openapi.application.Application
-import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.application.ModalityState
-import com.intellij.openapi.application.asContextElement
+import com.intellij.openapi.application.*
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.util.Disposer
 import com.intellij.util.ReflectionUtil
-import com.intellij.util.SingleAlarm
 import kotlinx.coroutines.*
+import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.annotations.ApiStatus.Obsolete
 import org.jetbrains.annotations.NonNls
 import java.awt.GraphicsEnvironment
@@ -41,8 +38,14 @@ abstract class Animator @JvmOverloads constructor(
     isRepeatable: Boolean,
     isForward: Boolean = true,
     disposable: Disposable,
-  ) : this(name = name, totalFrames = totalFrames, cycleDuration = cycleDuration, isRepeatable = isRepeatable, isForward = isForward,
-           coroutineScope = animatorCoroutineScope(name, disposable))
+  ) : this(
+    name = name,
+    totalFrames = totalFrames,
+    cycleDuration = cycleDuration,
+    isRepeatable = isRepeatable,
+    isForward = isForward,
+    coroutineScope = animatorCoroutineScope(name, disposable),
+  )
 
   @Obsolete
   fun isForward(): Boolean = isForward
@@ -56,6 +59,14 @@ abstract class Animator @JvmOverloads constructor(
     if (skipAnimation()) {
       animationDone()
     }
+  }
+
+  /**
+   * This operation is used for manual processing of animation in cases when the IDE event queue is unavailable
+   */
+  @ApiStatus.Internal
+  fun forceTick() {
+    onTick()
   }
 
   private fun onTick() {
@@ -135,9 +146,11 @@ abstract class Animator @JvmOverloads constructor(
       animationDone()
     }
     else if (ticker == null) {
-      var context = SingleAlarm.getEdtDispatcher()
-      if (ApplicationManager.getApplication() != null) {
-        context += ModalityState.any().asContextElement()
+      val context = if (ApplicationManager.getApplication() == null) {
+        RawSwingDispatcher
+      }
+      else {
+        Dispatchers.ui(uiKind()) + ModalityState.any().asContextElement()
       }
       ticker = coroutineScope.launch(context) {
         while (true) {
@@ -147,6 +160,9 @@ abstract class Animator @JvmOverloads constructor(
       }
     }
   }
+
+  @ApiStatus.Internal
+  protected open fun uiKind(): CoroutineSupport.UiDispatcherKind = CoroutineSupport.UiDispatcherKind.RELAX
 
   abstract fun paintNow(frame: Int, totalFrames: Int, cycle: Int)
 
@@ -194,7 +210,7 @@ private fun skipAnimation(): Boolean {
 private fun animatorCoroutineScopeWithError(name: String?): CoroutineScope {
   val realName = name ?: getCallerClassName()
   logger<Animator>().error("Do not use repeatable animators without an explicit lifetime scope. " +
-                           "An explicit Disposable would at least let us to log memory leaks and runaway tasks.")
+                           "An explicit Disposable would at least let us log memory leaks and runaway tasks.")
   return CoroutineScope(SupervisorJob() +
                         Dispatchers.Default +
                         ModalityState.defaultModalityState().asContextElement() +

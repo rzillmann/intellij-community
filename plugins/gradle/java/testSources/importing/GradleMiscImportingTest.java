@@ -1,4 +1,4 @@
-// Copyright 2000-2022 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.plugins.gradle.importing;
 
 import com.intellij.ide.highlighter.ModuleFileType;
@@ -12,9 +12,9 @@ import com.intellij.openapi.externalSystem.model.task.TaskData;
 import com.intellij.openapi.externalSystem.service.project.IdeModifiableModelsProvider;
 import com.intellij.openapi.externalSystem.service.project.ProjectDataManager;
 import com.intellij.openapi.externalSystem.util.ExternalSystemApiUtil;
+import com.intellij.openapi.module.JavaModuleType;
 import com.intellij.openapi.module.Module;
 import com.intellij.openapi.module.ModuleManager;
-import com.intellij.openapi.module.StdModuleTypes;
 import com.intellij.openapi.projectRoots.ProjectJdkTable;
 import com.intellij.openapi.projectRoots.Sdk;
 import com.intellij.openapi.roots.ModifiableRootModel;
@@ -23,6 +23,7 @@ import com.intellij.openapi.roots.TestModuleProperties;
 import com.intellij.platform.backend.workspace.WorkspaceModel;
 import com.intellij.platform.workspace.jps.entities.ModuleId;
 import com.intellij.pom.java.AcceptedLanguageLevelsSettings;
+import com.intellij.pom.java.JavaRelease;
 import com.intellij.pom.java.LanguageLevel;
 import com.intellij.psi.PsiJavaModule;
 import com.intellij.testFramework.IdeaTestUtil;
@@ -59,7 +60,10 @@ public class GradleMiscImportingTest extends GradleJavaImportingTestCase {
   @Override
   public void setUp() throws Exception {
     super.setUp();
-    AcceptedLanguageLevelsSettings.allowLevel(getTestRootDisposable(), LanguageLevel.values()[LanguageLevel.HIGHEST.ordinal() + 1]);
+    AcceptedLanguageLevelsSettings.allowLevel(
+      getTestRootDisposable(),
+      LanguageLevel.getEntries().get(LanguageLevel.HIGHEST.ordinal() + 1)
+    );
   }
 
   @Test
@@ -124,21 +128,21 @@ public class GradleMiscImportingTest extends GradleJavaImportingTestCase {
 
   @Test
   public void testPreviewLanguageLevel() throws Exception {
-    int feature = LanguageLevel.HIGHEST.feature();
+    LanguageLevel highest = JavaRelease.getHighest();
+    LanguageLevel highestPreview = highest.getPreviewLevel();
+
     importProject(
       "apply plugin: 'java'\n" +
-      "java.sourceCompatibility = " + feature+ "\n" +
-      "apply plugin: 'java'\n" +
+      "java.sourceCompatibility = " + highest.feature() + "\n" +
       "compileTestJava {\n" +
-      "  sourceCompatibility = " + feature +"\n" +
+      "  sourceCompatibility = " + highest.feature() + "\n" +
       "  options.compilerArgs << '--enable-preview'" +
       "}\n"
     );
 
     assertModules("project", "project.main", "project.test");
-    assertEquals(LanguageLevel.HIGHEST, getLanguageLevelForModule("project"));
-    assertEquals(LanguageLevel.HIGHEST, getLanguageLevelForModule("project.main"));
-    LanguageLevel highestPreview = LanguageLevel.values()[LanguageLevel.HIGHEST.ordinal() + 1];
+    assertEquals(highest, getLanguageLevelForModule("project"));
+    assertEquals(highest, getLanguageLevelForModule("project.main"));
     assertEquals(highestPreview, getLanguageLevelForModule("project.test"));
   }
 
@@ -164,7 +168,7 @@ public class GradleMiscImportingTest extends GradleJavaImportingTestCase {
   public void testCompilerArguments() {
     createProjectConfig(script(it -> it
       .withJavaPlugin()
-      .configureTask("compileTestJava", "JavaCompile", task -> {
+      .compileTestJava(task -> {
         task.code("options.compilerArgs << '-param1' << '-param2'");
       })
     ));
@@ -177,10 +181,10 @@ public class GradleMiscImportingTest extends GradleJavaImportingTestCase {
 
     createProjectConfig(script(it -> it
       .withJavaPlugin()
-      .configureTask("compileJava", "JavaCompile", task -> {
+      .compileJava(task -> {
         task.code("options.compilerArgs << '-param'");
       })
-      .configureTask("compileTestJava", "JavaCompile", task -> {
+      .compileTestJava(task -> {
         task.code("options.compilerArgs << '-param'");
       })
     ));
@@ -217,7 +221,7 @@ public class GradleMiscImportingTest extends GradleJavaImportingTestCase {
                        }
                    }
                    """)
-      .configureTask("compileJava", "JavaCompile", task -> {
+      .compileJava(task -> {
         task.code("options.compilerArgumentProviders.add(new GStringArgumentProvider(value: \"Str1\"))");
         task.code("options.compilerArgumentProviders.add(new JavaStringArgumentProvider(value: \"Str2\"))");
       })
@@ -230,7 +234,7 @@ public class GradleMiscImportingTest extends GradleJavaImportingTestCase {
   @Test
   public void testJdkName() throws Exception {
     Sdk myJdk = IdeaTestUtil.getMockJdk17("MyJDK");
-    edt(() -> ApplicationManager.getApplication().runWriteAction(() -> ProjectJdkTable.getInstance().addJdk(myJdk, myProject)));
+    edt(() -> ApplicationManager.getApplication().runWriteAction(() -> ProjectJdkTable.getInstance().addJdk(myJdk, getMyProject())));
     importProject(
       """
         apply plugin: 'java'
@@ -255,7 +259,7 @@ public class GradleMiscImportingTest extends GradleJavaImportingTestCase {
     );
     assertModules("project", "project.main", "project.test");
 
-    edt(() -> ModuleManager.getInstance(myProject).setUnloadedModulesSync(List.of("project", "project.main")));
+    edt(() -> ModuleManager.getInstance(getMyProject()).setUnloadedModulesSync(List.of("project", "project.main")));
     assertModules("project.test");
 
     importProject();
@@ -264,6 +268,16 @@ public class GradleMiscImportingTest extends GradleJavaImportingTestCase {
 
   @Test
   public void testESLinkedProjectIds() throws Exception {
+    // Project configuration without an existing directory is not allowed
+    createProjectSubDir("app");
+    createProjectSubDir("util");
+
+    createProjectSubDir("included-build/util");
+    createProjectSubDir("included-build/buildSrc/util");
+
+    createProjectSubDir("buildSrc/buildSrcSubProject");
+    createProjectSubDir("buildSrc/util");
+
     // main build
     createSettingsFile("""
                          rootProject.name = 'multiproject'
@@ -361,9 +375,9 @@ public class GradleMiscImportingTest extends GradleJavaImportingTestCase {
 
   @Test
   public void testSourceSetModuleNamesForDeduplicatedMainModule() throws Exception {
-    IdeModifiableModelsProvider modelsProvider = ProjectDataManager.getInstance().createModifiableModelsProvider(myProject);
-    modelsProvider.newModule(getProjectPath() + "/app.iml", StdModuleTypes.JAVA.getId());
-    modelsProvider.newModule(getProjectPath() + "/my_group.app.main.iml", StdModuleTypes.JAVA.getId());
+    IdeModifiableModelsProvider modelsProvider = ProjectDataManager.getInstance().createModifiableModelsProvider(getMyProject());
+    modelsProvider.newModule(getProjectPath() + "/app.iml", JavaModuleType.getModuleType().getId());
+    modelsProvider.newModule(getProjectPath() + "/my_group.app.main.iml", JavaModuleType.getModuleType().getId());
     edt(() -> ApplicationManager.getApplication().runWriteAction(modelsProvider::commit));
 
     createSettingsFile("rootProject.name = 'app'");
@@ -384,7 +398,7 @@ public class GradleMiscImportingTest extends GradleJavaImportingTestCase {
   public void testImportingTasksWithSpaces() throws IOException {
     importProject("project.tasks.create('descriptive task name') {}");
     ExternalProjectInfo projectData =
-      ProjectDataManager.getInstance().getExternalProjectData(myProject, GradleConstants.SYSTEM_ID, getProjectPath());
+      ProjectDataManager.getInstance().getExternalProjectData(getMyProject(), GradleConstants.SYSTEM_ID, getProjectPath());
     DataNode<ModuleData> moduleNode = ExternalSystemApiUtil.find(projectData.getExternalProjectStructure(), ProjectKeys.MODULE);
     Collection<DataNode<TaskData>> tasksNodes = ExternalSystemApiUtil.findAll(moduleNode, ProjectKeys.TASK);
     List<String> taskNames = ContainerUtil.map(tasksNodes, node -> node.getData().getName());
@@ -396,21 +410,21 @@ public class GradleMiscImportingTest extends GradleJavaImportingTestCase {
     // After first opening of the project, IJ creates a fake module at the project root
     edt(() -> {
       ApplicationManager.getApplication().runWriteAction(() -> {
-        Module module = ModuleManager.getInstance(myProject).newModule(
-          getProjectPath() + "/" + "project" + ModuleFileType.DOT_DEFAULT_EXTENSION, StdModuleTypes.JAVA.getId());
+        Module module = ModuleManager.getInstance(getMyProject()).newModule(
+          getProjectPath() + "/" + "project" + ModuleFileType.DOT_DEFAULT_EXTENSION, JavaModuleType.getModuleType().getId());
         ModifiableRootModel modifiableModel = ModuleRootManager.getInstance(module).getModifiableModel();
-        modifiableModel.addContentEntry(myProjectRoot);
+        modifiableModel.addContentEntry(getMyProjectRoot());
         modifiableModel.inheritSdk();
         modifiableModel.commit();
       });
     });
 
-    Module module = ModuleManager.getInstance(myProject).findModuleByName("project");
+    Module module = ModuleManager.getInstance(getMyProject()).findModuleByName("project");
     assertFalse(ExternalSystemApiUtil.isExternalSystemAwareModule(GradleConstants.SYSTEM_ID, module));
 
     importProject("");
 
-    Module moduleAfter = ModuleManager.getInstance(myProject).findModuleByName("project");
+    Module moduleAfter = ModuleManager.getInstance(getMyProject()).findModuleByName("project");
     assertTrue(ExternalSystemApiUtil.isExternalSystemAwareModule(GradleConstants.SYSTEM_ID, moduleAfter));
   }
 
@@ -439,7 +453,7 @@ public class GradleMiscImportingTest extends GradleJavaImportingTestCase {
         }"""
     );
 
-    var moduleEntity = WorkspaceModel.getInstance(myProject).getCurrentSnapshot().resolve(new ModuleId("project.main"));
+    var moduleEntity = WorkspaceModel.getInstance(getMyProject()).getCurrentSnapshot().resolve(new ModuleId("project.main"));
     var javaSettings = JavaModuleSettingsKt.getJavaSettings(moduleEntity);
     var automaticModuleName = javaSettings.getManifestAttributes().get(PsiJavaModule.AUTO_MODULE_NAME);
     assertEquals("my.module.name", automaticModuleName);
@@ -455,7 +469,7 @@ public class GradleMiscImportingTest extends GradleJavaImportingTestCase {
 
   @NotNull
   private Map<String, ExternalProject> getExternalProjectsMap() {
-    ExternalProject rootExternalProject = ExternalProjectDataCache.getInstance(myProject).getRootExternalProject(getProjectPath());
+    ExternalProject rootExternalProject = ExternalProjectDataCache.getInstance(getMyProject()).getRootExternalProject(getProjectPath());
     final Map<String, ExternalProject> externalProjectMap = new HashMap<>();
     if (rootExternalProject == null) return externalProjectMap;
     ArrayDeque<ExternalProject> queue = new ArrayDeque<>();

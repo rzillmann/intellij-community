@@ -2,6 +2,7 @@
 package org.jetbrains.plugins.github.pullrequest.ui.editor
 
 import com.intellij.collaboration.async.stateInNow
+import com.intellij.collaboration.util.RefComparisonChange
 import com.intellij.platform.util.coroutines.childScope
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
@@ -12,6 +13,7 @@ import org.jetbrains.plugins.github.pullrequest.ui.comment.GHPRCompactReviewThre
 interface GHPRReviewFileEditorThreadViewModel : GHPRCompactReviewThreadViewModel {
   val isVisible: StateFlow<Boolean>
   val line: StateFlow<Int?>
+  val commentRange: StateFlow<IntRange?>
 }
 
 internal class MappedGHPRReviewEditorThreadViewModel(
@@ -23,9 +25,13 @@ internal class MappedGHPRReviewEditorThreadViewModel(
 
   override val isVisible: StateFlow<Boolean> = mapping.map { it.isVisible }.stateInNow(cs, false)
   override val line: StateFlow<Int?> = mapping.map { it.line }.stateInNow(cs, null)
+  override val commentRange: StateFlow<IntRange?> = mapping.map { it.commentRange }.stateInNow(cs, null)
 
   data class MappingData(
     val isVisible: Boolean,
-    val line: Int?
-  )
+    val change: RefComparisonChange?,
+    val commentRange: IntRange?,
+  ) {
+    val line: Int? = commentRange?.last
+  }
 }

@@ -2616,6 +2616,25 @@ public abstract class FindUsagesWithCompilerReferenceIndexFirTestGenerated exten
 
             @RunWith(JUnit3RunnerWithInners.class)
             @TestMetadata("../../idea/tests/testData/findUsages/kotlin/findFunctionUsages")
+            public static class TestKotlinFunctionWithPropertyFromSuperClass extends AbstractFindUsagesWithCompilerReferenceIndexFirTest {
+                @java.lang.Override
+                @org.jetbrains.annotations.NotNull
+                public final KotlinPluginMode getPluginMode() {
+                    return KotlinPluginMode.K2;
+                }
+
+                private void runTest(String testDataFilePath) throws Exception {
+                    KotlinTestUtils.runTest(this::doTest, this, testDataFilePath);
+                }
+
+                @TestMetadata("kotlinFunctionWithPropertyFromSuperClass.0.kt")
+                public void testKotlinFunctionWithPropertyFromSuperClass() throws Exception {
+                    runTest("../../idea/tests/testData/findUsages/kotlin/findFunctionUsages/kotlinFunctionWithPropertyFromSuperClass.0.kt");
+                }
+            }
+
+            @RunWith(JUnit3RunnerWithInners.class)
+            @TestMetadata("../../idea/tests/testData/findUsages/kotlin/findFunctionUsages")
             public static class TestKotlinInterfaceImplThroughDelegate extends AbstractFindUsagesWithCompilerReferenceIndexFirTest {
                 @java.lang.Override
                 @org.jetbrains.annotations.NotNull
@@ -2801,6 +2820,25 @@ public abstract class FindUsagesWithCompilerReferenceIndexFirTestGenerated exten
                 @TestMetadata("kotlinNestedClassMethodUsages.0.kt")
                 public void testKotlinNestedClassMethodUsages() throws Exception {
                     runTest("../../idea/tests/testData/findUsages/kotlin/findFunctionUsages/kotlinNestedClassMethodUsages.0.kt");
+                }
+            }
+
+            @RunWith(JUnit3RunnerWithInners.class)
+            @TestMetadata("../../idea/tests/testData/findUsages/kotlin/findFunctionUsages")
+            public static class TestKotlinNoBaseMethodUsages extends AbstractFindUsagesWithCompilerReferenceIndexFirTest {
+                @java.lang.Override
+                @org.jetbrains.annotations.NotNull
+                public final KotlinPluginMode getPluginMode() {
+                    return KotlinPluginMode.K2;
+                }
+
+                private void runTest(String testDataFilePath) throws Exception {
+                    KotlinTestUtils.runTest(this::doTest, this, testDataFilePath);
+                }
+
+                @TestMetadata("kotlinNoBaseMethodUsages.0.kt")
+                public void testKotlinNoBaseMethodUsages() throws Exception {
+                    runTest("../../idea/tests/testData/findUsages/kotlin/findFunctionUsages/kotlinNoBaseMethodUsages.0.kt");
                 }
             }
 
@@ -6161,6 +6199,25 @@ public abstract class FindUsagesWithCompilerReferenceIndexFirTestGenerated exten
                 @TestMetadata("JKFieldUsagesReadWriteAccess.0.java")
                 public void testJKFieldUsagesReadWriteAccess() throws Exception {
                     runTest("../../idea/tests/testData/findUsages/java/findJavaFieldUsages/JKFieldUsagesReadWriteAccess.0.java");
+                }
+            }
+
+            @RunWith(JUnit3RunnerWithInners.class)
+            @TestMetadata("../../idea/tests/testData/findUsages/java/findJavaFieldUsages")
+            public static class TestJKRecordFieldUsages extends AbstractFindUsagesWithCompilerReferenceIndexFirTest {
+                @java.lang.Override
+                @org.jetbrains.annotations.NotNull
+                public final KotlinPluginMode getPluginMode() {
+                    return KotlinPluginMode.K2;
+                }
+
+                private void runTest(String testDataFilePath) throws Exception {
+                    KotlinTestUtils.runTest(this::doTest, this, testDataFilePath);
+                }
+
+                @TestMetadata("JKRecordFieldUsages.0.java")
+                public void testJKRecordFieldUsages() throws Exception {
+                    runTest("../../idea/tests/testData/findUsages/java/findJavaFieldUsages/JKRecordFieldUsages.0.java");
                 }
             }
         }

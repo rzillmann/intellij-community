@@ -120,16 +120,6 @@ public class VcsNotifier {
     return notify(notification);
   }
 
-  /**
-   * @deprecated use {@link #notifyError(String, String, String, NotificationListener)} instead
-   */
-  @Deprecated(forRemoval = true)
-  public @NotNull Notification notifyError(@NotificationTitle @NotNull String title,
-                                  @NotificationContent @NotNull String message,
-                                  @Nullable NotificationListener listener) {
-    return notify(importantNotification(), null, title, message, NotificationType.ERROR, listener);
-  }
-
   public @NotNull Notification notifyError(@NonNls @Nullable String displayId,
                                            @NotificationTitle @NotNull String title,
                                            @NotificationContent @NotNull String message,
@@ -163,37 +153,10 @@ public class VcsNotifier {
     return notify(toolWindowNotification(), displayId, title, message, NotificationType.ERROR);
   }
 
-  /**
-   * @deprecated use {@link #notifySuccess(String, String, String)} instead
-   */
-  @Deprecated(forRemoval = true)
-  public @NotNull Notification notifySuccess(@NotificationContent @NotNull String message) {
-    return notify(toolWindowNotification(), null, "", message, NotificationType.INFORMATION);
-  }
-
-  /**
-   * @deprecated use {@link #notifySuccess(String, String, String)} instead
-   */
-  @Deprecated(forRemoval = true)
-  public @NotNull Notification notifySuccess(@NotificationTitle @NotNull String title,
-                                    @NotificationContent @NotNull String message) {
-    return notify(toolWindowNotification(), null, title, message, NotificationType.INFORMATION);
-  }
-
   public @NotNull Notification notifySuccess(@NonNls @Nullable String displayId,
                                              @NotificationTitle @NotNull String title,
                                              @NotificationContent @NotNull String message) {
     return notify(toolWindowNotification(), displayId, title, message, NotificationType.INFORMATION);
-  }
-
-  /**
-   * @deprecated use {@link #notifySuccess(String, String, String, NotificationListener)} instead
-   */
-  @Deprecated(forRemoval = true)
-  public @NotNull Notification notifySuccess(@NotificationTitle @NotNull String title,
-                                    @NotificationContent @NotNull String message,
-                                    @Nullable NotificationListener listener) {
-    return notify(toolWindowNotification(), null, title, message, NotificationType.INFORMATION, listener);
   }
 
   public @NotNull Notification notifySuccess(@NonNls @Nullable String displayId,
@@ -201,16 +164,6 @@ public class VcsNotifier {
                                              @NotificationContent @NotNull String message,
                                              @Nullable NotificationListener listener) {
     return notify(toolWindowNotification(), displayId, title, message, NotificationType.INFORMATION, listener);
-  }
-
-  /**
-   * @deprecated use {@link #notifyImportantInfo(String, String, String, NotificationListener)} instead
-   */
-  @Deprecated(forRemoval = true)
-  public @NotNull Notification notifyImportantInfo(@NotificationTitle @NotNull String title,
-                                          @NotificationContent @NotNull String message,
-                                          @Nullable NotificationListener listener) {
-    return notify(importantNotification(), null, title, message, NotificationType.INFORMATION, listener);
   }
 
   public @NotNull Notification notifyImportantInfo(@NonNls @Nullable String displayId,
@@ -224,15 +177,6 @@ public class VcsNotifier {
                                                    @NotificationTitle @NotNull String title,
                                                    @NotificationContent @NotNull String message) {
     return notify(importantNotification(), displayId, title, message, NotificationType.INFORMATION);
-  }
-
-  /**
-   * @deprecated use {@link #notifyInfo(String, String, String)} instead
-   */
-  @Deprecated(forRemoval = true)
-  public @NotNull Notification notifyInfo(@NotificationTitle @NotNull String title,
-                                 @NotificationContent @NotNull String message) {
-    return notifyInfo(null, title, message, null);
   }
 
   public @NotNull Notification notifyInfo(@NonNls @Nullable String displayId,
@@ -273,15 +217,6 @@ public class VcsNotifier {
     return notify(standardNotification(), displayId, title, message, NotificationType.WARNING, listener);
   }
 
-  /**
-   * @deprecated use {@link #notifyWarning(String, String, String)} instead
-   */
-  @Deprecated(forRemoval = true)
-  public @NotNull Notification notifyWarning(@NotificationTitle @NotNull String title,
-                                    @NotificationContent @NotNull String message) {
-    return notify(toolWindowNotification(), null, title, message, NotificationType.WARNING);
-  }
-
   @SuppressWarnings("UnusedReturnValue")
   public @NotNull Notification notifyWarning(@NonNls @Nullable String displayId,
                                              @NotificationTitle @NotNull String title,
@@ -308,16 +243,6 @@ public class VcsNotifier {
                                                       @NotificationContent @NotNull String message,
                                                       @Nullable Collection<? extends Exception> errors) {
     return notifyImportantWarning(displayId, title, buildNotificationMessage(message, errors));
-  }
-
-  /**
-   * @deprecated use {@link #notifyImportantWarning(String, String, String, NotificationListener)} instead
-   */
-  @Deprecated(forRemoval = true)
-  public @NotNull Notification notifyImportantWarning(@NotificationTitle @NotNull String title,
-                                             @NotificationContent @NotNull String message,
-                                             @Nullable NotificationListener listener) {
-    return notify(importantNotification(), null, title, message, NotificationType.WARNING, listener);
   }
 
   public @NotNull Notification notifyImportantWarning(@NonNls @Nullable String displayId,

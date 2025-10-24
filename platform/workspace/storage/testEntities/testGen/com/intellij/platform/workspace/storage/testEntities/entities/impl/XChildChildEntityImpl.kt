@@ -1,16 +1,7 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.platform.workspace.storage.testEntities.entities.impl
 
 import com.intellij.platform.workspace.storage.*
-import com.intellij.platform.workspace.storage.ConnectionId
-import com.intellij.platform.workspace.storage.EntitySource
-import com.intellij.platform.workspace.storage.EntityType
-import com.intellij.platform.workspace.storage.GeneratedCodeApiVersion
-import com.intellij.platform.workspace.storage.GeneratedCodeImplVersion
-import com.intellij.platform.workspace.storage.MutableEntityStorage
-import com.intellij.platform.workspace.storage.WorkspaceEntity
-import com.intellij.platform.workspace.storage.WorkspaceEntityInternalApi
-import com.intellij.platform.workspace.storage.annotations.Child
 import com.intellij.platform.workspace.storage.impl.EntityLink
 import com.intellij.platform.workspace.storage.impl.ModifiableWorkspaceEntityBase
 import com.intellij.platform.workspace.storage.impl.WorkspaceEntityBase
@@ -22,11 +13,14 @@ import com.intellij.platform.workspace.storage.instrumentation.EntityStorageInst
 import com.intellij.platform.workspace.storage.instrumentation.MutableEntityStorageInstrumentation
 import com.intellij.platform.workspace.storage.metadata.model.EntityMetadata
 import com.intellij.platform.workspace.storage.testEntities.entities.XChildChildEntity
+import com.intellij.platform.workspace.storage.testEntities.entities.XChildChildEntityBuilder
 import com.intellij.platform.workspace.storage.testEntities.entities.XChildEntity
+import com.intellij.platform.workspace.storage.testEntities.entities.XChildEntityBuilder
 import com.intellij.platform.workspace.storage.testEntities.entities.XParentEntity
+import com.intellij.platform.workspace.storage.testEntities.entities.XParentEntityBuilder
 
 @GeneratedCodeApiVersion(3)
-@GeneratedCodeImplVersion(6)
+@GeneratedCodeImplVersion(7)
 @OptIn(WorkspaceEntityInternalApi::class)
 internal class XChildChildEntityImpl(private val dataSource: XChildChildEntityData) : XChildChildEntity, WorkspaceEntityBase(dataSource) {
 
@@ -61,7 +55,7 @@ internal class XChildChildEntityImpl(private val dataSource: XChildChildEntityDa
 
 
   internal class Builder(result: XChildChildEntityData?) : ModifiableWorkspaceEntityBase<XChildChildEntity, XChildChildEntityData>(
-    result), XChildChildEntity.Builder {
+    result), XChildChildEntityBuilder {
     internal constructor() : this(XChildChildEntityData())
 
     override fun applyToBuilder(builder: MutableEntityStorage) {
@@ -135,16 +129,16 @@ internal class XChildChildEntityImpl(private val dataSource: XChildChildEntityDa
 
       }
 
-    override var parent1: XParentEntity.Builder
+    override var parent1: XParentEntityBuilder
       get() {
         val _diff = diff
         return if (_diff != null) {
           @OptIn(EntityStorageInstrumentationApi::class)
-          ((_diff as MutableEntityStorageInstrumentation).getParentBuilder(PARENT1_CONNECTION_ID, this) as? XParentEntity.Builder)
-          ?: (this.entityLinks[EntityLink(false, PARENT1_CONNECTION_ID)]!! as XParentEntity.Builder)
+          ((_diff as MutableEntityStorageInstrumentation).getParentBuilder(PARENT1_CONNECTION_ID, this) as? XParentEntityBuilder)
+          ?: (this.entityLinks[EntityLink(false, PARENT1_CONNECTION_ID)]!! as XParentEntityBuilder)
         }
         else {
-          this.entityLinks[EntityLink(false, PARENT1_CONNECTION_ID)]!! as XParentEntity.Builder
+          this.entityLinks[EntityLink(false, PARENT1_CONNECTION_ID)]!! as XParentEntityBuilder
         }
       }
       set(value) {
@@ -175,16 +169,16 @@ internal class XChildChildEntityImpl(private val dataSource: XChildChildEntityDa
         changedProperty.add("parent1")
       }
 
-    override var parent2: XChildEntity.Builder
+    override var parent2: XChildEntityBuilder
       get() {
         val _diff = diff
         return if (_diff != null) {
           @OptIn(EntityStorageInstrumentationApi::class)
-          ((_diff as MutableEntityStorageInstrumentation).getParentBuilder(PARENT2_CONNECTION_ID, this) as? XChildEntity.Builder)
-          ?: (this.entityLinks[EntityLink(false, PARENT2_CONNECTION_ID)]!! as XChildEntity.Builder)
+          ((_diff as MutableEntityStorageInstrumentation).getParentBuilder(PARENT2_CONNECTION_ID, this) as? XChildEntityBuilder)
+          ?: (this.entityLinks[EntityLink(false, PARENT2_CONNECTION_ID)]!! as XChildEntityBuilder)
         }
         else {
-          this.entityLinks[EntityLink(false, PARENT2_CONNECTION_ID)]!! as XChildEntity.Builder
+          this.entityLinks[EntityLink(false, PARENT2_CONNECTION_ID)]!! as XChildEntityBuilder
         }
       }
       set(value) {
@@ -223,7 +217,7 @@ internal class XChildChildEntityImpl(private val dataSource: XChildChildEntityDa
 internal class XChildChildEntityData : WorkspaceEntityData<XChildChildEntity>() {
 
 
-  override fun wrapAsModifiable(diff: MutableEntityStorage): WorkspaceEntity.Builder<XChildChildEntity> {
+  override fun wrapAsModifiable(diff: MutableEntityStorage): WorkspaceEntityBuilder<XChildChildEntity> {
     val modifiable = XChildChildEntityImpl.Builder(null)
     modifiable.diff = diff
     modifiable.id = createEntityId()
@@ -250,10 +244,10 @@ internal class XChildChildEntityData : WorkspaceEntityData<XChildChildEntity>() 
     return XChildChildEntity::class.java
   }
 
-  override fun createDetachedEntity(parents: List<WorkspaceEntity.Builder<*>>): WorkspaceEntity.Builder<*> {
+  override fun createDetachedEntity(parents: List<WorkspaceEntityBuilder<*>>): WorkspaceEntityBuilder<*> {
     return XChildChildEntity(entitySource) {
-      parents.filterIsInstance<XParentEntity.Builder>().singleOrNull()?.let { this.parent1 = it }
-      parents.filterIsInstance<XChildEntity.Builder>().singleOrNull()?.let { this.parent2 = it }
+      parents.filterIsInstance<XParentEntityBuilder>().singleOrNull()?.let { this.parent1 = it }
+      parents.filterIsInstance<XChildEntityBuilder>().singleOrNull()?.let { this.parent2 = it }
     }
   }
 

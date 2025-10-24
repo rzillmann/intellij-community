@@ -10,7 +10,6 @@ import com.intellij.cce.metric.additionalList
 import com.intellij.cce.workspace.info.FileEvaluationInfo
 import com.intellij.cce.workspace.storages.FeaturesStorage
 import kotlinx.html.*
-import kotlinx.html.id
 import kotlinx.html.stream.createHTML
 import java.text.DecimalFormat
 import kotlin.io.path.Path
@@ -129,7 +128,7 @@ class CardReportGenerator(
                   renderProperty(property, fileIndex, session.id, lookupIndex)
                 }
                 else if (i == tableSize) {
-                  popupContainer(lookupId(session.id, lookupIndex, category))
+                  popupContainer(popupId(session.id, lookupIndex, category))
                 }
               }
             }
@@ -151,7 +150,7 @@ class CardReportGenerator(
       if (property.suffix != null) ": ${property.suffix}"
       else if (propertyValue.inline != null) ": ${propertyValue.inline}"
       else ""
-    
+
     a {
       style = ""
 
@@ -163,6 +162,12 @@ class CardReportGenerator(
         style += "cursor: pointer;"
         style += "text-decoration: underline dashed;"
         onClick = propertyValue.popupOpenLogic
+      }
+
+      if (propertyValue.link != null) {
+        style += "cursor: pointer;"
+        href = propertyValue.link
+        target = "_blank"
       }
 
       strong {
@@ -179,29 +184,61 @@ class CardReportGenerator(
     }
   }
 
-  private fun FlowContent.popupContainer(containerId: String) {
+  private fun FlowContent.popupContainer(popupId: String) {
     div {
       style = "position: relative;"
 
       div("popup-container") {
-        id = containerId
+        id = popupId
         style = """
               position: absolute;
               border: 1px solid #d4d4d4;
               border-bottom: none;
               border-top: none;
               z-index: 99;
-              overflow: scroll;
               top: 1.5em;
               left: 0;
               
-              width: 60em;
-              max-height: 40em;
-              min-height: 10em;
-              
-              background-color: lightgray;
               visibility: hidden;
             """.trimIndent()
+
+        div("popup-container-header") {
+          style = """
+            display: flex;
+            align-items: center;
+            background-color: #e0e0e0;
+            border: 1px solid #d4d4d4;
+            border-bottom: none;
+          """
+
+          button {
+            id = "${popupId}-copy-button"
+            onClick = "copyPopupText('$popupId')"
+            style = """
+              cursor: pointer;
+              margin: 4px;
+            """
+            +"Copy"
+          }
+
+          pre("popup-container-description") {
+            id = "${popupId}-description"
+            style = """
+              margin: 4px;
+            """
+          }
+        }
+
+        div("popup-container-content") {
+          id = "${popupId}-content"
+          style = """
+            width: 60em;
+            max-height: 40em;
+            min-height: 10em;
+            background-color: lightgray;
+            overflow: scroll;
+          """.trimIndent()
+        }
       }
     }
   }
@@ -214,7 +251,7 @@ class CardReportGenerator(
 
 private fun fileVariable(fileIndex: Int): String = "fileText${fileIndex}"
 
-private fun lookupId(sessionId: String, lookupIndex: Int, category: PresentationCategory): String =
+private fun popupId(sessionId: String, lookupIndex: Int, category: PresentationCategory): String =
   "${sessionId}-${lookupIndex}-${category.name}"
 
 private fun embedString(string: String): String = "pako.ungzip(atob(`${zipString(string)}`), { to: 'string' })"
@@ -287,6 +324,7 @@ private data class ResolvedProperty<T>(
 private data class PropertyValue(
   val popupOpenLogic: String?,
   val inline: String?,
+  val link: String? = null
 ) {
   companion object {
     fun <T> build(
@@ -303,18 +341,25 @@ private data class PropertyValue(
         return PropertyValue(null, null)
       }
 
-      val element = """document.getElementById("${lookupId(sessionId, lookupIndex, property.category)}")"""
+      val element = "'${popupId(sessionId, lookupIndex, property.category)}'"
       val stringValues =
         if (property.placement != null) nativeTexts(property.placement, fileIndex, sessionId, lookupIndex, property.placementIndex)
         else embeddedTexts(property.renderer, property.value)
+
+      val description = if (property.value is HasDescription) "'${property.value.descriptionText}'" else "null"
 
       return when (property.renderer) {
         is DataRenderer.InlineBoolean -> PropertyValue(null, "${property.value}")
         is DataRenderer.InlineLong -> PropertyValue(null, "${property.value}")
         is DataRenderer.InlineDouble -> PropertyValue(null, "${property.value}")
-        is DataRenderer.Text -> PropertyValue("""openText($element, ${stringValues[0]}, ${property.renderer.wrapping});""", null)
-        is DataRenderer.Lines -> PropertyValue("""openText($element, ${stringValues[0]});""", null)
-        is DataRenderer.TextDiff -> PropertyValue("""openDiff($element, ${stringValues[0]}, ${stringValues[1]});""", null)
+        is DataRenderer.InlineInt -> PropertyValue(null, "${property.value}")
+        is DataRenderer.CodeCommentRanges -> PropertyValue(null, "${property.value}")
+        is DataRenderer.ClickableLink -> PropertyValue(null, null, "${property.value}")
+        is DataRenderer.Text -> PropertyValue("""openText($element, ${stringValues[0]}, ${description}, ${property.renderer.wrapping});""", null)
+        is DataRenderer.Lines -> PropertyValue("""openText($element, ${stringValues[0]}, ${description});""", null)
+        is DataRenderer.TextDiff -> PropertyValue("""openDiff($element, ${stringValues[0]}, ${stringValues[1]}, ${description});""", null)
+        is DataRenderer.Snippets -> PropertyValue("""openSnippets($element, ${stringValues[0]});""", inline = null)
+        is DataRenderer.ColoredInsights -> PropertyValue("""openText($element, ${stringValues[0]}, ${description});""", null)
       }
     }
 
@@ -332,6 +377,9 @@ private data class PropertyValue(
         is DataPlacement.AdditionalDouble -> listOf(
           """sessions["${sessionId}"]["_lookups"][${lookupIndex}]["additionalInfo"]["${placement.propertyKey}"].toString()"""
         )
+        is DataPlacement.AdditionalInt -> listOf(
+          """sessions["${sessionId}"]["_lookups"][${lookupIndex}]["additionalInfo"]["${placement.propertyKey}"].toString()"""
+        )
         is DataPlacement.Latency -> listOf(
           """sessions["${sessionId}"]["_lookups"][${lookupIndex}]["latency"].toString()"""
         )
@@ -341,6 +389,9 @@ private data class PropertyValue(
         is DataPlacement.AdditionalConcatenatedLines -> listOf(
           """sessions["${sessionId}"]["_lookups"][${lookupIndex}]["additionalInfo"]["${placement.propertyKey}"].split("\n").map(l => "• " + l).join("\n")"""
         )
+        is DataPlacement.AdditionalJsonSerializedStrings -> listOf(
+          """JSON.parse(sessions["${sessionId}"]["_lookups"][${lookupIndex}]["additionalInfo"]["${placement.propertyKey}"])"""
+        )
         is DataPlacement.CurrentFileUpdate -> listOf(
           fileVariable(fileIndex),
           """sessions["${sessionId}"]["_lookups"][${lookupIndex}].suggestions[0].presentationText"""
@@ -348,6 +399,16 @@ private data class PropertyValue(
         is DataPlacement.FileUpdates -> listOf(
           """sessions["${sessionId}"]["_lookups"][${lookupIndex}]["additionalInfo"]["${placement.propertyKey}"][${placementIndex}].originalText""",
           """sessions["${sessionId}"]["_lookups"][${lookupIndex}]["additionalInfo"]["${placement.propertyKey}"][${placementIndex}].updatedText"""
+        )
+        is DataPlacement.AdditionalCodeCommentRanges -> listOf(
+          """sessions["${sessionId}"]["_lookups"][${lookupIndex}]["additionalInfo"]["${placement.propertyKey}"][${placementIndex}].start""",
+          """sessions["${sessionId}"]["_lookups"][${lookupIndex}]["additionalInfo"]["${placement.propertyKey}"][${placementIndex}].end""",
+          """sessions["${sessionId}"]["_lookups"][${lookupIndex}]["additionalInfo"]["${placement.propertyKey}"][${placementIndex}].text""",
+          """sessions["${sessionId}"]["_lookups"][${lookupIndex}]["additionalInfo"]["${placement.propertyKey}"][${placementIndex}].negativeExample""",
+          """sessions["${sessionId}"]["_lookups"][${lookupIndex}]["additionalInfo"]["${placement.propertyKey}"][${placementIndex}].category""",
+        )
+        is DataPlacement.ColoredInsightsPlacement -> listOf(
+          """sessions["${sessionId}"]["_lookups"][${lookupIndex}]["additionalInfo"]["${placement.propertyKey}"][${placementIndex}].text"""
         )
       }
     }
@@ -357,12 +418,24 @@ private data class PropertyValue(
         DataRenderer.InlineBoolean -> listOf("\"${value}\"")
         DataRenderer.InlineLong -> listOf("\"${value}\"")
         DataRenderer.InlineDouble -> listOf("\"${value}\"")
+        DataRenderer.InlineInt -> listOf("\"${value}\"")
+        DataRenderer.ClickableLink -> listOf()
         is DataRenderer.Text -> listOf(embedString(value as String))
         DataRenderer.Lines -> listOf(embedString((value as List<*>).joinToString("\n") { "• $it" }))
+        DataRenderer.Snippets -> (value as List<*>).map { embedString(it as String) }
         DataRenderer.TextDiff -> listOf(
           embedString((value as TextUpdate).originalText),
           embedString((value as TextUpdate).updatedText)
         )
+        DataRenderer.CodeCommentRanges -> listOf(
+          "\"${(value as CodeCommentRange).start}\"",
+          "\"${(value as CodeCommentRange).end}\"",
+          embedString((value as CodeCommentRange).text),
+          "\"${(value as CodeCommentRange).negativeExample}\"",
+          embedString((value as CodeCommentRange).category.toString()),
+          embedString((value as CodeCommentRange).type.toString()),
+        )
+        DataRenderer.ColoredInsights -> listOf(embedString((value as ColoredInsightsData).text))
       }
     }
   }

@@ -35,7 +35,7 @@ import com.intellij.xml.XmlNSDescriptor;
 import com.intellij.xml.impl.schema.AnyXmlElementDescriptor;
 import com.intellij.xml.impl.schema.MultiFileNsDescriptor;
 import com.intellij.xml.impl.schema.XmlNSDescriptorImpl;
-import com.intellij.xml.index.XmlNamespaceIndex;
+import com.intellij.xml.impl.schema.XmlSchemaService;
 import com.intellij.xml.util.XmlPsiUtil;
 import com.intellij.xml.util.XmlTagUtil;
 import com.intellij.xml.util.XmlUtil;
@@ -117,6 +117,11 @@ public abstract class XmlTagDelegate {
   }
 
   PsiReference @NotNull [] getDefaultReferences(@NotNull PsiReferenceService.Hints hints) {
+    //todo can it be moved to reference provider?
+    if (PlatformUtils.isJetBrainsClient()) {
+      return PsiReference.EMPTY_ARRAY;
+    }
+
     ProgressManager.checkCanceled();
     if (hints == PsiReferenceService.Hints.NO_HINTS) {
       return CachedValuesManager
@@ -415,7 +420,7 @@ public abstract class XmlTagDelegate {
       return (XmlFile)psiFile;
     }
 
-    return XmlNamespaceIndex.guessSchema(namespace, nsDecl ? null : tag.getLocalName(), version, fileLocation, file);
+    return XmlSchemaService.getInstance().guessSchema(namespace, nsDecl ? null : tag.getLocalName(), version, fileLocation, file);
   }
 
   private static @Nullable PsiMetaOwner retrieveOwner(final @Nullable XmlTag tag,

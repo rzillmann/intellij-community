@@ -3,22 +3,30 @@
 
 package org.jetbrains.plugins.gradle.service.execution
 
+import com.amazon.ion.IonType
+import com.google.common.collect.Multimap
 import com.google.gson.GsonBuilder
 import com.intellij.gradle.toolingExtension.GradleToolingExtensionClass
 import com.intellij.gradle.toolingExtension.impl.GradleToolingExtensionImplClass
+import com.intellij.gradle.toolingExtension.util.GradleVersionUtil
 import com.intellij.openapi.application.PathManager
 import com.intellij.openapi.application.ex.ApplicationManagerEx
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.util.SystemInfoRt
 import com.intellij.openapi.util.io.FileUtil
 import com.intellij.openapi.util.io.FileUtilRt
-import com.intellij.openapi.util.io.toCanonicalPath
 import com.intellij.platform.eel.path.EelPath
 import com.intellij.platform.externalSystem.rt.ExternalSystemRtClass
+import gnu.trove.TObjectHash
 import groovy.lang.MissingMethodException
+import io.opentelemetry.api.trace.Span
+import io.opentelemetry.context.ImplicitContextKeyed
+import org.apache.commons.lang3.StringUtils
 import org.gradle.api.invocation.Gradle
 import org.gradle.util.GradleVersion
 import org.jetbrains.annotations.ApiStatus
+import org.jetbrains.plugins.gradle.service.task.LazyVersionSpecificInitScript
+import org.jetbrains.plugins.gradle.service.task.VersionSpecificInitScript
 import org.jetbrains.plugins.gradle.tooling.internal.init.Init
 import org.jetbrains.plugins.gradle.tooling.proxy.Main
 import org.jetbrains.plugins.gradle.util.GradleConstants
@@ -34,8 +42,8 @@ import kotlin.io.path.*
 private val LOG = Logger.getInstance("org.jetbrains.plugins.gradle.service.execution.GradleInitScriptUtil")
 private val EXCLUDED_JAR_SUFFIXES = setOf(
   "lib/app.jar",
-  "lib/app-client.jar",
-  "lib/lib-client.jar"
+  "lib/app-backend.jar",
+  "lib/lib.jar"
 )
 
 @ApiStatus.Internal
@@ -53,18 +61,33 @@ const val TEST_INIT_SCRIPT_NAME: String = "ijTestInit"
 @ApiStatus.Internal
 const val IDEA_PLUGIN_CONFIGURATOR_SCRIPT_NAME: String = "ijIdeaPluginConfigurator"
 
+@ApiStatus.Internal
+const val ARTIFACT_DOWNLOADER_SCRIPT_NAME: String = "ijArtifactDownloader"
+
+@ApiStatus.Internal
+const val HOTSWAP_DETECTION_SCRIPT_NAME: String = "ijHotswapDetection"
+
 @JvmField
 val GRADLE_TOOLING_EXTENSION_CLASSES: Set<Class<*>> = setOf(
   SystemInfoRt::class.java, // intellij.platform.util.rt
   ExternalSystemRtClass::class.java, // intellij.platform.externalSystem.rt
   GradleToolingExtensionClass::class.java, // intellij.gradle.toolingExtension
   GradleToolingExtensionImplClass::class.java, // intellij.gradle.toolingExtension.impl
+
+  // the set of dependencies required for the modules above
+  Unit::class.java, // kotlin-stdlib
+  GsonBuilder::class.java, // gson
+  IonType::class.java,  // ion serialisation
+  Multimap::class.java, // guava
+  StringUtils::class.java, // apache commons
+  TObjectHash::class.java, // trove hashing
+  Span::class.java, // opentelemetry
+  ImplicitContextKeyed::class.java // opentelemetry-context
 )
 
 @JvmField
 @ApiStatus.Internal
 val GRADLE_TOOLING_EXTENSION_PROXY_CLASSES: Set<Class<*>> = GRADLE_TOOLING_EXTENSION_CLASSES + setOf(
-  KotlinVersion::class.java, // kotlin-stdlib-jdk8
   Gradle::class.java, // gradle-api jar
   LoggerFactory::class.java, JDK14LoggerFactory::class.java, // logging jars
   Main::class.java, // gradle tooling proxy module
@@ -97,30 +120,35 @@ fun createIdeaPluginConfiguratorInitScript(): Path {
 fun loadDownloadArtifactInitScript(
   dependencyNotation: String,
   taskName: String,
-  downloadTarget: Path,
-  externalProjectPath: String,
-): String {
-  return loadInitScript("/org/jetbrains/plugins/gradle/tooling/internal/init/downloadArtifact.gradle", mapOf(
-    "DEPENDENCY_NOTATION" to dependencyNotation.toGroovyStringLiteral(),
-    "TARGET_PATH" to downloadTarget.toCanonicalPath().toGroovyStringLiteral(),
-    "GRADLE_TASK_NAME" to taskName.toGroovyStringLiteral(),
-    "GRADLE_PROJECT_PATH" to externalProjectPath.toGroovyStringLiteral(),
-  ))
-}
-
-@ApiStatus.Internal
-fun loadLegacyDownloadArtifactInitScript(
-  dependencyNotation: String,
-  taskName: String,
-  downloadTarget: Path,
-  externalProjectPath: String,
-): String {
-  return loadInitScript("/org/jetbrains/plugins/gradle/tooling/internal/init/legacyDownloadArtifact.gradle", mapOf(
-    "DEPENDENCY_NOTATION" to dependencyNotation.toGroovyStringLiteral(),
-    "TARGET_PATH" to downloadTarget.toCanonicalPath().toGroovyStringLiteral(),
-    "GRADLE_TASK_NAME" to taskName.toGroovyStringLiteral(),
-    "GRADLE_PROJECT_PATH" to externalProjectPath.toGroovyStringLiteral(),
-  ))
+  downloadTarget: EelPath,
+  projectPath: EelPath,
+): List<VersionSpecificInitScript> {
+  return listOf(
+    LazyVersionSpecificInitScript(
+      filePrefix = ARTIFACT_DOWNLOADER_SCRIPT_NAME,
+      isApplicable = { GradleVersionUtil.isGradleAtLeast(it, "5.6") },
+      scriptSupplier = {
+        loadInitScript("/org/jetbrains/plugins/gradle/tooling/internal/init/downloadArtifact.gradle", mapOf(
+          "DEPENDENCY_NOTATION" to dependencyNotation.toGroovyStringLiteral(),
+          "TARGET_PATH" to downloadTarget.toString().toGroovyStringLiteral(),
+          "GRADLE_TASK_NAME" to taskName.toGroovyStringLiteral(),
+          "GRADLE_PROJECT_PATH" to projectPath.toString().toGroovyStringLiteral(),
+        ))
+      }
+    ),
+    LazyVersionSpecificInitScript(
+      filePrefix = ARTIFACT_DOWNLOADER_SCRIPT_NAME,
+      isApplicable = { GradleVersionUtil.isGradleOlderThan(it, "5.6") },
+      scriptSupplier = {
+        loadInitScript("/org/jetbrains/plugins/gradle/tooling/internal/init/legacyDownloadArtifact.gradle", mapOf(
+          "DEPENDENCY_NOTATION" to dependencyNotation.toGroovyStringLiteral(),
+          "TARGET_PATH" to downloadTarget.toString().toGroovyStringLiteral(),
+          "GRADLE_TASK_NAME" to taskName.toGroovyStringLiteral(),
+          "GRADLE_PROJECT_PATH" to projectPath.toString().toGroovyStringLiteral(),
+        ))
+      }
+    )
+  )
 }
 
 @ApiStatus.Internal
@@ -145,7 +173,7 @@ fun loadTaskInitScript(
   taskName: String,
   taskType: String,
   toolingExtensionClasses: Set<Class<*>>,
-  taskConfiguration: String?
+  taskConfiguration: String?,
 ): String {
   return joinInitScripts(
     loadToolingExtensionProvidingInitScript(GRADLE_TOOLING_EXTENSION_CLASSES + toolingExtensionClasses),
@@ -169,7 +197,7 @@ fun createWrapperInitScript(
   gradleVersion: GradleVersion?,
   jarFile: File,
   scriptFile: File,
-  fileWithPathToProperties: File
+  fileWithPathToProperties: File,
 ): Path {
   val initScript = loadInitScript("/org/jetbrains/plugins/gradle/tooling/internal/init/WrapperInit.gradle", mapOf(
     "GRADLE_VERSION" to (gradleVersion?.version?.toGroovyStringLiteral() ?: "null"),
@@ -205,6 +233,57 @@ fun loadJvmOptionsInitScript(
     "TASKS" to tasks.toGroovyListLiteral { toGroovyStringLiteral() },
     "JVM_ARGS" to jvmArgs.toGroovyListLiteral { toGroovyStringLiteral() }
   ))
+}
+
+@ApiStatus.Internal
+fun loadHotswapDetectionInitScript(
+  isImprovedHotswapDetectionEnabled: Boolean,
+  outputFile: EelPath,
+): List<VersionSpecificInitScript> {
+  return listOf(
+    LazyVersionSpecificInitScript(
+      filePrefix = HOTSWAP_DETECTION_SCRIPT_NAME,
+      isApplicable = { isImprovedHotswapDetectionEnabled && GradleVersionUtil.isGradleOlderThan(it, "6.8") },
+      scriptSupplier = {
+        joinInitScripts(
+          loadInitScript("/org/jetbrains/plugins/gradle/tooling/internal/init/projectTaskRunner/ImprovedHotswapDetectionUtils.gradle"),
+          loadInitScript("/org/jetbrains/plugins/gradle/tooling/internal/init/projectTaskRunner/ImprovedHotswapDetectionInit.gradle", mapOf(
+            "OUTPUT_PATH" to outputFile.toString().toGroovyStringLiteral(),
+          ))
+        )
+      }
+    ),
+    LazyVersionSpecificInitScript(
+      filePrefix = HOTSWAP_DETECTION_SCRIPT_NAME,
+      isApplicable = { isImprovedHotswapDetectionEnabled && GradleVersionUtil.isGradleAtLeast(it, "6.8") },
+      scriptSupplier = {
+        joinInitScripts(
+          loadInitScript("/org/jetbrains/plugins/gradle/tooling/internal/init/projectTaskRunner/ImprovedHotswapDetectionUtils.gradle"),
+          loadInitScript("/org/jetbrains/plugins/gradle/tooling/internal/init/projectTaskRunner/ImprovedHotswapDetectionUsingServiceInit.gradle", mapOf(
+            "OUTPUT_PATH" to outputFile.toString().toGroovyStringLiteral(),
+          ))
+        )
+      }
+    ),
+    LazyVersionSpecificInitScript(
+      filePrefix = HOTSWAP_DETECTION_SCRIPT_NAME,
+      isApplicable = { !isImprovedHotswapDetectionEnabled && GradleVersionUtil.isGradleOlderThan(it, "6.8") },
+      scriptSupplier = {
+        loadInitScript("/org/jetbrains/plugins/gradle/tooling/internal/init/projectTaskRunner/HotswapDetectionInit.gradle", mapOf(
+          "OUTPUT_PATH" to outputFile.toString().toGroovyStringLiteral(),
+        ))
+      }
+    ),
+    LazyVersionSpecificInitScript(
+      filePrefix = HOTSWAP_DETECTION_SCRIPT_NAME,
+      isApplicable = { !isImprovedHotswapDetectionEnabled && GradleVersionUtil.isGradleAtLeast(it, "6.8") },
+      scriptSupplier = {
+        loadInitScript("/org/jetbrains/plugins/gradle/tooling/internal/init/projectTaskRunner/HotswapDetectionUsingServiceInit.gradle", mapOf(
+          "OUTPUT_PATH" to outputFile.toString().toGroovyStringLiteral(),
+        ))
+      }
+    )
+  )
 }
 
 private val JUNIT_3_COMPARISON_FAILURE = listOf("junit.framework.ComparisonFailure")
@@ -252,6 +331,7 @@ fun loadApplicationInitScript(
   useManifestJar: Boolean,
   useArgsFile: Boolean,
   useClasspathFile: Boolean,
+  javaModuleName: String?,
 ): String {
   return joinInitScripts(
     loadToolingExtensionProvidingInitScript(GRADLE_TOOLING_EXTENSION_CLASSES),
@@ -268,7 +348,8 @@ fun loadApplicationInitScript(
       "DEFS" to if (definitions.isNullOrEmpty()) "// NO DEFS" else definitions,
       "USE_MANIFEST_JAR" to useManifestJar.toString(),
       "USE_ARGS_FILE" to useArgsFile.toString(),
-      "USE_CLASSPATH_FILE" to useClasspathFile.toString()
+      "USE_CLASSPATH_FILE" to useClasspathFile.toString(),
+      "JAVA_MODULE_NAME" to if (javaModuleName.isNullOrEmpty()) "null" else javaModuleName.toGroovyStringLiteral()
     ))
   )
 }
@@ -287,7 +368,7 @@ fun joinInitScripts(vararg initScripts: String): String {
   return joinInitScripts(initScripts.asList())
 }
 
-fun joinInitScripts(initScripts: List<String>): String {
+fun joinInitScripts(initScripts: Iterable<String>): String {
   return initScripts.joinToString(System.lineSeparator())
 }
 

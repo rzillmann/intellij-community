@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.testFramework.fixtures;
 
 import com.intellij.codeInsight.TargetElementUtil;
@@ -132,12 +132,13 @@ public class EditorTestFixture {
   public boolean performEditorAction(@NotNull String actionId, @Nullable AnActionEvent actionEvent) {
     ActionManagerEx managerEx = ActionManagerEx.getInstanceEx();
     AnAction action = managerEx.getAction(actionId);
-    AnActionEvent event = actionEvent != null ? actionEvent
-                                              : new AnActionEvent(null, getEditorDataContext(), ActionPlaces.UNKNOWN, new Presentation(), managerEx, 0);
+    AnActionEvent event =
+      actionEvent != null ? actionEvent :
+      new AnActionEvent(null, getEditorDataContext(), ActionPlaces.UNKNOWN, new Presentation(), managerEx, 0);
     PerformWithDocumentsCommitted.commitDocumentsIfNeeded(action, event);
-    ActionUtil.performDumbAwareUpdate(action, event, false);
+    ActionUtil.updateAction(action, event);
     if (event.getPresentation().isEnabled()) {
-      ActionUtil.performActionDumbAwareWithCallbacks(action, event);
+      ActionUtil.performAction(action, event);
       LOG.info("performEditorAction(): performing action '" + event.getActionManager().getId(action) + "'");
       return true;
     }
@@ -190,7 +191,7 @@ public class EditorTestFixture {
     ApplicationManager.getApplication().invokeAndWait(() -> CommandProcessor.getInstance().executeCommand(myProject, () -> {
       final CodeCompletionHandlerBase handler = new CodeCompletionHandlerBase(type) {
         @Override
-        protected void completionFinished(CompletionProgressIndicator indicator, boolean hasModifiers) {
+        protected void completionFinished(@NotNull CompletionProgressIndicator indicator, boolean hasModifiers) {
           myEmptyLookup = indicator.getLookup().getItems().isEmpty();
           super.completionFinished(indicator, hasModifiers);
         }

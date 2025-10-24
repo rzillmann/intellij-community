@@ -4,7 +4,6 @@ import com.intellij.idea.TestFor
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.settingsSync.core.SettingsSyncMain
 import com.intellij.settingsSync.core.SettingsSyncSettings
-import com.intellij.settingsSync.core.SettingsSyncStatusTracker
 import com.intellij.settingsSync.core.auth.SettingsSyncAuthService
 import com.intellij.settingsSync.jba.CloudConfigServerCommunicator
 import com.intellij.settingsSync.jba.CloudConfigVersionContext
@@ -16,14 +15,22 @@ import com.jetbrains.cloudconfig.CloudConfigFileClientV2
 import com.jetbrains.cloudconfig.Configuration
 import com.jetbrains.cloudconfig.FileVersionInfo
 import com.jetbrains.cloudconfig.exception.UnauthorizedException
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestCoroutineScheduler
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.junit.runners.JUnit4
+import kotlinx.coroutines.test.TestScope
+import org.junit.jupiter.api.BeforeEach
 import org.mockito.Mockito.*
 import java.util.Date
 
 @RunWith(JUnit4::class)
-internal class SettingsSyncAuthTest : BasePlatformTestCase() {
+@OptIn(ExperimentalCoroutinesApi::class)
+internal class SettingsSyncAuthTest() : BasePlatformTestCase() {
+
+  private lateinit var testScope: TestScope
 
   private fun dummyFileVersionInfo(): FileVersionInfo {
     return object : FileVersionInfo() {
@@ -41,10 +48,16 @@ internal class SettingsSyncAuthTest : BasePlatformTestCase() {
     }
   }
 
+  @BeforeEach
+  override fun setUp() {
+    super.setUp()
+    testScope = TestScope(StandardTestDispatcher(TestCoroutineScheduler()))
+  }
+
   @Test
   @TestFor(issues = ["IDEA-307565"])
   fun `idToken is invalidated after unauthorized exception`() {
-    val authServiceSpy = spy<JBAAuthService>()
+    val authServiceSpy = spy(JBAAuthService(testScope))
     ApplicationManager.getApplication().replaceService(SettingsSyncAuthService::class.java, authServiceSpy, SettingsSyncMain.getInstance())
 
     val accountInfoService = mock<JBAccountInfoService>()
@@ -57,9 +70,9 @@ internal class SettingsSyncAuthTest : BasePlatformTestCase() {
         super.createCloudConfigClient(url, versionContext)
 
         return object : CloudConfigFileClientV2("http://localhost:7777/cloudconfig", Configuration(),
-                                                CloudConfigServerCommunicator.DUMMY_ETAG_STORAGE, CloudConfigVersionContext()) {
+                                                CloudConfigServerCommunicator.DUMMY_E_TAG_STORAGE, CloudConfigVersionContext()) {
           override fun getLatestVersion(file: String?): FileVersionInfo {
-            if (_currentIdTokenVar != "NEW-ID-TOKEN") {
+            if (currentIdTokenVar != "NEW-ID-TOKEN") {
               throw UnauthorizedException("Invalid credentials!!!")
             }
             return dummyFileVersionInfo()
@@ -85,7 +98,7 @@ internal class SettingsSyncAuthTest : BasePlatformTestCase() {
 
     // Check that userId was updated in communicator
     communicator.checkServerState()
-    assertEquals("NEW-ID-TOKEN", communicator._currentIdTokenVar)
+    assertEquals("NEW-ID-TOKEN", communicator.currentIdTokenVar)
   }
 
   @Test
@@ -94,7 +107,7 @@ internal class SettingsSyncAuthTest : BasePlatformTestCase() {
     SettingsSyncSettings.getInstance().syncEnabled = true
     assertTrue(SettingsSyncSettings.getInstance().syncEnabled)
 
-    val authServiceSpy = spy<JBAAuthService>()
+    val authServiceSpy = spy(JBAAuthService(testScope))
     ApplicationManager.getApplication().replaceService(SettingsSyncAuthService::class.java, authServiceSpy, SettingsSyncMain.getInstance())
 
     val accountInfoService = mock<JBAccountInfoService>()
@@ -108,9 +121,9 @@ internal class SettingsSyncAuthTest : BasePlatformTestCase() {
         super.createCloudConfigClient(url, versionContext)
 
         return object : CloudConfigFileClientV2("http://localhost:7777/cloudconfig", Configuration(),
-                                                CloudConfigServerCommunicator.DUMMY_ETAG_STORAGE, CloudConfigVersionContext()) {
+                                                CloudConfigServerCommunicator.DUMMY_E_TAG_STORAGE, CloudConfigVersionContext()) {
           override fun getLatestVersion(file: String?): FileVersionInfo {
-            if (_currentIdTokenVar != invalidToken) {
+            if (currentIdTokenVar != invalidToken) {
               fail("current token must be invalid!!")
             }
             throw UnauthorizedException("Invalid credentials!!!")
@@ -121,7 +134,7 @@ internal class SettingsSyncAuthTest : BasePlatformTestCase() {
 
     communicator.checkServerState()
     //assertFalse(authServiceSpy.isLoggedIn())
-    assertTrue(SettingsSyncStatusTracker.getInstance().currentStatus is SettingsSyncStatusTracker.SyncStatus.ActionRequired)
+    assertNotNull(authServiceSpy.getPendingUserAction("jba"))
   }
 
   @Test
@@ -130,7 +143,7 @@ internal class SettingsSyncAuthTest : BasePlatformTestCase() {
     SettingsSyncSettings.getInstance().syncEnabled = true
     assertTrue(SettingsSyncSettings.getInstance().syncEnabled)
 
-    val authServiceSpy = spy<JBAAuthService>()
+    val authServiceSpy = spy(JBAAuthService(testScope))
     ApplicationManager.getApplication().replaceService(SettingsSyncAuthService::class.java, authServiceSpy, SettingsSyncMain.getInstance())
 
     val accountInfoService = mock<JBAccountInfoService>()

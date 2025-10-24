@@ -1,30 +1,40 @@
 ### auto-generated section `build intellij.vcs.git.shared` start
-load("@rules_jvm//:jvm.bzl", "jvm_library", "jvm_resources")
+load("@rules_jvm//:jvm.bzl", "jvm_library", "resourcegroup")
 
-jvm_resources(
-  name = "vcs-git-shared_resources",
-  files = glob(["resources/**/*"]),
+resourcegroup(
+  name = "shared_resources",
+  srcs = glob(["resources/**/*"]),
   strip_prefix = "resources"
 )
 
 jvm_library(
-  name = "vcs-git-shared",
+  name = "shared",
   module_name = "intellij.vcs.git.shared",
   visibility = ["//visibility:public"],
-  srcs = glob(["src/**/*.kt", "src/**/*.java"], allow_empty = True),
+  srcs = glob(["src/**/*.kt", "src/**/*.java", "src/**/*.form"], allow_empty = True),
+  resources = [":shared_resources"],
   deps = [
     "@lib//:kotlin-stdlib",
-    "@lib//:kotlinx-serialization-core",
-    "@lib//:kotlinx-serialization-json",
-    "//platform/vcs-impl/shared:vcs-impl-shared",
+    "//libraries/kotlinx/serialization/core",
+    "//libraries/kotlinx/serialization/json",
+    "//platform/core-api:core",
+    "//platform/projectModel-api:projectModel",
+    "//platform/vcs-impl/shared",
     "//platform/platform-api:ide",
     "//platform/kernel/shared:kernel",
-    "//platform/platform-impl/rpc:ide-rpc",
+    "//platform/platform-impl/rpc",
     "//platform/project/shared:project",
     "//platform/platform-impl:ide-impl",
-    "//platform/dvcs-impl/shared:vcs-dvcs-impl-shared",
+    "//platform/dvcs-impl/shared",
     "//platform/core-ui",
-  ],
-  runtime_deps = [":vcs-git-shared_resources"]
+    "//platform/util/coroutines",
+    "//platform/editor-ui-api:editor-ui",
+    "//libraries/caffeine",
+    "//platform/analysis-api:analysis",
+    "//platform/util/text-matching",
+    "//platform/platform-impl/ui",
+    "//platform/diagnostic/telemetry",
+    "@lib//:opentelemetry",
+  ]
 )
 ### auto-generated section `build intellij.vcs.git.shared` end

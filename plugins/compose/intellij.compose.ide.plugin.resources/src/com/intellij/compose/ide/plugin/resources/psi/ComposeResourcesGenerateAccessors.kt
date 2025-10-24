@@ -2,8 +2,10 @@
 package com.intellij.compose.ide.plugin.resources.psi
 
 import com.intellij.compose.ide.plugin.resources.ComposeResourcesDir
+import com.intellij.compose.ide.plugin.resources.ComposeResourcesManager
 import com.intellij.compose.ide.plugin.resources.ResourceType
 import com.intellij.openapi.application.readAction
+import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.search.FilenameIndex
@@ -50,11 +52,22 @@ internal suspend fun Project.generateAccessorsFrom(changedComposeResourcesDirs: 
     } ?: return
     val packageName = changedComposeResourcesDir.getResourcePackageName(this)
     val moduleDir = resourcesAccessorsDir.findFileByRelativePath(packageName.replace('.', '/')) ?: return
-    getAccessorsSpecs(resources, packageName, changedComposeResourcesDir.sourceSetName, moduleDir.path)
+    val composeResourcesConfig = this.service<ComposeResourcesManager>().composeResourcesByModulePath[moduleName] ?: return
+    val isPublicResClass = composeResourcesConfig.isPublicResClass
+    val nameOfResClass = composeResourcesConfig.nameOfResClass
+    getAccessorsSpecs(
+      resources = resources,
+      packageName = packageName,
+      sourceSetName = changedComposeResourcesDir.sourceSetName,
+      moduleDir = moduleDir.path,
+      isPublicResClass = isPublicResClass,
+      nameOfResClass = nameOfResClass,
+    )
   }
 }
 
 private fun Project.findResourcesDir(moduleName: String, name: String): VirtualFile? =
+  //TODO use .processFilesByName() to get the first matching file without collecting/resolving all them first
   FilenameIndex.getVirtualFilesByName(name, GlobalSearchScope.allScope(this)).firstOrNull { it.path.contains(moduleName) }
 
 private fun ComposeResourcesDir.getResourcePackageName(project: Project): String {
@@ -138,7 +151,7 @@ private fun Path.listNotHiddenFiles(): List<Path> =
   Files.list(this).filter { !Files.isHidden(it) }.toList()
 
 
-private fun String.asUnderscoredIdentifier(): String =
+internal fun String.asUnderscoredIdentifier(): String =
   replace('-', '_')
     .let { if (it.isNotEmpty() && it.first().isDigit()) "_$it" else it }
 

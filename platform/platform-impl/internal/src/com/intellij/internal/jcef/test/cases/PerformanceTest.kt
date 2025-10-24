@@ -14,7 +14,9 @@ internal class PerformanceTest : JBCefTestAppFrame.TestCase() {
   override fun getComponent(): Component {
     val panel = JPanel(VerticalFlowLayout(FlowLayout.LEFT))
     panel.add(createTestCaseItem("Resize test", "Measures the time to redraw the component after resize", "Start Test", ::runSimpleResizeTest))
-    panel.add(createTestCaseItem("Manual scrolling test", "Manual scrolling with drawing diagram", "Start Test", ::runScrollingTest))
+    panel.add(createTestCaseItem("Manual scrolling test", "Manual scrolling with the scrolling requested/performed diagram", "Start Test", ::runScrollingTest))
+    panel.add(createTestCaseItem("FPS test", "A simple FPS test", "Start Test", ::runFpsTest))
+    panel.add(createTestCaseItem("CPU usage", "JCEF CPU usage statistic", "Show", ::showCpuUsage))
 
     val scrollPane = JBScrollPane(panel)
     scrollPane.horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_NEVER

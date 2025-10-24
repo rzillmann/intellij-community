@@ -8,6 +8,7 @@ import com.intellij.platform.util.progress.impl.EmptyProgressStep
 import com.intellij.platform.util.progress.impl.ProgressStep
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.currentCoroutineContext
+import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.annotations.ApiStatus.Internal
 import kotlin.coroutines.AbstractCoroutineContextElement
 import kotlin.coroutines.CoroutineContext
@@ -77,16 +78,21 @@ fun CoroutineContext.internalCreateRawHandleFromContextStepIfExistsAndFresh(): R
   return currentProgressStep().asRaw()
 }
 
+@ApiStatus.ScheduledForRemoval
 @Internal // clients are not supposed to put reporter into context
 @Deprecated("To report use `reportProgress` or `reportSequentialProgress`. Don't pass as context.")
 fun ProgressReporter0.asContextElement(): CoroutineContext.Element = ProgressReporterElement.Step
 
+@get:ApiStatus.ScheduledForRemoval
 @get:Internal
+@get:Deprecated("To report use `reportProgress` or `reportSequentialProgress`. Don't pass as context.")
 @Deprecated("To report use `reportProgress` or `reportSequentialProgress`. Don't pass as context.")
 val CoroutineContext.progressReporter: ProgressReporter0? get() = null
 
 @get:Internal
 @Deprecated("To report use `reportProgress` or `reportSequentialProgress`. Don't pass as context.")
+@get:Deprecated("To report use `reportProgress` or `reportSequentialProgress`. Don't pass as context.")
+@get:ApiStatus.ScheduledForRemoval
 val CoroutineScope.progressReporter: ProgressReporter0? get() = null
 
 @Internal // clients are not supposed to put reporter into context

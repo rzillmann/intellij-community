@@ -7,6 +7,7 @@ import com.intellij.openapi.application.ReadAction;
 import com.intellij.openapi.util.Predicates;
 import com.intellij.openapi.util.text.Strings;
 import com.intellij.psi.*;
+import com.intellij.psi.impl.PsiClassImplUtil;
 import com.intellij.psi.impl.light.LightElement;
 import com.intellij.psi.search.GlobalSearchScope;
 import com.intellij.psi.util.*;
@@ -28,10 +29,11 @@ public sealed class RefMethodImpl extends RefJavaElementImpl implements RefMetho
   private static final int IS_LIBRARY_OVERRIDE_MASK   = 0b10_00000000_00000000; // 18th bit
   private static final int IS_CONSTRUCTOR_MASK        = 0b100_00000000_00000000; // 19th bit
   private static final int IS_ABSTRACT_MASK           = 0b1000_00000000_00000000; // 20th bit
-  public static final int IS_BODY_EMPTY_MASK          = 0b10000_00000000_00000000; // 21st bit
+  private static final int IS_BODY_EMPTY_MASK          = 0b10000_00000000_00000000; // 21st bit
   private static final int IS_ONLY_CALLS_SUPER_MASK   = 0b100000_00000000_00000000; // 22nd bit
   private static final int IS_RETURN_VALUE_USED_MASK  = 0b1000000_00000000_00000000; // 23rd bit
   private static final int IS_RECORD_ACCESSOR_MASK    = 0b10000000_00000000_00000000; // 24th bit
+  private static final int HAS_BODY_MASK              = 0b1_00000000_00000000_00000000; // 25th bit
 
   private static final int IS_CALLED_ON_SUBCLASS_MASK = 0b1000_00000000_00000000_00000000; // 28th bit
 
@@ -133,7 +135,9 @@ public sealed class RefMethodImpl extends RefJavaElementImpl implements RefMetho
   }
 
   private static boolean isAppMain(PsiMethod psiMethod, RefMethod refMethod) {
-    if ("main".equals(psiMethod.getName()) && PsiMethodUtil.isMainMethod(psiMethod)) return true;
+    if ("main".equals(psiMethod.getName()) && PsiClassImplUtil.isMainOrPremainMethod(psiMethod)) {
+      return true;
+    }
 
     if (!refMethod.isStatic()) return false;
     if (!PsiTypes.voidType().equals(psiMethod.getReturnType())) return false;
@@ -229,13 +233,7 @@ public sealed class RefMethodImpl extends RefJavaElementImpl implements RefMetho
 
   @Override
   public boolean hasBody() {
-    if (!isAbstract()) {
-      RefClass ownerClass = getOwnerClass();
-      if (ownerClass == null || !ownerClass.isInterface()) {
-        return true;
-      }
-    }
-    return !isBodyEmpty();
+    return checkFlag(HAS_BODY_MASK);
   }
 
   private void initializeSuperMethods(PsiMethod method) {
@@ -299,7 +297,7 @@ public sealed class RefMethodImpl extends RefJavaElementImpl implements RefMetho
     refUtil.addReferencesTo(method, this, method);
     checkForSuperCall(method);
     setOnlyCallsSuper(refUtil.isMethodOnlyCallsSuper(method));
-
+    setHasBody(method.getUastBody() != null);
     setBodyEmpty(isOnlyCallsSuper() || !isExternalOverride() && isEmptyExpression(method.getUastBody()));
     refUtil.addTypeReference(method, method.getReturnType(), getRefManager(), this);
   }
@@ -530,7 +528,6 @@ public sealed class RefMethodImpl extends RefJavaElementImpl implements RefMetho
 
   void updateParameterValues(@NotNull UCallExpression call, @Nullable PsiElement elementPlace) {
     LOG.assertTrue(isInitialized());
-    if (call.getValueArguments().isEmpty()) return;
     if (isExternalOverride()) return;
 
     if (!getSuperMethods().isEmpty()) {
@@ -615,6 +612,10 @@ public sealed class RefMethodImpl extends RefJavaElementImpl implements RefMetho
 
   public void setBodyEmpty(boolean bodyEmpty) {
     setFlag(bodyEmpty, IS_BODY_EMPTY_MASK);
+  }
+
+  private void setHasBody(boolean hasBody) {
+    setFlag(hasBody, HAS_BODY_MASK);
   }
 
   private void setOnlyCallsSuper(boolean onlyCallsSuper) {

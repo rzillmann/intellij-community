@@ -9,6 +9,8 @@ import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.ex.FileEditorManagerEx
 import com.intellij.openapi.fileEditor.impl.FileEditorOpenOptions
 import com.intellij.openapi.fileEditor.impl.waitForFullyCompleted
+import com.intellij.openapi.options.advanced.AdvancedSettingType
+import com.intellij.openapi.options.advanced.AdvancedSettings
 import com.intellij.openapi.project.BaseProjectDirectories.Companion.getBaseDirectories
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.playback.PlaybackContext
@@ -19,6 +21,7 @@ import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
 import com.jetbrains.performancePlugin.PerformanceTestingBundle
 import com.jetbrains.performancePlugin.utils.DaemonCodeAnalyzerListener
+import com.jetbrains.performancePlugin.utils.HighlightingTestUtil
 import com.sampullara.cli.Args
 import io.opentelemetry.api.trace.Span
 import kotlinx.coroutines.Dispatchers
@@ -37,7 +40,8 @@ class OpenFileCommand(text: String, line: Int) : PerformanceCommandCoroutineAdap
   companion object {
     const val NAME: @NonNls String = "openFile"
     const val PREFIX: @NonNls String = "$CMD_PREFIX$NAME"
-    const val SPAN_NAME: @NonNls String = "firstCodeAnalysis"
+    const val OPEN_FILE_SPAN_NAME: @NonNls String = "openFile"
+    const val FIRST_CODE_ANALYSIS_SPAN_NAME: @NonNls String = "firstCodeAnalysis"
 
     @JvmStatic
     fun findFile(filePath: String, project: Project): VirtualFile? {
@@ -63,6 +67,9 @@ class OpenFileCommand(text: String, line: Int) : PerformanceCommandCoroutineAdap
     val filePath = (options?.file ?: text.split(' ', limit = 4)[1]).replace("SPACE_SYMBOL", " ")
     val timeout = options?.timeout ?: 0
     val suppressErrors = options?.suppressErrors == true
+    if (options?.forbidDownloadingSourcesOnNavigation == true) {
+      AdvancedSettings.getInstance().setSetting("gradle.download.sources.automatically", false, AdvancedSettingType.Bool)
+    }
 
     val project = context.project
     val file = findFile(filePath, project) ?: error(PerformanceTestingBundle.message("command.file.not.found", filePath))
@@ -80,7 +87,7 @@ class OpenFileCommand(text: String, line: Int) : PerformanceCommandCoroutineAdap
       listenJob
     }
 
-    spanRef.set(startSpan(SPAN_NAME))
+    spanRef.set(startSpan(FIRST_CODE_ANALYSIS_SPAN_NAME))
     setFilePath(projectPath = projectPath, span = spanRef.get(), file = file)
 
     // focus window
@@ -88,11 +95,17 @@ class OpenFileCommand(text: String, line: Int) : PerformanceCommandCoroutineAdap
       ProjectUtil.focusProjectWindow(project, stealFocusIfAppInactive = true)
     }
 
+    var openFileSpan: Span? = null
+    if (useWaitForCodeAnalysisCode(options)) {
+      openFileSpan = startSpan(OPEN_FILE_SPAN_NAME).setAttribute("path", file.path)
+    }
+
     val fileEditor = (project.serviceAsync<FileEditorManager>() as FileEditorManagerEx)
       .openFile(file = file, options = FileEditorOpenOptions(requestFocus = true))
 
     if (useWaitForCodeAnalysisCode(options)) {
-      waitForAnalysisWithNewApproach(project, spanRef, timeout, suppressErrors)
+      HighlightingTestUtil.waitForAnalysisWithNewApproach(project, spanRef, timeout, suppressErrors)
+      openFileSpan!!.end()
       return
     }
 

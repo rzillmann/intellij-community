@@ -45,10 +45,16 @@ class KotlinChangeInfo(
     }
 
     override fun removeParameter(index: Int) {
-        val parameterInfo = newParameters.removeAt(index)
+        val parameterInfo = newParameters.filter { !it.isContextParameter }.toTypedArray()[index]
+        newParameters.remove(parameterInfo)
         if (parameterInfo == receiverParameterInfo) {
             receiverParameterInfo = null
         }
+    }
+
+    fun removeContextParameter(index: Int) {
+        val parameterInfo = newParameters.filter { it.isContextParameter }.toTypedArray()[index]
+        newParameters.remove(parameterInfo)
     }
 
     override fun clearParameters() {
@@ -124,8 +130,7 @@ class KotlinChangeInfo(
     }
 
     private val isParameterSetOrOrderChangedLazy: Boolean by lazy {
-        val signatureParameters = getNonReceiverParameters().filterNot { it.isContextParameter }
-        val contextParameters = getNonReceiverParameters().filter { it.isContextParameter }
+        val (contextParameters, signatureParameters) = getNonReceiverParameters().partition { it.isContextParameter }
         methodDescriptor.receiver?.oldIndex != receiverParameterInfo?.oldIndex ||
                 signatureParameters.size != methodDescriptor.parametersCount ||
                 signatureParameters.indices.any { i -> signatureParameters[i].oldIndex != i } ||

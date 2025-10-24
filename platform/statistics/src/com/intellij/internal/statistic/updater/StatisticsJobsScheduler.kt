@@ -1,12 +1,15 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.internal.statistic.updater
 
 import com.intellij.ide.ApplicationActivity
 import com.intellij.ide.StatisticsNotificationManager
 import com.intellij.internal.statistic.eventLog.StatisticsEventLogProviderUtil.getEventLogProviders
+import com.intellij.internal.statistic.eventLog.StatisticsEventLogProvidersHolder
 import com.intellij.internal.statistic.eventLog.StatisticsEventLoggerProvider
 import com.intellij.internal.statistic.eventLog.uploader.EventLogExternalUploader
 import com.intellij.internal.statistic.eventLog.validator.IntellijSensitiveDataValidator
+import com.intellij.internal.statistic.eventLog.validator.storage.FusComponentProvider.listenToMetadataEvents
+import com.intellij.internal.statistic.eventLog.validator.storage.FusComponentProvider.listenToOptionsChanges
 import com.intellij.internal.statistic.utils.StatisticsUploadAssistant
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.Service
@@ -15,7 +18,6 @@ import com.intellij.openapi.extensions.ExtensionNotApplicableException
 import com.intellij.openapi.extensions.ExtensionPointListener
 import com.intellij.openapi.extensions.InternalIgnoreDependencyViolation
 import com.intellij.openapi.extensions.PluginDescriptor
-import com.intellij.openapi.progress.blockingContext
 import kotlinx.coroutines.*
 import org.jetbrains.annotations.ApiStatus
 import java.util.concurrent.ConcurrentHashMap
@@ -42,7 +44,7 @@ private class StatisticsJobsScheduler : ApplicationActivity {
               launchStatisticsSendJob(extension, this)
 
               if (extension.isLoggingEnabled()) {
-                IntellijSensitiveDataValidator.getInstance(extension.recorderId).update()
+                launchValidationRulesUpdate(extension)
               }
             }
           }
@@ -76,7 +78,7 @@ private class StatisticsJobsScheduler : ApplicationActivity {
   private suspend fun runEventLogStatisticsService() {
     delay(1.minutes)
 
-    val providers = getEventLogProviders()
+    val providers = serviceAsync<StatisticsEventLogProvidersHolder>().getEventLogProviders().toList()
     coroutineScope {
       for (provider in providers) {
         launchStatisticsSendJob(provider, this)
@@ -93,9 +95,7 @@ private class StatisticsJobsScheduler : ApplicationActivity {
       delay((5 * 60).seconds)
 
       while (isActive) {
-        blockingContext {
-          StatisticsUploadAssistant.getEventLogStatisticsService(provider.recorderId).send()
-        }
+        StatisticsUploadAssistant.getEventLogStatisticsService(provider.recorderId).send()
         delay(provider.sendFrequencyMs.milliseconds)
       }
     }
@@ -103,16 +103,20 @@ private class StatisticsJobsScheduler : ApplicationActivity {
   }
 }
 
-private suspend fun runValidationRulesUpdate() {
-  if (!System.getProperty("fus.internal.reduce.initial.delay").toBoolean()) {
-    delay(3.minutes)
+private suspend fun CoroutineScope.runValidationRulesUpdate() {
+  val providers = getEventLogProviders()
+  for (provider in providers) {
+    launchValidationRulesUpdate(provider)
   }
+  serviceAsync<StatisticsValidationUpdatedService>().updatedDeferred.complete(Unit)
+}
 
-  while (true) {
-    updateValidationRules()
-    serviceAsync<StatisticsValidationUpdatedService>().updatedDeferred.complete(Unit)
-
-    delay(180.minutes)
+private suspend fun CoroutineScope.launchValidationRulesUpdate(provider: StatisticsEventLoggerProvider) {
+  if (provider.isLoggingEnabled()) {
+    val validator = IntellijSensitiveDataValidator.getInstance(provider.recorderId)
+    listenToOptionsChanges(provider.recorderId, validator.messageBus)
+    listenToMetadataEvents(provider.recorderId, validator.messageBus)
+    validator.validationRulesStorage.update(this)
   }
 }
 

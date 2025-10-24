@@ -2,7 +2,7 @@
 package com.intellij.diff.tools.combined
 
 import com.intellij.diff.*
-import com.intellij.diff.editor.DiffEditorTabFilesManager.Companion.isDiffInEditor
+import com.intellij.diff.editor.DiffEditorTabFilesUtil
 import com.intellij.diff.impl.DiffEditorViewer
 import com.intellij.diff.impl.DiffEditorViewerListener
 import com.intellij.diff.impl.DiffRequestProcessor
@@ -80,6 +80,12 @@ class CombinedDiffComponentProcessorImpl(
   override val blocks: List<CombinedBlockProducer> get() = model.requests
   override fun setBlocks(requests: List<CombinedBlockProducer>) = model.setBlocks(requests)
   override fun cleanBlocks() = model.cleanBlocks()
+
+  override val currentBlock: CombinedBlockProducer?
+    get() {
+      val currentBlockId = combinedViewer?.getCurrentBlockId() ?: return null
+      return model.getBlock(currentBlockId)
+    }
 
   override fun fireProcessorActivated() = Unit
   override fun addListener(listener: DiffEditorViewerListener, disposable: Disposable?) {
@@ -261,7 +267,7 @@ internal data class CombinedDiffEditorState(
   val activeEditorStates: List<TextEditorState>,
 ) : FileEditorStateWithPreferredOpenMode {
   override val openMode: FileEditorManagerImpl.OpenMode?
-    get() = if (!isDiffInEditor) FileEditorManagerImpl.OpenMode.NEW_WINDOW else null
+    get() = if (!DiffEditorTabFilesUtil.isDiffInEditor) FileEditorManagerImpl.OpenMode.NEW_WINDOW else null
 
   override fun canBeMergedWith(otherState: FileEditorState, level: FileEditorStateLevel): Boolean {
     return otherState is CombinedDiffEditorState &&
@@ -280,4 +286,6 @@ interface CombinedDiffComponentProcessor : DiffEditorViewer {
    */
   fun setBlocks(requests: List<CombinedBlockProducer>)
   fun cleanBlocks()
+
+  val currentBlock: CombinedBlockProducer?
 }

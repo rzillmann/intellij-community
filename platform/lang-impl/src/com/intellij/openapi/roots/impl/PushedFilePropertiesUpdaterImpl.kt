@@ -10,7 +10,10 @@ import com.intellij.openapi.application.WriteAction
 import com.intellij.openapi.diagnostic.Attachment
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.module.Module
-import com.intellij.openapi.progress.*
+import com.intellij.openapi.progress.ProgressIndicator
+import com.intellij.openapi.progress.ProgressManager
+import com.intellij.openapi.progress.checkCanceled
+import com.intellij.openapi.progress.runBlockingCancellable
 import com.intellij.openapi.project.*
 import com.intellij.openapi.project.DumbServiceImpl.Companion.isSynchronousTaskExecution
 import com.intellij.openapi.roots.ContentIteratorEx
@@ -32,6 +35,7 @@ import com.intellij.platform.workspace.storage.EntityStorage
 import com.intellij.psi.impl.PsiManagerEx
 import com.intellij.psi.impl.file.impl.FileManagerEx
 import com.intellij.util.ModalityUiUtil
+import com.intellij.util.concurrency.annotations.RequiresReadLock
 import com.intellij.util.containers.TreeNodeProcessingResult
 import com.intellij.util.gist.GistManager
 import com.intellij.util.gist.GistManagerImpl
@@ -230,9 +234,7 @@ class PushedFilePropertiesUpdaterImpl(private val myProject: Project) : PushedFi
       try {
         coroutineScope {
           task.getTasks().forEachConcurrent(SCANNING_PARALLELISM) { subtask ->
-            blockingContext {
-              subtask.run()
-            }
+            subtask.run()
           }
         }
         hadTasks = true
@@ -309,6 +311,7 @@ class PushedFilePropertiesUpdaterImpl(private val myProject: Project) : PushedFi
     }
   }
 
+  @RequiresReadLock
   private fun doApplyPushersToFile(fileOrDir: VirtualFile,
                                    pushers: List<FilePropertyPusher<*>>,
                                    moduleValues: Array<Any?>?) {
@@ -397,10 +400,10 @@ class PushedFilePropertiesUpdaterImpl(private val myProject: Project) : PushedFi
         try {
           session.visitFile(fileOrDir)
         }
-        catch (e: ProcessCanceledException) {
-          throw e
-        }
         catch (e: Exception) {
+          if (Logger.shouldRethrow(e)) {
+            throw e
+          }
           LOG.error("Failed to visit file", e, Attachment("filePath.txt", fileOrDir.path))
         }
       }

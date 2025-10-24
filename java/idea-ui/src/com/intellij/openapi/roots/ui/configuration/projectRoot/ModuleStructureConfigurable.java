@@ -56,10 +56,7 @@ import com.intellij.util.PlatformIcons;
 import com.intellij.util.concurrency.ThreadingAssertions;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.ui.tree.TreeUtil;
-import org.jetbrains.annotations.ApiStatus;
-import org.jetbrains.annotations.NonNls;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.*;
 
 import javax.swing.*;
 import javax.swing.tree.*;
@@ -129,16 +126,12 @@ public final class ModuleStructureConfigurable extends BaseStructureConfigurable
   }
 
   @Override
-  protected @NotNull String getTextForSpeedSearch(MyNode node) {
-    if (node instanceof ModuleNode) {
-      return ((ModuleNode)node).getFullModuleName();
-    }
-    else if (node instanceof ModuleGroupNodeImpl) {
-      return ((ModuleGroupNodeImpl)node).getModuleGroup().getQualifiedName();
-    }
-    else {
-      return super.getTextForSpeedSearch(node);
-    }
+  protected @NotNull String getTextForSpeedSearch(@NotNull MyNode node) {
+    return switch (node) {
+      case ModuleNode moduleNode -> moduleNode.getFullModuleName();
+      case ModuleGroupNodeImpl groupNode -> groupNode.getModuleGroup().getQualifiedName();
+      default -> super.getTextForSpeedSearch(node);
+    };
   }
 
   @Override
@@ -235,7 +228,7 @@ public final class ModuleStructureConfigurable extends BaseStructureConfigurable
                                                                                     ModuleGroupingTreeHelper.createDefaultGrouping(moduleGrouper),
                                                                                     ModuleStructureConfigurable::createModuleGroupNode,
                                                                                     m -> createModuleNode(m, moduleGrouper), getNodeComparator());
-    var modules = Arrays.stream(myModuleManager.getModules()).filter(module -> ModuleStructureFilterExtension.isAllowed(module)).toList();
+    var modules = Arrays.stream(myModuleManager.getModules()).toList();
     helper.createModuleNodes(modules, myRoot, getTreeModel());
     if (containsSecondLevelNodes(myRoot)) {
       myTree.setShowsRootHandles(true);
@@ -461,14 +454,6 @@ public final class ModuleStructureConfigurable extends BaseStructureConfigurable
 
   private ModuleGrouper getModuleGrouper() {
     return ModuleGrouper.instanceFor(myProject, myContext.myModulesConfigurator.getModuleModel());
-  }
-
-  /**
-   * @deprecated use {@link ProjectStructureConfigurable#getModulesConfig()} instead
-   */
-  @Deprecated(forRemoval = true)
-  public static ModuleStructureConfigurable getInstance(final Project project) {
-    return ProjectStructureConfigurable.getInstance(project).getModulesConfig();
   }
 
   public Project getProject() {
@@ -1020,7 +1005,8 @@ public final class ModuleStructureConfigurable extends BaseStructureConfigurable
     private final @NotNull Path myComponentPath;
     private final @NotNull Project myProject;
 
-    CopiedModuleBuilder(@NotNull ModifiableRootModel rootModel, @NotNull Path componentPath, @NotNull Project project) {
+    @VisibleForTesting
+    public CopiedModuleBuilder(@NotNull ModifiableRootModel rootModel, @NotNull Path componentPath, @NotNull Project project) {
       this.myRootModel = rootModel;
       this.myComponentPath = componentPath;
       this.myProject = project;

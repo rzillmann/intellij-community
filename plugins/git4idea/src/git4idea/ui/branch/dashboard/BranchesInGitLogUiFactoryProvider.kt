@@ -24,11 +24,15 @@ import com.intellij.vcs.log.VcsLogFilterCollection
 import com.intellij.vcs.log.VcsLogProvider
 import com.intellij.vcs.log.VcsLogRootFilter
 import com.intellij.vcs.log.data.VcsLogData
+import com.intellij.vcs.log.data.roots
 import com.intellij.vcs.log.impl.*
 import com.intellij.vcs.log.impl.VcsLogManager.BaseVcsLogUiFactory
 import com.intellij.vcs.log.impl.VcsLogNavigationUtil.jumpToBranch
 import com.intellij.vcs.log.impl.VcsLogNavigationUtil.jumpToRefOrHash
-import com.intellij.vcs.log.ui.*
+import com.intellij.vcs.log.ui.MainVcsLogUi
+import com.intellij.vcs.log.ui.VcsLogColorManager
+import com.intellij.vcs.log.ui.VcsLogInternalDataKeys
+import com.intellij.vcs.log.ui.VcsLogUiImpl
 import com.intellij.vcs.log.ui.filter.VcsLogFilterUiEx
 import com.intellij.vcs.log.ui.frame.MainFrame
 import com.intellij.vcs.log.util.VcsLogUtil
@@ -57,7 +61,7 @@ class BranchesInGitLogUiFactoryProvider(private val project: Project) : CustomVc
     BranchesVcsLogUiFactory(vcsLogManager, logId, filters)
 
   private fun hasGitRoots(project: Project, roots: Collection<VirtualFile>) =
-    ProjectLevelVcsManager.getInstance(project).allVcsRoots.asSequence()
+    ProjectLevelVcsManager.getInstance(project).getAllVcsRoots().asSequence()
       .filter { it.vcs?.keyInstanceMethod == GitVcs.getKey() }
       .map(VcsRoot::getPath)
       .toSet()
@@ -98,7 +102,7 @@ internal class BranchesVcsLogUi(
   }
 
   private fun createMainComponent(logData: VcsLogData, properties: MainVcsLogUiProperties, mainFrame: MainFrame): JComponent {
-    val model = BranchesDashboardTreeModelImpl(logData).also {
+    val model = SyncBranchesDashboardTreeModel(logData).also {
       Disposer.register(this, it)
     }
 
@@ -119,8 +123,10 @@ internal class BranchesVcsLogUi(
                                                           logData.project,
                                                           model,
                                                           selectionHandler,
-                                                          mainFrame.toolbar
-    )
+                                                          BranchesDashboardTreeComponent.SearchLook.Inline(mainFrame.toolbar)
+    ).apply {
+      border = createBorder(SideBorder.LEFT)
+    }
     val actionManager = ActionManager.getInstance()
     val actions = DefaultActionGroup().apply {
       val hideBranchesAction = actionManager.getAction("Git.Log.Hide.Branches")
@@ -227,12 +233,12 @@ internal class BranchesVcsLogUi(
       }
     }
 
-    override fun navigateTo(navigatable: BranchNodeDescriptor.LogNavigatable, focus: Boolean) {
+    override fun navigateTo(navigatable: VcsLogNavigatable, focus: Boolean) {
       val navigateSilently = false
+      val repositoryRoot = navigatable.repository?.root
       when (navigatable) {
-        BranchNodeDescriptor.Head -> jumpToBranch(VcsLogUtil.HEAD, navigateSilently, focus)
-        is BranchNodeDescriptor.Branch -> jumpToBranch(navigatable.branchInfo.branchName, navigateSilently, focus)
-        is BranchNodeDescriptor.Ref -> jumpToRefOrHash(navigatable.refInfo.refName, navigateSilently, focus)
+        is VcsLogNavigatable.Branch -> jumpToBranch(repositoryRoot, navigatable.branchName, navigateSilently, focus)
+        is VcsLogNavigatable.Ref -> jumpToRefOrHash(repositoryRoot, navigatable.refName, navigateSilently, focus)
       }
     }
   }
@@ -267,19 +273,9 @@ fun VcsLogFilterUiEx.filterBy(branches: List<String>) {
 }
 
 @ApiStatus.Internal
-fun VcsLogUiEx.navigateTo(navigatable: BranchNodeDescriptor.LogNavigatable, focus: Boolean) {
-  val navigateSilently = false
-  when (navigatable) {
-    BranchNodeDescriptor.Head -> jumpToBranch(VcsLogUtil.HEAD, navigateSilently, focus)
-    is BranchNodeDescriptor.Branch -> jumpToBranch(navigatable.branchInfo.branchName, navigateSilently, focus)
-    is BranchNodeDescriptor.Ref -> jumpToRefOrHash(navigatable.refInfo.refName, navigateSilently, focus)
-  }
-}
-
-@ApiStatus.Internal
 val SHOW_GIT_BRANCHES_LOG_PROPERTY: VcsLogUiProperties.VcsLogUiProperty<Boolean> =
   object : VcsLogProjectTabsProperties.CustomBooleanTabProperty("Show.Git.Branches") {
-    override fun defaultValue(logId: String) = logId == VcsLogContentProvider.MAIN_LOG_ID
+    override fun defaultValue(logId: String) = logId == VcsLogManager.MAIN_LOG_ID
   }
 
 @ApiStatus.Internal

@@ -58,6 +58,7 @@ Navigation item file #1: kotlin-stdlib-sources.jar!/commonMain/kotlin/annotation
      DeprecatedSinceKotlin
      DeprecationLevel
      DslMarker
+     ExperimentalContextParameters
      ExperimentalMultiplatform
      ExperimentalStdlibApi
      ExperimentalSubclassOptIn
@@ -75,7 +76,7 @@ Navigation item file #1: kotlin-stdlib-sources.jar!/commonMain/kotlin/annotation
      Lazy
      LazyThreadSafetyMode
      Metadata
-     MustUseReturnValue
+     MustUseReturnValues
      NotImplementedError
      NoWhenBranchMatchedException
      OptIn

@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.codeInsight.daemon;
 
 import com.intellij.codeHighlighting.Pass;
@@ -246,13 +246,13 @@ public abstract class DaemonAnalyzerTestCase extends JavaCodeInsightTestCase {
   protected void doCheckResult(@NotNull ExpectedHighlightingData data,
                                @NotNull Collection<? extends HighlightInfo> infos,
                                @NotNull String text) {
-    PsiFile file = getFile();
+    PsiFile psiFile = getFile();
     ActionUtil.underModalProgress(myProject, "", () -> {
       //line marker tooltips are called in BGT in production
-      data.checkLineMarkers(file, DaemonCodeAnalyzerImpl.getLineMarkers(getDocument(file), getProject()), text);
+      data.checkLineMarkers(psiFile, DaemonCodeAnalyzerImpl.getLineMarkers(getDocument(psiFile), getProject()), text);
       return null;
     });
-    data.checkResult(file, infos, text);
+    data.checkResult(psiFile, infos, text);
   }
 
   @Override
@@ -306,7 +306,7 @@ public abstract class DaemonAnalyzerTestCase extends JavaCodeInsightTestCase {
     }
 
     boolean canChange = canChangeDocumentDuringHighlighting();
-    List<HighlightInfo> infos = CodeInsightTestFixtureImpl.instantiateAndRun(getFile(), getEditor(), toIgnore.toIntArray(), canChange);
+    List<HighlightInfo> infos = CodeInsightTestFixtureImpl.instantiateAndRun(getFile(), getEditor(), toIgnore.toIntArray(), canChange, true);
 
     if (!canChange) {
       Document document = getDocument(getFile());
@@ -344,8 +344,8 @@ public abstract class DaemonAnalyzerTestCase extends JavaCodeInsightTestCase {
   protected static void findAndInvokeIntentionAction(@NotNull Collection<? extends HighlightInfo> infos,
                                                      @NotNull String intentionActionName,
                                                      @NotNull Editor editor,
-                                                     @NotNull PsiFile file) {
-    List<IntentionAction> actions = getIntentionActions(infos, editor, file);
+                                                     @NotNull PsiFile psiFile) {
+    List<IntentionAction> actions = getIntentionActions(infos, editor, psiFile);
     IntentionAction intentionAction = LightQuickFixTestCase.findActionWithText(actions, intentionActionName);
 
     if (intentionAction == null) {
@@ -353,27 +353,27 @@ public abstract class DaemonAnalyzerTestCase extends JavaCodeInsightTestCase {
            "'.\nAvailable actions: [" +StringUtil.join(ContainerUtil.map(actions, c -> c.getText()), ", ")+ "]\n" +
            "HighlightInfos: [" +StringUtil.join(infos, ", ")+"]");
     }
-    CodeInsightTestFixtureImpl.invokeIntention(intentionAction, file, editor);
+    CodeInsightTestFixtureImpl.invokeIntention(intentionAction, psiFile, editor);
   }
 
   protected static @Nullable IntentionAction findIntentionAction(@NotNull Collection<? extends HighlightInfo> infos,
                                                                  @NotNull String intentionActionName,
                                                                  @NotNull Editor editor,
-                                                                 @NotNull PsiFile file) {
-    List<IntentionAction> actions = getIntentionActions(infos, editor, file);
+                                                                 @NotNull PsiFile psiFile) {
+    List<IntentionAction> actions = getIntentionActions(infos, editor, psiFile);
     return LightQuickFixTestCase.findActionWithText(actions, intentionActionName);
   }
 
   protected static @NotNull @Unmodifiable List<IntentionAction> getIntentionActions(@NotNull Collection<? extends HighlightInfo> infos,
                                                                                     @NotNull Editor editor,
-                                                                                    @NotNull PsiFile file) {
-    List<IntentionAction> actions = LightQuickFixTestCase.getAvailableActions(editor, file);
+                                                                                    @NotNull PsiFile psiFile) {
+    List<IntentionAction> actions = LightQuickFixTestCase.getAvailableActions(editor, psiFile);
 
     final List<IntentionAction> quickFixActions = new ArrayList<>();
     for (HighlightInfo info : infos) {
       info.findRegisteredQuickFix((descriptor, range) -> {
         IntentionAction action = descriptor.getAction();
-        if (!actions.contains(action) && action.isAvailable(file.getProject(), editor, file)) {
+        if (!actions.contains(action) && action.isAvailable(psiFile.getProject(), editor, psiFile)) {
           quickFixActions.add(action);
         }
         return null;

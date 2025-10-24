@@ -3,6 +3,8 @@ package com.intellij.xdebugger.impl.ui;
 
 import com.intellij.codeInsight.hint.HintUtil;
 import com.intellij.codeWithMe.ClientId;
+import com.intellij.frontend.FrontendApplicationInfo;
+import com.intellij.frontend.FrontendType;
 import com.intellij.ide.nls.NlsMessages;
 import com.intellij.ide.ui.AntiFlickeringPanel;
 import com.intellij.openapi.Disposable;
@@ -13,6 +15,7 @@ import com.intellij.openapi.actionSystem.AnActionEvent;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.ModalityState;
 import com.intellij.openapi.application.WriteIntentReadAction;
+import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.editor.ClientEditorManager;
 import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.editor.EditorFactory;
@@ -44,7 +47,6 @@ import com.intellij.util.ui.UIUtil;
 import com.intellij.xdebugger.*;
 import com.intellij.xdebugger.breakpoints.XBreakpoint;
 import com.intellij.xdebugger.breakpoints.XBreakpointListener;
-import com.intellij.xdebugger.breakpoints.XBreakpointManager;
 import com.intellij.xdebugger.frame.XFullValueEvaluator;
 import com.intellij.xdebugger.frame.XValue;
 import com.intellij.xdebugger.frame.XValueModifier;
@@ -77,6 +79,8 @@ import static com.intellij.xdebugger.impl.breakpoints.XBreakpointProxyKt.asProxy
 public final class DebuggerUIUtil {
   public static final @NonNls String FULL_VALUE_POPUP_DIMENSION_KEY = "XDebugger.FullValuePopup";
 
+  private final static Logger LOG = Logger.getInstance(DebuggerUIUtil.class);
+
   private DebuggerUIUtil() {
   }
 
@@ -99,6 +103,16 @@ public final class DebuggerUIUtil {
 
   public static void invokeLater(Runnable runnable) {
     ApplicationManager.getApplication().invokeLater(runnable);
+  }
+
+  @ApiStatus.Internal
+  public static void invokeLaterIfNeeded(Runnable runnable) {
+    if (ApplicationManager.getApplication().isDispatchThread()) {
+      runnable.run();
+    }
+    else {
+      ApplicationManager.getApplication().invokeLater(runnable, ModalityState.any());
+    }
   }
 
   public static @Nullable RelativePoint getPositionForPopup(@NotNull Editor editor, int line) {
@@ -303,6 +317,7 @@ public final class DebuggerUIUtil {
     final JComponent mainPanel = propertiesPanel.getMainPanel();
     final Balloon balloon = showBreakpointEditor(project, mainPanel, point, component, showMoreOptions, breakpoint);
     balloonRef.set(balloon);
+    propertiesPanel.setBalloon(balloon);
 
     Disposable disposable = Disposer.newDisposable();
 
@@ -415,8 +430,8 @@ public final class DebuggerUIUtil {
 
   public static @Nullable String getNodeRawValue(@NotNull XValueNodeImpl valueNode) {
     String res = null;
-    if (valueNode.getValueContainer() instanceof XValueTextProvider) {
-      res = ((XValueTextProvider)valueNode.getValueContainer()).getValueText();
+    if (valueNode.getValueContainer() instanceof XValueTextProvider textValue && textValue.shouldShowTextValue()) {
+      res = textValue.getValueText();
     }
     if (res == null) {
       res = valueNode.getRawValue();
@@ -537,8 +552,11 @@ public final class DebuggerUIUtil {
   /**
    * Use {@link DebuggerUIUtil#getSessionProxy(AnActionEvent)} instead.
    */
-  @ApiStatus.Obsolete
   public static @Nullable XDebugSession getSession(@NotNull AnActionEvent e) {
+    if (SplitDebuggerMode.showSplitWarnings() && FrontendApplicationInfo.INSTANCE.getFrontendType() instanceof FrontendType.Remote) {
+      LOG.error("In Split mode DebuggerUIUtil#getSession(AnActionEvent) should not be called from the frontend. " +
+                "Please use DebuggerUIUtil#getSessionProxy(AnActionEvent) instead.");
+    }
     XDebugSession session = e.getData(XDebugSession.DATA_KEY);
     if (session == null) {
       Project project = e.getProject();

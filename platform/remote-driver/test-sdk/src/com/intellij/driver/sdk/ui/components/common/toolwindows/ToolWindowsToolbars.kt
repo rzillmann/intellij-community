@@ -25,11 +25,12 @@ class ToolWindowLeftToolbarUi(data: ComponentData) : ToolWindowToolbarUi(data) {
   val servicesButton = stripeButton("Services")
   val terminalButton = stripeButton("Terminal")
   val problemsButton = stripeButton("Problems")
-  val jupyterButton = stripeButton("Jupyter")
   val moreButton = stripeButton("More")
   val debugButton = stripeButton("Debug")
   val findButton = stripeButton("Find")
   val cmakeButton = stripeButton("CMake")
+  val jpaButton = stripeButton("JPA Console")
+  val persistenceButton = stripeButton("Persistence")
 
   fun IdeaFrameUI.openMoreToolWindow(name: String) {
     moreButton.click()
@@ -63,7 +64,7 @@ class StripeButtonUi(data: ComponentData) : UiComponent(data) {
     if (!toolWindow.isActive()) {
       val activateToolWindowAction = driver.utility(ActivateToolWindowActionManager::class)
         .getActionIdForToolWindow(toolWindow.getId())
-      driver.invokeAction(activateToolWindowAction)
+      driver.invokeAction(activateToolWindowAction, component = component)
     }
   }
 

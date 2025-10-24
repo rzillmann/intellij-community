@@ -9,7 +9,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.*
 import com.intellij.psi.impl.source.tree.LeafPsiElement
-import org.jetbrains.kotlin.gradle.scripting.shared.roots.GradleBuildRootsManager
+import org.jetbrains.kotlin.gradle.scripting.shared.roots.GradleBuildRootsLocator
 import org.jetbrains.kotlin.psi.KtCallExpression
 import org.jetbrains.kotlin.psi.KtFile
 import org.jetbrains.kotlin.psi.KtScriptInitializer
@@ -58,12 +58,12 @@ fun getGradleScriptInputsStamp(
                 }
             }
 
-        val buildRoot = GradleBuildRootsManager.getInstance(project)?.findScriptBuildRoot(file)?.nearest
+        val buildRoot = GradleBuildRootsLocator.getInstance(project)?.findScriptBuildRoot(file)?.nearest
         GradleKotlinScriptConfigurationInputs(result.toString(), givenTimeStamp, buildRoot?.pathPrefix)
     }
 }
 
-const val minimal_gradle_version_supported = "6.0"
+const val minimal_gradle_version_supported: String = "6.0"
 
 fun kotlinDslScriptsModelImportSupported(gradleVersion: String): Boolean {
     return GradleVersionUtil.isGradleAtLeast(gradleVersion, minimal_gradle_version_supported)

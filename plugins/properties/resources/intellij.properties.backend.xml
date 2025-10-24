@@ -1,4 +1,4 @@
-<idea-plugin>
+<idea-plugin visibility="public">
   <resource-bundle>messages.PropertiesBundle</resource-bundle>
   <dependencies>
     <plugin id="com.intellij.modules.lang"/>
@@ -7,6 +7,7 @@
     <module name="intellij.properties"/>
     <module name="intellij.properties.psi"/>
     <module name="intellij.properties.backend.psi"/>
+    <module name="intellij.spellchecker"/>
   </dependencies>
 
   <extensionPoints>
@@ -127,6 +128,8 @@
     <liveTemplateContext contextId="Properties" implementation="com.intellij.lang.properties.template.PropertiesContextType"/>
     <structuralsearch.profile implementation="com.intellij.lang.properties.structuralsearch.PropertiesStructuralSearchProfile"/>
 
+    <diff.merge.conflict.semantic.resolver implementation="com.intellij.lang.properties.merge.PropertiesMergeConflictResolver"/>
+
     <intentionAction>
       <language>Properties</language>
       <className>com.intellij.lang.properties.actions.CopyPropertyValueToClipboardIntention</className>
@@ -146,6 +149,8 @@
     <properties.implicitPropertyUsageProvider implementation="com.intellij.lang.properties.providers.slf4j.SimpleLoggerImplicitPropertiesUsageProvider"/>
 
     <lang.floatingToolbar language="Properties" minimal="true"/>
+
+    <diff.lang.DiffLangSpecificAdjuster implementation="com.intellij.lang.properties.diff.PropertiesDiffLangSpecificProvider"/>
 
     <applicationService serviceInterface="com.intellij.lang.properties.PropertiesUtilService"
                         serviceImplementation="com.intellij.lang.properties.PropertiesUtilServiceImpl"

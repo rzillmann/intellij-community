@@ -15,6 +15,7 @@ import com.intellij.openapi.roots.ModuleFileIndex;
 import com.intellij.openapi.roots.ModuleRootManager;
 import com.intellij.openapi.util.Comparing;
 import com.intellij.openapi.util.Pair;
+import com.intellij.openapi.util.Ref;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.pom.java.JavaFeature;
 import com.intellij.psi.*;
@@ -158,16 +159,10 @@ final class ClassChecker {
     PsiElement parent = aClass.getParent();
     boolean checkSiblings;
     if (parent instanceof PsiClass psiClass && !PsiUtil.isLocalOrAnonymousClass(psiClass) && !PsiUtil.isLocalOrAnonymousClass(aClass)) {
-      // optimization: instead of iterating PsiClass children manually, we can get them all from caches
-      PsiClass innerClass = psiClass.findInnerClassByName(name, false);
-      if (innerClass != null && innerClass != aClass) {
-        if (innerClass.getTextOffset() > aClass.getTextOffset()) {
-          // report duplicate lower in text
-          PsiClass c = innerClass;
-          innerClass = aClass;
-          aClass = c;
-        }
-        myVisitor.report(JavaErrorKinds.CLASS_DUPLICATE.create(aClass, innerClass));
+      var duplicates = ContainerUtil.filter(psiClass.getInnerClasses(), c -> Objects.equals(c.getName(), name));
+      var duplicatesWithoutMe = ContainerUtil.filter(duplicates, c -> c != aClass);
+      if (!duplicatesWithoutMe.isEmpty()) {
+        myVisitor.report(JavaErrorKinds.CLASS_DUPLICATE.create(aClass, duplicatesWithoutMe.get(0)));
         return;
       }
       checkSiblings = false; // there still might be duplicates in parents
@@ -197,8 +192,13 @@ final class ClassChecker {
       parent = element;
 
       if (element instanceof PsiDeclarationStatement) element = PsiTreeUtil.getChildOfType(element, PsiClass.class);
+
+      if (myVisitor.isApplicable(JavaFeature.IMPLICIT_CLASS_NAME_OUT_OF_SCOPE) &&
+          element instanceof PsiImplicitClass) return;
+
       if (element instanceof PsiClass psiClass && name.equals(psiClass.getName())) {
         myVisitor.report(JavaErrorKinds.CLASS_DUPLICATE.create(aClass, psiClass));
+        return;
       }
     }
   }
@@ -399,11 +399,27 @@ final class ClassChecker {
       myVisitor.report(JavaErrorKinds.CLASS_IMPLICIT_INVALID_FILE_NAME.create(file, implicitClass));
       return;
     }
-    PsiMethod[] methods = implicitClass.getMethods();
-    boolean hasMainMethod = ContainerUtil.exists(methods, method -> "main".equals(method.getName()) && PsiMethodUtil.isMainMethod(method));
+    PsiMethod[] methods = implicitClass.findMethodsByName("main", false);
+    boolean hasMainMethod = ContainerUtil.exists(methods, method -> PsiMethodUtil.isMainMethod(method));
     if (!hasMainMethod) {
+      //don't show errors if there is a package, this package will be highlighted
+      if (file.getPackageStatement() != null) return;
+      //don't show errors if the file contains broken {}
+      if(hasErrorElementWithBraces(file)) return;
       myVisitor.report(JavaErrorKinds.CLASS_IMPLICIT_NO_MAIN_METHOD.create(file, implicitClass));
     }
+  }
+
+  private static boolean hasErrorElementWithBraces(@NotNull PsiElement parentElement) {
+    Ref<Boolean> result = new Ref<>(false);
+    PsiWalkingState.processAll(parentElement, el -> {
+      if (el instanceof PsiErrorElement element &&
+          (element.getText().contains("}") || element.getText().contains("{"))) {
+        result.set(true);
+        return false;
+      } else return true;
+    });
+    return result.get();
   }
 
   void checkImplicitClassMember(@NotNull PsiMember member) {
@@ -448,7 +464,9 @@ final class ClassChecker {
   }
 
   void checkPackageNotAllowedInImplicitClass(@NotNull PsiPackageStatement statement) {
-    if (myVisitor.isApplicable(JavaFeature.IMPLICIT_CLASSES) && JavaImplicitClassUtil.isFileWithImplicitClass(myVisitor.file())) {
+    if (myVisitor.isApplicable(JavaFeature.IMPLICIT_CLASSES) &&
+        JavaImplicitClassUtil.isFileWithImplicitClass(myVisitor.file()) &&
+        !hasErrorElementWithBraces(myVisitor.file())) {
       myVisitor.report(JavaErrorKinds.CLASS_IMPLICIT_PACKAGE.create(statement));
     }
   }
@@ -621,12 +639,8 @@ final class ClassChecker {
     myVisitor.report(error.create(ref, aClass));
   }
 
-  void checkValueClassExtends(@NotNull PsiClass superClass,
-                              @NotNull PsiClass psiClass,
-                              @NotNull PsiJavaCodeReferenceElement ref) {
-    if (!(!psiClass.isValueClass() ||
-          superClass.isValueClass() ||
-          CommonClassNames.JAVA_LANG_OBJECT.equals(superClass.getQualifiedName()))) {
+  void checkValueClassExtends(@NotNull PsiClass superClass, @NotNull PsiClass psiClass, @NotNull PsiJavaCodeReferenceElement ref) {
+    if (psiClass.isValueClass() && !superClass.isValueClass() && !CommonClassNames.JAVA_LANG_OBJECT.equals(superClass.getQualifiedName())) {
       myVisitor.report(JavaErrorKinds.VALUE_CLASS_EXTENDS_NON_ABSTRACT.create(ref));
     }
   }

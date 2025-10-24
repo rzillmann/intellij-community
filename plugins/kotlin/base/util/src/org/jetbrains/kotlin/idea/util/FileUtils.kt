@@ -4,10 +4,15 @@ package org.jetbrains.kotlin.idea.util
 
 import com.intellij.ide.highlighter.JavaClassFileType
 import com.intellij.ide.highlighter.JavaFileType
+import com.intellij.injected.editor.VirtualFileWindow
 import com.intellij.openapi.fileTypes.FileTypeManager
+import com.intellij.openapi.project.Project
+import com.intellij.openapi.roots.ProjectRootManager
 import com.intellij.openapi.vfs.VfsUtilCore
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.vfs.VirtualFileVisitor
+import com.intellij.testFramework.LightVirtualFileBase
+import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.kotlin.idea.KotlinFileType
 
 fun VirtualFile.isKotlinFileType(): Boolean {
@@ -26,6 +31,16 @@ fun VirtualFile.isJavaFileType(): Boolean {
             FileTypeManager.getInstance().getFileTypeByFileName(nameSequence) == JavaFileType.INSTANCE
 }
 
+fun VirtualFile.getOriginalOrDelegateFileOrSelf(): VirtualFile =
+    getOriginalOrDelegateFile() ?: this
+
+fun VirtualFile.getOriginalOrDelegateFile(): VirtualFile? =
+    when (this) {
+        is VirtualFileWindow -> delegate.getOriginalOrDelegateFile()
+        is LightVirtualFileBase -> originalFile
+        else -> this
+    }
+
 fun getAllFilesRecursively(filesOrDirs: Array<VirtualFile>): Collection<VirtualFile> {
     val result = ArrayList<VirtualFile>()
     for (file in filesOrDirs) {
@@ -37,4 +52,11 @@ fun getAllFilesRecursively(filesOrDirs: Array<VirtualFile>): Collection<VirtualF
         })
     }
     return result
+}
+
+@ApiStatus.Internal
+fun Project.isFileInRoots(file: VirtualFile?): Boolean {
+    if (file == null) return false
+    val index = ProjectRootManager.getInstance(this).fileIndex
+    return index.isInSourceContent(file) || index.isInLibraryClasses(file) || index.isInLibrarySource(file)
 }

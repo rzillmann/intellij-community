@@ -3,6 +3,7 @@ package org.jetbrains.plugins.gradle.frameworkSupport
 
 import org.gradle.util.GradleVersion
 import org.jetbrains.plugins.gradle.frameworkSupport.buildscript.GradleBuildScriptBuilder
+import org.jetbrains.plugins.gradle.tooling.VersionMatcherRule
 import org.junit.jupiter.api.Assertions
 
 abstract class GradleBuildScriptBuilderTestCase {
@@ -11,15 +12,23 @@ abstract class GradleBuildScriptBuilderTestCase {
     vararg cases: Pair<GradleVersion, Pair<String, String>>,
     configure: GradleBuildScriptBuilder<*>.() -> Unit
   ) {
-    for ((gradleVersion, expectedScripts) in cases) {
+    val casesForSupportedGradleVersions = VersionMatcherRule.SUPPORTED_GRADLE_VERSIONS
+      .mapNotNull {
+        val gradleVersion = GradleVersion.version(it)
+        cases.asSequence()
+          .filter { (version, _) -> version <= gradleVersion }
+          .maxByOrNull { (version, _) -> version }
+          ?.let { (_, case) -> gradleVersion to case }
+      }
+    for ((gradleVersion, expectedScripts) in casesForSupportedGradleVersions + cases) {
       val (expectedGroovyScript, expectedKotlinScript) = expectedScripts
       val actualGroovyScript = GradleBuildScriptBuilder.create(gradleVersion, useKotlinDsl = false).apply(configure).generate()
       val actualKotlinScript = GradleBuildScriptBuilder.create(gradleVersion, useKotlinDsl = true).apply(configure).generate()
       Assertions.assertEquals(expectedGroovyScript, actualGroovyScript) {
-        "Groovy scripts should be equal"
+        "$gradleVersion: Groovy scripts should be equal"
       }
       Assertions.assertEquals(expectedKotlinScript, actualKotlinScript) {
-        "Kotlin scripts should be equal"
+        "$gradleVersion: Kotlin scripts should be equal"
       }
     }
   }
@@ -29,6 +38,7 @@ abstract class GradleBuildScriptBuilderTestCase {
     kotlinScript: String,
     configure: GradleBuildScriptBuilder<*>.() -> Unit
   ) {
-    assertBuildScript(GradleVersion.current() to (groovyScript to kotlinScript), configure = configure)
+    val gradleVersion = GradleVersion.version(VersionMatcherRule.SUPPORTED_GRADLE_VERSIONS.first())
+    assertBuildScript(gradleVersion to (groovyScript to kotlinScript), configure = configure)
   }
 }

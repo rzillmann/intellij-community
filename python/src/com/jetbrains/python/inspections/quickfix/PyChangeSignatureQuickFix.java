@@ -7,7 +7,6 @@ import com.intellij.codeInspection.LocalQuickFixOnPsiElement;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.DialogWrapper;
-import com.intellij.openapi.util.Conditions;
 import com.intellij.openapi.util.Key;
 import com.intellij.openapi.util.Pair;
 import com.intellij.openapi.util.text.StringUtil;
@@ -145,7 +144,7 @@ public final class PyChangeSignatureQuickFix extends LocalQuickFixOnPsiElement {
   }
 
   @Override
-  public void invoke(@NotNull Project project, @NotNull PsiFile file, @NotNull PsiElement startElement, @NotNull PsiElement endElement) {
+  public void invoke(@NotNull Project project, @NotNull PsiFile psiFile, @NotNull PsiElement startElement, @NotNull PsiElement endElement) {
     final PyFunction function = getFunction();
     final PyMethodDescriptor descriptor = createMethodDescriptor(function);
 
@@ -190,8 +189,8 @@ public final class PyChangeSignatureQuickFix extends LocalQuickFixOnPsiElement {
     }
     if (suggestions.isEmpty()) {
       PyType type = context.getType(argumentValue);
-      if (type instanceof PyUnionType) {
-        type = ContainerUtil.find(((PyUnionType)type).getMembers(), Conditions.instanceOf(PyClassType.class));
+      if (type instanceof PyUnionType unionType) {
+        type = ContainerUtil.findInstance(unionType.getMembers(), PyClassType.class);
       }
       final String typeName = type != null && type.getName() != null ? type.getName() : "object";
       suggestions.addAll(NameSuggesterUtil.generateNamesByType(typeName));

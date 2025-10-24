@@ -3,6 +3,9 @@ package com.jetbrains.python.hatch.packaging
 
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.projectRoots.Sdk
+import com.intellij.python.hatch.HatchService
+import com.intellij.python.hatch.getHatchService
+import com.jetbrains.python.errorProcessing.PyResult
 import com.jetbrains.python.hatch.sdk.HatchSdkAdditionalData
 import com.jetbrains.python.hatch.sdk.isHatch
 import com.jetbrains.python.packaging.management.PythonPackageManager
@@ -15,6 +18,17 @@ internal class HatchPackageManager(project: Project, sdk: Sdk) : PipPythonPackag
            ?: error("SDK [${sdk.name}] has illegal state, " +
                     "additional data has to be ${HatchSdkAdditionalData::class.java.name}, " +
                     "but was ${sdk.sdkAdditionalData?.javaClass?.name}")
+  }
+
+  override suspend fun syncCommand(): PyResult<Unit> {
+    val hatchService = getHatchService().getOr { return it }
+    return hatchService.syncDependencies().mapSuccess { }
+  }
+
+  suspend fun getHatchService(): PyResult<HatchService> {
+    val data = getSdkAdditionalData()
+    val workingDirectory = data.hatchWorkingDirectory
+    return workingDirectory.getHatchService(hatchEnvironmentName = data.hatchEnvironmentName)
   }
 }
 

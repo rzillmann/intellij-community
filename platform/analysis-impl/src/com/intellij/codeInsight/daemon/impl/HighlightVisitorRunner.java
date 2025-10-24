@@ -7,35 +7,36 @@ import com.intellij.codeInsight.daemon.impl.analysis.HighlightInfoHolder;
 import com.intellij.codeInsight.highlighting.PassRunningAssert;
 import com.intellij.concurrency.JobLauncher;
 import com.intellij.lang.annotation.HighlightSeverity;
+import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.editor.colors.TextAttributesScheme;
-import com.intellij.openapi.progress.ProcessCanceledException;
 import com.intellij.openapi.progress.ProgressIndicatorProvider;
 import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.openapi.project.DumbService;
 import com.intellij.openapi.project.IndexNotReadyException;
 import com.intellij.openapi.project.Project;
-import com.intellij.openapi.util.TextRange;
 import com.intellij.psi.PsiElement;
 import com.intellij.psi.PsiFile;
-import com.intellij.util.ArrayUtil;
 import com.intellij.util.Consumer;
 import com.intellij.util.ExceptionUtil;
 import com.intellij.util.containers.ContainerUtil;
-import it.unimi.dsi.fastutil.longs.LongList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.*;
+import java.util.concurrent.CancellationException;
 import java.util.function.Supplier;
 
 class HighlightVisitorRunner {
-  private final @NotNull Supplier<? extends @NotNull HighlightVisitor @NotNull []> myHighlightVisitorProducer;
+  @NotNull private final PsiFile myPsiFile;
+  @Nullable private final TextAttributesScheme myScheme;
+  private final boolean myRunVisitors;
+  private final boolean myHighlightErrorElements;
 
   HighlightVisitorRunner(@NotNull PsiFile psiFile, @Nullable TextAttributesScheme scheme, boolean runVisitors, boolean highlightErrorElements) {
-    // "do not run visitors" here means "reduce the set of visitors down to DefaultHighlightVisitor", because it reports error elements
-    myHighlightVisitorProducer = runVisitors ?
-                                 () -> cloneAndFilterHighlightVisitors(psiFile, scheme) :
-                                 () -> new HighlightVisitor[]{new DefaultHighlightVisitor(psiFile.getProject(), highlightErrorElements, false)};
+    myPsiFile = psiFile;
+    myScheme = scheme;
+    myRunVisitors = runVisitors;
+    myHighlightErrorElements = highlightErrorElements;
   }
 
   private static final PassRunningAssert HIGHLIGHTING_PERFORMANCE_ASSERT =
@@ -44,12 +45,13 @@ class HighlightVisitorRunner {
     HIGHLIGHTING_PERFORMANCE_ASSERT.assertPassNotRunning();
   }
 
-  private static @NotNull HighlightVisitor @NotNull [] cloneAndFilterHighlightVisitors(@NotNull PsiFile psiFile, @Nullable TextAttributesScheme colorsScheme) {
+  private @NotNull HighlightVisitor @NotNull [] cloneAndFilterHighlightVisitors(@NotNull PsiFile psiFile, @Nullable TextAttributesScheme colorsScheme) {
     Project project = psiFile.getProject();
-    HighlightVisitor[] visitors = HighlightVisitor.EP_HIGHLIGHT_VISITOR.getExtensions(project);
+    // "!runVisitors" here means "reduce the set of visitors down to DefaultHighlightVisitor", because we should report error elements
+    List<HighlightVisitor> visitors = myRunVisitors ? HighlightVisitor.EP_HIGHLIGHT_VISITOR.getExtensionList(project) : List.of();
+    List<HighlightVisitor> clones = new ArrayList<>(visitors.size()+1);
     DumbService dumbService = DumbService.getInstance(project);
-    int o = 0;
-    HighlightVisitor[] clones = new HighlightVisitor[visitors.length];
+    boolean defaultHighlightVisitorAdded = false; // or a visitor superseding DefaultHighlightVisitor
     for (HighlightVisitor visitor : visitors) {
       if (!dumbService.isUsableInCurrentContext(visitor)) {
         continue;
@@ -67,25 +69,19 @@ class HighlightVisitorRunner {
         // or we can just clone the visitor, which is not expensive, given that all overrides are just a single new() call.
         cloned = visitor.clone();
         assert cloned.getClass() == visitor.getClass() : visitor.getClass()+".clone() must return a copy of "+visitor.getClass()+"; but got: "+cloned+" ("+cloned.getClass()+")";
-        if (cloned.supersedesDefaultHighlighter()) {
-          int index = ContainerUtil.indexOf(clones, e -> e instanceof DefaultHighlightVisitor);
-          if (index >= 0) {
-            clones[index] = cloned;
-            continue;
-          }
-        }
-        clones[o++] = cloned;
+        assert !(cloned instanceof DefaultHighlightVisitor) : "DefaultHighlightVisitor must not be registered as a regular <highlightVisitor>; instead, this method ensures it (or some other visitor superseding DefaultHighlightVisitor) is always in the list";
+        defaultHighlightVisitorAdded |= cloned.supersedesDefaultHighlighter();
+        clones.add(cloned);
       }
     }
-    if (o == 0) {
-      GeneralHighlightingPass.LOG.error("No visitors registered. all visitors:" + Arrays.toString(visitors));
+    if (!defaultHighlightVisitorAdded && myHighlightErrorElements) {
+      clones.add(new DefaultHighlightVisitor(project));
     }
-    return ArrayUtil.realloc(clones, o, HighlightVisitor.ARRAY_FACTORY);
+    return clones.toArray(HighlightVisitor.EMPTY_ARRAY);
   }
 
   void createHighlightVisitorsFor(@NotNull Consumer<? super HighlightVisitor[]> consumer) {
-    // first ever queried HighlightVisitor can be used as is, but all further HighlightVisitors queried while the previous HighlightVisitor haven't finished, should be cloned to avoid reentrancy issues
-    HighlightVisitor[] filtered = myHighlightVisitorProducer.get();
+    HighlightVisitor[] filtered = cloneAndFilterHighlightVisitors(myPsiFile, myScheme);
     consumer.consume(filtered);
   }
 
@@ -93,11 +89,8 @@ class HighlightVisitorRunner {
                              @NotNull Set<PsiElement> skipParentsSet,
                              @NotNull HighlightInfoHolder holder) {}
   boolean runVisitors(@NotNull PsiFile psiFile,
-                      @NotNull TextRange myRestrictRange,
                       @NotNull List<? extends PsiElement> elements1,
-                      @NotNull LongList ranges1,
                       @NotNull List<? extends PsiElement> elements2,
-                      @NotNull LongList ranges2,
                       HighlightVisitor @NotNull [] visitors,
                       boolean forceHighlightParents,
                       int chunkSize,
@@ -105,10 +98,8 @@ class HighlightVisitorRunner {
                       @NotNull Supplier<? extends HighlightInfoHolder> infoHolderProducer,
                       @NotNull ResultSink resultSink) {
     List<VisitorInfo> visitorInfos = ContainerUtil.map(visitors, v -> new VisitorInfo(v, new HashSet<>(), infoHolderProducer.get()));
-    // first, run all visitors in parallel on all visible elements, then run all visitors in parallel on all invisible elements
-    List<PsiElement> elements = ContainerUtil.concat(elements1, elements2);
     if (GeneralHighlightingPass.LOG.isDebugEnabled()) {
-      GeneralHighlightingPass.LOG.debug("HighlightVisitorRunner: visitors: " + Arrays.toString(visitors)+"; myRestrictRange="+myRestrictRange+"; psiFile="+psiFile);
+      GeneralHighlightingPass.LOG.debug("HighlightVisitorRunner: visitors: " + Arrays.toString(visitors)+"; psiFile="+psiFile);
     }
     boolean res =
       JobLauncher.getInstance().invokeConcurrentlyUnderProgress(visitorInfos, ProgressIndicatorProvider.getGlobalProgressIndicator(), visitorInfo -> {
@@ -121,7 +112,8 @@ class HighlightVisitorRunner {
           HighlightInfoHolder holder = visitorInfo.holder();
           boolean result = visitor.analyze(psiFile, myUpdateAll, holder, () -> {
             reportOutOfRunVisitorInfos(0, ANALYZE_BEFORE_RUN_VISITOR_FAKE_PSI_ELEMENT, holder, visitor, resultSink);
-            runVisitor(psiFile, myRestrictRange, elements, chunkSize, visitorInfo.skipParentsSet(), holder, forceHighlightParents, visitor, resultSink);
+            runVisitor(psiFile, elements1, chunkSize, visitorInfo.skipParentsSet(), holder, forceHighlightParents, visitor, resultSink);
+            runVisitor(psiFile, elements2, chunkSize, visitorInfo.skipParentsSet(), holder, forceHighlightParents, visitor, resultSink);
             sizeAfterRunVisitor[0] = holder.size();
           });
           reportOutOfRunVisitorInfos(sizeAfterRunVisitor[0], ANALYZE_AFTER_RUN_VISITOR_FAKE_PSI_ELEMENT, holder, visitor, resultSink);
@@ -130,6 +122,9 @@ class HighlightVisitorRunner {
                                               (result ? "" : " returned false") + "; holder: "+holder.size()+" results"+"; "+Thread.currentThread());
           }
           return result;
+        }
+        catch (CancellationException e) {
+          throw e;
         }
         catch (Exception e) {
           if (GeneralHighlightingPass.LOG.isDebugEnabled()) {
@@ -172,7 +167,6 @@ class HighlightVisitorRunner {
   }
 
   private static void runVisitor(@NotNull PsiFile psiFile,
-                                 @NotNull TextRange myRestrictRange,
                                  @NotNull List<? extends PsiElement> elements,
                                  int chunkSize,
                                  @NotNull Set<? super PsiElement> skipParentsSet,
@@ -200,10 +194,10 @@ class HighlightVisitorRunner {
         catch (IndexNotReadyException e) {
           break;
         }
-        catch (ProcessCanceledException e) {
-          throw e;
-        }
         catch (Exception e) {
+          if (Logger.shouldRethrow(e)) {
+            throw e;
+          }
           if (!failed) {
             GeneralHighlightingPass.LOG.error("In file: " + psiFile.getViewProvider().getVirtualFile(), e);
           }
@@ -212,13 +206,11 @@ class HighlightVisitorRunner {
         for (int j = oldSize; j < holder.size(); j++) {
           HighlightInfo info = holder.get(j);
 
-          if (!myRestrictRange.contains(info)) continue;
           boolean isError = info.getSeverity() == HighlightSeverity.ERROR;
           if (isError) {
             if (!forceHighlightParents && parent != null) {
               skipParentsSet.add(parent);
             }
-            //myErrorFound = true;
           }
           info.toolId = toolId;
           info.setGroup(HighlightInfoUpdaterImpl.MANAGED_HIGHLIGHT_INFO_GROUP);
@@ -226,7 +218,9 @@ class HighlightVisitorRunner {
         }
       }
       resultSink.accept(toolId, psiElement, infos);
-      infos.clear();
+      if (!infos.isEmpty()) {
+        infos.clear();
+      }
       if (i == nextLimit) {
         //advanceProgress(chunkSize);
         nextLimit = i + chunkSize;

@@ -45,6 +45,8 @@ class K2DataFlowInspectionTest : AbstractK2InspectionTest() {
     fun testComparisonNoValues() = doTest(false)
     fun testConstantDivisionByZero() = doTest()
     fun testConstantWithDifferentType() = doTest()
+    fun testContextParameter() = doTest()
+    fun testContractForNumber() = doTest()
     fun testCustomObjectComparisonK2() = doTest()
     fun testDestructuringInLoop() = doTest()
     fun testDoubleComparison() = doTest()
@@ -54,6 +56,7 @@ class K2DataFlowInspectionTest : AbstractK2InspectionTest() {
     fun testExtensionImplicitThis() = doTest()
     fun testFieldAliasing() = doTest()
     fun testForLoop() = doTest()
+    fun testGenericAgainstNumber() = doTest()
     fun testInRange() = doTest()
     fun testInIterable() = doTest()
     fun testIncompleteCode1K2() = doTest()
@@ -72,19 +75,22 @@ class K2DataFlowInspectionTest : AbstractK2InspectionTest() {
     }
     fun testJavaMethods() = doTest()
     fun testJavaConstant() = doTest()
-    fun testJavaType() = doTest()
+    fun testJavaTypeK2() = doTest()
+    fun testJavaClassGetSimpleName() = doTest()
     fun testLambda() = doTest()
     fun testLanguageConstructs() = doTest()
     fun testLastIndex() = doTest()
     fun testLetNonLocalReturn() = doTest()
     fun testList() = doTest()
     fun testListApply() = doTest()
+    fun testLocalFunctionDeconstruction() = doTest()
     fun testMapEmpty() = doTest()
     fun testMath() = doTest()
     fun testMembers() = doTest()
     fun testNestedLoopLabel() = doTest()
     fun testNestedThis() = doTest()
     fun testNothingType() = doTest()
+    fun testNullableBooleanWrapper() = doTest()
     fun testPlatformType() {
         // KTIJ-22430
         myFixture.addClass("""
@@ -127,6 +133,7 @@ class K2DataFlowInspectionTest : AbstractK2InspectionTest() {
     fun testWhenIsObject() = doTest()
     fun testWhenGuarded() = doTest()
     fun testWhenGuardedElse() = doTest()
+    fun testWhenImpliesSmartCast() = doTest()
     fun testWhileLoop() = doTest()
 
     fun doTest(warnOnConstantRefs: Boolean = true) {

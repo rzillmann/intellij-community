@@ -1,3 +1,4 @@
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.compose.ide.plugin.k2.highlighting
 
 import com.intellij.codeInsight.daemon.impl.HighlightInfoType
@@ -34,7 +35,9 @@ internal class K2ComposeFunctionCallHighlightingTestCase: ComposableFunctionCall
         "Call was not found!"
       }
 
-      ext.highlightCall(element, call)
+      with(ext) {
+        highlightCall(element, call)
+      }
     }
   }
 

@@ -41,7 +41,9 @@ import com.intellij.platform.testFramework.core.FileComparisonFailedError;
 import com.intellij.psi.PsiDocumentManager;
 import com.intellij.psi.PsiFile;
 import com.intellij.psi.impl.source.PostprocessReformattingAspect;
+import com.intellij.psi.impl.source.tree.injected.InjectedLanguageEditorUtil;
 import com.intellij.psi.impl.source.tree.injected.InjectedLanguageUtil;
+import com.intellij.testFramework.common.EditorCaretTestUtil;
 import com.intellij.util.ThrowableRunnable;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
@@ -67,7 +69,7 @@ import java.util.*;
  */
 public abstract class LightPlatformCodeInsightTestCase extends LightPlatformTestCase implements TestIndexingModeSupporter {
   private Editor myEditor;
-  private PsiFile myFile;
+  private PsiFile myPsiFile;
   private VirtualFile myVFile;
   private TestIndexingModeSupporter.IndexingMode myIndexingMode = IndexingMode.SMART;
   private IndexingMode.ShutdownToken indexingModeShutdownToken;
@@ -156,12 +158,13 @@ public abstract class LightPlatformCodeInsightTestCase extends LightPlatformTest
    * @param checkCaret if true, it will be verified that file contains at least one caret or selection marker
    */
   protected @NotNull Document configureFromFileText(@NonNls @NotNull String fileName,
-                                           @NonNls @NotNull String fileText,
-                                           boolean checkCaret) {
+                                                    @NonNls @NotNull String fileText,
+                                                    boolean checkCaret) {
     return WriteCommandAction.writeCommandAction(null).compute(() -> {
       Document fakeDocument = new DocumentImpl(fileText);
 
-      EditorTestUtil.CaretAndSelectionState caretsState = EditorTestUtil.extractCaretAndSelectionMarkers(fakeDocument);
+      EditorCaretTestUtil.CaretAndSelectionState
+        caretsState = EditorTestUtil.extractCaretAndSelectionMarkers(fakeDocument);
       if (checkCaret) {
         assertTrue("No caret specified in " + fileName, caretsState.hasExplicitCaret());
       }
@@ -184,7 +187,7 @@ public abstract class LightPlatformCodeInsightTestCase extends LightPlatformTest
   protected @NotNull Editor configureFromFileTextWithoutPSI(@NonNls @NotNull String fileText) {
     return WriteCommandAction.writeCommandAction(getProject()).compute(() -> {
       Document fakeDocument = EditorFactory.getInstance().createDocument(fileText);
-      EditorTestUtil.CaretAndSelectionState caretsState = EditorTestUtil.extractCaretAndSelectionMarkers(fakeDocument);
+      EditorCaretTestUtil.CaretAndSelectionState caretsState = EditorTestUtil.extractCaretAndSelectionMarkers(fakeDocument);
 
       String newFileText = fakeDocument.getText();
       Document document = EditorFactory.getInstance().createDocument(newFileText);
@@ -214,7 +217,7 @@ public abstract class LightPlatformCodeInsightTestCase extends LightPlatformTest
 
     myEditor = createSaveAndOpenFile(relativePath, fileText);
     myVFile = FileDocumentManager.getInstance().getFile(getEditor().getDocument());
-    myFile = getPsiManager().findFile(myVFile);
+    myPsiFile = getPsiManager().findFile(myVFile);
     getIndexingMode().ensureIndexingStatus(getProject());
     return getEditor().getDocument();
   }
@@ -232,8 +235,8 @@ public abstract class LightPlatformCodeInsightTestCase extends LightPlatformTest
 
   protected void setupEditorForInjectedLanguage() {
     if (getEditor() != null) {
-      Editor hostEditor = getEditor() instanceof EditorWindow ? ((EditorWindow)getEditor()).getDelegate() : getEditor();
-      PsiFile hostFile = myFile == null ? null : InjectedLanguageManager.getInstance(getProject()).getTopLevelFile(myFile);
+      Editor hostEditor = InjectedLanguageEditorUtil.getTopLevelEditor(getEditor());
+      PsiFile hostFile = myPsiFile == null ? null : InjectedLanguageManager.getInstance(getProject()).getTopLevelFile(myPsiFile);
       Ref<EditorWindow> editorWindowRef = new Ref<>();
       hostEditor.getCaretModel().runForEachCaret(caret -> {
         Editor editor = InjectedLanguageUtil.getEditorForInjectedLanguageNoCommit(hostEditor, hostFile);
@@ -243,8 +246,8 @@ public abstract class LightPlatformCodeInsightTestCase extends LightPlatformTest
       });
       if (!editorWindowRef.isNull()) {
         myEditor = editorWindowRef.get();
-        myFile = editorWindowRef.get().getInjectedFile();
-        myVFile = myFile.getVirtualFile();
+        myPsiFile = editorWindowRef.get().getInjectedFile();
+        myVFile = myPsiFile.getVirtualFile();
       }
     }
   }
@@ -324,7 +327,7 @@ public abstract class LightPlatformCodeInsightTestCase extends LightPlatformTest
       }
       deleteVFile();
       myEditor = null;
-      myFile = null;
+      myPsiFile = null;
       myVFile = null;
     }
     catch (Throwable e) {
@@ -423,13 +426,13 @@ public abstract class LightPlatformCodeInsightTestCase extends LightPlatformTest
         ((DocumentImpl)document).stripTrailingSpaces(getProject());
       }
 
-      EditorTestUtil.CaretAndSelectionState carets = EditorTestUtil.extractCaretAndSelectionMarkers(document);
+      EditorCaretTestUtil.CaretAndSelectionState carets = EditorTestUtil.extractCaretAndSelectionMarkers(document);
 
       PostprocessReformattingAspect.getInstance(getProject()).doPostponedFormatting();
       String newFileText = document.getText();
 
       PsiDocumentManager.getInstance(getProject()).commitAllDocuments();
-      String fileText1 = myFile.getText();
+      String fileText1 = myPsiFile.getText();
       String failMessage = getMessage("Text mismatch", message);
       if (filePath != null && !newFileText.equals(fileText1)) {
         throw new FileComparisonFailedError(failMessage, newFileText, fileText1, filePath);
@@ -452,7 +455,7 @@ public abstract class LightPlatformCodeInsightTestCase extends LightPlatformTest
         ((DocumentImpl)fakeDocument).stripTrailingSpaces(getProject());
       }
 
-      EditorTestUtil.CaretAndSelectionState carets = EditorTestUtil.extractCaretAndSelectionMarkers(fakeDocument);
+      EditorCaretTestUtil.CaretAndSelectionState carets = EditorTestUtil.extractCaretAndSelectionMarkers(fakeDocument);
 
       String newFileText = fakeDocument.getText();
       String fileText1 = editor.getDocument().getText();
@@ -482,7 +485,7 @@ public abstract class LightPlatformCodeInsightTestCase extends LightPlatformTest
    * @return the file that is opened in the editor used in the test
    */
   protected PsiFile getFile() {
-    return myFile;
+    return myPsiFile;
   }
 
   protected VirtualFile getVFile() {
@@ -493,9 +496,9 @@ public abstract class LightPlatformCodeInsightTestCase extends LightPlatformTest
     PsiDocumentManager.getInstance(getProject()).commitAllDocuments();
     if (getEditor() instanceof EditorWindow) {
       Document document = ((DocumentWindow)getEditor().getDocument()).getDelegate();
-      myFile = PsiDocumentManager.getInstance(getProject()).getPsiFile(document);
+      myPsiFile = PsiDocumentManager.getInstance(getProject()).getPsiFile(document);
       myEditor = ((EditorWindow)getEditor()).getDelegate();
-      myVFile = myFile.getVirtualFile();
+      myVFile = myPsiFile.getVirtualFile();
     }
   }
 
@@ -531,6 +534,9 @@ public abstract class LightPlatformCodeInsightTestCase extends LightPlatformTest
 
   protected void type(char c) {
     type(c, getEditor(), getProject());
+  }
+  protected void escape() {
+    executeAction(IdeActions.ACTION_EDITOR_ESCAPE, getEditor(), getProject());
   }
 
   public static void type(char c, @NotNull Editor editor, @Nullable Project project) {
@@ -737,11 +743,11 @@ public abstract class LightPlatformCodeInsightTestCase extends LightPlatformTest
       sink.set(CommonDataKeys.PROJECT, getProject());
       sink.set(CommonDataKeys.PSI_FILE, getFile());
       sink.lazy(CommonDataKeys.PSI_ELEMENT, () -> {
-        PsiFile file = getFile();
-        if (file == null) return null;
+        PsiFile psiFile = getFile();
+        if (psiFile == null) return null;
         Editor editor = getEditor();
         if (editor == null) return null;
-        return file.findElementAt(editor.getCaretModel().getOffset());
+        return psiFile.findElementAt(editor.getCaretModel().getOffset());
       });
     });
   }
@@ -859,8 +865,8 @@ public abstract class LightPlatformCodeInsightTestCase extends LightPlatformTest
     myEditor = editor;
   }
 
-  protected void setFile(@NotNull PsiFile file) {
-    myFile = file;
+  protected void setFile(@NotNull PsiFile psiFile) {
+    myPsiFile = psiFile;
   }
 
   protected void setVFile(@NotNull VirtualFile virtualFile) {

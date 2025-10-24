@@ -30,6 +30,16 @@ public class KotlinReferenceTypeHintsProviderTestGenerated extends AbstractKotli
         KotlinTestUtils.runTest(this::doTest, this, testDataFilePath);
     }
 
+    @TestMetadata("AnonymousAnyCollectionElement.kt")
+    public void testAnonymousAnyCollectionElement() throws Exception {
+        runTest("testData/codeInsight/hints/types/AnonymousAnyCollectionElement.kt");
+    }
+
+    @TestMetadata("AnonymousCollectionElement.kt")
+    public void testAnonymousCollectionElement() throws Exception {
+        runTest("testData/codeInsight/hints/types/AnonymousCollectionElement.kt");
+    }
+
     @TestMetadata("AnonymousObject.kt")
     public void testAnonymousObject() throws Exception {
         runTest("testData/codeInsight/hints/types/AnonymousObject.kt");
@@ -125,6 +135,16 @@ public class KotlinReferenceTypeHintsProviderTestGenerated extends AbstractKotli
         runTest("testData/codeInsight/hints/types/FlexibleType.kt");
     }
 
+    @TestMetadata("FlexibleTypeWithRanges.kt")
+    public void testFlexibleTypeWithRanges() throws Exception {
+        runTest("testData/codeInsight/hints/types/FlexibleTypeWithRanges.kt");
+    }
+
+    @TestMetadata("FlexibleTypeWithRangesArrayElement.kt")
+    public void testFlexibleTypeWithRangesArrayElement() throws Exception {
+        runTest("testData/codeInsight/hints/types/FlexibleTypeWithRangesArrayElement.kt");
+    }
+
     @TestMetadata("FunctionalType.kt")
     public void testFunctionalType() throws Exception {
         runTest("testData/codeInsight/hints/types/FunctionalType.kt");
@@ -185,6 +205,11 @@ public class KotlinReferenceTypeHintsProviderTestGenerated extends AbstractKotli
         runTest("testData/codeInsight/hints/types/NestedClassWithoutImport.kt");
     }
 
+    @TestMetadata("ParameterNamesInFunctionTypes.kt")
+    public void testParameterNamesInFunctionTypes() throws Exception {
+        runTest("testData/codeInsight/hints/types/ParameterNamesInFunctionTypes.kt");
+    }
+
     @TestMetadata("ParameterType.kt")
     public void testParameterType() throws Exception {
         runTest("testData/codeInsight/hints/types/ParameterType.kt");
@@ -208,6 +233,11 @@ public class KotlinReferenceTypeHintsProviderTestGenerated extends AbstractKotli
     @TestMetadata("SAMConstructor.kt")
     public void testSAMConstructor() throws Exception {
         runTest("testData/codeInsight/hints/types/SAMConstructor.kt");
+    }
+
+    @TestMetadata("SmartCast.kt")
+    public void testSmartCast() throws Exception {
+        runTest("testData/codeInsight/hints/types/SmartCast.kt");
     }
 
     @TestMetadata("SuspendFunctionalType.kt")
