@@ -2,23 +2,29 @@ import socket
 import sys
 from collections.abc import Iterable
 from ssl import SSLContext, SSLSocket
-from typing import Any, ClassVar, Literal, SupportsIndex
+from typing import Any, ClassVar, Final, Literal, SupportsIndex
 
 from gunicorn.glogging import Logger as GLogger
 
 from .config import Config
 
+PLATFORM: Final[str]
+
 class BaseSocket:
+    sock: socket.socket
+
     def __init__(self, address: str, conf: Config, log: GLogger, fd: SupportsIndex | None = None) -> None: ...
     def __getattr__(self, name: str) -> Any: ...
     def set_options(self, sock: socket.socket, bound: bool = False) -> socket.socket: ...
     def bind(self, sock: socket.socket) -> None: ...
     def close(self) -> None: ...
+    def get_backlog(self) -> int: ...
 
 class TCPSocket(BaseSocket):
     FAMILY: ClassVar[Literal[socket.AddressFamily.AF_INET, socket.AddressFamily.AF_INET6]]
 
     def set_options(self, sock: socket.socket, bound: bool = False) -> socket.socket: ...
+    def get_backlog(self) -> int: ...
 
 class TCP6Socket(TCPSocket):
     FAMILY: ClassVar[Literal[socket.AddressFamily.AF_INET6]]

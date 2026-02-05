@@ -1,13 +1,12 @@
 // Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.idea.maven.wizards
 
-import com.intellij.ide.impl.runUnderModalProgressIfIsEdt
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.projectImport.ProjectOpenProcessor
 import javax.swing.Icon
 
-internal class MavenProjectOpenProcessor : ProjectOpenProcessor() {
+class MavenProjectOpenProcessor : ProjectOpenProcessor() {
   private val importProvider = MavenOpenProjectProvider()
 
   override val name: String

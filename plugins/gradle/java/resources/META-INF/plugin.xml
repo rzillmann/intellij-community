@@ -19,13 +19,13 @@
   <depends optional="true" config-file="gradle-groovy-integration.xml">org.intellij.groovy</depends>
   <depends optional="true" config-file="gradle-properties-integration.xml">com.intellij.properties</depends>
   <depends optional="true" config-file="gradle-toml-integration.xml">org.toml.lang</depends>
-  <depends optional="true" config-file="gradle-performance-plugin-support.xml">com.jetbrains.performancePlugin</depends>
 
   <content namespace="jetbrains">
     <module name="intellij.gradle.profiler"/>
     <module name="intellij.gradle.java.maven"/>
     <module name="intellij.gradle.analysis"/>
     <module name="intellij.gradle.dependencyUpdater"/>
+    <module name="intellij.gradle.java.performance"/>
   </content>
 
   <resource-bundle>messages.GradleInspectionBundle</resource-bundle>
@@ -72,6 +72,7 @@
                         serviceImplementation="org.jetbrains.plugins.gradle.GradleJavaIdeManager"/>
 
     <treeStructureProvider implementation="org.jetbrains.plugins.gradle.projectView.GradleTreeStructureProvider" order="last"/>
+    <attachSourcesProviderFilter implementation="org.jetbrains.plugins.gradle.editor.GradleAttachSourcesProviderFilter"/>
 
     <compileServer.plugin classpath="gradle-jps.jar"/>
     <postStartupActivity implementation="org.jetbrains.plugins.gradle.startup.GradleJvmStartupActivity"/>
@@ -86,7 +87,6 @@
         implementation="org.jetbrains.plugins.gradle.execution.build.GradleUpdateResourcesBuildContributor"/>
     <compiler.task execute="BEFORE" implementation="org.jetbrains.plugins.gradle.config.GradleResourceConfigurationGeneratorCompileTask"/>
 
-    <attachSourcesProvider implementation="org.jetbrains.plugins.gradle.action.GradleAttachSourcesProvider"/>
     <projectImportProvider implementation="org.jetbrains.plugins.gradle.service.project.wizard.JavaGradleProjectImportProvider"/>
 
     <defender.config implementation="org.jetbrains.plugins.gradle.util.GradleWindowsDefenderCheckerExt"/>
@@ -163,10 +163,21 @@
                      key="inspection.display.name.deprecated.configurations" groupKey="inspection.validity" groupBundle="messages.GradleInspectionBundle"
                      enabledByDefault="true" level="WARNING"
                      implementationClass="org.jetbrains.plugins.gradle.codeInspection.GradleDeprecatedConfigurationInspection"/>
-  </extensions>
 
-  <projectListeners>
-    <listener class="org.jetbrains.plugins.gradle.service.editor.GradleDownloadSourceEditorListener"
-              topic="com.intellij.openapi.fileEditor.FileEditorManagerListener"/>
-  </projectListeners>
+    <localInspection language="UAST" groupPath="Gradle" shortName="AvoidDependencyNamedArgumentsNotation"
+                     bundle="messages.GradleInspectionBundle"
+                     key="inspection.display.name.avoid.dependency.named.arguments.notation" groupKey="inspection.best.practises"
+                     groupBundle="messages.GradleInspectionBundle"
+                     enabledByDefault="true" level="WEAK WARNING"
+                     implementationClass="org.jetbrains.plugins.gradle.codeInspection.GradleAvoidDependencyNamedArgumentsNotationInspection"
+                     isInternal="true"/>
+
+    <localInspection language="UAST" groupPath="Gradle" shortName="RedundantKotlinStdLibDependency"
+                     bundle="messages.GradleInspectionBundle"
+                     key="inspection.display.name.redundant.kotlin.std.lib.dependency" groupKey="inspection.best.practises"
+                     groupBundle="messages.GradleInspectionBundle"
+                     enabledByDefault="true" level="WARNING"
+                     implementationClass="org.jetbrains.plugins.gradle.codeInspection.GradleRedundantKotlinStdLibInspection"
+                     isInternal="true"/>
+  </extensions>
 </idea-plugin>

@@ -1,10 +1,11 @@
-// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2026 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.xdebugger.impl.ui;
 
 import com.intellij.codeInsight.lookup.LookupManager;
 import com.intellij.codeInsight.lookup.impl.LookupImpl;
 import com.intellij.openapi.Disposable;
 import com.intellij.openapi.application.ApplicationManager;
+import com.intellij.openapi.application.WriteIntentReadAction;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.project.Project;
@@ -23,10 +24,25 @@ import com.intellij.xdebugger.XDebuggerManagerListener;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.Nullable;
 
-import javax.swing.*;
+import javax.swing.AbstractAction;
+import javax.swing.JComponent;
+import javax.swing.JLayeredPane;
+import javax.swing.JRootPane;
+import javax.swing.KeyStroke;
+import javax.swing.SwingUtilities;
 import javax.swing.plaf.basic.ComboPopup;
-import java.awt.*;
-import java.awt.event.*;
+import java.awt.AWTEvent;
+import java.awt.Component;
+import java.awt.Point;
+import java.awt.Rectangle;
+import java.awt.Toolkit;
+import java.awt.event.AWTEventListener;
+import java.awt.event.ActionEvent;
+import java.awt.event.ComponentAdapter;
+import java.awt.event.ComponentEvent;
+import java.awt.event.HierarchyListener;
+import java.awt.event.KeyEvent;
+import java.awt.event.MouseEvent;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -186,14 +202,19 @@ public abstract class InplaceEditor implements AWTEventListener {
     editorComponent.getActionMap().put("enterStroke", new AbstractAction() {
       @Override
       public void actionPerformed(ActionEvent e) {
-        doOKAction();
+        WriteIntentReadAction.run(() -> {
+          doOKAction();
+          }
+        );
       }
     });
     editorComponent.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT).put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "escapeStroke");
     editorComponent.getActionMap().put("escapeStroke", new AbstractAction() {
       @Override
       public void actionPerformed(ActionEvent e) {
-        cancelEditing();
+        WriteIntentReadAction.run(() -> {
+          cancelEditing();
+        });
       }
     });
     final Toolkit defaultToolkit = Toolkit.getDefaultToolkit();
@@ -270,7 +291,7 @@ public abstract class InplaceEditor implements AWTEventListener {
     }
 
     if (ComponentUtil.getWindow(sourceComponent) == ComponentUtil.getWindow(myInplaceEditorComponent) && id == MouseEvent.MOUSE_PRESSED) {
-      doOKAction();
+      WriteIntentReadAction.run(this::doOKAction);
     }
   }
 

@@ -17,11 +17,28 @@ import com.intellij.terminal.tests.reworked.util.TerminalTestUtil
 import com.intellij.testFramework.ExtensionTestUtil
 import com.intellij.testFramework.common.timeoutRunBlocking
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineStart.UNDISPATCHED
-import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.assertj.core.api.Assertions.assertThat
-import org.jetbrains.plugins.terminal.session.impl.*
+import org.jetbrains.plugins.terminal.session.impl.TerminalContentUpdatedEvent
+import org.jetbrains.plugins.terminal.session.impl.TerminalFilterResultInfo
+import org.jetbrains.plugins.terminal.session.impl.TerminalHighlightingInfo
+import org.jetbrains.plugins.terminal.session.impl.TerminalHyperlinkInfo
+import org.jetbrains.plugins.terminal.session.impl.TerminalHyperlinksHeartbeatEvent
+import org.jetbrains.plugins.terminal.session.impl.TerminalInlayInfo
+import org.jetbrains.plugins.terminal.session.impl.TerminalOutputEvent
 import org.jetbrains.plugins.terminal.view.TerminalOffset
 import org.jetbrains.plugins.terminal.view.TerminalOutputModel
 import org.jetbrains.plugins.terminal.view.impl.updateContent
@@ -299,6 +316,16 @@ internal class BackendTerminalHyperlinkHighlighterTest : BasePlatformTestCase() 
   @Test
   fun `many links, fast filter`() = withFixture {
     updateModel(0L, generateLines(0, 499, links = (0..499).toList()))
+    assertLinks(
+      *(0..499).map { link(at(it, "link${it}")) }.toTypedArray(),
+    )
+  }
+
+  @Test
+  fun `many small updates, fast filter`() = withFixture {
+    for (line in 0L..499L) {
+      updateModel(line, "$line: link$line")
+    }
     assertLinks(
       *(0..499).map { link(at(it, "link${it}")) }.toTypedArray(),
     )

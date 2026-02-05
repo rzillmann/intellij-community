@@ -12,6 +12,7 @@ import com.intellij.openapi.module.ModuleManager
 import com.intellij.openapi.project.ExternalStorageConfigurationManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.ex.ProjectManagerEx
+import com.intellij.openapi.project.ex.ProjectManagerEx.Companion.getInstanceEx
 import com.intellij.openapi.roots.libraries.LibraryTablesRegistrar
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.registry.Registry
@@ -36,14 +37,24 @@ import com.intellij.testFramework.OpenProjectTaskBuilder
 import com.intellij.testFramework.PlatformTestUtil
 import com.intellij.testFramework.rules.ProjectModelRule
 import com.intellij.testFramework.rules.TempDirectory
+import com.intellij.testFramework.useProject
 import com.intellij.workspaceModel.ide.getJpsProjectConfigLocation
-import com.intellij.workspaceModel.ide.impl.*
+import com.intellij.workspaceModel.ide.impl.WorkspaceModelCacheImpl
+import com.intellij.workspaceModel.ide.impl.WorkspaceModelCacheSerializer
+import com.intellij.workspaceModel.ide.impl.WorkspaceModelImpl
+import com.intellij.workspaceModel.ide.impl.createJpsProjectUrlRelativizer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import org.assertj.core.api.Assertions.assertThat
-import org.junit.*
-import org.junit.Assert.*
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
+import org.junit.Before
+import org.junit.ClassRule
+import org.junit.Rule
+import org.junit.Test
 import java.io.File
 import java.nio.file.Files
 import java.util.stream.Collectors
@@ -248,8 +259,9 @@ class DelayedProjectSynchronizerTest {
   }
 
   private fun getSerializerForProjectData(projectData: LoadedProjectData): EntityStorageSerializer {
-    val currentProject = PlatformTestUtil.loadAndOpenProject(projectData.projectDir.toPath(), disposableRule.disposable)
-    val relativizer = if (Registry.`is`("ide.workspace.model.store.relative.paths.in.cache", false)) createJpsProjectUrlRelativizer(currentProject) else null
+    val relativizer = getInstanceEx().openProject(projectData.projectDir.toPath(), OpenProjectTaskBuilder().build())!!.useProject { currentProject ->
+      if (Registry.`is`("ide.workspace.model.store.relative.paths.in.cache", false)) createJpsProjectUrlRelativizer(currentProject) else null
+    }
     return EntityStorageSerializerImpl(
       WorkspaceModelCacheSerializer.PluginAwareEntityTypesResolver,
       virtualFileManager,

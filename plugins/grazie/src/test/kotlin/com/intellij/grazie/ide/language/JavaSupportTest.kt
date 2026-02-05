@@ -1,4 +1,6 @@
 // Copyright 2000-2019 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license that can be found in the LICENSE file.
+@file:Suppress("NonAsciiCharacters")
+
 package com.intellij.grazie.ide.language
 
 import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer
@@ -13,13 +15,13 @@ import com.intellij.spellchecker.dictionary.Loader
 import com.intellij.spellchecker.settings.SpellCheckerSettings
 import com.intellij.testFramework.DumbModeTestUtils.runInDumbModeSynchronously
 import com.intellij.testFramework.LightProjectDescriptor
+import com.intellij.testFramework.PerformanceUnitTest
 import com.intellij.testFramework.fixtures.LightJavaCodeInsightFixtureTestCase
 import com.intellij.tools.ide.metrics.benchmark.Benchmark
 import java.util.function.Consumer
 
 
 class JavaSupportTest : GrazieTestBase() {
-  override val enableGrazieChecker: Boolean = true
 
   override fun getProjectDescriptor(): LightProjectDescriptor {
     return LightJavaCodeInsightFixtureTestCase.JAVA_LATEST
@@ -55,12 +57,14 @@ class JavaSupportTest : GrazieTestBase() {
     myFixture.checkResultByFile("ide/language/java/AccidentalMerge_after.java")
   }
 
+  @PerformanceUnitTest
   fun `test long comment performance`() {
     Benchmark.newBenchmark("highlighting") {
       runHighlightTestForFile("ide/language/java/LongCommentPerformance.java")
     }.setup { psiManager.dropPsiCaches() }.start()
   }
 
+  @PerformanceUnitTest
   fun `test performance with many line comments`() {
     val text = "// this is a single line comment\n".repeat(5000)
     myFixture.configureByText("a.java", text)
@@ -181,7 +185,6 @@ class JavaSupportTest : GrazieTestBase() {
     runHighlightTestForFile("ide/language/java/Trailing.java")
   }
 
-  @Suppress("MISSING_DEPENDENCY_SUPERCLASS_IN_TYPE_ARGUMENT")
   fun `test add capitalized word to dictionary`() {
     val isUseSingleDictionary = SpellCheckerSettings.getInstance(project).isUseSingleDictionaryToSave
     Disposer.register(testRootDisposable) {
@@ -209,6 +212,7 @@ class JavaSupportTest : GrazieTestBase() {
     myFixture.checkHighlighting()
   }
 
+  @PerformanceUnitTest
   fun `test performance on typos by word-level spellchecker`() {
     // German is not enabled on purpose to disable suggestion-based typo detection
     Benchmark.newBenchmark("word-level spellchecking performance") {
@@ -218,6 +222,72 @@ class JavaSupportTest : GrazieTestBase() {
       GrazieSpellCheckerEngine.getInstance(project).dropSuggestionCache()
     }.start()
   }
+
+  fun `test todo in dumb mode`() {
+    (DaemonCodeAnalyzer.getInstance(project) as DaemonCodeAnalyzerImpl).mustWaitForSmartMode(false, testRootDisposable)
+    runInDumbModeSynchronously(project) {
+      myFixture.configureByText("a.java", "// TODO It is an friend of human")
+      myFixture.checkHighlighting()
+    }
+  }
+
+  fun `test false positive an with consonant`() {
+    myFixture.configureByText("a.java", """
+      // Returns an xlsx file based on given type. I have an mp3.
+      // Writes a uint32_t to a buffer.
+      // It is an SA disk. It is an SC disk. It is a SATA disk.
+      // It is a SCORN with no grade. It is a SCORM with no grade.
+      // It is an ECO summit. It is an ECS summit.
+      // It is an ISS mission. It is an ISSA mission.
+      """.trimIndent()
+    )
+    myFixture.checkHighlighting()
+  }
+
+  fun `test mass apply is available around problems`() {
+    // Action is available because there is a typo intersecting with selection
+    myFixture.configureByText("a.java", """
+      class A {
+        void foo() {
+          // <TYPO descr="Typo: In word 'tagret'">t<caret><selection>a</selection>gret</TYPO>
+        }
+      }
+    """)
+    myFixture.checkHighlighting()
+    assertNotNull(myFixture.getAvailableIntention("Accept all writing suggestions…"))
+
+    // Action is available because there is caret near typo
+    myFixture.configureByText("b.java", """
+      class B {
+        void foo() {
+          // <TYPO descr="Typo: In word 'tagret'">tagret</TYPO>
+          // <caret>target
+        }
+      }
+    """)
+    myFixture.checkHighlighting()
+    assertNotNull(myFixture.getAvailableIntention("Accept all writing suggestions…"))
+
+    // Action is not available because there is no grammar / style / spelling issues in selection
+    myFixture.configureByText("c.java", """
+      class C {
+        void foo() {
+          // <TYPO descr="Typo: In word 'tagret'">tagret</TYPO>
+          // <selection>tar</selection>get
+        }
+      }
+    """)
+    myFixture.checkHighlighting()
+    assertNull(myFixture.getAvailableIntention("Accept all writing suggestions…"))
+  }
+
+  fun `test asian-english mixed texts`() {
+    runHighlightTestForFile("ide/language/java/Mixed.java")
+
+    enableProofreadingFor(setOf(Lang.JAPANESE))
+    runHighlightTestForFile("ide/language/java/Mixed.java")
+  }
+
 
   private fun doTest(beforeText: String, afterText: String, hint: String) {
     myFixture.configureByText("a.java", beforeText)

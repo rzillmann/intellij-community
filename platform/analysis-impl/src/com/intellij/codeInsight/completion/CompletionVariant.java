@@ -5,7 +5,6 @@ package com.intellij.codeInsight.completion;
 import com.intellij.codeInsight.TailType;
 import com.intellij.codeInsight.TailTypes;
 import com.intellij.codeInsight.lookup.LookupElement;
-import com.intellij.codeInsight.lookup.LookupItem;
 import com.intellij.psi.PsiElement;
 import com.intellij.psi.PsiFile;
 import com.intellij.psi.PsiReference;
@@ -14,7 +13,12 @@ import com.intellij.util.ReflectionUtil;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NonNls;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * @deprecated use CompletionContributor
@@ -161,9 +165,4 @@ public class CompletionVariant {
   public String toString(){
     return "completion variant at " + myPosition.toString() + " completions: " + myCompletionsList;
   }
-
-  public void setCaseInsensitive(boolean caseInsensitive) {
-    myItemProperties.put(LookupItem.CASE_INSENSITIVE, caseInsensitive);
-  }
-
 }

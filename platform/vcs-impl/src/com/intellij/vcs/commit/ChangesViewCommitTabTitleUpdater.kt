@@ -7,7 +7,6 @@ import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.vcs.VcsBundle
 import com.intellij.openapi.vcs.changes.ui.ChangesViewContentManager
 import com.intellij.openapi.vcs.changes.ui.ChangesViewContentManagerListener
-import com.intellij.openapi.vcs.changes.ui.isCommitToolWindowShown
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.ui.content.ContentManagerEvent
 import com.intellij.ui.content.ContentManagerListener
@@ -42,12 +41,13 @@ class ChangesViewCommitTabTitleUpdater(private val project: Project, val tabName
   }
 
   private fun updateTitle() {
-    val contentManager = getToolWindow()?.contentManager ?: return
+    val toolWindow = getToolWindow()?.takeIf { it.isAvailable } ?: return
+    val contentManager = toolWindow.contentManager
     val tabContent = contentManager.contents.find { it.tabName == tabName } ?: return
 
     tabContent.displayName = when {
       contentManager.contentCount == 1 -> null
-      project.isCommitToolWindowShown -> VcsBundle.message("tab.title.commit")
+      CommitModeManager.isCommitToolWindowEnabled(project) -> VcsBundle.message("tab.title.commit")
       else -> VcsBundle.message("local.changes.tab")
     }
   }

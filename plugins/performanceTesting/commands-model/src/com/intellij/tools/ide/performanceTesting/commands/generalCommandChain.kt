@@ -2,7 +2,17 @@
 package com.intellij.tools.ide.performanceTesting.commands
 
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
-import com.intellij.tools.ide.performanceTesting.commands.dto.*
+import com.intellij.tools.ide.performanceTesting.commands.dto.BuildToolsAutoReloadType
+import com.intellij.tools.ide.performanceTesting.commands.dto.BuildType
+import com.intellij.tools.ide.performanceTesting.commands.dto.GradleTaskInfoDto
+import com.intellij.tools.ide.performanceTesting.commands.dto.GradleTestRunner
+import com.intellij.tools.ide.performanceTesting.commands.dto.MavenArchetypeInfo
+import com.intellij.tools.ide.performanceTesting.commands.dto.MavenGoalConfigurationDto
+import com.intellij.tools.ide.performanceTesting.commands.dto.MoveDeclarationsData
+import com.intellij.tools.ide.performanceTesting.commands.dto.MoveFilesData
+import com.intellij.tools.ide.performanceTesting.commands.dto.NewGradleProjectDto
+import com.intellij.tools.ide.performanceTesting.commands.dto.NewMavenProjectDto
+import com.intellij.tools.ide.performanceTesting.commands.dto.NewSpringProjectDto
 import java.io.File
 import java.lang.reflect.Modifier
 import java.nio.file.Path
@@ -78,7 +88,6 @@ fun <T : CommandChain> T.openFile(
   warmup: Boolean = false,
   disableCodeAnalysis: Boolean = false,
   useWaitForCodeAnalysisCode: Boolean = true,
-  forbidDownloadingSourcesOnNavigation: Boolean = false,
 ): T = apply {
   val command = mutableListOf("${CMD_PREFIX}openFile", "-file ${relativePath.replace(" ", "SPACE_SYMBOL")}")
   if (timeoutInSeconds != 0L) {
@@ -95,9 +104,6 @@ fun <T : CommandChain> T.openFile(
   }
   if (useWaitForCodeAnalysisCode) {
     command.add("-unwfca")
-  }
-  if (forbidDownloadingSourcesOnNavigation) {
-    command.add("-forbidDownloadingSourcesOnNavigation")
   }
 
   addCommand(*command.toTypedArray())
@@ -173,6 +179,7 @@ fun <T : CommandChain> T.findUsages(expectedElementName: String = "", scope: Str
 
 fun <T : CommandChain> T.findUsagesInToolWindow(expectedElementName: String = "", scope: String = "Project Files", warmup: Boolean = false): T = apply {
   navigateAndFindUsages(expectedElementName, "", scope, warmup = warmup, runInToolWindow = true)
+  addCommand("${CMD_PREFIX}findUsagesInToolWindowWait")
 }
 
 fun <T : CommandChain> T.navigateAndFindUsages(
@@ -464,15 +471,20 @@ fun <T : CommandChain> T.createAllServicesAndExtensions(): T = apply {
   addCommand("${CMD_PREFIX}CreateAllServicesAndExtensions")
 }
 
+enum class RunConfigurationMode {
+  TILL_STARTED,
+  TILL_TERMINATED
+}
+
 fun <T : CommandChain> T.runConfiguration(
   configurationName: String,
-  mode: String = "TILL_TERMINATED",
+  mode: RunConfigurationMode = RunConfigurationMode.TILL_TERMINATED,
   failureExpected: Boolean = false,
   debug: Boolean = false,
 ): T = apply {
   val command = mutableListOf("${CMD_PREFIX}runConfiguration")
   command.add("-configurationName=$configurationName")
-  command.add("-mode=$mode")
+  command.add("-mode=${mode.name}")
   if (failureExpected) {
     command.add("-failureExpected")
   }
@@ -546,6 +558,7 @@ fun <T : CommandChain> T.expandMainMenu(): T = apply {
 }
 
 fun <T : CommandChain> T.closeAllTabs(): T = apply {
+  addCommand("${CMD_PREFIX}takeScreenshot before_close_all_tabs")
   addCommand("${CMD_PREFIX}closeAllTabs")
 }
 
@@ -782,6 +795,10 @@ fun <T : CommandChain> T.startInlineRename(): T = apply {
 }
 
 fun <T : CommandChain> T.setRegistry(registry: String, value: Boolean): T = apply {
+  addCommand("${CMD_PREFIX}set $registry=$value")
+}
+
+fun <T : CommandChain> T.setRegistry(registry: String, value: Int): T = apply {
   addCommand("${CMD_PREFIX}set $registry=$value")
 }
 
@@ -1030,6 +1047,10 @@ fun <T : CommandChain> T.waitForCodeAnalysisFinished(): T = apply {
   addCommand("${CMD_PREFIX}waitForFinishedCodeAnalysis")
 }
 
+fun <T : CommandChain> T.waitForCodeVision(timeoutSeconds: Int = 30): T = apply {
+  addCommand("${CMD_PREFIX}waitForCodeVision $timeoutSeconds")
+}
+
 @Suppress("unused")
 fun <T : CommandChain> T.checkChatBotResponse(textToCheck: String): T = apply {
   addCommand("${CMD_PREFIX}checkResponseContains ${textToCheck}")
@@ -1113,6 +1134,7 @@ fun <T : CommandChain> T.waitForVcsLogUpdate(): T = apply {
  * Wait for background procedures on project opening
  */
 fun <T : CommandChain> T.waitForProjectOpenProcedures(): T = apply {
+  refreshFilesInVfs()
   waitForSmartMode()
   waitForVcsLogUpdate()
 }
@@ -1166,13 +1188,17 @@ fun <T : CommandChain> T.replaceText(
   if (endOffset != null) {
     options.append(" -endOffset ${endOffset}")
   }
-  if (newText != null) {
-    options.append(" -newText ${newText}")
-  }
   if (calculateAnalysisTime) {
     options.append(" -calculateAnalysisTime ${true}")
   }
+  if (newText != null) {
+    options.append(" -newText ${newText}")
+  }
   addCommand("${CMD_PREFIX}replaceText ${options}")
+}
+
+fun <T : CommandChain> T.insertText(offset: Int, text: String): T = apply {
+  addCommand("${CMD_PREFIX}replaceText -startOffset ${offset} -endOffset ${offset} -newText ${text}")
 }
 
 fun <T : CommandChain> T.saveDocumentsAndSettings(): T = apply {
@@ -1219,8 +1245,8 @@ fun <T : CommandChain> T.disableKotlinNotification(): T = apply {
   addCommand("${CMD_PREFIX}disableKotlinNotification")
 }
 
-fun <T : CommandChain> T.scrollEditor(): T = apply {
-  addCommand("${CMD_PREFIX}scrollEditor")
+fun <T : CommandChain> T.scrollEditor(scrollDelay: Int = 100): T = apply {
+  addCommand("${CMD_PREFIX}scrollEditor $scrollDelay")
 }
 
 
@@ -1302,6 +1328,10 @@ fun <T : CommandChain> T.waitForVfsRefreshSelectedEditor(): T = apply {
   addCommand("${CMD_PREFIX}waitForVfsRefreshSelectedEditor")
 }
 
+fun <T : CommandChain> T.refreshFilesInVfs(): T = apply {
+  addCommand("${CMD_PREFIX}refreshFilesInVfs")
+}
+
 /** @see com.jetbrains.performancePlugin.commands.FindInFilesCommand */
 @Suppress("KDocUnresolvedReference")
 fun <T : CommandChain> T.findInFiles(queries: List<String> = listOf()): T = apply {
@@ -1350,7 +1380,11 @@ fun <T : CommandChain> T.waitForReOpenedFile(relativePath: String): T = apply {
   addCommand("${CMD_PREFIX}waitForReOpenedFile -file ${relativePath.replace(" ", "SPACE_SYMBOL")}")
 }
 
-@Suppress("KDocUnresolvedReference")
 fun <T : CommandChain> T.detectProjectLeaks(): T = apply {
   addCommand("${CMD_PREFIX}detectProjectLeaks")
+}
+
+fun <T : CommandChain> T.hideAllToolWindows(): T = apply {
+  addCommand("${CMD_PREFIX}takeScreenshot before_close_all_tabs")
+  addCommand("${CMD_PREFIX}hideAllToolWindows")
 }

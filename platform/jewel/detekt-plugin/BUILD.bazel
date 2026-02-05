@@ -1,3 +1,24 @@
+load("@rules_java//java:defs.bzl", "java_binary")
+
+# Build detekt-plugin-binary_deploy.jar to get plugin binary
+java_binary(
+    name = "detekt-plugin-binary",
+    main_class = "NoMainClass",
+    visibility = ["//visibility:public"],
+    runtime_deps = ["detekt-plugin"],
+    deploy_env = ["detekt-plugin-binary-excludes"],
+)
+
+java_binary(
+    name = "detekt-plugin-binary-excludes",
+    main_class = "NoMainClass",
+    runtime_deps = [
+      "@lib//:kotlin-stdlib",
+      "@lib//:kotlinx-coroutines-core",
+      "@lib//:platform-jewel-detekt_plugin-jetbrains-kotlin-compiler-embeddable",
+    ],
+)
+
 ### auto-generated section `build intellij.platform.jewel.detektPlugin` start
 load("@rules_jvm//:jvm.bzl", "jvm_library", "resourcegroup")
 
@@ -21,8 +42,9 @@ jvm_library(
   resources = [":detekt-plugin_resources"],
   deps = [
     "@lib//:kotlin-stdlib",
-    "@lib//:kotlinx-coroutines-core",
+    "//libraries/kotlinx/coroutines/core",
     "@lib//:jetbrains-annotations",
+    "@lib//:platform-jewel-detekt_plugin-jetbrains-kotlin-compiler-embeddable",
     "@lib//:platform-jewel-detekt_plugin-io-gitlab-arturbosch-detekt-api",
   ]
 )
@@ -35,8 +57,9 @@ jvm_library(
   associates = [":detekt-plugin"],
   deps = [
     "@lib//:kotlin-stdlib",
-    "@lib//:kotlinx-coroutines-core",
+    "//libraries/kotlinx/coroutines/core",
     "@lib//:jetbrains-annotations",
+    "@lib//:platform-jewel-detekt_plugin-jetbrains-kotlin-compiler-embeddable",
     "@lib//:platform-jewel-detekt_plugin-io-gitlab-arturbosch-detekt-api",
     "//libraries/junit5",
     "@lib//:assert_j",

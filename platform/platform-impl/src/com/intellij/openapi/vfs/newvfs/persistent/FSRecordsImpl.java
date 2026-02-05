@@ -5,13 +5,21 @@ import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.progress.ProcessCanceledException;
 import com.intellij.openapi.util.Comparing;
 import com.intellij.openapi.util.ThrowableComputable;
-import com.intellij.openapi.util.io.*;
+import com.intellij.openapi.util.io.ByteArraySequence;
+import com.intellij.openapi.util.io.ContentTooBigException;
+import com.intellij.openapi.util.io.FileAttributes;
+import com.intellij.openapi.util.io.FileTooBigException;
+import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.openapi.vfs.VirtualFileSystem;
 import com.intellij.openapi.vfs.impl.ZipHandlerBase;
 import com.intellij.openapi.vfs.impl.local.LocalFileSystemImpl;
-import com.intellij.openapi.vfs.newvfs.*;
+import com.intellij.openapi.vfs.newvfs.AttributeInputStream;
+import com.intellij.openapi.vfs.newvfs.AttributeOutputStream;
+import com.intellij.openapi.vfs.newvfs.ChildInfoImpl;
+import com.intellij.openapi.vfs.newvfs.FileAttribute;
+import com.intellij.openapi.vfs.newvfs.NewVirtualFileSystem;
 import com.intellij.openapi.vfs.newvfs.events.ChildInfo;
 import com.intellij.openapi.vfs.newvfs.persistent.IPersistentFSRecordsStorage.RecordReader;
 import com.intellij.openapi.vfs.newvfs.persistent.IPersistentFSRecordsStorage.RecordUpdater;
@@ -20,18 +28,36 @@ import com.intellij.openapi.vfs.newvfs.persistent.namecache.MRUFileNameCache;
 import com.intellij.openapi.vfs.newvfs.persistent.namecache.SLRUFileNameCache;
 import com.intellij.openapi.vfs.newvfs.persistent.recovery.VFSInitializationResult;
 import com.intellij.serviceContainer.AlreadyDisposedException;
-import com.intellij.util.*;
+import com.intellij.util.BitUtil;
+import com.intellij.util.ExceptionUtil;
+import com.intellij.util.Processor;
+import com.intellij.util.SlowOperations;
+import com.intellij.util.SystemProperties;
 import com.intellij.util.concurrency.AppExecutorUtil;
 import com.intellij.util.containers.ContainerUtil;
-import com.intellij.util.io.*;
+import com.intellij.util.io.ClosedStorageException;
+import com.intellij.util.io.CorruptedException;
+import com.intellij.util.io.DataEnumeratorEx;
 import com.intellij.util.io.DataOutputStream;
+import com.intellij.util.io.IOUtil;
 import com.intellij.util.io.blobstorage.ByteBufferReader;
 import com.intellij.util.io.blobstorage.ByteBufferWriter;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
 import it.unimi.dsi.fastutil.ints.IntList;
-import org.jetbrains.annotations.*;
+import org.jetbrains.annotations.ApiStatus;
+import org.jetbrains.annotations.Contract;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
+import org.jetbrains.annotations.VisibleForTesting;
 
-import java.io.*;
+import java.io.Closeable;
+import java.io.DataInputStream;
+import java.io.EOFException;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InterruptedIOException;
+import java.io.UncheckedIOException;
 import java.nio.file.Path;
 import java.util.Collections;
 import java.util.HashSet;
@@ -915,9 +941,9 @@ public final class FSRecordsImpl implements Closeable {
       fileRecordLock.lockForHierarchyUpdate(maxId);
       try {
         try {
-          ListResult firstParentChildren = loadChildrenUnderRecordLock(fromParentId);
-          ListResult fromParentChildrenWithoutChildMoved = firstParentChildren.remove(childToMoveId);
-          if (fromParentChildrenWithoutChildMoved == firstParentChildren) {
+          ListResult fromParentChildren = loadChildrenUnderRecordLock(fromParentId);
+          ListResult fromParentChildrenWithoutChildMoved = fromParentChildren.remove(childToMoveId);
+          if (fromParentChildrenWithoutChildMoved == fromParentChildren) {
             //RC: this means childToMove doesn't present among fromParent's children. It seems natural to fail move
             //    procedure in this case by throwing IllegalArgumentException, because there is definitely something
             //    wrong with arguments supplied. But the legacy version of this code didn't fail -- it proceeds
@@ -940,9 +966,12 @@ public final class FSRecordsImpl implements Closeable {
             //    is an error in params supplied, and it should be resolved
             String childToMoveName = getNameByNameId(childToMoveNameId);
             throw new IllegalArgumentException(
-              "Can't move child(#" + childToMoveId + ", name='" + childToMoveName + "') " +
-              "from parent(" + fromParentId + ") to (" + toParentId + "): " +
-              "toParent already has a child with same name -- " + alreadyExistingChild);
+              "Can't move child(#" + childToMoveId + ", name='" + childToMoveName + "', nameId=" + childToMoveNameId + "), " +
+              "parent (" + fromParentId + " -> " + toParentId + "): " +
+              "new parent already has a child with same name (=" + alreadyExistingChild + ")\n" +
+              "fromParent.children=" + fromParentChildren + "\n" +
+              "toParent.children=" + toParentChildren
+            );
           }
 
           ListResult toParentChildrenUpdated = toParentChildren.insert(

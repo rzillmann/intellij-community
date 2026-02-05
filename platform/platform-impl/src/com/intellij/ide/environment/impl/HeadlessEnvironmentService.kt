@@ -9,7 +9,12 @@ import com.intellij.ide.environment.description
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.configuration.HeadlessLogging
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import java.io.IOException
 
 class HeadlessEnvironmentService(scope: CoroutineScope) : BaseEnvironmentService() {
@@ -22,7 +27,6 @@ class HeadlessEnvironmentService(scope: CoroutineScope) : BaseEnvironmentService
     return getEnvironmentValueOrNull(key)
            ?: run {
              val throwable = MissingEnvironmentKeyException(key)
-             LOG.error(throwable)
              HeadlessLogging.logFatalError(MissingEnvironmentKeyException(key))
              throw throwable
            }

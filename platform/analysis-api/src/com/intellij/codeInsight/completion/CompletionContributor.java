@@ -6,6 +6,7 @@ import com.intellij.codeInsight.lookup.LookupElementPresentation;
 import com.intellij.lang.Language;
 import com.intellij.lang.LanguageExtension;
 import com.intellij.lang.LanguageExtensionWithAny;
+import com.intellij.modcompletion.ModCompletionItemProvider;
 import com.intellij.openapi.application.ReadAction;
 import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.extensions.ExtensionPointName;
@@ -14,14 +15,17 @@ import com.intellij.openapi.project.DumbService;
 import com.intellij.openapi.project.PossiblyDumbAware;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.NlsContexts;
+import com.intellij.openapi.util.registry.Registry;
 import com.intellij.patterns.ElementPattern;
 import com.intellij.psi.PsiElement;
 import com.intellij.psi.PsiReference;
 import com.intellij.psi.util.PsiUtilCore;
 import com.intellij.util.Consumer;
+import com.intellij.util.PlatformUtils;
 import com.intellij.util.ProcessingContext;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.containers.MultiMap;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.Nls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -226,17 +230,37 @@ public abstract class CompletionContributor implements PossiblyDumbAware {
   public static @NotNull List<CompletionContributor> forParameters(@NotNull CompletionParameters parameters) {
     return ReadAction.compute(() -> {
       PsiElement position = parameters.getPosition();
-      return forLanguageHonorDumbness(PsiUtilCore.getLanguageAtOffset(position.getContainingFile(), parameters.getOffset()),
-                                      position.getProject());
+      Language language = PsiUtilCore.getLanguageAtOffset(position.getContainingFile(), parameters.getOffset());
+      return forLanguageHonorDumbness(language, position.getProject());
     });
   }
 
+  @ApiStatus.Internal
   public static @NotNull List<CompletionContributor> forLanguage(@NotNull Language language) {
-    return INSTANCE.forKey(language);
+    boolean isRDFrontend = Registry.is("remdev.completion.on.frontend") && PlatformUtils.isJetBrainsClient();
+
+    List<CompletionContributor> contributors;
+    if (isRDFrontend) {
+      contributors = ContainerUtil.filter(INSTANCE.forKey(language), c -> c instanceof FrontendCompletionContributor);
+    }
+    else {
+      contributors = INSTANCE.forKey(language);
+    }
+
+    if (ModCompletionItemProvider.modCommandCompletionEnabled()) {
+      List<ModCompletionItemProvider> modContributors = ModCompletionItemProvider.forLanguage(language);
+      List<CompletionItemContributor> modContributorAdapters = ContainerUtil.map(modContributors, CompletionItemContributor::new);
+      return ContainerUtil.concat(modContributorAdapters, contributors);
+    }
+    else {
+      return contributors;
+    }
   }
 
+  @ApiStatus.Internal
   public static @NotNull List<CompletionContributor> forLanguageHonorDumbness(@NotNull Language language, @NotNull Project project) {
-    return DumbService.getInstance(project).filterByDumbAwareness(forLanguage(language));
+    List<CompletionContributor> contributors = forLanguage(language);
+    return DumbService.getInstance(project).filterByDumbAwareness(contributors);
   }
 
   private static final LanguageExtension<CompletionContributor> INSTANCE = new LanguageExtensionWithAny<>(EP.getName());

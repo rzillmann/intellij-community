@@ -3,13 +3,15 @@ package com.intellij.ide.starter.runner
 import com.intellij.ide.starter.config.ConfigurationStorage
 import com.intellij.ide.starter.config.classFileVerification
 import com.intellij.ide.starter.config.includeRuntimeModuleRepositoryInIde
+import com.intellij.ide.starter.config.monitoringDumpsIntervalSeconds
 import com.intellij.ide.starter.di.di
 import com.intellij.ide.starter.ide.IDERemDevTestContext
 import com.intellij.ide.starter.ide.IDEStartConfig
 import com.intellij.ide.starter.ide.IDETestContext
+import com.intellij.ide.starter.ide.asRemDevContext
+import com.intellij.ide.starter.ide.isRemDevContext
 import com.intellij.ide.starter.models.IDEStartResult
 import com.intellij.ide.starter.models.VMOptions
-import com.intellij.ide.starter.models.VMOptions.Companion.ALLOW_SKIPPING_FULL_SCANNING_ON_STARTUP_OPTION
 import com.intellij.ide.starter.path.IDEDataPaths
 import com.intellij.ide.starter.process.ProcessInfo.Companion.toProcessInfo
 import com.intellij.ide.starter.process.collectJavaThreadDumpSuspendable
@@ -21,13 +23,19 @@ import com.intellij.ide.starter.profiler.ProfilerType
 import com.intellij.ide.starter.runner.events.IdeAfterLaunchEvent
 import com.intellij.ide.starter.runner.events.IdeLaunchEvent
 import com.intellij.ide.starter.screenRecorder.IDEScreenRecorder
-import com.intellij.ide.starter.utils.*
+import com.intellij.ide.starter.utils.JvmUtils
+import com.intellij.ide.starter.utils.catchAll
+import com.intellij.ide.starter.utils.formatArtifactName
+import com.intellij.ide.starter.utils.startProfileNativeThreads
+import com.intellij.ide.starter.utils.stopProfileNativeThreads
+import com.intellij.ide.starter.utils.takeScreenshot
 import com.intellij.openapi.util.SystemInfoRt
-import com.intellij.openapi.util.io.NioFiles
 import com.intellij.tools.ide.performanceTesting.commands.MarshallableCommand
 import com.intellij.tools.ide.starter.bus.EventsBus
 import com.intellij.tools.ide.util.common.logError
 import com.intellij.tools.ide.util.common.logOutput
+import com.intellij.util.containers.ConcurrentList
+import com.intellij.util.containers.ContainerUtil
 import com.intellij.util.io.createDirectories
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -41,8 +49,9 @@ import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import kotlin.io.path.bufferedReader
 import kotlin.io.path.exists
-import kotlin.io.path.listDirectoryEntries
+import kotlin.io.path.name
 import kotlin.io.path.readText
+import kotlin.io.path.walk
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
@@ -70,7 +79,9 @@ data class IDERunContext(
   val launchDir: Path = testContext.paths.testHome.resolve(launchName).createDirectoriesIfNotExist()
   val logsDir: Path = testContext.paths.testHome.resolve(launchName).resolve("log").createDirectoriesIfNotExist()
 
-  private val patchesForVMOptions: MutableList<VMOptions.() -> Unit> = mutableListOf()
+  private val patchesForVMOptions: ConcurrentList<VMOptions.() -> Unit> = ContainerUtil.createConcurrentList()
+
+  var artifactsPublishingEnabled: Boolean = true
 
   private fun Path.createDirectoriesIfNotExist(): Path {
     if (exists()) {
@@ -79,16 +90,6 @@ data class IDERunContext(
     }
     logOutput("Creating reports dir '${this.fileName}'")
     return createDirectories()
-  }
-
-  internal fun deleteJVMCrashes() {
-    println("Cleaning JVM crashes ...")
-    listOf(heapDumpOnOomDirectory, jvmCrashLogDirectory)
-      .filter { dir -> dir.exists() && dir.listDirectoryEntries().isNotEmpty() }
-      .forEach {
-        println("Deleting $it")
-        NioFiles.deleteRecursively(it)
-      }
   }
 
   private fun formatArtifactName(artifactName: String): String {
@@ -100,7 +101,9 @@ data class IDERunContext(
     }
   }
 
-  internal fun publishArtifacts() {
+  fun publishArtifacts(publish: Boolean = artifactsPublishingEnabled) {
+    if (!publish) return
+
     testContext.publishArtifact(
       source = logsDir,
       artifactPath = contextName,
@@ -161,14 +164,13 @@ data class IDERunContext(
       setFatalErrorNotificationEnabled()
       setFlagIntegrationTests()
       setJcefJsQueryPoolSize(10_000)
-      takeScreenshotsPeriodically()
+      if (!testContext.isRemDevContext()) {
+        takeScreenshotsPeriodically()
+      }
       withJvmCrashLogDirectory(jvmCrashLogDirectory)
       withHeapDumpOnOutOfMemoryDirectory(heapDumpOnOomDirectory)
       withGCLogs(reportsDir.resolve("gcLog.log"))
       setOpenTelemetryMaxFilesNumber()
-      if (!hasOption(ALLOW_SKIPPING_FULL_SCANNING_ON_STARTUP_OPTION)) {
-        addSystemProperty(ALLOW_SKIPPING_FULL_SCANNING_ON_STARTUP_OPTION, false)
-      }
 
       if (ConfigurationStorage.classFileVerification()) {
         withClassFileVerification()
@@ -248,9 +250,12 @@ data class IDERunContext(
     startConfig: IDEStartConfig,
     process: Process,
     snapshotsDir: Path,
+    runContext: IDERunContext,
   ) {
-    catchAll {
-      takeScreenshot(logsDir)
+    if (!runContext.calculateVmOptions().hasHeadlessMode() && runContext.testContext !is IDERemDevTestContext) {
+      catchAll {
+        takeScreenshot(logsDir)
+      }
     }
     if (expectedKill) return
 
@@ -259,6 +264,7 @@ data class IDERunContext(
       if (ideProcessId == null) {
         ideProcessId = getIdeProcessIdWithRetry(
           parentProcessInfo = process.toProcessInfo(),
+          runContext = runContext,
         )
       }
       return ideProcessId
@@ -283,7 +289,7 @@ data class IDERunContext(
   }
 
   private fun isLowMemorySignalPresent(logsDir: Path): Boolean {
-    return logsDir.resolve("idea.log").bufferedReader().useLines { lines ->
+    return logsDir.walk().single { it.name == "idea.log"}.bufferedReader().useLines { lines ->
       lines.any { line ->
         line.contains("Low memory signal received: afterGc=true")
       }
@@ -302,7 +308,7 @@ data class IDERunContext(
 
     var cnt = 0
     while (process.isAlive) {
-      delay(1.minutes)
+      delay(ConfigurationStorage.monitoringDumpsIntervalSeconds().seconds)
       if (!process.isAlive) break
 
       val dumpFile = monitoringThreadDumpDir.resolve("threadDump-${++cnt}-${getCurrentTimestamp()}.txt")
@@ -369,15 +375,15 @@ data class IDERunContext(
   }
 
   fun withScreenRecording() {
-    if (testContext is IDERemDevTestContext && testContext != testContext.frontendIDEContext) {
+    if (testContext.isRemDevContext() && testContext != testContext.asRemDevContext().frontendIDEContext && !calculateVmOptions().hasHeadlessMode()) {
       logOutput("Will not record screen for a backend of remote dev")
       return
     }
     val screenRecorder = IDEScreenRecorder(this)
-    EventsBus.subscribeOnce(screenRecorder) { _: IdeLaunchEvent ->
+    EventsBus.subscribeOnce(IDEScreenRecorder::class.java) { _: IdeLaunchEvent ->
       screenRecorder.start()
     }
-    EventsBus.subscribeOnce(screenRecorder) { _: IdeAfterLaunchEvent ->
+    EventsBus.subscribeOnce(IDEScreenRecorder::class.java) { _: IdeAfterLaunchEvent ->
       screenRecorder.stop()
     }
   }

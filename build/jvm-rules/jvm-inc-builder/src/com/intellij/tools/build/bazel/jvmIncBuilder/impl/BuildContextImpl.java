@@ -1,28 +1,59 @@
 // Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.tools.build.bazel.jvmIncBuilder.impl;
 
-import com.intellij.tools.build.bazel.jvmIncBuilder.*;
+import com.intellij.tools.build.bazel.jvmIncBuilder.BuildContext;
+import com.intellij.tools.build.bazel.jvmIncBuilder.BuildProcessLogger;
+import com.intellij.tools.build.bazel.jvmIncBuilder.BuilderOptions;
+import com.intellij.tools.build.bazel.jvmIncBuilder.CLFlags;
+import com.intellij.tools.build.bazel.jvmIncBuilder.DataPaths;
+import com.intellij.tools.build.bazel.jvmIncBuilder.Message;
+import com.intellij.tools.build.bazel.jvmIncBuilder.NodeSourceSnapshot;
+import com.intellij.tools.build.bazel.jvmIncBuilder.ResourceGroup;
+import com.intellij.tools.build.bazel.jvmIncBuilder.VMFlags;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.bazel.jvm.Input;
 import org.jetbrains.jps.dependency.NodeSource;
 import org.jetbrains.jps.dependency.NodeSourcePathMapper;
 import org.jetbrains.jps.dependency.impl.PathSourceMapper;
+import org.jetbrains.jps.util.Pair;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Base64;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.function.Function;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
+import static org.jetbrains.jps.util.Iterators.asIterable;
+import static org.jetbrains.jps.util.Iterators.find;
+import static org.jetbrains.jps.util.Iterators.flat;
 import static org.jetbrains.jps.util.Iterators.map;
+import static org.jetbrains.jps.util.Iterators.unique;
 
 /** @noinspection IO_FILE_USAGE*/
 public class BuildContextImpl implements BuildContext {
   private static final Logger LOG = Logger.getLogger("com.intellij.tools.build.bazel.jvmIncBuilder.impl.BuildContextImpl");
+  private static final List<String> ourExpectedUntrackedInputSuffixes = List.of(
+    "/jvm-inc-builder/jvm-inc-builder_deploy.jar",
+    "/rules/impl/MemoryLauncher.java"
+  );
   private final String myTargetName;
   private final Map<CLFlags, List<String>> myFlags;
+  private final long myUntrackedInputsDigest;
+  private final List<String> myUnexpectedInputs = new ArrayList<>();
+  
   private final boolean myAllowWarnings;
   private final Path myBaseDir;
   private final PathSourceMapper myPathMapper;
@@ -38,7 +69,8 @@ public class BuildContextImpl implements BuildContext {
   private final boolean myIsRebuild;
   private final BuilderOptions myBuilderOptions;
 
-  private volatile boolean myHasErrors;
+  private final List<Message> myErrors = new ArrayList<>();
+  private BuildProcessLogger myBuildProcessLogger;
 
   public BuildContextImpl(Path baseDir, Iterable<Input> inputs, Map<CLFlags, List<String>> flags, Appendable messageSink) {
     myFlags = Map.copyOf(flags);
@@ -61,31 +93,49 @@ public class BuildContextImpl implements BuildContext {
     String abiPath = CLFlags.ABI_OUT.getOptionalScalarValue(flags);
     myAbiJar = abiPath != null? baseDir.resolve(abiPath).normalize() : null;
 
-    myKotlinCriStoragePath = myOutJar.resolveSibling(truncateExtension(myOutJar.getFileName().toString()) + DataPaths.KOTLIN_CRI_STORAGE_SUFFIX);
+    String kotlinCriStoragePath = CLFlags.KOTLIN_CRI_OUT.getOptionalScalarValue(flags);
+    myKotlinCriStoragePath = kotlinCriStoragePath != null ? baseDir.resolve(kotlinCriStoragePath).normalize() : null;
 
     myDataDir = myOutJar.resolveSibling(truncateExtension(myOutJar.getFileName().toString()) + DataPaths.DATA_DIR_NAME_SUFFIX);
-    
+
     myIsRebuild = CLFlags.NON_INCREMENTAL.isFlagSet(flags);
 
-    Map<String, String> digestsMap = new HashMap<>();
-    Base64.Encoder base64 = Base64.getEncoder().withoutPadding();
+    Map<String, byte[]> digestsMap = new HashMap<>();
     for (Input input : inputs) {
-      String inputDigest = base64.encodeToString(input.digest);
-      digestsMap.put(input.path, inputDigest);
+      digestsMap.put(input.path, input.digest);
     }
+
+    List<Pair<String, byte[]>> untrackedInputs = new ArrayList<>();
+    for (String path : unique(flat(map(CLFlags.PLUGIN_CLASSPATH.getValue(flags), cp -> cp.isBlank()? List.of() : asIterable(cp.split(":")))))) {
+      byte[] digest = digestsMap.get(path);
+      if (digest != null) {
+        untrackedInputs.add(Pair.create(path, digest));
+      }
+      else {
+        myUnexpectedInputs.add("!no-digest!: " + path);
+      }
+    }
+
+    Base64.Encoder base64 = Base64.getEncoder().withoutPadding();
+    Function<String, String> getDigest = path -> base64.encodeToString(Objects.requireNonNull(digestsMap.remove(path)));
 
     Map<NodeSource, String> sourcesMap = new HashMap<>();
     for (String src : CLFlags.SRCS.getValue(flags)) {
-      Path inputPath = baseDir.resolve(src).normalize();
-      assert isSourceDependency(inputPath);
-      sourcesMap.put(myPathMapper.toNodeSource(inputPath), Objects.requireNonNull(digestsMap.get(src)));
+      try {
+        Path inputPath = baseDir.resolve(src).toRealPath(LinkOption.NOFOLLOW_LINKS); // ensure the input path names have exactly the same case as on the disk
+        assert isSourceDependency(inputPath);
+        sourcesMap.put(myPathMapper.toNodeSource(inputPath), getDigest.apply(src));
+      }
+      catch (IOException e) {
+        report(Message.create(null, Message.Kind.ERROR, "Unable to resolve relative path " + src, e));
+      }
     }
     mySources = new SourceSnapshotImpl(sourcesMap);
 
     Map<NodeSource, String> libsMap = new LinkedHashMap<>(); // for the classpath order is important
     for (String cpEntry : CLFlags.CP.getValue(flags)) {
       Path path = baseDir.resolve(cpEntry).normalize();
-      libsMap.put(myPathMapper.toNodeSource(path), Objects.requireNonNull(digestsMap.get(cpEntry)));
+      libsMap.put(myPathMapper.toNodeSource(path), getDigest.apply(cpEntry));
     }
     myLibraries = new SourceSnapshotImpl(libsMap);
 
@@ -97,7 +147,7 @@ public class BuildContextImpl implements BuildContext {
       Map<NodeSource, String> resourcesMap = new HashMap<>();
       for (String file : parts[2].split(":")) {
         Path path = baseDir.resolve(file).normalize();
-        String digest = Objects.requireNonNull(digestsMap.get(file));
+        String digest = getDigest.apply(file);
         resourcesMap.put(myPathMapper.toNodeSource(path), digest);
       }
       if (!resourcesMap.isEmpty()) {
@@ -106,7 +156,29 @@ public class BuildContextImpl implements BuildContext {
     }
     myResources = resources;
 
+    for (Iterator<Map.Entry<String, byte[]>> it = digestsMap.entrySet().iterator(); it.hasNext(); ) {
+      Map.Entry<String, byte[]> entry = it.next();
+      String input = entry.getKey();
+      if (input.endsWith(DataPaths.PARAMS_FILE_NAME_SUFFIX)) {
+        it.remove(); // params are tracked selectively by flags digest
+      }
+      else if (find(ourExpectedUntrackedInputSuffixes, input::endsWith) != null) {
+        untrackedInputs.add(Pair.create(input, entry.getValue()));
+      }
+    }
+
+    Collections.sort(untrackedInputs, Comparator.comparing(p -> p.first)); // ensure same order over invocations;
+    myUntrackedInputsDigest = Utils.digestContent(map(untrackedInputs, p -> {
+      digestsMap.remove(p.first);
+      return p.second;
+    }));
+
+    for (Map.Entry<String, byte[]> entry : digestsMap.entrySet()) {
+      myUnexpectedInputs.add(base64.encodeToString(entry.getValue()) + ": " + entry.getKey());
+    }
+
     myBuilderOptions = BuilderOptions.create(buildJavaOptions(flags), buildKotlinOptions(flags, map(myLibraries.getElements(), myPathMapper::toPath)));
+    myBuildProcessLogger = VMFlags.isBuildProcessLoggerEnabled()? new BuildProcessLoggerImpl(baseDir) : BuildProcessLogger.EMPTY;
   }
 
   private static @NotNull List<String> buildKotlinOptions(Map<CLFlags, List<String>> flags, @NotNull Iterable<@NotNull Path> classpath) {
@@ -304,6 +376,11 @@ public class BuildContextImpl implements BuildContext {
   }
 
   @Override
+  public long getUntrackedInputsDigest() {
+    return myUntrackedInputsDigest;
+  }
+
+  @Override
   public @NotNull Path getBaseDir() {
     return myBaseDir;
   }
@@ -344,6 +421,11 @@ public class BuildContextImpl implements BuildContext {
   }
 
   @Override
+  public Iterable<String> getUnexpectedInputs() {
+    return myUnexpectedInputs;
+  }
+
+  @Override
   public BuilderOptions getBuilderOptions() {
     return myBuilderOptions;
   }
@@ -355,16 +437,22 @@ public class BuildContextImpl implements BuildContext {
 
   @Override
   public BuildProcessLogger getBuildLogger() {
-    return BuildProcessLogger.EMPTY; // used for tests
+    return myBuildProcessLogger; // used for tests
   }
 
   @Override
   public void report(Message msg) {
     try {
-      if (!myAllowWarnings && msg.getKind() == Message.Kind.WARNING) {
-        return;
+      if (msg.getKind() == Message.Kind.ERROR) {
+        myErrors.add(msg);
       }
+      
       if (!myAllowWarnings) {
+
+        if (msg.getKind() == Message.Kind.WARNING) {
+          return;
+        }
+
         // Some warnings in javac are impossible to disable
         // They're also reported as notes, not warnings
         // It greatly pollutes compilation output
@@ -379,11 +467,11 @@ public class BuildContextImpl implements BuildContext {
           return;
         }
       }
+
       if (msg.getSource() != null) {
         myMessageSink.append(msg.getSource().getName()).append(": ");
       }
       if (msg.getKind() == Message.Kind.ERROR) {
-        myHasErrors = true;
         myMessageSink.append("Error: ");
       }
       myMessageSink.append(msg.getText()).append("\n");
@@ -395,11 +483,15 @@ public class BuildContextImpl implements BuildContext {
 
   @Override
   public boolean hasErrors() {
-    return myHasErrors;
+    return !myErrors.isEmpty();
+  }
+
+  @Override
+  public Iterable<Message> getErrors() {
+    return myErrors;
   }
 
   private static String truncateExtension(String filename) {
-    int idx = filename.lastIndexOf('.');
-    return idx >= 0? filename.substring(0, idx) : filename;
+    return DataPaths.truncateExtension(filename);  // todo: inline the method
   }
 }

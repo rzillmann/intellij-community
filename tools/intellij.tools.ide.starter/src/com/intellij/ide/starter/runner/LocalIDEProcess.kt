@@ -9,7 +9,6 @@ import com.intellij.ide.starter.process.exec.ExecTimeoutException
 import com.intellij.ide.starter.process.exec.ProcessExecutor
 import com.intellij.ide.starter.process.getIdeProcessIdWithRetry
 import com.intellij.ide.starter.profiler.ProfilerType
-import com.intellij.ide.starter.report.AllureHelper
 import com.intellij.ide.starter.report.ErrorReporter
 import com.intellij.ide.starter.report.FailureDetailsOnCI
 import com.intellij.ide.starter.report.TimeoutAnalyzer
@@ -26,21 +25,16 @@ import com.intellij.openapi.util.io.NioFiles
 import com.intellij.tools.ide.starter.bus.EventsBus
 import com.intellij.tools.ide.util.common.logError
 import com.intellij.tools.ide.util.common.logOutput
-import io.qameta.allure.Allure
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.runInterruptible
 import java.io.Closeable
 import java.nio.file.Path
-import kotlin.io.path.exists
-import kotlin.io.path.extension
 import kotlin.time.measureTime
 
 class LocalIDEProcess : IDEProcess {
   override suspend fun run(runContext: IDERunContext): IDEStartResult {
     with(runContext) {
-      // experimental move of adding an Allure link to start IDE instead of finally block
-      Allure.link("Link to CI artifacts", FailureDetailsOnCI.instance.getLinkToCIArtifacts(this))
       EventsBus.postAndWaitProcessing(IdeBeforeLaunchEvent(this))
 
       deleteSavedAppStateOnMac()
@@ -95,20 +89,20 @@ class LocalIDEProcess : IDEProcess {
               span.addEvent("process created")
               EventsBus.subscribeOnce(process) { _: IdeExceptionEvent ->
                 if (process.isAlive) {
-                  captureDiagnosticOnKill(logsDir, jdkHome, startConfig, process, snapshotsDir)
+                  captureDiagnosticOnKill(logsDir, jdkHome, startConfig, process, snapshotsDir, runContext)
                 }
               }
               runInterruptible {
                 EventsBus.postAndWaitProcessing(IdeLaunchEvent(runContext = this, ideProcess = IDEProcessHandle(process.toHandle())))
               }
-              ideProcessId = getIdeProcessIdWithRetry(process.toProcessInfo())
+              ideProcessId = getIdeProcessIdWithRetry(process.toProcessInfo(), runContext)
               startCollectThreadDumpsLoop(logsDir, IDEProcessHandle(process.toHandle()), jdkHome, startConfig.workDir, ideProcessId, "ide")
             },
             onBeforeKilled = { process, pid ->
               span.end()
               computeWithSpan("runIde post-processing before killed") {
                 logOutput("BeforeKilled: $processPresentableName")
-                captureDiagnosticOnKill(logsDir, jdkHome, startConfig, process, snapshotsDir)
+                captureDiagnosticOnKill(logsDir, jdkHome, startConfig, process, snapshotsDir, runContext = this)
                 EventsBus.postAndWaitProcessing(IdeBeforeKillEvent(this, process, pid))
                 if (testContext.profilerType != ProfilerType.NONE) {
                   EventsBus.postAndWaitProcessing(StopProfilerEvent(listOf()))
@@ -158,7 +152,6 @@ class LocalIDEProcess : IDEProcess {
             }
             testContext.collectJBRDiagnosticFiles(ideProcessId)
 
-            deleteJVMCrashes()
             val link = FailureDetailsOnCI.instance.getLinkToCIArtifacts(this)
             TeamCityCIServer.addTestMetadata(testName = null, TeamCityCIServer.TeamCityMetadataType.LINK, flowId = null, name = "Link to Logs and artifacts", value = link.toString())
             (CIServer.instance as? TeamCityCIServer)?.buildId?.let {
@@ -172,14 +165,9 @@ class LocalIDEProcess : IDEProcess {
           throw e
         }
         finally {
-          computeWithSpan("runIde post-processing, allure and artifacts publishing") {
+          computeWithSpan("runIde post-processing and artifacts publishing") {
             kotlin.runCatching {
               publishArtifacts()
-              AllureHelper.addAttachmentsFromDir(logsDir.resolve("screenshots"), filter = { it.extension.endsWith("png") })
-              val ideaLog = logsDir.resolve("idea.log")
-              if (ideaLog.exists()) {
-                AllureHelper.attachFile("idea.log", ideaLog)
-              }
             }.onFailure {
               logError("Fail to execute publishArtifacts run for $contextName", it)
             }.onSuccess {

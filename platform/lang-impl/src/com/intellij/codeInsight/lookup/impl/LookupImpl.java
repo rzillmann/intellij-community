@@ -2,26 +2,60 @@
 package com.intellij.codeInsight.lookup.impl;
 
 import com.intellij.CommonBundle;
+import com.intellij.analysis.AnalysisBundle;
 import com.intellij.codeInsight.AutoPopupController;
 import com.intellij.codeInsight.FileModificationService;
-import com.intellij.codeInsight.completion.*;
+import com.intellij.codeInsight.completion.CodeCompletionFeatures;
+import com.intellij.codeInsight.completion.CodeCompletionHandlerBase;
+import com.intellij.codeInsight.completion.CompletionItemLookupElement;
+import com.intellij.codeInsight.completion.CompletionLookupArrangerImpl;
+import com.intellij.codeInsight.completion.CompletionUtil;
+import com.intellij.codeInsight.completion.FinishCompletionInfo;
+import com.intellij.codeInsight.completion.LookupElementListPresenter;
+import com.intellij.codeInsight.completion.PrefixMatcher;
+import com.intellij.codeInsight.completion.ShowHideIntentionIconLookupAction;
 import com.intellij.codeInsight.completion.impl.CamelHumpMatcher;
 import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer;
-import com.intellij.codeInsight.lookup.*;
+import com.intellij.codeInsight.lookup.LookupActionProvider;
+import com.intellij.codeInsight.lookup.LookupArranger;
+import com.intellij.codeInsight.lookup.LookupElement;
+import com.intellij.codeInsight.lookup.LookupElementAction;
+import com.intellij.codeInsight.lookup.LookupElementDecorator;
+import com.intellij.codeInsight.lookup.LookupElementInsertStopper;
+import com.intellij.codeInsight.lookup.LookupElementPresentation;
+import com.intellij.codeInsight.lookup.LookupEvent;
+import com.intellij.codeInsight.lookup.LookupEx;
+import com.intellij.codeInsight.lookup.LookupFocusDegree;
+import com.intellij.codeInsight.lookup.LookupGroupArranger;
+import com.intellij.codeInsight.lookup.LookupListener;
+import com.intellij.codeInsight.lookup.LookupPresentation;
+import com.intellij.codeInsight.lookup.LookupUtil;
 import com.intellij.codeInsight.lookup.impl.actions.ChooseItemAction;
 import com.intellij.codeInsight.template.impl.actions.NextVariableAction;
 import com.intellij.codeWithMe.ClientId;
 import com.intellij.featureStatistics.FeatureUsageTracker;
+import com.intellij.ide.PowerSaveMode;
 import com.intellij.injected.editor.DocumentWindow;
 import com.intellij.injected.editor.EditorWindow;
 import com.intellij.internal.statistic.service.fus.collectors.UIEventLogger;
 import com.intellij.lang.LangBundle;
 import com.intellij.lang.injection.InjectedLanguageManager;
+import com.intellij.modcommand.ActionContext;
+import com.intellij.modcommand.ModCommand;
+import com.intellij.modcommand.ModCommandExecutor;
+import com.intellij.modcompletion.ModCompletionItem;
 import com.intellij.openapi.Disposable;
-import com.intellij.openapi.actionSystem.*;
+import com.intellij.openapi.actionSystem.ActionManager;
+import com.intellij.openapi.actionSystem.ActionPlaces;
+import com.intellij.openapi.actionSystem.AnAction;
+import com.intellij.openapi.actionSystem.AnActionEvent;
+import com.intellij.openapi.actionSystem.DependentTransientComponent;
+import com.intellij.openapi.actionSystem.IdeActions;
 import com.intellij.openapi.actionSystem.ex.ActionUtil;
 import com.intellij.openapi.application.AccessToken;
 import com.intellij.openapi.application.ApplicationManager;
+import com.intellij.openapi.application.ReadAction;
+import com.intellij.openapi.application.WriteAction;
 import com.intellij.openapi.application.WriteIntentReadAction;
 import com.intellij.openapi.client.ClientProjectSession;
 import com.intellij.openapi.client.ClientSessionsUtil;
@@ -32,30 +66,55 @@ import com.intellij.openapi.editor.EditorModificationUtilEx;
 import com.intellij.openapi.editor.ScrollType;
 import com.intellij.openapi.editor.colors.FontPreferences;
 import com.intellij.openapi.editor.colors.impl.FontPreferencesImpl;
-import com.intellij.openapi.editor.event.*;
+import com.intellij.openapi.editor.event.CaretEvent;
+import com.intellij.openapi.editor.event.CaretListener;
+import com.intellij.openapi.editor.event.DocumentEvent;
+import com.intellij.openapi.editor.event.DocumentListener;
+import com.intellij.openapi.editor.event.EditorMouseEvent;
+import com.intellij.openapi.editor.event.EditorMouseListener;
+import com.intellij.openapi.editor.event.SelectionEvent;
+import com.intellij.openapi.editor.event.SelectionListener;
 import com.intellij.openapi.editor.ex.EditorEx;
 import com.intellij.openapi.editor.impl.EditorImpl;
+import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.openapi.project.DumbAwareAction;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.popup.JBPopupFactory;
 import com.intellij.openapi.ui.popup.ListPopup;
-import com.intellij.openapi.util.*;
+import com.intellij.openapi.util.Computable;
+import com.intellij.openapi.util.Disposer;
+import com.intellij.openapi.util.NlsContexts;
+import com.intellij.openapi.util.Pair;
+import com.intellij.openapi.util.SystemInfoRt;
+import com.intellij.openapi.util.TextRange;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.psi.PsiDocumentManager;
 import com.intellij.psi.PsiElement;
 import com.intellij.psi.PsiFile;
 import com.intellij.psi.impl.source.tree.injected.InjectedLanguageEditorUtil;
 import com.intellij.psi.impl.source.tree.injected.InjectedLanguageUtil;
-import com.intellij.ui.*;
+import com.intellij.ui.ClickListener;
+import com.intellij.ui.CollectionListModel;
+import com.intellij.ui.ComponentUtil;
+import com.intellij.ui.ExpandableItemsHandler;
+import com.intellij.ui.ExperimentalUI;
+import com.intellij.ui.LightweightHint;
+import com.intellij.ui.RelativeFont;
+import com.intellij.ui.ScrollingUtil;
 import com.intellij.ui.awt.RelativePoint;
 import com.intellij.ui.components.JBList;
 import com.intellij.ui.scale.JBUIScale;
 import com.intellij.util.CollectConsumer;
 import com.intellij.util.ExceptionUtil;
 import com.intellij.util.SlowOperations;
+import com.intellij.util.concurrency.AppExecutorUtil;
 import com.intellij.util.concurrency.ThreadingAssertions;
 import com.intellij.util.containers.ContainerUtil;
-import com.intellij.util.ui.*;
+import com.intellij.util.ui.Advertiser;
+import com.intellij.util.ui.EDT;
+import com.intellij.util.ui.JBUI;
+import com.intellij.util.ui.StartupUiUtil;
+import com.intellij.util.ui.UIUtil;
 import com.intellij.util.ui.accessibility.AccessibleContextUtil;
 import com.intellij.util.ui.accessibility.ScreenReader;
 import com.intellij.util.ui.update.Activatable;
@@ -64,17 +123,44 @@ import kotlinx.coroutines.CoroutineScope;
 import kotlinx.coroutines.CoroutineScopeKt;
 import kotlinx.coroutines.Dispatchers;
 import one.util.streamex.StreamEx;
-import org.jetbrains.annotations.*;
+import org.jetbrains.annotations.ApiStatus;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
+import org.jetbrains.annotations.Unmodifiable;
+import org.jetbrains.annotations.VisibleForTesting;
 
 import javax.accessibility.Accessible;
 import javax.accessibility.AccessibleContext;
-import javax.swing.*;
+import javax.swing.DefaultListSelectionModel;
+import javax.swing.Icon;
+import javax.swing.JComponent;
+import javax.swing.JList;
+import javax.swing.JPanel;
+import javax.swing.ListModel;
+import javax.swing.ListSelectionModel;
+import javax.swing.SwingUtilities;
+import javax.swing.ToolTipManager;
 import javax.swing.event.ListSelectionEvent;
 import javax.swing.event.ListSelectionListener;
-import java.awt.*;
-import java.awt.event.*;
-import java.util.*;
+import java.awt.BorderLayout;
+import java.awt.Color;
+import java.awt.Component;
+import java.awt.Font;
+import java.awt.Point;
+import java.awt.Rectangle;
+import java.awt.Window;
+import java.awt.event.ComponentAdapter;
+import java.awt.event.ComponentEvent;
+import java.awt.event.ComponentListener;
+import java.awt.event.InputEvent;
+import java.awt.event.KeyEvent;
+import java.awt.event.MouseEvent;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
@@ -258,6 +344,10 @@ public class LookupImpl extends LightweightHint implements LookupEx, Disposable,
     }
   }
 
+  /**
+   * let LookupImpl know that user changed selected element
+   * @see #isSelectionTouched()
+   */
   public void markSelectionTouched() {
     if (!ApplicationManager.getApplication().isUnitTestMode()) {
       ThreadingAssertions.assertEventDispatchThread();
@@ -324,17 +414,15 @@ public class LookupImpl extends LightweightHint implements LookupEx, Disposable,
 
     cellRenderer.itemAdded(item, presentation);
     LookupArranger arranger = myArranger;
+    arranger.invokeWhenLookupElementAdded(item, () -> cellRenderer.itemAddedToArranger(item));
     arranger.registerMatcher(item, matcher);
     arranger.addElement(item, presentation);
-    cellRenderer.itemAddedToArranger(item);
     return true;
   }
 
-  // Used by external plugins
-  @SuppressWarnings("unused")
   public void scheduleItemUpdate(@NotNull LookupElement item) {
     // this check significantly affects perfomance with enabled assertions
-    if (LOG.isTraceEnabled()){
+    if (LOG.isTraceEnabled()) {
       LOG.assertTrue(getItems().contains(item), "Item isn't present in lookup");
     }
     cellRenderer.updateItemPresentation(item);
@@ -356,6 +444,11 @@ public class LookupImpl extends LightweightHint implements LookupEx, Disposable,
   @ApiStatus.Internal
   public void showIfMeaningless() {
     myShowIfMeaningless = true;
+  }
+
+  @ApiStatus.Internal
+  public void cancelRendering(@NotNull LookupElement element) {
+    cellRenderer.cancelRendering(element);
   }
 
   private static boolean containsDummyIdentifier(@Nullable String s) {
@@ -646,6 +739,31 @@ public class LookupImpl extends LightweightHint implements LookupEx, Disposable,
     }, null, null);
   }
 
+  private static void insertItem(char completionChar,
+                                 @NotNull Editor editor,
+                                 int start, 
+                                 @NotNull PsiFile psiFile,
+                                 CompletionItemLookupElement wrapper) {
+    ModCompletionItem.InsertionContext insertionContext = new ModCompletionItem.InsertionContext(
+      completionChar == REPLACE_SELECT_CHAR ?
+      ModCompletionItem.InsertionMode.OVERWRITE : ModCompletionItem.InsertionMode.INSERT,
+      completionChar);
+    ActionContext actionContext = ActionContext.from(editor, psiFile);
+    ActionContext finalActionContext = actionContext
+      .withOffset(start)
+      .withSelection(TextRange.create(start, actionContext.offset()));
+    Project project = actionContext.project();
+    ModCommand command = wrapper.getCachedCommand(finalActionContext, insertionContext);
+    if (command == null) {
+      command = ProgressManager.getInstance().runProcessWithProgressSynchronously(
+        () -> ReadAction.nonBlocking(
+          () -> wrapper.computeCommand(finalActionContext, insertionContext)).executeSynchronously(),
+        AnalysisBundle.message("complete"), true, project);
+    }
+    WriteAction.run(() -> editor.getDocument().deleteString(start, actionContext.offset()));
+    ModCommandExecutor.getInstance().executeInteractively(actionContext, command, editor);
+  }
+
   void finishLookupInWritableFile(char completionChar, @Nullable LookupElement item) {
     if (item == null || !item.isValid() || item instanceof EmptyLookupItem) {
       hideWithItemSelected(null, completionChar);
@@ -668,15 +786,22 @@ public class LookupImpl extends LightweightHint implements LookupEx, Disposable,
 
     myFinishing = true;
     if (fireBeforeItemSelected(item, completionChar)) {
-      ApplicationManager.getApplication().runWriteAction(() -> {
-        editor.getDocument().startGuardedBlockChecking();
-        try {
-          insertLookupString(item, getPrefixLength(item));
-        }
-        finally {
-          editor.getDocument().stopGuardedBlockChecking();
-        }
-      });
+      if (item instanceof CompletionItemLookupElement wrapper) {
+        PsiFile file = Objects.requireNonNull(getPsiFile(), "PsiFile must be known for ModCommand completion");
+        editor.getCaretModel().runForEachCaret(__ -> {
+          insertItem(completionChar, editor, editor.getCaretModel().getOffset() - getPrefixLength(item), file, wrapper);
+        });
+      } else {
+        ApplicationManager.getApplication().runWriteAction(() -> {
+          editor.getDocument().startGuardedBlockChecking();
+          try {
+            insertLookupString(item, getPrefixLength(item));
+          }
+          finally {
+            editor.getDocument().stopGuardedBlockChecking();
+          }
+        });
+      }
     }
 
     if (isLookupDisposed()) { // any document listeners could close us
@@ -781,6 +906,7 @@ public class LookupImpl extends LightweightHint implements LookupEx, Disposable,
 
   @Override
   public boolean vetoesHiding() {
+    if (isLookupDisposed()) return false;
     // the second condition means that the Lookup belongs to another connected client
     return myGuardedChanges > 0 ||
            mySession != ClientSessionsUtil.getCurrentSessionOrNull(mySession.getProject()) ||
@@ -1128,6 +1254,21 @@ public class LookupImpl extends LightweightHint implements LookupEx, Disposable,
       LookupEvent event = new LookupEvent(this, currentItem, (char)0);
       for (LookupListener listener : myListeners) {
         listener.currentItemChanged(event);
+      }
+    }
+    if (currentItem instanceof CompletionItemLookupElement wrapper && !PowerSaveMode.isEnabled()) {
+      PsiFile file = getPsiFile();
+      if (file != null) {
+        ActionContext actionContext = ActionContext.from(editor, file);
+        int start = actionContext.offset() - getPrefixLength(currentItem);
+        ActionContext finalActionContext = actionContext
+          .withOffset(start)
+          .withSelection(TextRange.create(start, actionContext.offset()));
+        // Cache current item result
+        ReadAction.nonBlocking(
+          () -> wrapper.computeCommand(finalActionContext, ModCompletionItem.DEFAULT_INSERTION_CONTEXT))
+          .expireWith(this)
+          .submit(AppExecutorUtil.getAppExecutorService());
       }
     }
     myPreview.updatePreview(currentItem);
@@ -1495,7 +1636,7 @@ public class LookupImpl extends LightweightHint implements LookupEx, Disposable,
     public void setSelectionInterval(int index0, int index1) {
       // If either endpoint is a separator, do not select
       if (isSeparator(index0)) {
-        int next = findNextSelectable(index0, 1);
+        int next = findNextSelectable(index0);
         if (next != -1) {
           super.setSelectionInterval(next, next);
         }
@@ -1514,13 +1655,11 @@ public class LookupImpl extends LightweightHint implements LookupEx, Disposable,
       return false;
     }
 
-    private int findNextSelectable(int start, int direction) {
+    private int findNextSelectable(int start) {
       ListModel<?> model = list.getModel();
       int size = model.getSize();
-      int i = start + direction;
-      while (i >= 0 && i < size) {
+      for (int i = start + 1; i >= 0 && i < size; i++) {
         if (!isSeparator(i)) return i;
-        i += direction;
       }
       return -1;
     }

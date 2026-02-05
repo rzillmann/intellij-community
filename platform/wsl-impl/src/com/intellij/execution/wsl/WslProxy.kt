@@ -6,11 +6,32 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.util.registry.Registry
 import io.ktor.network.selector.ActorSelectorManager
-import io.ktor.network.sockets.*
-import io.ktor.utils.io.*
+import io.ktor.network.sockets.Socket
+import io.ktor.network.sockets.TcpSocketBuilder
+import io.ktor.network.sockets.aSocket
+import io.ktor.network.sockets.openReadChannel
+import io.ktor.network.sockets.openWriteChannel
+import io.ktor.utils.io.ByteReadChannel
+import io.ktor.utils.io.ByteWriteChannel
+import io.ktor.utils.io.cancel
+import io.ktor.utils.io.close
 import io.ktor.utils.io.jvm.javaio.toByteReadChannel
-import kotlinx.coroutines.*
+import io.ktor.utils.io.readAvailable
+import io.ktor.utils.io.readFully
+import io.ktor.utils.io.readUTF8Line
+import io.ktor.utils.io.writeFully
+import kotlinx.coroutines.CoroutineName
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.ClosedReceiveChannelException
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import org.jetbrains.annotations.ApiStatus
 import java.io.IOException
 import java.net.InetAddress
@@ -20,6 +41,9 @@ import java.nio.ByteOrder
 import kotlin.coroutines.coroutineContext
 
 /**
+ * *Warning*: This class is *deprecated*. Use Eel API.
+ *
+ *
  * The problem is covered here: PY-50689.
  *
  * Intellij debuggers opens port and waits debugee to connect to it.
@@ -34,6 +58,7 @@ import kotlin.coroutines.coroutineContext
  *
  */
 @ApiStatus.Internal
+@Deprecated("Please use Eel API instead")
 class WslProxy(distro: AbstractWslDistribution, private val applicationAddress: InetSocketAddress) : Disposable {
   @Deprecated("Use the construction with the application address." +
               " This constructor can lead to sporadic 'connection refused' errors in case of IPv4/IPv6 confusion.")
@@ -80,19 +105,21 @@ class WslProxy(distro: AbstractWslDistribution, private val applicationAddress: 
       try {
         outputStream.close() // Closing stream should stop process
       }
-      catch (e: Exception) {
+      catch (e: IOException) {
         Logger.getInstance(WslProxy::class.java).warn(e)
       }
-      GlobalScope.launch(Dispatchers.IO) {
-        // Wait for process to die. If not -- kill it
-        delay(1000)
-        if (isAlive) {
-          Logger.getInstance(WslProxy::class.java).warn("Process still alive, destroying")
-          destroy()
-        }
-        val exitCode = exitValue()
-        if (exitCode != 0) {
-          Logger.getInstance(WslProxy::class.java).warn("Exit code was $exitCode")
+      finally {
+        GlobalScope.launch(Dispatchers.IO) {
+          // Wait for process to die. If not -- kill it
+          delay(1000)
+          if (isAlive) {
+            Logger.getInstance(WslProxy::class.java).warn("Process still alive, destroying")
+            destroy()
+          }
+          val exitCode = exitValue()
+          if (exitCode != 0) {
+            Logger.getInstance(WslProxy::class.java).warn("Exit code was $exitCode")
+          }
         }
       }
     }

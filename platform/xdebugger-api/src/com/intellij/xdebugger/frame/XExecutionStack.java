@@ -11,7 +11,7 @@ import org.jetbrains.annotations.Nls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import javax.swing.*;
+import javax.swing.Icon;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
@@ -75,6 +75,15 @@ public abstract class XExecutionStack {
    * @return top stack frame or {@code null} if it isn't available
    */
   public abstract @Nullable XStackFrame getTopFrame();
+
+  /**
+   * Compute the top stack frame asynchronously.
+   * @return a future with top stack frame or {@code null} if it isn't available
+   */
+  @ApiStatus.Internal
+  public @NotNull CompletableFuture<@Nullable XStackFrame> getTopFrameAsync() {
+    return CompletableFuture.completedFuture(getTopFrame());
+  }
 
   /**
    * Start computing stack frames top-down starting from {@code firstFrameIndex}. This method is called from the Event Dispatch Thread

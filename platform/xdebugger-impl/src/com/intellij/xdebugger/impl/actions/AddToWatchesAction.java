@@ -2,14 +2,14 @@
 package com.intellij.xdebugger.impl.actions;
 
 import com.intellij.openapi.actionSystem.AnActionEvent;
-import com.intellij.openapi.actionSystem.remoting.ActionRemoteBehaviorSpecification;
+import com.intellij.platform.debugger.impl.shared.SplitDebuggerAction;
 import com.intellij.xdebugger.impl.DebuggerSupport;
 import com.intellij.xdebugger.impl.actions.handlers.XAddToWatchesFromEditorActionHandler;
 import com.intellij.xdebugger.impl.ui.tree.actions.XAddToWatchesTreeAction;
-import com.intellij.xdebugger.impl.ui.tree.actions.XDebuggerTreeActionBase;
+import com.intellij.xdebugger.impl.ui.tree.actions.XDebuggerTreeSplitActionBase;
 import org.jetbrains.annotations.NotNull;
 
-final class AddToWatchesAction extends XDebuggerActionBase implements ActionRemoteBehaviorSpecification.FrontendOtherwiseBackend {
+final class AddToWatchesAction extends XDebuggerActionBase implements SplitDebuggerAction {
   private static class Holder {
     private static final XAddToWatchesTreeAction TREE_ACTION = new XAddToWatchesTreeAction();
   }
@@ -27,7 +27,7 @@ final class AddToWatchesAction extends XDebuggerActionBase implements ActionRemo
 
   @Override
   public void update(@NotNull AnActionEvent event) {
-    if (XDebuggerTreeActionBase.getSelectedNode(event.getDataContext()) != null) {
+    if (XDebuggerTreeSplitActionBase.getSelectedNode(event.getDataContext()) != null) {
       Holder.TREE_ACTION.update(event);
     }
     else {
@@ -37,7 +37,7 @@ final class AddToWatchesAction extends XDebuggerActionBase implements ActionRemo
 
   @Override
   public void actionPerformed(@NotNull AnActionEvent event) {
-    if (XDebuggerTreeActionBase.getSelectedNode(event.getDataContext()) != null) {
+    if (XDebuggerTreeSplitActionBase.getSelectedNode(event.getDataContext()) != null) {
       Holder.TREE_ACTION.actionPerformed(event);
     }
     else {

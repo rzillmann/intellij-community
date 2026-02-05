@@ -3,14 +3,32 @@ package com.intellij.updater;
 
 import org.jetbrains.annotations.Nullable;
 
-import java.io.*;
+import java.io.BufferedOutputStream;
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
-import java.nio.file.*;
-import java.util.*;
-import java.util.logging.*;
+import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
+import java.nio.file.LinkOption;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.StringTokenizer;
+import java.util.logging.FileHandler;
 import java.util.logging.Formatter;
+import java.util.logging.Level;
+import java.util.logging.LogRecord;
+import java.util.logging.Logger;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 import java.util.zip.ZipInputStream;
@@ -571,16 +589,25 @@ public final class Runner {
   }
 
   private static void postUpdateTasks(UpdaterUI ui, Path targetDir, @Nullable String newVersion) {
+    LOG.info("Running post-update tasks (ver=" + newVersion + " mac=" + Utils.IS_MAC + " win=" + Utils.IS_WINDOWS + ')');
     if (Utils.IS_MAC) {
       PostUpdateTasks.refreshAppBundleIcon(targetDir);
     }
-    else if (Utils.IS_WINDOWS && newVersion != null) {
+    else if (newVersion != null) {
       var parts = Utils.splitVersionString(newVersion);
       if (parts.length == 2) {
-        ui.startProcess(UpdaterUI.message("updating.shortcuts"));
-        ui.setProgressIndeterminate();
-        PostUpdateTasks.updateWindowsRegistry(targetDir, parts[0], parts[1]);
-        PostUpdateTasks.updateWindowsShortcuts(targetDir, parts[0]);
+        var united = Utils.majorVersion(parts[1]) >= 253;
+        if (Utils.IS_WINDOWS) {
+          ui.startProcess(UpdaterUI.message("updating.shortcuts"));
+          ui.setProgressIndeterminate();
+          PostUpdateTasks.updateWindowsRegistry(targetDir, parts[0], parts[1], united);
+          PostUpdateTasks.updateWindowsShortcuts(targetDir, parts[0]);
+        }
+        else if (united) {
+          ui.startProcess(UpdaterUI.message("updating.shortcuts"));
+          ui.setProgressIndeterminate();
+          PostUpdateTasks.updateDesktopEntries(targetDir);
+        }
       }
     }
   }

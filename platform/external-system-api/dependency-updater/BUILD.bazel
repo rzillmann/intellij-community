@@ -34,6 +34,12 @@ resourcegroup(
 )
 
 jvm_library(
+  name = "externalSystem-dependencyUpdater-tests",
+  visibility = ["//visibility:public"],
+  srcs = glob([], allow_empty = True)
+)
+
+jvm_library(
   name = "externalSystem-dependencyUpdater-tests_test_lib",
   module_name = "intellij.platform.externalSystem.dependencyUpdater.tests",
   visibility = ["//visibility:public"],
@@ -55,7 +61,8 @@ jvm_library(
     "//platform/testFramework",
     "//platform/testFramework:testFramework_test_lib",
     "//java/java-runtime:rt",
-  ]
+  ],
+  runtime_deps = [":externalSystem-dependencyUpdater-tests"]
 )
 ### auto-generated section `build intellij.platform.externalSystem.dependencyUpdater.tests` end
 

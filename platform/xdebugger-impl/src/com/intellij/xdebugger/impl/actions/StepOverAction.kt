@@ -3,14 +3,13 @@ package com.intellij.xdebugger.impl.actions
 
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DataContext
-import com.intellij.openapi.actionSystem.remoting.ActionRemoteBehaviorSpecification
 import com.intellij.openapi.project.DumbAware
-import com.intellij.xdebugger.impl.DebuggerSupport
-import com.intellij.xdebugger.impl.frame.XDebugSessionProxy
-import com.intellij.xdebugger.impl.performDebuggerActionAsync
+import com.intellij.platform.debugger.impl.shared.SplitDebuggerAction
+import com.intellij.platform.debugger.impl.shared.performDebuggerActionAsync
+import com.intellij.platform.debugger.impl.shared.proxy.XDebugSessionProxy
 
-open class StepOverAction : XDebuggerActionBase(), DumbAware, ActionRemoteBehaviorSpecification.FrontendOtherwiseBackend {
-  override fun getHandler(debuggerSupport: DebuggerSupport): DebuggerActionHandler {
+open class StepOverAction : XDebuggerActionBase(), DumbAware, SplitDebuggerAction {
+  override fun getHandler(): DebuggerActionHandler {
     return ourHandler
   }
 

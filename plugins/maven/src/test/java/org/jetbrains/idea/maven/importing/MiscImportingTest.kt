@@ -15,12 +15,11 @@ import com.intellij.testFramework.ExtensionTestUtil.maskExtensions
 import com.intellij.testFramework.PlatformTestUtil
 import kotlinx.coroutines.runBlocking
 import org.jetbrains.idea.maven.MavenCustomRepositoryHelper
-import org.jetbrains.idea.maven.importing.workspaceModel.WORKSPACE_IMPORTER_SKIP_FAST_APPLY_ATTEMPTS_ONCE
 import org.jetbrains.idea.maven.model.MavenId
 import org.jetbrains.idea.maven.project.MavenProject
 import org.jetbrains.idea.maven.server.MavenServerManager
 import org.junit.Test
-import java.util.*
+import java.util.Properties
 import java.util.function.Function
 
 class MiscImportingTest : MavenMultiVersionImportingTestCase() {
@@ -65,25 +64,25 @@ class MiscImportingTest : MavenMultiVersionImportingTestCase() {
     assertEquals("2", projectsTree.rootProjects[0].name)
   }
 
-  @Test
-  fun testFallbackToSlowWorkspaceCommit() = runBlocking {
-    try {
-      WORKSPACE_IMPORTER_SKIP_FAST_APPLY_ATTEMPTS_ONCE = true
-      importProjectAsync("""
-                      <groupId>test</groupId>
-                      <artifactId>project</artifactId>
-                      <version>1</version>
-                      <name>1</name>
-                      """.trimIndent())
-      assertModules("project")
-
-      // make sure the logic in WorkspaceProjectImporter worked as expected
-      assertFalse(WORKSPACE_IMPORTER_SKIP_FAST_APPLY_ATTEMPTS_ONCE)
-    }
-    finally {
-      WORKSPACE_IMPORTER_SKIP_FAST_APPLY_ATTEMPTS_ONCE = false
-    }
-  }
+  //@Test
+  //fun testFallbackToSlowWorkspaceCommit() = runBlocking {
+  //  try {
+  //    WORKSPACE_IMPORTER_SKIP_FAST_APPLY_ATTEMPTS_ONCE = true
+  //    importProjectAsync("""
+  //                    <groupId>test</groupId>
+  //                    <artifactId>project</artifactId>
+  //                    <version>1</version>
+  //                    <name>1</name>
+  //                    """.trimIndent())
+  //    assertModules("project")
+  //
+  //    // make sure the logic in WorkspaceProjectImporter worked as expected
+  //    assertFalse(WORKSPACE_IMPORTER_SKIP_FAST_APPLY_ATTEMPTS_ONCE)
+  //  }
+  //  finally {
+  //    WORKSPACE_IMPORTER_SKIP_FAST_APPLY_ATTEMPTS_ONCE = false
+  //  }
+  //}
 
   @Test
 

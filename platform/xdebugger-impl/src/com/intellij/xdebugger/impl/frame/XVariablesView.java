@@ -7,6 +7,8 @@ import com.intellij.openapi.actionSystem.UiDataProvider;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.util.Key;
+import com.intellij.platform.debugger.impl.shared.proxy.XDebugSessionProxy;
+import com.intellij.platform.debugger.impl.ui.XDebuggerEntityConverter;
 import com.intellij.util.ObjectUtils;
 import com.intellij.util.ui.components.BorderLayoutPanel;
 import com.intellij.xdebugger.XDebugSession;
@@ -21,7 +23,8 @@ import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import javax.swing.*;
+import javax.swing.JComponent;
+import javax.swing.JPanel;
 import java.lang.ref.WeakReference;
 import java.util.Collections;
 import java.util.List;
@@ -35,8 +38,8 @@ public class XVariablesView extends XVariablesViewBase {
    * @deprecated Use {@link XVariablesView#XVariablesView(XDebugSessionProxy)} instead
    */
   @Deprecated
-  public XVariablesView(@NotNull XDebugSessionImpl session) {
-    this(XDebugSessionProxyKeeperKt.asProxy(session));
+  public XVariablesView(@NotNull XDebugSession session) {
+    this(XDebuggerEntityConverter.asProxy(session));
   }
 
   public XVariablesView(@NotNull XDebugSessionProxy proxy) {
@@ -106,12 +109,15 @@ public class XVariablesView extends XVariablesViewBase {
   public final @Nullable XDebugSessionImpl getSession() {
     XDebugSessionProxy proxy = getSessionProxy();
     if (proxy == null) return null;
-    if (!(proxy instanceof XDebugSessionProxy.Monolith monolith)) {
+    XDebugSession xDebugSession = XDebuggerEntityConverter.getSessionNonSplitOnly(proxy);
+    if (xDebugSession == null) {
       Logger.getInstance(XVariablesView.class).error("This method can be used only with monolith session proxies, got: " +
                                                      proxy + " of type " + proxy.getClass() + " instead");
-      return null;
     }
-    return monolith.getSessionImpl();
+    if (xDebugSession instanceof XDebugSessionImpl session) {
+      return session;
+    }
+    return null;
   }
 
   @ApiStatus.Internal
@@ -163,7 +169,7 @@ public class XVariablesView extends XVariablesViewBase {
     @ApiStatus.Obsolete
     public static @Nullable InlineVariablesInfo get(@Nullable XDebugSession session) {
       if (session == null) return null;
-     return get(XDebugSessionProxyKeeperKt.asProxy(session));
+      return get(XDebuggerEntityConverter.asProxy(session));
     }
 
     @ApiStatus.Internal
@@ -180,7 +186,7 @@ public class XVariablesView extends XVariablesViewBase {
     @ApiStatus.Obsolete
     public static void set(@Nullable XDebugSession session, InlineVariablesInfo info) {
       if (session != null) {
-        set(XDebugSessionProxyKeeperKt.asProxy(session), info);
+        set(XDebuggerEntityConverter.asProxy(session), info);
       }
     }
 

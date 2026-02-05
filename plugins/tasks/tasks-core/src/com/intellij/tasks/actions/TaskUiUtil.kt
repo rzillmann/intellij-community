@@ -7,10 +7,11 @@ package com.intellij.tasks.actions
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.IconLoader.getTransparentIcon
+import com.intellij.openapi.util.TextRange
 import com.intellij.psi.codeStyle.MinusculeMatcher
 import com.intellij.tasks.LocalTask
 import com.intellij.tasks.TaskManager
-import com.intellij.tasks.doc.TaskPsiElement
+import com.intellij.tasks.core.TaskSymbol
 import com.intellij.ui.LayeredIcon
 import com.intellij.ui.dsl.listCellRenderer.listCellRenderer
 import com.intellij.util.text.MatcherHolder
@@ -23,7 +24,7 @@ internal fun getTaskCellRenderer(project: Project) = listCellRenderer<Any> {
   val value = value
 
   when (value) {
-    is TaskPsiElement -> {
+    is TaskSymbol -> {
       val task = value.task
       val taskManager = TaskManager.getManager(project)
       val isLocalTask = taskManager.findTask(task.id) != null
@@ -40,7 +41,7 @@ internal fun getTaskCellRenderer(project: Project) = listCellRenderer<Any> {
           foreground = greyForeground
         }
         speedSearch {
-          ranges = matcher?.matchingFragments(task.presentableName)
+          ranges = matcher?.match(task.presentableName)?.map { TextRange(it.startOffset, it.endOffset) }
         }
       }
     }

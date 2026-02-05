@@ -2,8 +2,20 @@ package com.intellij.python.hatch.runtime
 
 import com.intellij.platform.eel.EelApi
 import com.intellij.platform.eel.provider.localEel
-import com.intellij.python.community.execService.*
-import com.intellij.python.hatch.*
+import com.intellij.python.community.execService.Args
+import com.intellij.python.community.execService.BinOnEel
+import com.intellij.python.community.execService.ExecOptions
+import com.intellij.python.community.execService.ExecService
+import com.intellij.python.community.execService.ProcessOutputTransformer
+import com.intellij.python.community.execService.ProcessSemiInteractiveFun
+import com.intellij.python.community.execService.execute
+import com.intellij.python.community.execService.processSemiInteractiveHandler
+import com.intellij.python.community.execService.python.validatePythonAndGetInfo
+import com.intellij.python.hatch.BasePythonExecutableNotFoundHatchError
+import com.intellij.python.hatch.HatchConfiguration
+import com.intellij.python.hatch.HatchError
+import com.intellij.python.hatch.PythonVirtualEnvironment
+import com.intellij.python.hatch.WorkingDirectoryNotFoundHatchError
 import com.intellij.python.hatch.cli.HatchCli
 import com.jetbrains.python.PythonBinary
 import com.jetbrains.python.PythonHomePath
@@ -13,7 +25,6 @@ import com.jetbrains.python.sdk.impl.resolvePythonBinary
 import java.nio.file.Path
 import kotlin.io.path.isDirectory
 import kotlin.io.path.isExecutable
-import kotlin.time.Duration.Companion.minutes
 
 class HatchRuntime(
   val hatchBinary: BinOnEel,
@@ -63,15 +74,13 @@ class HatchRuntime(
   }
 
   internal suspend fun resolvePythonVirtualEnvironment(pythonHomePath: PythonHomePath): PyResult<PythonVirtualEnvironment> {
-    val pythonVersion = pythonHomePath.takeIf { it.isDirectory() }?.resolvePythonBinary()?.let { pythonBinaryPath ->
-      execService.execGetStdout(pythonBinaryPath, Args("--version"),
-                                ExecOptions(timeout = 20.minutes),
-                                procListener = null).getOr { return it }.trim()
+    val pythonInfo = pythonHomePath.takeIf { it.isDirectory() }?.resolvePythonBinary()?.let { pythonBinaryPath ->
+      pythonBinaryPath.validatePythonAndGetInfo().getOr { return it }
     }
 
     val pythonVirtualEnvironment = when {
-      pythonVersion == null -> PythonVirtualEnvironment.NotExisting(pythonHomePath)
-      else -> PythonVirtualEnvironment.Existing(pythonHomePath, pythonVersion)
+      pythonInfo == null -> PythonVirtualEnvironment.NotExisting(pythonHomePath)
+      else -> PythonVirtualEnvironment.Existing(pythonHomePath, pythonInfo)
     }
     return Result.success(pythonVirtualEnvironment)
   }

@@ -9,15 +9,46 @@ import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.util.containers.tailOrEmpty
 import com.jetbrains.python.PyNames
 import com.jetbrains.python.ast.PyAstFunction
-import com.jetbrains.python.codeInsight.*
+import com.jetbrains.python.codeInsight.PyDataclassFieldParameters
 import com.jetbrains.python.codeInsight.PyDataclassNames.Attrs
 import com.jetbrains.python.codeInsight.PyDataclassNames.Dataclasses
+import com.jetbrains.python.codeInsight.PyDataclassParameters
+import com.jetbrains.python.codeInsight.parseDataclassParameters
+import com.jetbrains.python.codeInsight.parseStdDataclassParameters
+import com.jetbrains.python.codeInsight.resolveDataclassFieldParameters
 import com.jetbrains.python.codeInsight.typing.PyTypingTypeProvider
-import com.jetbrains.python.psi.*
+import com.jetbrains.python.psi.AccessDirection
+import com.jetbrains.python.psi.PyCallExpression
+import com.jetbrains.python.psi.PyCallable
+import com.jetbrains.python.psi.PyClass
+import com.jetbrains.python.psi.PyElementGenerator
+import com.jetbrains.python.psi.PyEllipsisLiteralExpression
+import com.jetbrains.python.psi.PyExpression
+import com.jetbrains.python.psi.PyFunction
+import com.jetbrains.python.psi.PyKnownDecoratorUtil
+import com.jetbrains.python.psi.PyNamedParameter
+import com.jetbrains.python.psi.PyParameter
+import com.jetbrains.python.psi.PyReferenceExpression
+import com.jetbrains.python.psi.PyTargetExpression
+import com.jetbrains.python.psi.PyTypedElement
+import com.jetbrains.python.psi.PyUtil
 import com.jetbrains.python.psi.impl.PyBuiltinCache
 import com.jetbrains.python.psi.impl.PyCallExpressionNavigator
 import com.jetbrains.python.psi.resolve.PyResolveContext
-import com.jetbrains.python.psi.types.*
+import com.jetbrains.python.psi.types.PyCallableParameter
+import com.jetbrains.python.psi.types.PyCallableParameterImpl
+import com.jetbrains.python.psi.types.PyCallableType
+import com.jetbrains.python.psi.types.PyCallableTypeImpl
+import com.jetbrains.python.psi.types.PyClassLikeType
+import com.jetbrains.python.psi.types.PyClassType
+import com.jetbrains.python.psi.types.PyCollectionType
+import com.jetbrains.python.psi.types.PyDescriptorTypeUtil
+import com.jetbrains.python.psi.types.PyType
+import com.jetbrains.python.psi.types.PyTypeMember
+import com.jetbrains.python.psi.types.PyTypeProviderBase
+import com.jetbrains.python.psi.types.PyTypeUtil
+import com.jetbrains.python.psi.types.PyUnionType
+import com.jetbrains.python.psi.types.TypeEvalContext
 import one.util.streamex.StreamEx
 import org.jetbrains.annotations.ApiStatus
 
@@ -28,13 +59,14 @@ class PyDataclassTypeProvider : PyTypeProviderBase() {
   }
 
   override fun getReferenceType(referenceTarget: PsiElement, context: TypeEvalContext, anchor: PsiElement?): Ref<PyType>? {
-    val result = when {
-      referenceTarget is PyClass && anchor is PyCallExpression -> getDataclassTypeForClass(referenceTarget, context)
-      referenceTarget is PyParameter && referenceTarget.isSelf && anchor is PyCallExpression -> {
+    val result = when (referenceTarget) {
+      // MyDataclass() call
+      is PyClass if anchor is PyCallExpression -> getDataclassTypeForClass(context.getType(referenceTarget), context)
+      // cls() call
+      is PyParameter if referenceTarget.isSelf && anchor is PyCallExpression -> {
         PsiTreeUtil.getParentOfType(referenceTarget, PyFunction::class.java)
           ?.takeIf { it.modifier == PyAstFunction.Modifier.CLASSMETHOD }
-          ?.containingClass
-          ?.let { getDataclassTypeForClass(it, context) }
+          ?.let { getDataclassTypeForClass(context.getType(it), context) }
       }
       else -> null
     }
@@ -68,8 +100,7 @@ class PyDataclassTypeProvider : PyTypeProviderBase() {
       if (!t.isDefinition) {
         continue
       }
-      val dataclassType =
-        getDataclassTypeForClass(t.pyClass, context)
+      val dataclassType = getDataclassTypeForClass(t, context)
       if (dataclassType != null) {
         return Ref.create(dataclassType)
       }
@@ -92,7 +123,7 @@ class PyDataclassTypeProvider : PyTypeProviderBase() {
         return null
       }
 
-      if (dataclassParameters.frozen) {
+      if (dataclassParameters.frozen == true) {
         return null
       }
 
@@ -103,7 +134,7 @@ class PyDataclassTypeProvider : PyTypeProviderBase() {
       return listOf(PyTypeMember(null, PyBuiltinCache.getInstance(type.pyClass).noneType))
     }
     else {
-      if (dataclassParameters.frozen) {
+      if (dataclassParameters.frozen == true) {
         val resolvedMembers = type.resolveMember(name, location, direction, context, false)
         if (resolvedMembers?.isNotEmpty() == true) {
           return resolvedMembers.map {
@@ -154,9 +185,9 @@ class PyDataclassTypeProvider : PyTypeProviderBase() {
     @ApiStatus.Internal
     class InitVarInfo(val targetExpression: PyTargetExpression, val type: PyType?)
 
-    fun getGeneratedMatchArgs(cls: PyClass, context: TypeEvalContext): List<String>? {
-      if (parseDataclassParameters(cls, context)?.matchArgs != true) return null
-      return getDataclassTypeForClass(cls, context)?.getParameters(context)?.mapNotNull { it.name }
+    fun getGeneratedMatchArgs(classType: PyClassType, context: TypeEvalContext): List<String>? {
+      if (parseDataclassParameters(classType.pyClass, context)?.matchArgs != true) return null
+      return getDataclassTypeForClass(classType, context)?.getParameters(context)?.mapNotNull { it.name }
     }
 
     private fun getDataclassesReplaceType(referenceExpression: PyReferenceExpression, context: TypeEvalContext): PyCallableType? {
@@ -180,7 +211,7 @@ class PyDataclassTypeProvider : PyTypeProviderBase() {
       val objType = context.getType(obj) as? PyClassType ?: return null
       if (objType.isDefinition) return null
 
-      val dataclassType = getDataclassTypeForClass(objType.pyClass, context) ?: return null
+      val dataclassType = getDataclassTypeForClass(objType, context) ?: return null
       val dataclassParameters = dataclassType.getParameters(context) ?: return null
 
       val parameters = mutableListOf<PyCallableParameter>()
@@ -195,11 +226,11 @@ class PyDataclassTypeProvider : PyTypeProviderBase() {
       return PyCallableTypeImpl(parameters, dataclassType.getReturnType(context))
     }
 
-    fun getDataclassTypeForClass(cls: PyClass, context: TypeEvalContext): PyCallableType? {
-      val clsType = (context.getType(cls) as? PyClassLikeType) ?: return null
+    fun getDataclassTypeForClass(clsType: PyType?, context: TypeEvalContext): PyCallableType? {
+      if (clsType !is PyClassType) return null
 
       val resolveContext = PyResolveContext.defaultContext(context)
-      val elementGenerator = PyElementGenerator.getInstance(cls.project)
+      val elementGenerator = PyElementGenerator.getInstance(clsType.pyClass.project)
       val ellipsis = elementGenerator.createEllipsis()
 
       val collected = linkedMapOf<String, PyCallableParameter>()
@@ -208,7 +239,7 @@ class PyDataclassTypeProvider : PyTypeProviderBase() {
       var seenKeywordOnlyClass = false
       val seenNames = mutableSetOf<String>()
 
-      for (currentType in StreamEx.of(clsType).append(cls.getAncestorTypes(context))) {
+      for (currentType in StreamEx.of<PyClassLikeType>(clsType).append(clsType.getAncestorTypes(context))) {
         if (currentType == null ||
             !currentType.resolveMember(PyNames.INIT, null, AccessDirection.READ, resolveContext, false).isNullOrEmpty() ||
             !currentType.resolveMember(PyNames.NEW, null, AccessDirection.READ, resolveContext, false).isNullOrEmpty() ||

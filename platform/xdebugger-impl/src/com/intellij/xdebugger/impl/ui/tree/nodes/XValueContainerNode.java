@@ -8,14 +8,24 @@ import com.intellij.util.SmartList;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.containers.SortedList;
 import com.intellij.xdebugger.evaluation.InlineDebuggerHelper;
-import com.intellij.xdebugger.frame.*;
+import com.intellij.xdebugger.frame.XCompositeNode;
+import com.intellij.xdebugger.frame.XDebuggerTreeNodeHyperlink;
+import com.intellij.xdebugger.frame.XNamedValue;
+import com.intellij.xdebugger.frame.XValueChildrenList;
+import com.intellij.xdebugger.frame.XValueContainer;
+import com.intellij.xdebugger.frame.XValueGroup;
 import com.intellij.xdebugger.impl.pinned.items.XDebuggerPinToTopManager;
 import com.intellij.xdebugger.impl.ui.XDebuggerUIConstants;
 import com.intellij.xdebugger.impl.ui.tree.XDebuggerTree;
+import com.intellij.xdebugger.impl.ui.tree.XDebuggerTreeState;
 import com.intellij.xdebugger.settings.XDebuggerSettingsManager;
-import org.jetbrains.annotations.*;
+import org.jetbrains.annotations.ApiStatus;
+import org.jetbrains.annotations.Nls;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.Unmodifiable;
 
-import javax.swing.*;
+import javax.swing.Icon;
 import javax.swing.event.HyperlinkListener;
 import javax.swing.tree.TreeNode;
 import java.util.ArrayList;
@@ -314,5 +324,21 @@ public abstract class XValueContainerNode<ValueContainer extends XValueContainer
 
   public void setObsolete() {
     myObsolete = true;
+  }
+
+  @ApiStatus.Internal
+  public abstract static class Root<ValueContainer extends XValueContainer> extends XValueContainerNode<ValueContainer> {
+
+    @Nullable private final XDebuggerTreeState myStateToRecover;
+
+    protected Root(XDebuggerTree tree, XDebuggerTreeNode parent, boolean leaf, @NotNull ValueContainer valueContainer,
+                   @Nullable XDebuggerTreeState treeStateToRecover) {
+      super(tree, parent, leaf, valueContainer);
+      myStateToRecover = treeStateToRecover;
+    }
+
+    public @Nullable XDebuggerTreeState getStateToRecover() {
+      return myStateToRecover;
+    }
   }
 }

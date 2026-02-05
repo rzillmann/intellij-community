@@ -6,12 +6,13 @@ import com.intellij.codeWithMe.ClientId;
 import com.intellij.frontend.FrontendApplicationInfo;
 import com.intellij.frontend.FrontendType;
 import com.intellij.ide.nls.NlsMessages;
-import com.intellij.ide.ui.AntiFlickeringPanel;
 import com.intellij.openapi.Disposable;
 import com.intellij.openapi.actionSystem.ActionManager;
 import com.intellij.openapi.actionSystem.ActionPlaces;
 import com.intellij.openapi.actionSystem.AnAction;
 import com.intellij.openapi.actionSystem.AnActionEvent;
+import com.intellij.openapi.actionSystem.DataSink;
+import com.intellij.openapi.actionSystem.UiDataProvider;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.ModalityState;
 import com.intellij.openapi.application.WriteIntentReadAction;
@@ -26,13 +27,22 @@ import com.intellij.openapi.fileEditor.FileEditorManager;
 import com.intellij.openapi.fileTypes.FileType;
 import com.intellij.openapi.keymap.KeymapUtil;
 import com.intellij.openapi.project.Project;
-import com.intellij.openapi.ui.popup.*;
+import com.intellij.openapi.ui.popup.Balloon;
+import com.intellij.openapi.ui.popup.BalloonBuilder;
+import com.intellij.openapi.ui.popup.ComponentPopupBuilder;
+import com.intellij.openapi.ui.popup.JBPopup;
+import com.intellij.openapi.ui.popup.JBPopupFactory;
+import com.intellij.openapi.ui.popup.JBPopupListener;
+import com.intellij.openapi.ui.popup.LightweightWindowEvent;
 import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.util.NlsContexts;
 import com.intellij.openapi.util.Ref;
-import com.intellij.openapi.util.registry.Registry;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.wm.IdeFocusManager;
+import com.intellij.platform.debugger.impl.shared.proxy.XBreakpointManagerProxy;
+import com.intellij.platform.debugger.impl.shared.proxy.XBreakpointProxy;
+import com.intellij.platform.debugger.impl.shared.proxy.XDebugManagerProxy;
+import com.intellij.platform.debugger.impl.shared.proxy.XDebugSessionProxy;
 import com.intellij.psi.PsiDocumentManager;
 import com.intellij.psi.PsiManager;
 import com.intellij.testFramework.LightVirtualFile;
@@ -44,20 +54,20 @@ import com.intellij.ui.popup.list.ListPopupImpl;
 import com.intellij.util.Consumer;
 import com.intellij.util.ui.JBUI;
 import com.intellij.util.ui.UIUtil;
-import com.intellij.xdebugger.*;
+import com.intellij.xdebugger.Obsolescent;
+import com.intellij.xdebugger.SplitDebuggerMode;
+import com.intellij.xdebugger.XDebugSession;
+import com.intellij.xdebugger.XDebuggerBundle;
+import com.intellij.xdebugger.XDebuggerManager;
+import com.intellij.xdebugger.XExpression;
 import com.intellij.xdebugger.breakpoints.XBreakpoint;
 import com.intellij.xdebugger.breakpoints.XBreakpointListener;
 import com.intellij.xdebugger.frame.XFullValueEvaluator;
 import com.intellij.xdebugger.frame.XValue;
 import com.intellij.xdebugger.frame.XValueModifier;
-import com.intellij.xdebugger.impl.XDebuggerUtilImpl;
 import com.intellij.xdebugger.impl.breakpoints.XBreakpointBase;
-import com.intellij.xdebugger.impl.breakpoints.XBreakpointManagerProxy;
-import com.intellij.xdebugger.impl.breakpoints.XBreakpointProxy;
 import com.intellij.xdebugger.impl.breakpoints.ui.BreakpointsDialogFactory;
 import com.intellij.xdebugger.impl.breakpoints.ui.XLightBreakpointPropertiesPanel;
-import com.intellij.xdebugger.impl.frame.XDebugManagerProxy;
-import com.intellij.xdebugger.impl.frame.XDebugSessionProxy;
 import com.intellij.xdebugger.impl.frame.XWatchesView;
 import com.intellij.xdebugger.impl.ui.tree.XDebuggerTree;
 import com.intellij.xdebugger.impl.ui.tree.XDebuggerTreeState;
@@ -69,12 +79,26 @@ import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import javax.swing.*;
-import java.awt.*;
-import java.awt.event.*;
+import javax.swing.AbstractAction;
+import javax.swing.JCheckBox;
+import javax.swing.JComponent;
+import javax.swing.KeyStroke;
+import javax.swing.SwingUtilities;
+import javax.swing.UIManager;
+import java.awt.Color;
+import java.awt.Point;
+import java.awt.Rectangle;
+import java.awt.Window;
+import java.awt.event.ActionEvent;
+import java.awt.event.ComponentAdapter;
+import java.awt.event.ComponentEvent;
+import java.awt.event.HierarchyBoundsAdapter;
+import java.awt.event.HierarchyBoundsListener;
+import java.awt.event.HierarchyEvent;
+import java.awt.event.MouseEvent;
 
 import static com.intellij.openapi.wm.IdeFocusManager.getGlobalInstance;
-import static com.intellij.xdebugger.impl.breakpoints.XBreakpointProxyKt.asProxy;
+import static com.intellij.xdebugger.impl.proxy.MonolithBreakpointProxyKt.asProxy;
 
 public final class DebuggerUIUtil {
   public static final @NonNls String FULL_VALUE_POPUP_DIMENSION_KEY = "XDebugger.FullValuePopup";
@@ -158,7 +182,7 @@ public final class DebuggerUIUtil {
                                     @NotNull MouseEvent event,
                                     @NotNull Project project,
                                     @Nullable Editor editor) {
-    WriteIntentReadAction.run((Runnable)() -> VisualizedTextPopupUtil.evaluateAndShowValuePopup(evaluator, event, project, editor));
+    WriteIntentReadAction.run(() -> VisualizedTextPopupUtil.evaluateAndShowValuePopup(evaluator, event, project, editor));
   }
 
   /**
@@ -351,7 +375,14 @@ public final class DebuggerUIUtil {
     editor.setPropertiesPanel(mainPanel);
     editor.setShowMoreOptionsLink(true);
 
-    final JPanel panel = editor.getMainPanel();
+    final JComponent panel = UiDataProvider.wrapComponent(editor.getMainPanel(), new UiDataProvider() {
+      @Override
+      public void uiDataSnapshot(@NotNull DataSink sink) {
+        if (breakpoint instanceof XBreakpointProxy breakpointProxy) {
+          sink.set(XBreakpointProxy.DATA_KEY, breakpointProxy);
+        }
+      }
+    });
 
     BalloonBuilder builder = JBPopupFactory.getInstance()
       .createDialogBalloonBuilder(panel, null)
@@ -458,7 +489,7 @@ public final class DebuggerUIUtil {
     if (view == null && project != null) {
       XDebugSessionProxy proxy = getSessionProxy(e);
       if (proxy != null) {
-        XDebugSessionTab tab = proxy.getSessionTab();
+        XDebugSessionTab tab = (XDebugSessionTab)proxy.getSessionTab();
         if (tab != null) {
           return tab.getWatchesView();
         }
@@ -522,7 +553,7 @@ public final class DebuggerUIUtil {
             tree.rebuildAndRestore(treeState);
           }
         });
-        XDebuggerUtilImpl.rebuildAllSessionsViews(project);
+        rebuildAllSessionsViews(project);
       }
 
       @Override
@@ -531,7 +562,7 @@ public final class DebuggerUIUtil {
           tree.rebuildAndRestore(treeState);
           errorConsumer.consume(errorMessage);
         });
-        XDebuggerUtilImpl.rebuildAllSessionsViews(project);
+        rebuildAllSessionsViews(project);
       }
     });
   }
@@ -554,7 +585,7 @@ public final class DebuggerUIUtil {
    */
   public static @Nullable XDebugSession getSession(@NotNull AnActionEvent e) {
     if (SplitDebuggerMode.showSplitWarnings() && FrontendApplicationInfo.INSTANCE.getFrontendType() instanceof FrontendType.Remote) {
-      LOG.error("In Split mode DebuggerUIUtil#getSession(AnActionEvent) should not be called from the frontend. " +
+      LOG.error("[Split debugger] In Split mode DebuggerUIUtil#getSession(AnActionEvent) should not be called from the frontend. " +
                 "Please use DebuggerUIUtil#getSessionProxy(AnActionEvent) instead.");
     }
     XDebugSession session = e.getData(XDebugSession.DATA_KEY);
@@ -595,24 +626,19 @@ public final class DebuggerUIUtil {
     }
   }
 
-  private static boolean shouldUseAntiFlickeringPanel() {
-    return !ApplicationManager.getApplication().isUnitTestMode() && Registry.intValue("debugger.anti.flickering.delay", 0) > 0;
+  @ApiStatus.Internal
+  public static void rebuildAllSessionsViews(@Nullable Project project) {
+    if (project == null) return;
+    XDebugManagerProxy.getInstance().getSessions(project).stream()
+      .filter(XDebugSessionProxy::isSuspended)
+      .forEach(XDebugSessionProxy::rebuildViews);
   }
 
   @ApiStatus.Internal
-  public static @NotNull JComponent wrapWithAntiFlickeringPanel(@NotNull JComponent component) {
-    return shouldUseAntiFlickeringPanel() ? new AntiFlickeringPanel(component) : component;
-  }
-
-  @ApiStatus.Internal
-  public static boolean freezePaintingToReduceFlickering(@Nullable Component component) {
-    if (component instanceof AntiFlickeringPanel antiFlickeringPanel) {
-      int delay = Registry.intValue("debugger.anti.flickering.delay", 0);
-      if (delay > 0) {
-        ApplicationManager.getApplication().invokeAndWait(() -> antiFlickeringPanel.freezePainting(delay), ModalityState.any());
-        return true;
-      }
+  public static void rebuildTreeAndViews(XDebuggerTree tree) {
+    if (tree.isDetached()) {
+      tree.rebuild();
     }
-    return false;
+    rebuildAllSessionsViews(tree.getProject());
   }
 }

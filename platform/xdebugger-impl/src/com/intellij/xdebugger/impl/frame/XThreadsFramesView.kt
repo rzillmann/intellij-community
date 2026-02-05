@@ -9,6 +9,7 @@ import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.components.service
 import com.intellij.openapi.ui.NonProportionalOnePixelSplitter
 import com.intellij.openapi.util.Disposer
+import com.intellij.platform.debugger.impl.shared.proxy.XDebugSessionProxy
 import com.intellij.ui.ListSpeedSearch
 import com.intellij.ui.PopupHandler
 import com.intellij.ui.ScrollPaneFactory
@@ -23,7 +24,6 @@ import com.intellij.xdebugger.frame.XStackFrame
 import com.intellij.xdebugger.frame.XSuspendContext
 import com.intellij.xdebugger.impl.actions.XDebuggerActions
 import com.intellij.xdebugger.impl.frame.XFramesView.addFramesNavigationAd
-import com.intellij.xdebugger.impl.ui.XDebugSessionTab3
 import com.intellij.xdebugger.impl.util.SequentialDisposables
 import com.intellij.xdebugger.impl.util.isNotAlive
 import com.intellij.xdebugger.impl.util.onTermination
@@ -44,11 +44,11 @@ import javax.swing.JPanel
 import javax.swing.JScrollPane
 
 @Internal
-class XThreadsFramesView(val debugTab: XDebugSessionTab3, private val sessionProxy: XDebugSessionProxy) : XDebugView() {
+class XThreadsFramesView(tabDisposable: Disposable, private val sessionProxy: XDebugSessionProxy) : XDebugView() {
   private val myPauseDisposables = SequentialDisposables(this)
 
   private val myThreadsList = XDebuggerThreadsList.createDefault()
-  private val myFramesList = XDebuggerFramesList(debugTab.project, sessionProxy)
+  private val myFramesList = XDebuggerFramesList(sessionProxy.project, sessionProxy)
 
   private val myDescriptionPanel = JPanel(BorderLayout()).apply {
     border = JBEmptyBorder(0)
@@ -140,7 +140,7 @@ class XThreadsFramesView(val debugTab: XDebugSessionTab3, private val sessionPro
       false,
       SPLITTER_PROPORTION_KEY,
       SPLITTER_PROPORTION_DEFAULT_VALUE,
-      debugTab, debugTab.project), OccurenceNavigator by myFramesList {
+      tabDisposable, sessionProxy.project), OccurenceNavigator by myFramesList {
       override fun getActionUpdateThread(): ActionUpdateThread {
         return super.getActionUpdateThread()
       }
@@ -165,7 +165,7 @@ class XThreadsFramesView(val debugTab: XDebugSessionTab3, private val sessionPro
 
     splitter.secondComponent = frameListWrapper
 
-    stackInfoDescriptionRequester = debugTab.sessionProxy?.let { session ->
+    stackInfoDescriptionRequester = sessionProxy.let { session ->
       val descriptionComponentProvider = session.project
         .service<XDebuggerExecutionStackDescriptionService>().getLoadDescriptionComponent(sessionProxy, this)
 
@@ -523,7 +523,7 @@ class XThreadsFramesView(val debugTab: XDebugSessionTab3, private val sessionPro
         }
 
         myThreadsList.selectedIndex = 0
-        sessionProxy.computeExecutionStacks { this@ThreadsContainer }
+        sessionProxy.computeExecutionStacks(this@ThreadsContainer)
         isStarted = true
       }
     }

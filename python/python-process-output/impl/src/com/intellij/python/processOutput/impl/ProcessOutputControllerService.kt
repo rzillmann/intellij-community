@@ -24,9 +24,12 @@ import com.intellij.util.concurrency.annotations.RequiresEdt
 import com.jetbrains.python.NON_INTERACTIVE_ROOT_TRACE_CONTEXT
 import com.jetbrains.python.TraceContext
 import kotlin.time.Duration.Companion.milliseconds
+import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -46,8 +49,13 @@ import org.jetbrains.jewel.foundation.lazy.tree.TreeGeneratorScope
 import org.jetbrains.jewel.foundation.lazy.tree.TreeState
 import org.jetbrains.jewel.foundation.lazy.tree.buildTree
 
+@ApiStatus.Internal
+object CoroutineNames {
+    const val EXIT_INFO_COLLECTOR: String = "ProcessOutput.ExitInfoCollector"
+}
+
 internal object ProcessOutputControllerServiceLimits {
-    const val MAX_PROCESSES = 256
+    const val MAX_PROCESSES = 512
 }
 
 internal interface ProcessOutputController {
@@ -57,13 +65,15 @@ internal interface ProcessOutputController {
 
     fun collapseAllContexts()
     fun expandAllContexts()
-    fun selectProcess(process: LoggedProcess)
+    fun selectProcess(process: LoggedProcess?)
     fun toggleTreeFilter(filter: TreeFilter)
     fun toggleOutputFilter(filter: OutputFilter)
     fun toggleProcessInfo()
     fun toggleProcessOutput()
     fun specifyAdditionalMessageToUser(logId: Int, message: @Nls String)
     fun copyOutputToClipboard(loggedProcess: LoggedProcess)
+    fun copyOutputTagAtIndexToClipboard(loggedProcess: LoggedProcess, fromIndex: Int)
+    fun copyOutputExitInfoToClipboard(loggedProcess: LoggedProcess)
 
     @RequiresEdt
     fun tryOpenLogInToolWindow(logId: Int): Boolean
@@ -121,7 +131,7 @@ class ProcessOutputControllerService(
     private val project: Project,
     private val coroutineScope: CoroutineScope,
 ) : ProcessOutputController {
-    private val loggedProcesses: StateFlow<List<LoggedProcess>> = run {
+    internal val loggedProcesses: StateFlow<List<LoggedProcess>> = run {
         var processList = listOf<LoggedProcess>()
         ApplicationManager.getApplication().service<ExecLoggerService>()
             .processes
@@ -185,26 +195,27 @@ class ProcessOutputControllerService(
     }
 
     override fun collapseAllContexts() {
-        processTreeUiState.treeState.openNodes.forEach {
-            processTreeUiState.treeState.toggleNode(it)
-        }
+        processTreeUiState.treeState.openNodes = setOf()
 
         ProcessOutputUsageCollector.treeCollapseAllClicked()
     }
 
     override fun expandAllContexts() {
-        loggedProcesses.value
-            .mapNotNull { it.traceContext }
-            .toSet()
-            .subtract(processTreeUiState.treeState.openNodes)
-            .forEach {
-                processTreeUiState.treeState.toggleNode(it)
-            }
+        processTreeUiState.treeState.openNodes =
+            processTreeUiState.tree.value
+                .walkDepthFirst()
+                .mapNotNull {
+                    when (val data = it.data) {
+                        is TreeNode.Context -> data.traceContext
+                        is TreeNode.Process -> null
+                    }
+                }
+                .toSet()
 
         ProcessOutputUsageCollector.treeExpandAllClicked()
     }
 
-    override fun selectProcess(process: LoggedProcess) {
+    override fun selectProcess(process: LoggedProcess?) {
         selectedProcess.value = process
         ProcessOutputUsageCollector.treeProcessSelected()
     }
@@ -213,10 +224,17 @@ class ProcessOutputControllerService(
         processTreeFilters.toggle(filter)
 
         when (filter) {
-            TreeFilter.ShowBackgroundProcesses ->
+            TreeFilter.ShowBackgroundProcesses -> {
                 ProcessOutputUsageCollector.treeFilterBackgroundProcessesToggled(
-                    processTreeFilters.contains(TreeFilter.ShowBackgroundProcesses),
+                    processTreeFilters.contains(
+                        TreeFilter.ShowBackgroundProcesses,
+                    ),
                 )
+
+                coroutineScope.launch(Dispatchers.EDT) {
+                    processTreeUiState.selectableLazyListState.lazyListState.scrollToItem(0)
+                }
+            }
             TreeFilter.ShowTime ->
                 ProcessOutputUsageCollector.treeFilterTimeToggled(
                     processTreeFilters.contains(TreeFilter.ShowTime),
@@ -290,6 +308,44 @@ class ProcessOutputControllerService(
         ProcessOutputUsageCollector.outputCopyClicked()
     }
 
+    override fun copyOutputTagAtIndexToClipboard(
+        loggedProcess: LoggedProcess,
+        fromIndex: Int,
+    ) {
+        val stringToCopy = buildString {
+            val replayCache = loggedProcess.lines.replayCache
+
+            replayCache
+                .drop(fromIndex)
+                .takeWhile { it.kind == replayCache[fromIndex].kind }
+                .forEach {
+                    appendLine(it.text)
+                }
+        }
+
+        CopyPasteManager.copyTextToClipboard(stringToCopy)
+
+        ProcessOutputUsageCollector.outputTagSectionCopyClicked()
+    }
+
+    override fun copyOutputExitInfoToClipboard(loggedProcess: LoggedProcess) {
+        val exitInfo = loggedProcess.exitInfo.value ?: return
+        val stringToCopy = buildString {
+            append(exitInfo.exitValue)
+
+            exitInfo.additionalMessageToUser?.also { message ->
+                append(": ")
+                append(message)
+            }
+
+            appendLine()
+        }
+
+        CopyPasteManager.copyTextToClipboard(stringToCopy)
+
+        ProcessOutputUsageCollector.outputExitInfoCopyClicked()
+    }
+
     @RequiresEdt
     override fun tryOpenLogInToolWindow(logId: Int): Boolean {
         val match = loggedProcesses.value.find { process -> process.id == logId }
@@ -357,33 +413,53 @@ class ProcessOutputControllerService(
         }
     }
 
+    @OptIn(FlowPreview::class)
     private fun collectProcessTree() {
         val backgroundErrorProcesses = MutableStateFlow<Set<Int>>(setOf())
+        val backgroundObservingCoroutines = mutableListOf<Job>()
 
         coroutineScope.launch {
             loggedProcesses
+                .debounce(100.milliseconds)
                 .collect { list ->
+                    for (coroutine in backgroundObservingCoroutines) {
+                        coroutine.cancelAndJoin()
+                    }
+                    backgroundObservingCoroutines.clear()
+
                     backgroundErrorProcesses.value = setOf()
+
                     list
                         .filter { it.traceContext == NON_INTERACTIVE_ROOT_TRACE_CONTEXT }
                         .forEach { process ->
-                            launch {
-                                process.exitInfo.collect {
-                                    val exitValue = it?.exitValue
-                                    if (exitValue != null && exitValue != 0) {
-                                        backgroundErrorProcesses.value += process.id
-                                    } else {
-                                        backgroundErrorProcesses.value -= process.id
+                            val exitInfo = process.exitInfo.value
+
+                            if (exitInfo != null) {
+                                if (exitInfo.exitValue != 0) {
+                                    backgroundErrorProcesses.value += process.id
+                                }
+                                return@forEach
+                            }
+
+                            backgroundObservingCoroutines +=
+                                launch(CoroutineName(CoroutineNames.EXIT_INFO_COLLECTOR)) {
+                                    process.exitInfo.collect {
+                                        val exitValue = it?.exitValue
+                                        if (exitValue != null && exitValue != 0) {
+                                            backgroundErrorProcesses.value += process.id
+                                        } else {
+                                            backgroundErrorProcesses.value -= process.id
+                                        }
                                     }
                                 }
-                            }
+
                         }
                 }
         }
 
         combine(
             backgroundErrorProcesses,
-            loggedProcesses,
+            loggedProcesses.debounce(100.milliseconds),
             snapshotFlow { processTreeUiState.searchState.text },
             snapshotFlow { processTreeUiState.filters.toSet() },
         )
@@ -426,10 +502,8 @@ class ProcessOutputControllerService(
                                     .firstOrNull { node ->
                                         node.traceContext == currentContext
                                     }
-                                    ?: run {
-                                        Node(traceContext = currentContext).also {
-                                            currentRoot += it
-                                        }
+                                    ?: Node(traceContext = currentContext).also {
+                                        currentRoot += it
                                     }
 
                             currentRoot = node.children
@@ -452,9 +526,15 @@ class ProcessOutputControllerService(
                 }
             }
 
-            processTree.value = buildTree {
+            val newTree = buildTree {
                 buildNodeTree(root)
             }
+
+            if (newTree.isEmpty()) {
+                selectProcess(null)
+            }
+
+            processTree.value = newTree
         }.launchIn(coroutineScope)
     }
 
@@ -487,9 +567,9 @@ class ProcessOutputControllerService(
 }
 
 internal object Tag {
-    const val ERROR = "error"
-    const val OUTPUT = "output"
-    const val EXIT = "exit"
+    val ERROR = message("process.output.output.tag.stdout")
+    val OUTPUT = message("process.output.output.tag.stderr")
+    val EXIT = message("process.output.output.tag.exit")
 
     val maxLength: Int =
         Tag::class.java.declaredFields

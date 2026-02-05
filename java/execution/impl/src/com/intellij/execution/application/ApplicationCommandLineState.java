@@ -4,7 +4,11 @@ package com.intellij.execution.application;
 import com.intellij.codeInsight.daemon.impl.analysis.JavaModuleGraphUtil;
 import com.intellij.compiler.CompilerConfiguration;
 import com.intellij.debugger.settings.DebuggerSettings;
-import com.intellij.execution.*;
+import com.intellij.execution.CantRunException;
+import com.intellij.execution.CommonJavaRunConfigurationParameters;
+import com.intellij.execution.ConfigurationWithCommandLineShortener;
+import com.intellij.execution.ExecutionBundle;
+import com.intellij.execution.ExecutionException;
 import com.intellij.execution.configurations.JavaParameters;
 import com.intellij.execution.configurations.JavaRunConfigurationModule;
 import com.intellij.execution.configurations.ModuleBasedConfiguration;
@@ -13,6 +17,7 @@ import com.intellij.execution.process.OSProcessHandler;
 import com.intellij.execution.runners.ExecutionEnvironment;
 import com.intellij.execution.util.JavaParametersUtil;
 import com.intellij.execution.util.ProgramParametersConfigurator;
+import com.intellij.java.JavaPluginDisposable;
 import com.intellij.openapi.application.ReadAction;
 import com.intellij.openapi.project.DumbService;
 import com.intellij.openapi.projectRoots.JavaSdkVersion;
@@ -68,7 +73,7 @@ public abstract class ApplicationCommandLineState<T extends
         }
         return null;
       })
-        .expireWith(configuration.getProject())
+        .expireWith(JavaPluginDisposable.getInstance(configuration.getProject()))
         .executeSynchronously();
     }
     catch (Exception e) {

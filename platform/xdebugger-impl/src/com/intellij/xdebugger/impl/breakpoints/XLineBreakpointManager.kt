@@ -5,7 +5,12 @@ import com.intellij.execution.impl.ConsoleViewUtil
 import com.intellij.ide.DataManager
 import com.intellij.ide.ui.UISettings.Companion.getInstance
 import com.intellij.internal.statistic.collectors.fus.actions.persistence.ActionsCollectorImpl
-import com.intellij.openapi.actionSystem.*
+import com.intellij.openapi.actionSystem.ActionManager
+import com.intellij.openapi.actionSystem.ActionPlaces
+import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.actionSystem.AnActionResult
+import com.intellij.openapi.actionSystem.DataKey
+import com.intellij.openapi.actionSystem.IdeActions
 import com.intellij.openapi.actionSystem.ex.ActionUtil
 import com.intellij.openapi.actionSystem.impl.SimpleDataContext
 import com.intellij.openapi.application.ApplicationManager
@@ -18,7 +23,12 @@ import com.intellij.openapi.editor.EditorFactory
 import com.intellij.openapi.editor.colors.EditorColorsListener
 import com.intellij.openapi.editor.colors.EditorColorsManager
 import com.intellij.openapi.editor.colors.EditorColorsScheme
-import com.intellij.openapi.editor.event.*
+import com.intellij.openapi.editor.event.DocumentEvent
+import com.intellij.openapi.editor.event.DocumentListener
+import com.intellij.openapi.editor.event.EditorMouseEvent
+import com.intellij.openapi.editor.event.EditorMouseEventArea
+import com.intellij.openapi.editor.event.EditorMouseListener
+import com.intellij.openapi.editor.event.EditorMouseMotionListener
 import com.intellij.openapi.editor.ex.EditorEx
 import com.intellij.openapi.editor.ex.util.EditorUtil
 import com.intellij.openapi.fileEditor.FileDocumentManager
@@ -33,6 +43,12 @@ import com.intellij.openapi.util.registry.RegistryValue
 import com.intellij.openapi.util.registry.RegistryValueListener
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.vfs.VirtualFileManager
+import com.intellij.platform.debugger.impl.shared.proxy.XBreakpointManagerProxy
+import com.intellij.platform.debugger.impl.shared.proxy.XBreakpointProxy
+import com.intellij.platform.debugger.impl.shared.proxy.XLightLineBreakpointProxy
+import com.intellij.platform.debugger.impl.shared.proxy.XLineBreakpointHighlighterRange
+import com.intellij.platform.debugger.impl.shared.proxy.XLineBreakpointManagerProxy
+import com.intellij.platform.debugger.impl.shared.proxy.XLineBreakpointProxy
 import com.intellij.platform.util.coroutines.childScope
 import com.intellij.psi.PsiDocumentManager
 import com.intellij.ui.ExperimentalUI.Companion.isNewUI
@@ -48,6 +64,8 @@ import com.intellij.xdebugger.SplitDebuggerMode
 import com.intellij.xdebugger.XDebuggerUtil
 import com.intellij.xdebugger.breakpoints.XBreakpoint
 import com.intellij.xdebugger.impl.actions.ToggleLineBreakpointAction
+import com.intellij.xdebugger.impl.proxy.MonolithLineBreakpointProxy
+import com.intellij.xdebugger.impl.proxy.asProxy
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.cancel
 import org.jetbrains.annotations.ApiStatus
@@ -62,7 +80,7 @@ class XLineBreakpointManager(
   coroutineScope: CoroutineScope,
   isEnabled: Boolean,
   private val manager: XBreakpointManagerProxy,
-) {
+): XLineBreakpointManagerProxy {
   private val cs = coroutineScope.childScope("XLineBreakpointManager")
 
   private val myBreakpoints = MultiMap.createConcurrent<String, XLineBreakpointProxy>()
@@ -157,17 +175,17 @@ class XLineBreakpointManager(
     log.debug { "Unregister line breakpoint ${breakpoint.id} [removed=$removed] ${breakpoint.javaClass.simpleName}: $fileUrl" }
   }
 
-  fun getDocumentBreakpointProxies(document: Document): Collection<XLineBreakpointProxy> {
+  override fun getDocumentBreakpointProxies(document: Document): Collection<XLineBreakpointProxy> {
     val file = FileDocumentManager.getInstance().getFile(document) ?: return emptyList()
     return myBreakpoints[file.url]
   }
 
   fun getDocumentBreakpoints(document: Document): Collection<XLineBreakpointImpl<*>> {
-    return getDocumentBreakpointProxies(document).filterIsInstance<XLineBreakpointProxy.Monolith>().map { it.breakpoint }
+    return getDocumentBreakpointProxies(document).filterIsInstance<MonolithLineBreakpointProxy>().map { it.breakpoint }
   }
 
   @TestOnly
-  fun getAllBreakpoints(): Collection<XLineBreakpointProxy> {
+  override fun getAllBreakpoints(): Collection<XLineBreakpointProxy> {
     return myBreakpoints.values()
   }
 
@@ -237,7 +255,7 @@ class XLineBreakpointManager(
     }
   }
 
-  fun breakpointChanged(breakpoint: XLightLineBreakpointProxy) {
+  override fun breakpointChanged(breakpoint: XLightLineBreakpointProxy) {
     if (EDT.isCurrentThreadEdt()) {
       updateBreakpointNow(breakpoint)
     }
@@ -262,7 +280,7 @@ class XLineBreakpointManager(
     })
   }
 
-  fun queueBreakpointUpdateCallback(breakpoint: XLightLineBreakpointProxy, callback: Runnable) {
+  override fun queueBreakpointUpdateCallback(breakpoint: XLightLineBreakpointProxy, callback: Runnable) {
     breakpointUpdateQueue.queue(object : Update(breakpoint) {
       override fun run() {
         callback.run()

@@ -5,12 +5,27 @@ import com.intellij.openapi.util.SystemInfo
 import com.intellij.openapi.util.TextRange
 import com.intellij.patterns.PatternCondition
 import com.intellij.patterns.PlatformPatterns.psiElement
-import com.intellij.psi.*
+import com.intellij.psi.ElementManipulators
+import com.intellij.psi.PsiElement
+import com.intellij.psi.PsiFileSystemItem
+import com.intellij.psi.PsiReference
+import com.intellij.psi.PsiReferenceContributor
+import com.intellij.psi.PsiReferenceProvider
+import com.intellij.psi.PsiReferenceRegistrar
 import com.intellij.psi.impl.source.resolve.reference.impl.providers.FileReference
 import com.intellij.psi.util.QualifiedName
 import com.intellij.util.ProcessingContext
 import com.intellij.util.SystemProperties
-import com.jetbrains.python.psi.*
+import com.jetbrains.python.psi.LanguageLevel
+import com.jetbrains.python.psi.PyArgumentList
+import com.jetbrains.python.psi.PyAssignmentStatement
+import com.jetbrains.python.psi.PyCallExpression
+import com.jetbrains.python.psi.PyKeywordArgument
+import com.jetbrains.python.psi.PyReferenceExpression
+import com.jetbrains.python.psi.PyStringLiteralExpression
+import com.jetbrains.python.psi.PyStringLiteralFileReferenceSet
+import com.jetbrains.python.psi.PyTargetExpression
+import com.jetbrains.python.psi.PyTypedElement
 import com.jetbrains.python.psi.impl.PyBuiltinCache
 import com.jetbrains.python.psi.impl.mapArguments
 import com.jetbrains.python.psi.resolve.PyResolveContext
@@ -75,7 +90,7 @@ open class PySoftFileReferenceContributor : PsiReferenceContributor() {
           parameterNames.any(::matchesPathNamePattern)
         }
         .any {
-          val mapping = callExpr.mapArguments( it, typeEvalContext)
+          val mapping = callExpr.mapArguments(it, typeEvalContext)
           val parameterName = mapping.mappedParameters[expr]?.name ?: return@any false
           matchesPathNamePattern(parameterName)
         }
@@ -110,12 +125,12 @@ open class PySoftFileReferenceContributor : PsiReferenceContributor() {
           val mapping = callExpr.mapArguments(it, typeEvalContext)
           mapping.mappedParameters[expr]?.getArgumentType(typeEvalContext)
         }
-      
+
       // We can't use PyTypeChecker.match directly because the type `str | PathLike` is considered incompatible 
       // with neither str nor PathLike (strict union semantics).
-      fun PyType.allowsValuesCompatibleWith(superType: PyType): Boolean = 
+      fun PyType.allowsValuesCompatibleWith(superType: PyType): Boolean =
         PyTypeUtil.toStream(this).anyMatch { it != null && PyTypeChecker.match(superType, it, typeEvalContext) }
-      
+
       return argumentTypes.any { it.allowsValuesCompatibleWith(bytesOrUnicodeType) } &&
              argumentTypes.any { it.allowsValuesCompatibleWith(osPathLikeType) }
     }
@@ -207,9 +222,11 @@ open class PySoftFileReferenceContributor : PsiReferenceContributor() {
     override fun createFileReference(range: TextRange, index: Int, text: String): FileReference? =
       doCreateFileReference(range, index, expandUserHome(text))
 
-    open fun doCreateFileReference(range: TextRange,
-                                   index: Int,
-                                   expandedText: String?): FileReference? =
+    open fun doCreateFileReference(
+      range: TextRange,
+      index: Int,
+      expandedText: String?,
+    ): FileReference? =
       super.createFileReference(range, index, expandedText)
 
     override fun isAbsolutePathReference(): Boolean =

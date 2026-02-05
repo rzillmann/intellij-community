@@ -5,9 +5,9 @@ import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.openapi.util.registry.Registry.Companion.`is`
+import com.intellij.platform.debugger.impl.rpc.XValueId
+import com.intellij.platform.debugger.impl.shared.proxy.XDebugManagerProxy
 import com.intellij.xdebugger.impl.evaluate.XDebuggerEvaluationDialog
-import com.intellij.xdebugger.impl.frame.XDebugManagerProxy
-import com.intellij.xdebugger.impl.rpc.XValueId
 import com.intellij.xdebugger.impl.ui.DebuggerUIUtil
 import com.intellij.xdebugger.impl.ui.tree.nodes.XValueNodeImpl
 import kotlinx.coroutines.Dispatchers
@@ -15,7 +15,7 @@ import kotlinx.coroutines.launch
 import org.jetbrains.annotations.ApiStatus
 
 @ApiStatus.Internal
-abstract class XJumpToSourceActionBase : XDebuggerTreeActionBase() {
+abstract class XJumpToSourceActionBase : XDebuggerTreeSplitActionBase() {
   override fun perform(node: XValueNodeImpl, nodeName: String, e: AnActionEvent) {
     val value = node.valueContainer
     val dialog = e.getData(XDebuggerEvaluationDialog.KEY)

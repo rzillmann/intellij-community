@@ -70,6 +70,11 @@ public class KtReferenceTypeHintsProviderTestGenerated extends AbstractKtReferen
         runTest("../../idea/tests/testData/codeInsight/hints/types/ConstructorWithoutTypeParametersType.kt");
     }
 
+    @TestMetadata("ContextParameters.kt")
+    public void testContextParameters() throws Exception {
+        runTest("../../idea/tests/testData/codeInsight/hints/types/ContextParameters.kt");
+    }
+
     @TestMetadata("DefinitelyNonNullTypes.kt")
     public void testDefinitelyNonNullTypes() throws Exception {
         runTest("../../idea/tests/testData/codeInsight/hints/types/DefinitelyNonNullTypes.kt");
@@ -165,6 +170,11 @@ public class KtReferenceTypeHintsProviderTestGenerated extends AbstractKtReferen
         runTest("../../idea/tests/testData/codeInsight/hints/types/JavaNonNullableArray.kt");
     }
 
+    @TestMetadata("JavaTypeWithWarningLevelNullability.kt")
+    public void testJavaTypeWithWarningLevelNullability() throws Exception {
+        runTest("../../idea/tests/testData/codeInsight/hints/types/JavaTypeWithWarningLevelNullability.kt");
+    }
+
     @TestMetadata("LambdaReturnType.kt")
     public void testLambdaReturnType() throws Exception {
         runTest("../../idea/tests/testData/codeInsight/hints/types/LambdaReturnType.kt");
@@ -243,6 +253,11 @@ public class KtReferenceTypeHintsProviderTestGenerated extends AbstractKtReferen
     @TestMetadata("SuspendFunctionalType.kt")
     public void testSuspendFunctionalType() throws Exception {
         runTest("../../idea/tests/testData/codeInsight/hints/types/SuspendFunctionalType.kt");
+    }
+
+    @TestMetadata("TruncatedTypes.kt")
+    public void testTruncatedTypes() throws Exception {
+        runTest("../../idea/tests/testData/codeInsight/hints/types/TruncatedTypes.kt");
     }
 
     @TestMetadata("TypeInCompanion.kt")

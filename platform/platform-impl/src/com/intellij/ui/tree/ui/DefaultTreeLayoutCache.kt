@@ -8,12 +8,11 @@ import com.intellij.util.ui.JBUI
 import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.annotations.VisibleForTesting
 import java.awt.Rectangle
-import java.util.*
+import java.util.Enumeration
 import javax.swing.event.TreeModelEvent
 import javax.swing.tree.AbstractLayoutCache
 import javax.swing.tree.TreeModel
 import javax.swing.tree.TreePath
-import kotlin.collections.ArrayDeque
 import kotlin.math.max
 
 @ApiStatus.Internal
@@ -225,18 +224,30 @@ class DefaultTreeLayoutCache(
     val changedValue = changedNode.userObject
     val changedChildIndexes = e?.childIndices ?: return
     val model = this.model ?: return
-    // We must do it in two passes: first remove all path mappings, then add the new ones.
-    // If we do it in one loop, we may end up in an inconsistent state
-    // if the new path of some child is equal to the old path of some other child.
-    // For example, when the children were sorted by the model.
-    for (i in changedChildIndexes) {
+    if (changedChildIndexes.size == 1) {
+      val i = changedChildIndexes[0]
       val changedChildNode = changedNode.getChildAt(i)
-      changedChildNode.removePathsRecursively()
-    }
-    for (i in changedChildIndexes) {
-      val changedChildNode = changedNode.getChildAt(i)
-      changedChildNode.addPathsRecursively(changedNode.path, model.getChild(changedValue, i))
+      val newUserObject = model.getChild(changedValue, i)
+      if (newUserObject !== changedChildNode.userObject) {
+        changedChildNode.removePathsRecursively()
+        changedChildNode.addPathsRecursively(changedNode.path, newUserObject)
+      }
       changedChildNode.invalidateSize()
+    }
+    else {
+      // We must do it in two passes: first remove all path mappings, then add the new ones.
+      // If we do it in one loop, we may end up in an inconsistent state
+      // if the new path of some child is equal to the old path of some other child.
+      // For example, when the children were sorted by the model.
+      for (i in changedChildIndexes) {
+        val changedChildNode = changedNode.getChildAt(i)
+        changedChildNode.removePathsRecursively()
+      }
+      for (i in changedChildIndexes) {
+        val changedChildNode = changedNode.getChildAt(i)
+        changedChildNode.addPathsRecursively(changedNode.path, model.getChild(changedValue, i))
+        changedChildNode.invalidateSize()
+      }
     }
     checkInvariants(Location("treeNodesChanged(value=%s, indices=%s)", changedValue, changedChildIndexes))
   }

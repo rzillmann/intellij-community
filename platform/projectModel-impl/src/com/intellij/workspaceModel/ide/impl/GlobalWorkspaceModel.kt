@@ -9,19 +9,35 @@ import com.intellij.openapi.components.serviceAsync
 import com.intellij.openapi.diagnostic.debug
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.project.ProjectCloseListener
 import com.intellij.openapi.project.ProjectManager
+import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.registry.Registry
 import com.intellij.platform.backend.workspace.GlobalWorkspaceModelCache
 import com.intellij.platform.backend.workspace.WorkspaceModel
 import com.intellij.platform.diagnostic.telemetry.helpers.MillisecondsMeasurer
 import com.intellij.platform.eel.EelMachine
-import com.intellij.platform.eel.provider.EelProvider
+import com.intellij.platform.eel.provider.EelMachineResolver
 import com.intellij.platform.eel.provider.LocalEelMachine
-import com.intellij.platform.eel.provider.getEelDescriptor
+import com.intellij.platform.eel.provider.getEelMachine
 import com.intellij.platform.workspace.jps.GlobalStorageEntitySource
 import com.intellij.platform.workspace.jps.JpsGlobalFileEntitySource
-import com.intellij.platform.workspace.jps.entities.*
-import com.intellij.platform.workspace.storage.*
+import com.intellij.platform.workspace.jps.entities.ExcludeUrlEntity
+import com.intellij.platform.workspace.jps.entities.ExcludeUrlEntityBuilder
+import com.intellij.platform.workspace.jps.entities.LibraryEntity
+import com.intellij.platform.workspace.jps.entities.LibraryPropertiesEntity
+import com.intellij.platform.workspace.jps.entities.LibraryPropertiesEntityBuilder
+import com.intellij.platform.workspace.jps.entities.LibraryRoot
+import com.intellij.platform.workspace.jps.entities.SdkEntity
+import com.intellij.platform.workspace.jps.entities.SdkRoot
+import com.intellij.platform.workspace.jps.entities.libraryProperties
+import com.intellij.platform.workspace.storage.EntityChange
+import com.intellij.platform.workspace.storage.EntitySource
+import com.intellij.platform.workspace.storage.EntityStorage
+import com.intellij.platform.workspace.storage.ImmutableEntityStorage
+import com.intellij.platform.workspace.storage.InternalEnvironmentName
+import com.intellij.platform.workspace.storage.MutableEntityStorage
+import com.intellij.platform.workspace.storage.VersionedStorageChange
 import com.intellij.platform.workspace.storage.impl.VersionedEntityStorageImpl
 import com.intellij.platform.workspace.storage.impl.assertConsistency
 import com.intellij.platform.workspace.storage.instrumentation.EntityStorageInstrumentationApi
@@ -29,7 +45,6 @@ import com.intellij.platform.workspace.storage.instrumentation.MutableEntityStor
 import com.intellij.platform.workspace.storage.url.VirtualFileUrl
 import com.intellij.platform.workspace.storage.url.VirtualFileUrlManager
 import com.intellij.util.concurrency.ThreadingAssertions
-import com.intellij.util.concurrency.annotations.RequiresBlockingContext
 import com.intellij.util.concurrency.annotations.RequiresWriteLock
 import com.intellij.workspaceModel.ide.JpsGlobalModelSynchronizer
 import com.intellij.workspaceModel.ide.impl.legacyBridge.library.ProjectLibraryTableBridgeImpl.Companion.libraryMap
@@ -106,6 +121,15 @@ class GlobalWorkspaceModel internal constructor(
   private val updateModelMethodName = GlobalWorkspaceModel::updateModel.name
   private val onChangedMethodName = GlobalWorkspaceModel::onChanged.name
 
+  /**
+   * ModuleBridgeLoaderService applies changed from the global model to a newly created project.
+   * But if the global model is modified again before the project is added to the list of open projects in [ProjectManager]
+   * those changes won't be applied to the project.
+   *
+   * Therefore, we need to keep the list of projects that are being initialized.
+   */
+  private val initializingAndOpenProjects = ConcurrentHashMap.newKeySet<Project>()
+
   init {
     LOG.debug { "Loading global workspace model" }
 
@@ -136,7 +160,7 @@ class GlobalWorkspaceModel internal constructor(
 
     val callback = JpsGlobalModelSynchronizer.getInstance()
       .apply { setVirtualFileUrlManager(globalWorkspaceModels.virtualFileManager) }
-      .loadInitialState(internalEnvironmentName, mutableEntityStorage, entityStorage, loadedFromCache)
+      .loadInitialState(eelMachine, internalEnvironmentName, mutableEntityStorage, entityStorage, loadedFromCache)
     val changes = (mutableEntityStorage as MutableEntityStorageInstrumentation).collectChanges()
     entityStorage.replace(mutableEntityStorage.toSnapshot(), changes, mutableEntityStorage.collectSymbolicEntityIdsChanges(), {}, {})
     callback.invoke()
@@ -222,6 +246,27 @@ class GlobalWorkspaceModel internal constructor(
     GlobalEntityBridgeAndEventHandler.getAllGlobalEntityHandlers(eelMachine).forEach { it.handleBeforeChangeEvents(change) }
   }
 
+  fun registerInitializingProjectForUpdatesFromGlobalModel(project: Project) {
+    LOG.info("Project ${project.name} is added to the list of initializing and open projects")
+    initializingAndOpenProjects.add(project)
+    ApplicationManager.getApplication().getMessageBus().simpleConnect().subscribe(ProjectCloseListener.TOPIC,
+      object : ProjectCloseListener {
+        override fun projectClosed(project: Project) {
+          if (initializingAndOpenProjects.remove(project)) {
+            LOG.info("Project ${project.name} is removed from the list of initializing and open projects. Project was closed.")
+          }
+        }
+      },
+    )
+    // in tests a Project instance may be created (which leads to "projectPreInit" activities including ModuleBridgeLoaderService to be run),
+    // but the Project is not open therefore, it doesn't get closed, only disposed.
+    Disposer.register(project) {
+      if (initializingAndOpenProjects.remove(project)) {
+        LOG.info("Project ${project.name} is removed from the list of initializing and open projects. Project was disposed.")
+      }
+    }
+  }
+
   @RequiresWriteLock
   private fun onChanged(change: VersionedStorageChange) {
     ThreadingAssertions.assertWriteAccess()
@@ -230,11 +275,12 @@ class GlobalWorkspaceModel internal constructor(
 
     globalWorkspaceModels.globalWorkspaceModelCache?.scheduleCacheSave()
     isFromGlobalWorkspaceModel = true
-    for (project in ProjectManager.getInstance().openProjects) {
-      if (project.isDisposed || project.getEelDescriptor().machine != eelMachine) {
+    for (project in initializingAndOpenProjects) {
+      if (project.isDisposed || project.getEelMachine() != eelMachine) {
         continue
       }
       applyStateToProject(project)
+      LOG.info("During global workspace model update the changes were also applied to project: ${project.name}")
     }
     isFromGlobalWorkspaceModel = false
   }
@@ -352,7 +398,6 @@ class GlobalWorkspaceModel internal constructor(
   companion object {
     private val LOG = logger<GlobalWorkspaceModel>()
 
-    @RequiresBlockingContext
     @JvmStatic
     fun getInstance(eelMachine: EelMachine): GlobalWorkspaceModel {
       return ApplicationManager.getApplication().service<GlobalWorkspaceModelRegistry>().getGlobalModel(eelMachine)
@@ -362,7 +407,7 @@ class GlobalWorkspaceModel internal constructor(
       return ApplicationManager.getApplication().serviceAsync<GlobalWorkspaceModelRegistry>().getGlobalModel(eelMachine)
     }
 
-    suspend fun getInstanceByEnvironmentName(environmentName: InternalEnvironmentName): GlobalWorkspaceModel {
+    suspend fun getInstanceByEnvironmentNameAsync(environmentName: InternalEnvironmentName): GlobalWorkspaceModel {
       return ApplicationManager.getApplication().serviceAsync<GlobalWorkspaceModelRegistry>().getGlobalModelByEnvironmentName(environmentName)
     }
 
@@ -427,25 +472,25 @@ class GlobalWorkspaceModelRegistry {
   private val environmentToModel = ConcurrentHashMap<EelMachine, GlobalWorkspaceModel>()
 
   fun getGlobalModel(eelMachine: EelMachine): GlobalWorkspaceModel {
-    val protectedMachine = if (Registry.`is`("ide.workspace.model.per.environment.model.separation")) eelMachine else LocalEelMachine
+    val protectedMachine = if (Registry.`is`("ide.workspace.model.per.environment.model.separation", false)) eelMachine else LocalEelMachine
     val internalEnvironmentName = protectedMachine.getInternalEnvironmentNameImpl()
     return environmentToModel.computeIfAbsent(protectedMachine) { GlobalWorkspaceModel(globalWorkspaceModels, protectedMachine, internalEnvironmentName) }
   }
 
-  fun getGlobalModelByEnvironmentName(name: InternalEnvironmentName): GlobalWorkspaceModel {
-    val protectedName = if (Registry.`is`("ide.workspace.model.per.environment.model.separation")) name else InternalEnvironmentName.Local
+  suspend fun getGlobalModelByEnvironmentName(name: InternalEnvironmentName): GlobalWorkspaceModel {
+    val protectedName = if (Registry.`is`("ide.workspace.model.per.environment.model.separation", false)) name else InternalEnvironmentName.Local
     val machine = if (protectedName == InternalEnvironmentName.Local) {
       LocalEelMachine
     }
     else {
-      EelProvider.EP_NAME.extensionList.firstNotNullOf { eelProvider -> eelProvider.getEelMachineByInternalName(protectedName.name) }
+      EelMachineResolver.getEelMachineByInternalName(protectedName.name)
     }
     val model = getGlobalModel(machine)
     return model
   }
 
   fun getGlobalModels(): List<GlobalWorkspaceModel> {
-    return if (Registry.`is`("ide.workspace.model.per.environment.model.separation")) {
+    return if (Registry.`is`("ide.workspace.model.per.environment.model.separation", false)) {
       environmentToModel.values.toList()
     }
     else {
@@ -462,7 +507,7 @@ class GlobalWorkspaceModelRegistry {
 
 @ApiStatus.Internal
 fun EelMachine.getInternalEnvironmentName(): InternalEnvironmentName {
-  val protectedMachine = if (Registry.`is`("ide.workspace.model.per.environment.model.separation")) this else LocalEelMachine
+  val protectedMachine = if (Registry.`is`("ide.workspace.model.per.environment.model.separation", false)) this else LocalEelMachine
   return protectedMachine.getInternalEnvironmentNameImpl()
 }
 
@@ -471,8 +516,5 @@ private fun EelMachine.getInternalEnvironmentNameImpl(): InternalEnvironmentName
     InternalEnvironmentName.Local
   }
   else {
-    val name = EelProvider.EP_NAME.extensionList.firstNotNullOfOrNull { eelProvider ->
-      eelProvider.getInternalName(eelMachine = this)
-    } ?: throw IllegalArgumentException("Descriptor $this must be registered before using in Workspace Model")
-    InternalEnvironmentName.of(name)
+    InternalEnvironmentName.of(internalName)
   }

@@ -1,8 +1,6 @@
 // Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.plugins.terminal
 
-import com.intellij.execution.wsl.WSLDistribution
-import com.intellij.execution.wsl.WslPath
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.diagnostic.debug
 import com.intellij.openapi.diagnostic.logger
@@ -10,10 +8,25 @@ import com.intellij.openapi.progress.runBlockingMaybeCancellable
 import com.intellij.openapi.util.SystemInfo
 import com.intellij.openapi.util.io.OSAgnosticPathUtil
 import com.intellij.openapi.util.registry.Registry
-import com.intellij.platform.eel.*
+import com.intellij.platform.eel.EelApi
+import com.intellij.platform.eel.EelDescriptor
+import com.intellij.platform.eel.EelExecApi
+import com.intellij.platform.eel.EelExecPosixApi
+import com.intellij.platform.eel.EelExecWindowsApi
+import com.intellij.platform.eel.EelProcess
+import com.intellij.platform.eel.ExecuteProcessException
+import com.intellij.platform.eel.environmentVariables
+import com.intellij.platform.eel.isPosix
 import com.intellij.platform.eel.path.EelPath
-import com.intellij.platform.eel.provider.*
-import com.intellij.platform.eel.provider.utils.*
+import com.intellij.platform.eel.provider.LocalEelDescriptor
+import com.intellij.platform.eel.provider.asEelPath
+import com.intellij.platform.eel.provider.localEel
+import com.intellij.platform.eel.provider.toEelApi
+import com.intellij.platform.eel.provider.utils.EelProcessExecutionResult
+import com.intellij.platform.eel.provider.utils.awaitProcessResult
+import com.intellij.platform.eel.provider.utils.stderrString
+import com.intellij.platform.eel.provider.utils.stdoutString
+import com.intellij.platform.eel.spawnProcess
 import com.intellij.util.PathUtil
 import com.intellij.util.io.awaitExit
 import com.intellij.util.system.OS
@@ -132,19 +145,18 @@ private fun buildStartupEelContext(workingDirectory: Path, shellCommand: List<St
       EelPath.parse(workingDirectory.toString(), LocalEelDescriptor)
     }
   }
-  val wslDistribNameFromCommandline = getWslDistributionNameFromCommand(shellCommand)
-  if (wslDistribNameFromCommandline != null) {
-    val wslDistribNameFromWorkingDirectory = WslPath.parseWindowsUncPath(workingDirectory.toString())?.distributionId
-    if (wslDistribNameFromCommandline != wslDistribNameFromWorkingDirectory) {
-      val wslRootPath = WSLDistribution(wslDistribNameFromCommandline).getUNCRootPath()
-      val eelDescriptor = wslRootPath.getEelDescriptor()
-      if (eelDescriptor != LocalEelDescriptor) {
-        return TerminalStartupEelContext(eelDescriptor) { eelApi ->
-          eelApi.userInfo.home
-        }
-      }
+
+  if (isWslCommand(shellCommand)) {
+    // Enforce running `wsl.exe ...` process locally
+    //
+    // As an alternative, we can try to decode the command specified by the client and
+    // use these parameters to start the process remotely (it will bring shell integration and better support overall).
+    // But it is error-prone and requires careful implementation.
+    return TerminalStartupEelContext(LocalEelDescriptor) {
+      EelPath.parse(workingDirectory.toString(), LocalEelDescriptor)
     }
   }
+
   val workingDirectoryEelPath = workingDirectory.asEelPath()
   return TerminalStartupEelContext(workingDirectoryEelPath.descriptor) {
     workingDirectoryEelPath
@@ -208,12 +220,15 @@ internal fun shouldUseEelApi(): Boolean = Registry.`is`("terminal.use.EelApi", t
  * loading the same configuration file twice might break things. 
  */
 internal suspend fun EelApi.fetchMinimalEnvironmentVariables(): Map<String, String> {
-  if (this.descriptor == LocalEelDescriptor) {
-    return System.getenv()
+  return try {
+    when (val exec = this.exec) {
+      is EelExecPosixApi -> exec.environmentVariables().minimal().eelIt().await()
+      is EelExecWindowsApi -> exec.environmentVariables().eelIt().await()
+    }
   }
-  return when (val exec = this.exec) {
-    is EelExecPosixApi -> exec.environmentVariables().minimal().eelIt().await()
-    is EelExecWindowsApi -> exec.environmentVariables().eelIt().await()
+  catch (err: EelExecApi.EnvironmentVariablesException) {
+    log.warn("Failed to fetch minimal environment variables for ${this.descriptor}, using an empty environment", err)
+    return emptyMap()
   }
 }
 
@@ -228,13 +243,15 @@ internal fun fetchMinimalEnvironmentVariablesBlocking(eelDescriptor: EelDescript
 
 
 internal class ShellProcessHolder(
-  eelProcess: EelProcess,
-  private val eelApi: EelApi,
+  val eelProcess: EelProcess,
+  val eelApi: EelApi,
 ) {
   val isPosix: Boolean get() = eelApi.platform.isPosix
 
   val ptyProcess: PtyProcess = eelProcess.convertToJavaProcess() as PtyProcess
   private val shellPid: EelApi.Pid = eelProcess.pid
+
+  val descriptor: EelDescriptor get() = eelApi.descriptor
 
   fun terminatePosixShell() {
     terminalApplicationScope().launch(Dispatchers.IO) {

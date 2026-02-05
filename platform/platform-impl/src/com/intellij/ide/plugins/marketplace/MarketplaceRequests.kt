@@ -9,8 +9,7 @@ import com.intellij.ide.plugins.PluginInfoProvider
 import com.intellij.ide.plugins.PluginNode
 import com.intellij.ide.plugins.auth.PluginRepositoryAuthService
 import com.intellij.ide.plugins.marketplace.utils.MarketplaceUrls
-import com.intellij.ide.plugins.marketplace.utils.buildEncodedArchParameter
-import com.intellij.ide.plugins.marketplace.utils.buildEncodedOsParameter
+import com.intellij.ide.plugins.marketplace.utils.buildOsParameter
 import com.intellij.ide.plugins.newui.PluginUiModel
 import com.intellij.ide.plugins.newui.PluginUiModelAdapter
 import com.intellij.ide.plugins.newui.PluginUiModelBuilderFactory
@@ -34,6 +33,7 @@ import com.intellij.openapi.util.BuildNumber
 import com.intellij.openapi.util.IntellijInternalApi
 import com.intellij.openapi.util.TimeoutCachedValue
 import com.intellij.util.PlatformUtils
+import com.intellij.util.Urls
 import com.intellij.util.concurrency.annotations.RequiresBackgroundThread
 import com.intellij.util.concurrency.annotations.RequiresReadLockAbsence
 import com.intellij.util.io.HttpRequests
@@ -152,12 +152,31 @@ class MarketplaceRequests(private val coroutineScope: CoroutineScope) : PluginIn
       }
     }
 
+    fun loadLastCompatiblePluginUpdate(
+      allIds: Set<PluginId>,
+      buildNumber: BuildNumber? = null,
+      throwExceptions: Boolean = false,
+    ): List<IdeCompatibleUpdate> {
+      return loadLastCompatiblePluginUpdate(allIds, buildNumber, throwExceptions, sendMachineId = false)
+    }
+
+    fun checkInstalledPluginUpdate(
+      allIds: Set<PluginId>,
+      buildNumber: BuildNumber? = null,
+      throwExceptions: Boolean = false,
+    ): List<IdeCompatibleUpdate> {
+      return loadLastCompatiblePluginUpdate(allIds, buildNumber, throwExceptions, sendMachineId = true)
+    }
+
     private fun loadLastCompatiblePluginUpdate(
       allIds: Set<PluginId>,
       buildNumber: BuildNumber? = null,
       throwExceptions: Boolean = false,
-      updateCheck: Boolean = false,
+      sendMachineId: Boolean,
     ): List<IdeCompatibleUpdate> {
+      LOG.info("Looking for the last compatible plugin updates for:\n$allIds\n" +
+               "send machine ID: $sendMachineId")
+
       val chunks = mutableListOf<MutableList<PluginId>>()
       chunks.add(ArrayList(100))
 
@@ -179,19 +198,8 @@ class MarketplaceRequests(private val coroutineScope: CoroutineScope) : PluginIn
       }
 
       return chunks.flatMap {
-        loadLastCompatiblePluginsUpdate(it, buildNumber, throwExceptions, updateCheck)
+        loadLastCompatiblePluginsUpdate(it, buildNumber, throwExceptions, sendMachineId)
       }
-    }
-
-    /**
-     * Must be used only from [com.intellij.openapi.updateSettings.impl.UpdateChecker].
-     */
-    fun checkLastCompatiblePluginUpdate(
-      allIds: Set<PluginId>,
-      buildNumber: BuildNumber? = null,
-      throwExceptions: Boolean = false,
-    ): List<IdeCompatibleUpdate> {
-      return loadLastCompatiblePluginUpdate(allIds, buildNumber, throwExceptions, updateCheck = true)
     }
 
     @RequiresBackgroundThread
@@ -210,7 +218,7 @@ class MarketplaceRequests(private val coroutineScope: CoroutineScope) : PluginIn
       ids: Collection<PluginId>,
       buildNumber: BuildNumber? = null,
       throwExceptions: Boolean = false,
-      updateCheck: Boolean = false,
+      sendMachineId: Boolean = false,
     ): List<IdeCompatibleUpdate> {
       try {
         if (ids.isEmpty()) return emptyList()
@@ -222,21 +230,22 @@ class MarketplaceRequests(private val coroutineScope: CoroutineScope) : PluginIn
         }
         else null
 
-        val query = buildString {
-          append("build=${ApplicationInfoImpl.orFromPluginCompatibleBuild(buildNumber)}")
-          append("&os=${buildEncodedOsParameter()}")
-          append("&arch=${buildEncodedArchParameter()}")
-          if (machineId != null && updateCheck) {
-            append("&mid=$machineId")
+        val params = mutableListOf(
+          "build" to ApplicationInfoImpl.orFromPluginCompatibleBuild(buildNumber),
+          "os" to buildOsParameter(),
+          "arch" to CpuArch.CURRENT.name
+        ).apply {
+          if (machineId != null && sendMachineId) {
+            add("mid" to machineId)
           }
-          for (id in ids) {
-            append("&pluginXmlId=${URLEncoder.encode(id.idString, StandardCharsets.UTF_8)}")
-          }
+          addAll(ids.map { "pluginXmlId" to it.idString })
         }
 
-        val urlString = url.withQuery(query).toString()
+        val query = params.joinToString(separator = "&") {
+          "${it.first}=${URLEncoder.encode(it.second, StandardCharsets.UTF_8)}"
+        }
 
-        return HttpRequests.request(urlString)
+        return HttpRequests.request(url.withQuery(query).toString())
           .accept(HttpRequests.JSON_CONTENT_TYPE)
           .setHeadersViaTuner()
           .productNameAsUserAgent()
@@ -745,18 +754,18 @@ class MarketplaceRequests(private val coroutineScope: CoroutineScope) : PluginIn
 
   fun getCompatibleUpdateByModule(module: String): PluginId? {
     try {
-      val url = URI(MarketplaceUrls.getSearchPluginsUpdatesUrl())
+      val params = mapOf(
+        "build" to ApplicationInfoImpl.orFromPluginCompatibleBuild(null),
+        "module" to module,
+        "os" to buildOsParameter(),
+        "arch" to CpuArch.CURRENT.name
+      )
 
-      val query = buildString {
-        append("build=${ApplicationInfoImpl.orFromPluginCompatibleBuild(null)}")
-        append("&os=${buildEncodedOsParameter()}")
-        append("&arch=${buildEncodedArchParameter()}")
-        append("&module=${URLEncoder.encode(module, StandardCharsets.UTF_8)}")
-      }
+      val url = Urls.newFromEncoded(MarketplaceUrls.getSearchPluginsUpdatesUrl())
+        .addParameters(params)
+        .toExternalForm()
 
-      val urlString = url.withQuery(query).toString()
-
-      return HttpRequests.request(urlString)
+      return HttpRequests.request(url)
         .accept(HttpRequests.JSON_CONTENT_TYPE)
         .setHeadersViaTuner()
         .productNameAsUserAgent()

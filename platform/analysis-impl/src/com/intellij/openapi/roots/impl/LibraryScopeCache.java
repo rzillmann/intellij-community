@@ -9,17 +9,47 @@ import com.intellij.openapi.module.impl.scopes.LibraryRuntimeClasspathScope;
 import com.intellij.openapi.module.impl.scopes.ModuleWithDependentsScope;
 import com.intellij.openapi.module.impl.scopes.ModulesScope;
 import com.intellij.openapi.project.Project;
-import com.intellij.openapi.roots.*;
+import com.intellij.openapi.roots.JdkOrderEntry;
+import com.intellij.openapi.roots.LibraryOrderEntry;
+import com.intellij.openapi.roots.ModuleOrderEntry;
+import com.intellij.openapi.roots.OrderEntry;
+import com.intellij.openapi.roots.OrderRootType;
+import com.intellij.openapi.roots.ProjectFileIndex;
+import com.intellij.openapi.roots.ProjectRootManager;
+import com.intellij.openapi.util.registry.Registry;
 import com.intellij.openapi.vfs.VirtualFile;
+import com.intellij.platform.backend.workspace.VirtualFileUrls;
+import com.intellij.platform.backend.workspace.WorkspaceModel;
+import com.intellij.platform.workspace.jps.entities.ExtensionsKt;
+import com.intellij.platform.workspace.jps.entities.InheritedSdkDependency;
+import com.intellij.platform.workspace.jps.entities.LibraryDependency;
+import com.intellij.platform.workspace.jps.entities.LibraryEntity;
+import com.intellij.platform.workspace.jps.entities.LibraryId;
+import com.intellij.platform.workspace.jps.entities.LibraryRoot;
+import com.intellij.platform.workspace.jps.entities.ModuleEntity;
+import com.intellij.platform.workspace.jps.entities.SdkEntity;
+import com.intellij.platform.workspace.jps.entities.SdkId;
+import com.intellij.platform.workspace.jps.entities.SdkRoot;
+import com.intellij.platform.workspace.storage.ImmutableEntityStorage;
 import com.intellij.psi.search.DelegatingGlobalSearchScope;
 import com.intellij.psi.search.GlobalSearchScope;
 import com.intellij.util.ConcurrencyUtil;
 import com.intellij.util.containers.ConcurrentFactoryMap;
 import com.intellij.util.containers.ContainerUtil;
+import com.intellij.workspaceModel.ide.impl.legacyBridge.sdk.SdkBridgeImplKt;
+import com.intellij.workspaceModel.ide.legacyBridge.ModuleBridges;
+import kotlin.sequences.SequencesKt;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
@@ -113,31 +143,43 @@ public final class LibraryScopeCache {
       }
     }
 
-    Comparator<Module> comparator = Comparator.comparing(Module::getName);
-    modulesLibraryUsedIn.sort(comparator);
-    List<? extends Module> uniquesList = ContainerUtil.removeDuplicatesFromSorted(modulesLibraryUsedIn, comparator);
-
-    GlobalSearchScope allCandidates = uniquesList.isEmpty() ? myLibrariesOnlyScope : getScopeForLibraryUsedIn(uniquesList);
-    if (lib != null) {
-      final LibraryRuntimeClasspathScope preferred = new LibraryRuntimeClasspathScope(myProject, lib);
-      // prefer current library
-      return new DelegatingGlobalSearchScope(allCandidates, preferred) {
-        @Override
-        public int compare(@NotNull VirtualFile file1, @NotNull VirtualFile file2) {
-          boolean c1 = preferred.contains(file1);
-          boolean c2 = preferred.contains(file2);
-          if (c1 && !c2) return 1;
-          if (c2 && !c1) return -1;
-
-          return super.compare(file1, file2);
-        }
-      };
-    }
-    return allCandidates;
+    return getScopeForLibrary(modulesLibraryUsedIn, lib == null ? null : new LibraryRuntimeClasspathScope(myProject, lib));
   }
+
   private @NotNull GlobalSearchScope calcLibraryScope(@NotNull VirtualFile virtualFile) {
-    List<OrderEntry> orderEntries = ProjectFileIndex.getInstance(myProject).getOrderEntriesForFile(virtualFile);
-    return calcLibraryScope(orderEntries);
+    if (Registry.is("use.workspace.model.for.calculation.library.scope")) {
+      var index = ProjectFileIndex.getInstance(myProject);
+      var sdks = index.findContainingSdks(virtualFile);
+
+      for (var sdk : sdks) {
+        return getScopeForSdk(sdk);
+      }
+
+      var libraries = index.findContainingLibraries(virtualFile);
+      var currentSnapshot = WorkspaceModel.getInstance(myProject).getCurrentSnapshot();
+      LibraryEntity lib = null;
+      List<Module> modulesLibraryUsedIn = new ArrayList<>();
+
+      for (var library: libraries) {
+        lib = library;
+        modulesLibraryUsedIn.addAll(modulesWithLibraryId(library.getSymbolicId(), currentSnapshot));
+      }
+
+      if (lib != null) {
+        var roots = lib.getRoots().stream()
+          .map(LibraryRoot::getUrl)
+          .map(VirtualFileUrls::getVirtualFile)
+          .toArray(VirtualFile[]::new);
+
+        return getScopeForLibrary(modulesLibraryUsedIn, new  LibraryRuntimeClasspathScope(myProject, roots));
+      }
+      else {
+        return getScopeForLibrary(modulesLibraryUsedIn, null);
+      }
+    } else {
+      List<OrderEntry> orderEntries = ProjectFileIndex.getInstance(myProject).getOrderEntriesForFile(virtualFile);
+      return calcLibraryScope(orderEntries);
+    }
   }
 
   public @NotNull GlobalSearchScope getScopeForSdk(@NotNull JdkOrderEntry jdkOrderEntry) {
@@ -151,12 +193,97 @@ public final class LibraryScopeCache {
     return scope;
   }
 
+  private @NotNull GlobalSearchScope getScopeForSdk(@NotNull SdkEntity sdkEntity) {
+    final String name = sdkEntity.getName();
+    GlobalSearchScope scope = mySdkScopes.get(name);
+    if (scope == null) {
+      String sdkSourcesRootTypeName = SdkBridgeImplKt.getCustomName(OrderRootType.SOURCES);
+      String sdkClassesRootTypeName = SdkBridgeImplKt.getCustomName(OrderRootType.CLASSES);
+      var roots = sdkEntity.getRoots();
+
+      var sources = roots.stream()
+        .filter(root -> Objects.equals(root.getType().getName(), sdkSourcesRootTypeName))
+        .map(SdkRoot::getUrl)
+        .map(VirtualFileUrls::getVirtualFile)
+        .toArray(VirtualFile[]::new);
+
+      var classes = roots.stream()
+        .filter(root -> Objects.equals(root.getType().getName(), sdkClassesRootTypeName))
+        .map(SdkRoot::getUrl)
+        .map(VirtualFileUrls::getVirtualFile)
+        .toArray(VirtualFile[]::new);
+
+      scope = new JdkScope(myProject, classes, sources, sdkEntity.getName());
+      return ConcurrencyUtil.cacheOrGet(mySdkScopes, name, scope);
+    }
+    return scope;
+  }
+
+  private GlobalSearchScope getScopeForLibrary(List<Module> modulesLibraryUsedIn, @Nullable LibraryRuntimeClasspathScope libraryScope) {
+    Comparator<Module> comparator = Comparator.comparing(Module::getName);
+    modulesLibraryUsedIn.sort(comparator);
+    List<? extends Module> uniquesList = ContainerUtil.removeDuplicatesFromSorted(modulesLibraryUsedIn, comparator);
+
+    GlobalSearchScope allCandidates = uniquesList.isEmpty() ? myLibrariesOnlyScope : getScopeForLibraryUsedIn(uniquesList);
+    if (libraryScope != null) {
+      // prefer current library
+      return new DelegatingGlobalSearchScope(allCandidates, libraryScope) {
+        @Override
+        public int compare(@NotNull VirtualFile file1, @NotNull VirtualFile file2) {
+          boolean c1 = libraryScope.contains(file1);
+          boolean c2 = libraryScope.contains(file2);
+          if (c1 && !c2) return 1;
+          if (c2 && !c1) return -1;
+
+          return super.compare(file1, file2);
+        }
+      };
+    }
+    return allCandidates;
+  }
+
   private @NotNull GlobalSearchScope calcLibraryUseScope(@NotNull List<? extends OrderEntry> entries) {
     Set<Module> modulesWithLibrary = new HashSet<>(entries.size());
     Set<Module> modulesWithSdk = new HashSet<>(entries.size());
     for (OrderEntry entry : entries) {
       (entry instanceof JdkOrderEntry ? modulesWithSdk : modulesWithLibrary).add(entry.getOwnerModule());
     }
+    return calcLibraryUseScope(modulesWithLibrary, modulesWithSdk);
+  }
+
+  private @NotNull GlobalSearchScope calcLibraryUseScope(@NotNull VirtualFile virtualFile) {
+    if (Registry.is("use.workspace.model.for.calculation.library.scope")) {
+      var index = ProjectFileIndex.getInstance(myProject);
+      var currentSnapshot = WorkspaceModel.getInstance(myProject).getCurrentSnapshot();
+      var sdks = index.findContainingSdks(virtualFile);
+      var libraries = index.findContainingLibraries(virtualFile);
+
+      Set<Module> modulesWithSdk = new HashSet<>();
+      for (var sdk : sdks) {
+        var sdkId = sdk.getSymbolicId();
+        for (var module: SequencesKt.toList(currentSnapshot.referrers(sdkId, ModuleEntity.class))) {
+          var moduleBridge = ModuleBridges.findModule(module, currentSnapshot);
+          if (moduleBridge != null) {
+            modulesWithSdk.add(moduleBridge);
+          }
+        }
+        addModulesInheritingProjectSdk(sdkId, currentSnapshot, modulesWithSdk);
+      }
+
+      Set<Module> modulesWithLibrary = new HashSet<>();
+      for (var library : libraries) {
+        modulesWithLibrary.addAll(modulesWithLibraryId(library.getSymbolicId(), currentSnapshot));
+      }
+      modulesWithLibrary.addAll(index.getModulesForFile(virtualFile, false));
+
+      return calcLibraryUseScope(modulesWithLibrary, modulesWithSdk);
+    } else {
+      List<? extends OrderEntry> entries = ProjectFileIndex.getInstance(myProject).getOrderEntriesForFile(virtualFile);
+      return calcLibraryUseScope(entries);
+    }
+  }
+
+  private @NotNull GlobalSearchScope calcLibraryUseScope(Set<Module> modulesWithLibrary, Set<Module> modulesWithSdk) {
     modulesWithSdk.removeAll(modulesWithLibrary);
 
     // optimisation: if the library attached to all modules (often the case with JDK) then replace the 'union of all modules' scope with just 'project'
@@ -177,10 +304,6 @@ public final class LibraryScopeCache {
     }
 
     return GlobalSearchScope.union(united.toArray(GlobalSearchScope.EMPTY_ARRAY));
-  }
-  private @NotNull GlobalSearchScope calcLibraryUseScope(@NotNull VirtualFile virtualFile) {
-    List<? extends OrderEntry> entries = ProjectFileIndex.getInstance(myProject).getOrderEntriesForFile(virtualFile);
-    return calcLibraryUseScope(entries);
   }
 
   private static final class LibrariesOnlyScope extends DelegatingGlobalSearchScope {
@@ -210,5 +333,54 @@ public final class LibraryScopeCache {
     public String toString() {
       return "Libraries only in (" + myBaseScope + ")";
     }
+  }
+
+  private void addModulesInheritingProjectSdk(SdkId sdkId, ImmutableEntityStorage currentSnapshot, Set<Module> result) {
+    var projectSdk = ProjectRootManager.getInstance(myProject).getProjectSdk();
+    if (projectSdk == null || !projectSdk.getName().equals(sdkId.getName())) {
+      return;
+    }
+
+    for (var moduleEntity : SequencesKt.toList(currentSnapshot.entities(ModuleEntity.class))) {
+      for (var dep : moduleEntity.getDependencies()) {
+        if (dep instanceof InheritedSdkDependency) {
+          var moduleBridge = ModuleBridges.findModule(moduleEntity, currentSnapshot);
+          if (moduleBridge != null) {
+            result.add(moduleBridge);
+          }
+          break;
+        }
+      }
+    }
+  }
+
+  private static Set<Module> modulesWithLibraryId(LibraryId libraryId, ImmutableEntityStorage currentSnapshot) {
+    Set<Module> modulesWithLibrary = new HashSet<>();
+    var ownerModules = SequencesKt.toList(currentSnapshot.referrers(libraryId, ModuleEntity.class));
+    for (var module : ownerModules) {
+      var moduleBridge = ModuleBridges.findModule(module, currentSnapshot);
+      if (moduleBridge != null) {
+        modulesWithLibrary.add(moduleBridge);
+      }
+      if (exportsLibrary(module, libraryId)) {
+        var transitiveModules = ExtensionsKt.collectTransitivelyDependentModules(module, currentSnapshot);
+        for (var depModule : transitiveModules) {
+          var depModuleBridge = ModuleBridges.findModule(depModule, currentSnapshot);
+          if (depModuleBridge != null) {
+            modulesWithLibrary.add(depModuleBridge);
+          }
+        }
+      }
+    }
+    return modulesWithLibrary;
+  }
+
+  private static boolean exportsLibrary(ModuleEntity module, LibraryId libraryId) {
+    for (var moduleDependency : module.getDependencies()) {
+      if (moduleDependency instanceof  LibraryDependency libraryDependency) {
+        if (libraryDependency.getLibrary().equals(libraryId) && libraryDependency.getExported()) return true;
+      }
+    }
+    return false;
   }
 }

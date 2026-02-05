@@ -1,7 +1,15 @@
 // Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.jetbrains.python.inlayHints
 
-import com.intellij.codeInsight.hints.declarative.*
+import com.intellij.codeInsight.hints.declarative.EndOfLinePosition
+import com.intellij.codeInsight.hints.declarative.HintFontSize
+import com.intellij.codeInsight.hints.declarative.HintFormat
+import com.intellij.codeInsight.hints.declarative.HintMarginPadding
+import com.intellij.codeInsight.hints.declarative.InlayHintsCollector
+import com.intellij.codeInsight.hints.declarative.InlayHintsProvider
+import com.intellij.codeInsight.hints.declarative.InlayTreeSink
+import com.intellij.codeInsight.hints.declarative.InlineInlayPosition
+import com.intellij.codeInsight.hints.declarative.SharedBypassCollector
 import com.intellij.codeInsight.hints.declarative.impl.PresentationTreeBuilderImpl.Companion.MAX_SEGMENT_TEXT_LENGTH
 import com.intellij.openapi.editor.Editor
 import com.intellij.psi.PsiElement
@@ -23,7 +31,7 @@ class PyTypeInlayHintsProvider : InlayHintsProvider {
   override fun createCollector(file: PsiFile, editor: Editor): InlayHintsCollector? = Collector()
 
   private class Collector : SharedBypassCollector {
-    val hintFormat = HintFormat.Companion.default
+    val hintFormat = HintFormat.default
       .withFontSize(HintFontSize.ABitSmallerThanInEditor)
       .withHorizontalMargin(HintMarginPadding.MarginAndSmallerPadding)
 

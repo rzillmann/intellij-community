@@ -11,10 +11,11 @@ import com.intellij.platform.eel.EelDescriptor
 import com.intellij.platform.eel.provider.LocalEelDescriptor
 import com.intellij.platform.eel.provider.asNioPath
 import com.intellij.platform.eel.provider.getEelDescriptor
+import com.intellij.platform.eel.provider.toEelApi
 import com.intellij.platform.eel.provider.toEelApiBlocking
 import com.intellij.platform.eel.where
+import com.intellij.platform.ide.impl.wsl.WslEelDescriptor
 import com.intellij.util.application
-import com.intellij.util.concurrency.annotations.RequiresBackgroundThread
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -66,7 +67,10 @@ internal class GitEelExecutableDetectionHelper private constructor(private val s
     fun getInstance() = application.service<GitEelExecutableDetectionHelper>()
 
     @JvmStatic
-    fun canUseEel(): Boolean = Registry.`is`("git.use.eel.for.non.local.projects")
+    fun canUseEel(): Boolean = Registry.`is`("git.use.eel.for.container.projects")
+
+    @JvmStatic
+    fun canUseEelForWsl(): Boolean = Registry.`is`("git.use.eel.for.wsl.projects")
 
     @JvmStatic
     fun useEelForLocalProjects(): Boolean = Registry.`is`("git.use.eel.for.local.projects")
@@ -76,16 +80,20 @@ internal class GitEelExecutableDetectionHelper private constructor(private val s
       return tryGetEelDescriptor(project, gitDirectory)?.toEelApiBlocking()
     }
 
-    @RequiresBackgroundThread
     @JvmStatic
     fun tryGetEelDescriptor(project: Project?, gitDirectory: Path?): EelDescriptor? {
-      val canUseEelForNonLocal = canUseEel()
       val canUseEelForLocal = useEelForLocalProjects()
-      return if (!canUseEelForLocal && !canUseEelForNonLocal) {
+      val canUseEelForWsl = canUseEelForWsl()
+      val canUseEelForOther = canUseEel()
+      return if (!canUseEelForLocal && !canUseEelForOther && !canUseEelForWsl) {
         null
       } else {
         val descriptor: EelDescriptor? = project?.getEelDescriptor() ?: gitDirectory?.getEelDescriptor()
-        val shouldUse = if (descriptor === LocalEelDescriptor) canUseEelForLocal else canUseEelForNonLocal
+        val shouldUse = when {
+          descriptor === LocalEelDescriptor -> canUseEelForLocal
+          descriptor is WslEelDescriptor -> canUseEelForWsl
+          else -> canUseEelForOther
+        }
         if (!shouldUse) {
           null
         } else {

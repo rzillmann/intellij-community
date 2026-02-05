@@ -1,11 +1,15 @@
-// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2026 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.codeInsight.completion
 
-import com.intellij.codeInsight.completion.CompletionPhase.CommittingDocuments.CommittingState.*
+import com.intellij.codeInsight.completion.CompletionPhase.CommittingDocuments.CommittingState.Cancelled
+import com.intellij.codeInsight.completion.CompletionPhase.CommittingDocuments.CommittingState.Disposed
+import com.intellij.codeInsight.completion.CompletionPhase.CommittingDocuments.CommittingState.InProgress
+import com.intellij.codeInsight.completion.CompletionPhase.CommittingDocuments.CommittingState.Success
 import com.intellij.codeInsight.completion.CompletionPhase.Companion.NoCompletion
 import com.intellij.codeInsight.completion.impl.CompletionServiceImpl
 import com.intellij.codeInsight.completion.impl.CompletionServiceImpl.Companion.assertPhase
 import com.intellij.codeWithMe.ClientId
+import com.intellij.codeWithMe.ClientId.Companion.withExplicitClientId
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.actionSystem.IdeActions
 import com.intellij.openapi.application.ApplicationListener
@@ -16,7 +20,12 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.diagnostic.debug
 import com.intellij.openapi.diagnostic.trace
 import com.intellij.openapi.editor.Editor
-import com.intellij.openapi.editor.event.*
+import com.intellij.openapi.editor.event.CaretEvent
+import com.intellij.openapi.editor.event.CaretListener
+import com.intellij.openapi.editor.event.DocumentEvent
+import com.intellij.openapi.editor.event.DocumentListener
+import com.intellij.openapi.editor.event.SelectionEvent
+import com.intellij.openapi.editor.event.SelectionListener
 import com.intellij.openapi.editor.ex.EditorEx
 import com.intellij.openapi.editor.ex.FocusChangeListener
 import com.intellij.openapi.project.IndexNotReadyException
@@ -57,9 +66,11 @@ import kotlin.math.max
  *  *  [Synchronous] - completion is computing candidates synchronously.
  *  *  [BgCalculation] - inferring candidates on background
  *  *  [ItemsCalculated] - completion items have been calculated
- *  *  [EmptyAutoPopup] -  completion was triggered by typing, but no completion items were found, and the lookup is not shown
+ *  *  [EmptyAutoPopup] - completion was triggered by typing, but no completion items were found, and the lookup is not shown
  *  *  [InsertedSingleItem] - a single item was found, and it was inserted into the document
  *  *  [NoSuggestionsHint] - candidate inference has finished, but no candidates were found and a warning "no suggestions found" is shown.
+ *
+ *  @See CompletionServiceImpl.completionPhase
  */
 sealed class CompletionPhase @ApiStatus.Internal constructor(
   @JvmField
@@ -70,6 +81,7 @@ sealed class CompletionPhase @ApiStatus.Internal constructor(
 
   override fun dispose() {}
 
+  /** see doc of [CompletionPhase] */
   class CommittingDocuments private constructor(
     indicator: CompletionProgressIndicator?,
     editor: Editor,
@@ -191,7 +203,7 @@ sealed class CompletionPhase @ApiStatus.Internal constructor(
        *
        * @param editor          editor where we start completion
        * @param completionType  completion type
-       * @param condition       condition to check before starting the completion process.
+       * @param condition       condition for the state of the file. If the condition is not met after committing the document, completion will not be started.
        * @param project         the current project
        * @param prevIndicator   the completion indicator, if any. The indicator exists if completion was already started and we restart it with new parameters.
        */
@@ -241,17 +253,20 @@ sealed class CompletionPhase @ApiStatus.Internal constructor(
           LOG.trace { "Phase is expired ${phase.myState}" }
           return null
         }
+
         LOG.trace { "Start non-blocking read action :: phase=${phase.replaced}" }
+
         // retrieve the injected file from scratch since our typing might have destroyed the old one completely
         val topLevelFile = PsiDocumentManager.getInstance(project).getPsiFile(topLevelEditor.getDocument())
         val completionEditor = InjectedLanguageUtil.getEditorForInjectedLanguageNoCommit(topLevelEditor, topLevelFile, offset)
-        val file = PsiDocumentManager.getInstance(project).getPsiFile(completionEditor.getDocument())
-        if (file == null || autopopup && shouldSkipAutoPopup(completionEditor, file) || condition != null && !condition.value(file)) {
-          LOG.trace { "File is null or should skip auto popup or condition is not met :: file=$file, condition=$condition" }
+        val completionFile = PsiDocumentManager.getInstance(project).getPsiFile(completionEditor.getDocument())
+
+        if (completionFile == null || autopopup && shouldSkipAutoPopup(completionEditor, completionFile) || condition != null && !condition.value(completionFile)) {
+          LOG.trace { "File is null or should skip auto popup or condition is not met :: file=$completionFile, condition=$condition" }
           return null
         }
 
-        loadContributorsOutsideEdt(completionEditor, file)
+        loadContributorsOutsideEdt(completionEditor, completionFile)
         return completionEditor
       }
 
@@ -371,6 +386,7 @@ sealed class CompletionPhase @ApiStatus.Internal constructor(
     }
   }
 
+  /** see doc of [CompletionPhase] */
   class Synchronous internal constructor(indicator: CompletionProgressIndicator) : CompletionPhase(indicator) {
     override fun newCompletionStarted(time: Int, repeated: Boolean): Int {
       assertPhase(NoCompletion.javaClass) // will fail and log valuable info
@@ -379,6 +395,7 @@ sealed class CompletionPhase @ApiStatus.Internal constructor(
     }
   }
 
+  /** see doc of [CompletionPhase] */
   class BgCalculation internal constructor(indicator: CompletionProgressIndicator) : CompletionPhase(indicator) {
     @JvmField
     internal var modifiersChanged: Boolean = false
@@ -392,21 +409,23 @@ sealed class CompletionPhase @ApiStatus.Internal constructor(
     private fun restartOnWriteAction() {
       ApplicationManager.getApplication().addApplicationListener(object : ApplicationListener {
         override fun beforeWriteActionStart(action: Any) {
-          if (!indicator!!.lookup.isLookupDisposed && !indicator.isCanceled && ownerId == ClientId.current) {
-            indicator.cancel()
-            if (EDT.isCurrentThreadEdt()) {
-              indicator.scheduleRestart()
-            }
-            else {
-              // this branch is possible because completion can be canceled on background write action
-              ApplicationManager.getApplication().invokeLater(
-                /* runnable = */ { indicator.scheduleRestart() },
+          if (!indicator!!.lookup.isLookupDisposed && !indicator.isCanceled) {
+            withExplicitClientId(ownerId) {
+              indicator.cancel()
+              if (EDT.isCurrentThreadEdt()) {
+                indicator.scheduleRestart()
+              }
+              else {
+                // this branch is possible because completion can be canceled on background write action
+                ApplicationManager.getApplication().invokeLater(
+                  /* runnable = */ { indicator.scheduleRestart() },
 
-                // since we break the synchronous execution here, it is possible that some other EDT event finishes completion before us
-                // in this case, the current indicator becomes obsolete, and we don't need to reschedule the session anymore
+                  // since we break the synchronous execution here, it is possible that some other EDT event finishes completion before us
+                  // in this case, the current indicator becomes obsolete, and we don't need to reschedule the session anymore
 
-                /* expired = */ { CompletionServiceImpl.currentCompletionProgressIndicator != indicator }
-              )
+                  /* expired = */ { CompletionServiceImpl.currentCompletionProgressIndicator != indicator }
+                )
+              }
             }
           }
         }
@@ -437,6 +456,7 @@ sealed class CompletionPhase @ApiStatus.Internal constructor(
     }
   }
 
+  /** see doc of [CompletionPhase] */
   class ItemsCalculated internal constructor(indicator: CompletionProgressIndicator) : CompletionPhase(indicator) {
     override fun newCompletionStarted(time: Int, repeated: Boolean): Int {
       requireNotNull(indicator) { "`ItemsCalculated#indicator` is not-null as its constructor accepts not-null `indicator`" }.closeAndFinish(false)
@@ -464,6 +484,7 @@ sealed class CompletionPhase @ApiStatus.Internal constructor(
     }
   }
 
+  /** see doc of [CompletionPhase] */
   class InsertedSingleItem internal constructor(
     indicator: CompletionProgressIndicator,
     @JvmField
@@ -482,6 +503,7 @@ sealed class CompletionPhase @ApiStatus.Internal constructor(
     }
   }
 
+  /** see doc of [CompletionPhase] */
   class NoSuggestionsHint internal constructor(hint: LightweightHint?, indicator: CompletionProgressIndicator) : ZombiePhase(indicator) {
     init {
       expireOnAnyEditorChange(indicator.editor)
@@ -498,6 +520,7 @@ sealed class CompletionPhase @ApiStatus.Internal constructor(
     }
   }
 
+  /** see doc of [CompletionPhase] */
   class EmptyAutoPopup internal constructor(
     editor: Editor,
     private val restartingPrefixConditions: Set<Pair<Int, ElementPattern<String>>>
@@ -519,6 +542,7 @@ sealed class CompletionPhase @ApiStatus.Internal constructor(
     }
   }
 
+  /** see doc of [CompletionPhase] */
   private object NoCompletionImpl: CompletionPhase(null) {
     override fun newCompletionStarted(time: Int, repeated: Boolean): Int {
       return time

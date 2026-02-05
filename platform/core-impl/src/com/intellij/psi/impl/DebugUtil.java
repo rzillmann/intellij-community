@@ -13,16 +13,35 @@ import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.util.Ref;
 import com.intellij.openapi.util.ThrowableComputable;
 import com.intellij.openapi.util.text.StringUtil;
-import com.intellij.psi.*;
+import com.intellij.psi.FileViewProvider;
+import com.intellij.psi.PsiComment;
+import com.intellij.psi.PsiDocumentManager;
+import com.intellij.psi.PsiElement;
+import com.intellij.psi.PsiErrorElement;
+import com.intellij.psi.PsiFile;
+import com.intellij.psi.PsiInvalidElementAccessException;
+import com.intellij.psi.PsiWhiteSpace;
+import com.intellij.psi.TokenType;
 import com.intellij.psi.impl.source.SourceTreeToPsiMap;
-import com.intellij.psi.impl.source.tree.*;
+import com.intellij.psi.impl.source.tree.CompositeElement;
+import com.intellij.psi.impl.source.tree.LeafPsiElement;
+import com.intellij.psi.impl.source.tree.RecursiveTreeElementWalkingVisitor;
+import com.intellij.psi.impl.source.tree.SharedImplUtil;
+import com.intellij.psi.impl.source.tree.TreeElement;
 import com.intellij.psi.stubs.PsiFileStubImpl;
 import com.intellij.psi.stubs.Stub;
 import com.intellij.psi.stubs.StubElement;
 import com.intellij.psi.templateLanguages.OuterLanguageElement;
 import com.intellij.psi.tree.IElementType;
 import com.intellij.psi.util.PsiUtilCore;
-import com.intellij.util.*;
+import com.intellij.util.ArrayUtil;
+import com.intellij.util.CharTable;
+import com.intellij.util.Consumer;
+import com.intellij.util.ExceptionUtil;
+import com.intellij.util.Function;
+import com.intellij.util.PairConsumer;
+import com.intellij.util.ThrowableRunnable;
+import com.intellij.util.TimeoutUtil;
 import com.intellij.util.diff.FlyweightCapableTreeStructure;
 import com.intellij.util.graph.InboundSemiGraph;
 import com.intellij.util.graph.OutboundSemiGraph;
@@ -221,7 +240,13 @@ public final class DebugUtil {
 
   public static @NotNull String lightTreeToString(@NotNull FlyweightCapableTreeStructure<LighterASTNode> tree, boolean showWhitespaces) {
     StringBuilder buffer = new StringBuilder();
-    lightTreeToBuffer(tree, tree.getRoot(), buffer, 0, showWhitespaces);
+    lightTreeToBuffer(tree, tree.getRoot(), buffer, 0, showWhitespaces, true);
+    return buffer.toString();
+  }
+
+  public static @NotNull String lightTreeAsElementTypeToString(@NotNull FlyweightCapableTreeStructure<LighterASTNode> tree, boolean showWhitespaces) {
+    StringBuilder buffer = new StringBuilder();
+    lightTreeToBuffer(tree, tree.getRoot(), buffer, 0, showWhitespaces, false);
     return buffer.toString();
   }
 
@@ -229,7 +254,8 @@ public final class DebugUtil {
                                         @NotNull LighterASTNode node,
                                         Appendable buffer,
                                         int indent,
-                                        boolean showWhitespaces) {
+                                        boolean showWhitespaces,
+                                        boolean showPsiElements) {
     IElementType tokenType = node.getTokenType();
     if (!showWhitespaces && tokenType == TokenType.WHITE_SPACE) return;
 
@@ -238,13 +264,28 @@ public final class DebugUtil {
     StringUtil.repeatSymbol(buffer, ' ', indent);
     try {
       if (tokenType == TokenType.ERROR_ELEMENT) {
-        buffer.append("PsiErrorElement:").append(PsiBuilderImpl.getErrorMessage(node));
+        if (showPsiElements) {
+          buffer.append("PsiErrorElement:").append(PsiBuilderImpl.getErrorMessage(node));
+        }
+        else {
+          buffer.append(tokenType.toString()).append(":").append(PsiBuilderImpl.getErrorMessage(node));
+        }
       }
       else if (tokenType == TokenType.WHITE_SPACE) {
-        buffer.append("PsiWhiteSpace");
+        if (showPsiElements) {
+          buffer.append("PsiWhiteSpace");
+        }
+        else {
+          buffer.append(tokenType.toString());
+        }
       }
       else {
-        buffer.append(isLeaf ? "PsiElement" : "Element").append('(').append(tokenType.toString()).append(')');
+        if (showPsiElements) {
+          buffer.append(isLeaf ? "PsiElement" : "Element").append('(').append(tokenType.toString()).append(')');
+        }
+        else {
+          buffer.append(tokenType.toString());
+        }
       }
 
       if (isLeaf) {
@@ -262,7 +303,7 @@ public final class DebugUtil {
         }
         else {
           for (int i = 0; i < numKids; i++) {
-            lightTreeToBuffer(tree, kids.get()[i], buffer, indent + 2, showWhitespaces);
+            lightTreeToBuffer(tree, kids.get()[i], buffer, indent + 2, showWhitespaces, showPsiElements);
           }
         }
       }

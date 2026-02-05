@@ -75,8 +75,7 @@ internal suspend fun buildNsisInstaller(
     generator.generateUninstallerFile(nsiConfDir.resolve("un_idea_win.nsh"))
 
     prepareConfigurationFiles(nsiConfDir, uninstallerFileName, customizer, context, arch)
-    for (it in customizer.customNsiConfigurationFiles) {
-      val file = Path.of(it)
+    for (file in customizer.customNsiConfigurationFiles) {
       val copy = nsiConfDir.resolve(file.fileName)
       Files.copy(file, copy, StandardCopyOption.REPLACE_EXISTING)
       copy.setLastModifiedTime(FileTime.from(context.options.buildDateInSeconds, TimeUnit.SECONDS))
@@ -139,7 +138,7 @@ internal suspend fun buildNsisInstaller(
 
   if (customizer.publishUninstaller) {
     val uninstallerFile = context.paths.artifactDir.resolve(uninstallerFileName)
-    check(Files.exists(uninstallerFile)) { "Windows uninstaller is missing." }
+    check(Files.exists(uninstallerFile)) { "Windows uninstaller is missing: $uninstallerFile" }
     context.notifyArtifactBuilt(uninstallerFile)
   }
 
@@ -188,7 +187,7 @@ private suspend fun prepareConfigurationFiles(nsiConfDir: Path, uninstallerFileN
       "'${signTool}' '%1'"
     }
     OsFamily.currentOs == OsFamily.WINDOWS -> {
-      "COPY /B /Y '%1' '${uninstallerCopy}'"
+      "COPY /B /Y \$\\\"%1\$\\\" \$\\\"${uninstallerCopy}\$\\\""
     }
     else -> {
       "cp -f '%1' '${uninstallerCopy}'"
@@ -197,7 +196,7 @@ private suspend fun prepareConfigurationFiles(nsiConfDir: Path, uninstallerFileN
 
   Files.writeString(nsiConfDir.resolve("config.nsi"), $$"""
     !define INSTALLER_ARCH $${expectedArch}
-    !define IMAGES_LOCATION "$${Path.of(customizer.installerImagesPath!!)}"
+    !define IMAGES_LOCATION "$${customizer.installerImagesPath!!}"
 
     !define MANUFACTURER "$${appInfo.shortCompanyName}"
     !define MUI_PRODUCT "$${customizer.getFullNameIncludingEdition(appInfo)}"

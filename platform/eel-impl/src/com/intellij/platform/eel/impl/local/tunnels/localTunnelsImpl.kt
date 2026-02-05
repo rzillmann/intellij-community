@@ -1,4 +1,4 @@
-// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2026 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.platform.eel.impl.local.tunnels
 
 import com.intellij.openapi.application.ApplicationManager
@@ -7,7 +7,14 @@ import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.fileLogger
 import com.intellij.platform.eel.EelConnectionError
 import com.intellij.platform.eel.EelIpPreference
-import com.intellij.platform.eel.EelTunnelsApi.*
+import com.intellij.platform.eel.EelTunnelsApi.Connection
+import com.intellij.platform.eel.EelTunnelsApi.ConnectionAcceptor
+import com.intellij.platform.eel.EelTunnelsApi.GetAcceptorForRemotePort
+import com.intellij.platform.eel.EelTunnelsApi.GetConnectionToRemotePortArgs
+import com.intellij.platform.eel.EelTunnelsApi.HostAddress
+import com.intellij.platform.eel.EelTunnelsApi.ListenOnUnixSocketResult
+import com.intellij.platform.eel.EelTunnelsApi.ListenOnUnixSocketTemporaryPathOptions
+import com.intellij.platform.eel.EelTunnelsApi.ResolvedSocketAddress
 import com.intellij.platform.eel.EelTunnelsPosixApi
 import com.intellij.platform.eel.EelTunnelsWindowsApi
 import com.intellij.platform.eel.channels.EelReceiveChannel
@@ -15,13 +22,33 @@ import com.intellij.platform.eel.channels.EelSendChannel
 import com.intellij.platform.eel.impl.asResolvedSocketAddress
 import com.intellij.platform.eel.path.EelPath
 import com.intellij.platform.eel.provider.LocalEelDescriptor
-import com.intellij.platform.eel.provider.utils.*
-import kotlinx.coroutines.*
+import com.intellij.platform.eel.provider.utils.CopyError
+import com.intellij.platform.eel.provider.utils.EelPipe
+import com.intellij.platform.eel.provider.utils.asEelChannel
+import com.intellij.platform.eel.provider.utils.consumeAsEelChannel
+import com.intellij.platform.eel.provider.utils.copy
+import com.intellij.util.io.computeDetached
+import kotlinx.coroutines.CoroutineName
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ClosedSendChannelException
 import kotlinx.coroutines.channels.ReceiveChannel
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.IOException
-import java.net.*
+import java.net.BindException
+import java.net.InetSocketAddress
+import java.net.ProtocolFamily
+import java.net.StandardProtocolFamily
+import java.net.UnixDomainSocketAddress
+import java.nio.channels.SelectionKey
+import java.nio.channels.Selector
 import java.nio.channels.ServerSocketChannel
 import java.nio.channels.SocketChannel
 import java.nio.file.Files
@@ -30,6 +57,10 @@ import kotlin.io.path.Path
 import kotlin.io.path.createTempFile
 import kotlin.io.path.deleteExisting
 import kotlin.io.path.pathString
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.ZERO
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.nanoseconds
 
 private val logger = fileLogger()
 
@@ -55,9 +86,10 @@ internal object EelLocalTunnelsApiImpl : EelTunnelsPosixApi, EelTunnelsWindowsAp
   }
 
   private suspend fun listenOnUnixSocket(socketFile: Path): ListenOnUnixSocketResult = withContext(Dispatchers.IO) {
-    val tx = EelPipe()
-    val rx = EelPipe()
+    val tx = EelPipe(prefersDirectBuffers = true)
+    val rx = EelPipe(prefersDirectBuffers = true)
     val serverChannel = ServerSocketChannel.open(StandardProtocolFamily.UNIX)
+    // TODO serverChannel.configureBlocking(false)
 
     // File might already be created.
     // On Windows file can't be used.
@@ -79,17 +111,17 @@ internal object EelLocalTunnelsApiImpl : EelTunnelsPosixApi, EelTunnelsWindowsAp
       client.use {
         val fromClient = launch {
           copyWithLoggingAndErrorHandling(client.consumeAsEelChannel(), rx.sink, "fromClient $socketFile") {
-            rx.closePipe(it)
+            rx.sink.close(it)
           }
         }
         val toClient = launch {
           copyWithLoggingAndErrorHandling(tx.source, client.asEelChannel(), "toClient $socketFile") {
-            tx.closePipe(it)
+            tx.sink.close(it)
           }
         }
         listOf(fromClient, toClient).joinAll()
-        tx.closePipe()
-        tx.closePipe()
+        tx.sink.close(null)
+        tx.sink.close(null)
       }
     }
     object : ListenOnUnixSocketResult {
@@ -123,31 +155,48 @@ private suspend fun getConnectionToRemotePortImpl(args: GetConnectionToRemotePor
     SocketChannel.open(it)
   } ?: SocketChannel.open()
   args.configureSocketBeforeConnection(ConfigurableClientSocketImpl(socketChannel.socket()))
-  val connKiller = async {
-    delay(args.timeout)
-    socketChannel.close()
-  }
-  return@withContext try {
-    socketChannel.connect(args.asInetSocketAddress)
-    SocketAdapter(socketChannel)
-  }
-  catch (e: IOException) {
-    throw EelConnectionError.UnknownFailure(e.toString())
-  }
-  finally {
-    connKiller.cancel()
-  }
-}
-
-private fun getAcceptorForRemotePortImpl(args: GetAcceptorForRemotePort): ConnectionAcceptor {
-  val channel = try {
-    ServerSocketChannel.open().apply {
-      bind(args.asInetSocketAddress)
-      logger.info("Listening for $localAddress")
+  socketChannel.configureBlocking(false)
+  try {
+    Selector.open().use { selector ->
+      if (!socketChannel.connect(args.asInetSocketAddress)) {
+        socketChannel.register(selector, SelectionKey.OP_CONNECT)
+        val pollUntil = System.nanoTime().nanoseconds + args.timeout
+        do {
+          var timeout: Duration
+          do {
+            // 100 was taken just as a beautiful number with no research.
+            timeout = (pollUntil - System.nanoTime().nanoseconds).coerceAtMost(100.milliseconds)
+            ensureActive()
+          }
+          while (timeout.isPositive() && selector.select(timeout.inWholeMilliseconds) == 0)
+          selector.selectedKeys().clear()
+        }
+        while (!socketChannel.finishConnect() && timeout > ZERO)
+      }
     }
   }
   catch (e: IOException) {
-    throw EelConnectionError.UnknownFailure(e.localizedMessage)
+    throw EelConnectionError.UnknownFailure(e.toString(), e)
+  }
+  if (!socketChannel.isConnected) {
+    // TODO IMO Timeouts deserve a dedicated exception.
+    throw EelConnectionError.ConnectionProblem("Timed out waiting ${args.timeout}")
+  }
+  SocketAdapter(socketChannel)
+}
+
+@OptIn(DelicateCoroutinesApi::class)
+private suspend fun getAcceptorForRemotePortImpl(args: GetAcceptorForRemotePort): ConnectionAcceptor {
+  val channel = computeDetached {
+    try {
+      ServerSocketChannel.open().apply {
+        bind(args.asInetSocketAddress, 50)  // Default backlog size, same as ServerSocket default.
+        logger.info("Listening for $localAddress")
+      }
+    }
+    catch (e: IOException) {
+      throw EelConnectionError.UnknownFailure(e.localizedMessage, e)
+    }
   }
   args.configureServerSocket(ConfigurableServerSocketImpl(channel.socket()))
   return ConnectionAcceptorImpl(channel)
@@ -163,33 +212,49 @@ private val EelIpPreference.protocolFamily: ProtocolFamily?
 private val HostAddress.asInetSocketAddress: InetSocketAddress get() = InetSocketAddress(hostname, port.toInt())
 
 private class ConnectionAcceptorImpl(private val boundServerSocket: ServerSocketChannel) : ConnectionAcceptor {
+  private val _incomingConnections = Channel<Connection>()
+  override val incomingConnections: ReceiveChannel<Connection> = _incomingConnections
+  override val boundAddress: ResolvedSocketAddress = boundServerSocket.localAddress.asResolvedSocketAddress
+
   private val listenSocket: Job
 
   init {
     assert(boundServerSocket.isOpen)
+    boundServerSocket.configureBlocking(false)
     listenSocket = ApplicationManager.getApplication().service<MyService>().scope.launch(Dispatchers.IO + CoroutineName("eel socket accept")) {
+      val selector = Selector.open()
+      boundServerSocket.register(selector, SelectionKey.OP_ACCEPT)
+
       try {
-        val channel = boundServerSocket.accept()
-        logger.info("Connection from ${channel.socket().remoteSocketAddress}")
-        try {
-          _incomingConnections.send(SocketAdapter(channel))
-        }
-        catch (_: ClosedSendChannelException) {
-          channel.close()
+        while (isActive) {
+          while (selector.select(100) == 0) {  // 100 was taken just as a beautiful number with no research.
+            ensureActive()
+          }
+          selector.selectedKeys().clear()
+
+          val channel = boundServerSocket.accept()
+          logger.info("Connection from ${channel.socket().remoteSocketAddress}")
+          try {
+            _incomingConnections.send(SocketAdapter(channel))
+          }
+          catch (_: ClosedSendChannelException) {
+            channel.close()
+          }
         }
       }
       catch (e: IOException) {
         closeImpl(e)
       }
+      finally {
+        selector.close()
+      }
     }
   }
 
-  private val _incomingConnections = Channel<Connection>()
-  override val incomingConnections: ReceiveChannel<Connection> = _incomingConnections
-  override val boundAddress: ResolvedSocketAddress = boundServerSocket.localAddress.asResolvedSocketAddress
 
   override suspend fun close() {
     closeImpl()
+    listenSocket.join()
   }
 
   private fun closeImpl(err: Throwable? = null) {
@@ -204,10 +269,11 @@ private class ConnectionAcceptorImpl(private val boundServerSocket: ServerSocket
 @Service
 private class MyService(val scope: CoroutineScope)
 
-private suspend fun copyWithLoggingAndErrorHandling(src: EelReceiveChannel, dest: EelSendChannel, title: String, onError: (IOException) -> Unit) {
+private suspend fun copyWithLoggingAndErrorHandling(src: EelReceiveChannel, dest: EelSendChannel, title: String, onError: suspend (IOException) -> Unit) {
   try {
     copy(src, dest)
-  } catch (e: CopyError) {
+  }
+  catch (e: CopyError) {
     when (e) {
       is CopyError.InError -> {
         logger.warn("$title input error", e.cause)

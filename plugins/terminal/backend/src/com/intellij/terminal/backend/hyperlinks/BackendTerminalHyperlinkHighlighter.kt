@@ -17,17 +17,39 @@ import com.intellij.openapi.progress.ProgressManager.checkCanceled
 import com.intellij.openapi.project.Project
 import com.intellij.util.asDisposable
 import com.intellij.util.containers.ComparatorUtil.min
-import kotlinx.coroutines.*
-import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineName
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.mapNotNull
+import kotlinx.coroutines.launch
 import org.jetbrains.annotations.TestOnly
 import org.jetbrains.plugins.terminal.block.hyperlinks.CompositeFilterWrapper
 import org.jetbrains.plugins.terminal.session.impl.TerminalHyperlinkId
 import org.jetbrains.plugins.terminal.session.impl.TerminalHyperlinksChangedEvent
 import org.jetbrains.plugins.terminal.session.impl.TerminalHyperlinksHeartbeatEvent
-import org.jetbrains.plugins.terminal.session.impl.dto.*
-import org.jetbrains.plugins.terminal.view.*
+import org.jetbrains.plugins.terminal.session.impl.dto.TerminalFilterResultInfoDto
+import org.jetbrains.plugins.terminal.session.impl.dto.TerminalHighlightingInfoDto
+import org.jetbrains.plugins.terminal.session.impl.dto.TerminalHyperlinkInfoDto
+import org.jetbrains.plugins.terminal.session.impl.dto.TerminalInlayInfoDto
+import org.jetbrains.plugins.terminal.session.impl.dto.toDto
+import org.jetbrains.plugins.terminal.view.TerminalContentChangeEvent
+import org.jetbrains.plugins.terminal.view.TerminalLineIndex
+import org.jetbrains.plugins.terminal.view.TerminalOffset
+import org.jetbrains.plugins.terminal.view.TerminalOutputModel
+import org.jetbrains.plugins.terminal.view.TerminalOutputModelListener
+import org.jetbrains.plugins.terminal.view.TerminalOutputModelSnapshot
 import java.awt.event.MouseEvent
-import java.util.*
+import java.util.Deque
 import java.util.concurrent.LinkedBlockingDeque
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
@@ -126,7 +148,7 @@ internal class BackendTerminalHyperlinkHighlighter(
     })
     coroutineScope.launch(CoroutineName("running filters")) {
       fakeMouseEventJob.await() // must complete before any attempt to show a context menu for a HyperlinkWithPopupMenuInfo
-      currentTaskState.mapNotNull { it.currentTaskRunner }.collect { runner ->
+      currentTaskState.mapNotNull { it.currentTaskRunner }.distinctUntilChanged().collect { runner ->
         runner.run()
       }
     }
@@ -311,7 +333,7 @@ private class HighlightTaskRunner(
     try {
       LOG.debug {
         "Started the task ${task} " +
-        "on the output model ${describe(outputModel)}, "
+        "on the output model ${describe(outputModel)}, " +
         "will process lines $topStartLine-$topStopLineInclusive at the top " +
         "and $bottomStartLine-$bottomStopLineInclusive at the bottom"
       }

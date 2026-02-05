@@ -13,18 +13,37 @@ import com.intellij.lang.injection.InjectedLanguageManager;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.extensions.ExtensionPoint;
-import com.intellij.openapi.util.*;
+import com.intellij.openapi.util.Key;
+import com.intellij.openapi.util.RecursionGuard;
+import com.intellij.openapi.util.RecursionManager;
+import com.intellij.openapi.util.TextRange;
+import com.intellij.openapi.util.UserDataHolderEx;
 import com.intellij.openapi.util.text.StringUtil;
-import com.intellij.psi.*;
+import com.intellij.psi.FileViewProvider;
+import com.intellij.psi.PsiElement;
+import com.intellij.psi.PsiFile;
+import com.intellij.psi.PsiWhiteSpace;
+import com.intellij.psi.SyntaxTraverser;
 import com.intellij.psi.util.CachedValue;
 import com.intellij.psi.util.CachedValueProvider;
 import com.intellij.psi.util.CachedValuesManager;
 import com.intellij.psi.util.PsiModificationTracker;
 import com.intellij.util.containers.ContainerUtil;
 import one.util.streamex.StreamEx;
-import org.jetbrains.annotations.*;
+import org.jetbrains.annotations.ApiStatus;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
+import org.jetbrains.annotations.Unmodifiable;
+import org.jetbrains.annotations.VisibleForTesting;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
@@ -110,7 +129,11 @@ public abstract class TextExtractor {
    * @return text contents intersecting the given PSI element with the domains from the allowed set.
    * <p>
    * Same as {@link #findTextsAt}, but the extensions are queried only for the given {@code psi}. The results are cached and reused.
+   *
+   * @deprecated {@link #findTextsAt} or {@link #findUniqueTextsAt} should be used instead.
    */
+  @SuppressWarnings("unused")
+  @Deprecated(forRemoval = true)
   public static @NotNull List<TextContent> findTextsExactlyAt(@NotNull PsiElement psi, @NotNull Set<TextContent.TextDomain> allowedDomains) {
     PsiFile file = psi.getContainingFile();
     return ContainerUtil.filter(
@@ -305,7 +328,7 @@ public abstract class TextExtractor {
     for (PsiFile root : vp.getAllFiles()) {
       for (PsiElement element : SyntaxTraverser.psiTraverser(root)) {
         if (element instanceof PsiWhiteSpace) continue;
-        allContents.addAll(findTextsExactlyAt(element, domains));
+        allContents.addAll(findTextsAt(element, domains));
       }
     }
     return allContents;

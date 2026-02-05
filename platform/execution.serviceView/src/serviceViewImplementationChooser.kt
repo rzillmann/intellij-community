@@ -8,7 +8,7 @@ import com.intellij.openapi.util.registry.Registry
 import com.intellij.openapi.util.registry.RegistryValue
 import com.intellij.platform.ide.productMode.IdeProductMode
 import org.jetbrains.annotations.ApiStatus
-import java.util.*
+import java.util.MissingResourceException
 
 private val LOG  by lazy {
   fileLogger()
@@ -30,6 +30,7 @@ fun shouldEnableServicesViewInCurrentEnvironment(): Boolean {
 }
 
 @ApiStatus.Internal
+@JvmName("isNewFrontendServiceViewEnabled")
 fun isNewFrontendServiceViewEnabled(): Boolean {
   // Split debugger's frontend works with a frontend run dashboard entities, same for backend. So registry flags must be in sync
   // when it comes to testing either the debugger or service view.
@@ -42,6 +43,7 @@ fun isNewFrontendServiceViewEnabled(): Boolean {
 @ApiStatus.Internal
 fun isOldMonolithServiceViewEnabled(): Boolean {
   if (isSplitDebuggerEnabledInTestsCopyPaste()) return false
+  if (!isCurrentProductSupportSplitServiceView()) return true
 
   return IdeProductMode.isMonolith || !isSplitServicesRegistryFlagOn()
 }

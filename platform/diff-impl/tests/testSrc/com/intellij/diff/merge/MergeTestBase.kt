@@ -1,13 +1,20 @@
-// Copyright 2000-2022 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.diff.merge
 
 import com.intellij.diff.DiffContentFactoryImpl
 import com.intellij.diff.HeavyDiffTestCase
 import com.intellij.diff.contents.DocumentContent
-import com.intellij.diff.merge.MergeTestBase.SidesState.*
+import com.intellij.diff.merge.MergeTestBase.SidesState.BOTH
+import com.intellij.diff.merge.MergeTestBase.SidesState.LEFT
+import com.intellij.diff.merge.MergeTestBase.SidesState.NONE
+import com.intellij.diff.merge.MergeTestBase.SidesState.RIGHT
 import com.intellij.diff.tools.util.base.IgnorePolicy
 import com.intellij.diff.tools.util.base.TextDiffSettingsHolder.TextDiffSettings
-import com.intellij.diff.util.*
+import com.intellij.diff.util.DiffUtil
+import com.intellij.diff.util.MergeRange
+import com.intellij.diff.util.Side
+import com.intellij.diff.util.TextDiffType
+import com.intellij.diff.util.ThreeSide
 import com.intellij.openapi.actionSystem.ActionPlaces
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
@@ -72,7 +79,8 @@ abstract class MergeTestBase : HeavyDiffTestCase() {
 
   inner class TestBuilder(val mergeViewer: TextMergeViewer, private val actions: List<AnAction>) {
     val viewer: MergeThreesideViewer = mergeViewer.viewer
-    val changes: List<TextMergeChange> = viewer.allChanges
+    val changes: List<TextMergeChange>
+      get() = viewer.allChanges
     val editor: EditorEx = viewer.editor
     val document: Document = editor.document
 
@@ -126,25 +134,25 @@ abstract class MergeTestBase : HeavyDiffTestCase() {
 
     fun Int.ignore(side: Side, modifier: Boolean = false) {
       val change = change(this)
-      command(change) { viewer.ignoreChange(change, side, modifier) }
+      command(change) { viewer.model.ignoreChange(change.index, side, modifier) }
     }
 
     fun Int.apply(side: Side, modifier: Boolean = false) {
       val change = change(this)
-      command(change) { viewer.replaceChange(change, side, modifier) }
+      command(change) { viewer.model.replaceChange(change.index, side, modifier) }
     }
 
     fun Int.resolve() {
       val change = change(this)
       command(change) {
-        assertTrue(change.isConflict && viewer.canResolveChangeAutomatically(change, ThreeSide.BASE))
+        assertTrue(change.isConflict && viewer.model.canResolveChangeAutomatically(change.index, ThreeSide.BASE))
         viewer.resolveChangeAutomatically(change, ThreeSide.BASE)
       }
     }
 
     fun Int.canResolveConflict(): Boolean {
       val change = change(this)
-      return viewer.canResolveChangeAutomatically(change, ThreeSide.BASE)
+      return viewer.model.canResolveChangeAutomatically(change.index, ThreeSide.BASE)
     }
 
     //
@@ -299,7 +307,7 @@ abstract class MergeTestBase : HeavyDiffTestCase() {
 
     fun Int.assertRange(start: Int, end: Int) {
       val change = change(this)
-      assertEquals(Pair(start, end), Pair(change.startLine, change.endLine))
+      assertEquals(Pair(start, end), Pair(change.resultStartLine, change.resultEndLine))
     }
 
     fun Int.assertRange(start1: Int, end1: Int, start2: Int, end2: Int, start3: Int, end3: Int) {
@@ -318,7 +326,7 @@ abstract class MergeTestBase : HeavyDiffTestCase() {
     fun Int.assertContent(expected: String) {
       val change = change(this)
       val document = editor.document
-      val actual = DiffUtil.getLinesContent(document, change.startLine, change.endLine)
+      val actual = DiffUtil.getLinesContent(document, change.resultStartLine, change.resultEndLine)
       assertEquals(parseSource(expected), actual)
     }
 
@@ -384,7 +392,7 @@ abstract class MergeTestBase : HeavyDiffTestCase() {
 
       private fun recordChangeState(viewer: MergeThreesideViewer, change: TextMergeChange): ChangeState {
         val document = viewer.editor.document
-        val content = DiffUtil.getLinesContent(document, change.startLine, change.endLine)
+        val content = DiffUtil.getLinesContent(document, change.resultStartLine, change.resultEndLine)
 
         val resolved =
           if (change.isResolved) BOTH

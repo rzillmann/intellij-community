@@ -8,7 +8,12 @@ import com.intellij.ui.JBColor
 import com.jetbrains.python.PyBundle.message
 import com.jetbrains.python.packaging.repository.InstalledPyPackagedRepository
 import com.jetbrains.python.packaging.repository.PyPackageRepository
-import com.jetbrains.python.packaging.toolwindow.model.*
+import com.jetbrains.python.packaging.toolwindow.model.DisplayablePackage
+import com.jetbrains.python.packaging.toolwindow.model.ErrorNode
+import com.jetbrains.python.packaging.toolwindow.model.ExpandResultNode
+import com.jetbrains.python.packaging.toolwindow.model.InstalledPackage
+import com.jetbrains.python.packaging.toolwindow.model.PyInvalidRepositoryViewData
+import com.jetbrains.python.packaging.toolwindow.model.PyPackagesViewData
 import com.jetbrains.python.packaging.toolwindow.packages.PyPackagingTreeGroup
 import com.jetbrains.python.packaging.toolwindow.packages.tree.PyPackagesTreeTable
 import com.jetbrains.python.packaging.toolwindow.ui.PyPackagesUiComponents
@@ -61,7 +66,6 @@ internal class PyPackagingTreeView(
     updatePackages(installed, repoData)
 
     installedPackages.expand()
-    installedPackages.updatePreferredSize()
     installedPackages.updateHeaderText(installed.size)
 
     val tableToData = repositories.map { repo -> repo to repoData.find { it.repository.name == repo.repositoryName }!! }
@@ -114,10 +118,6 @@ internal class PyPackagingTreeView(
   }
 
   private fun synchronizeScrollPaneSize() {
-    getRepos().forEach { repo ->
-      repo.updatePreferredSize()
-    }
-
     container.revalidate()
     container.repaint()
   }

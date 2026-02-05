@@ -1,7 +1,18 @@
 // Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.codeInsight;
 
-import com.intellij.psi.*;
+import com.intellij.psi.JavaPsiFacade;
+import com.intellij.psi.PsiAnnotation;
+import com.intellij.psi.PsiClass;
+import com.intellij.psi.PsiElement;
+import com.intellij.psi.PsiField;
+import com.intellij.psi.PsiJavaCodeReferenceElement;
+import com.intellij.psi.PsiJavaModule;
+import com.intellij.psi.PsiMethod;
+import com.intellij.psi.PsiModifierList;
+import com.intellij.psi.PsiModifierListOwner;
+import com.intellij.psi.PsiPackage;
+import com.intellij.psi.PsiPackageStatement;
 import com.intellij.util.containers.ContainerUtil;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
@@ -33,6 +44,12 @@ public /* sealed */ interface NullabilitySource {
      * (e.g., primitive type, or disjunction type)
      */
     MANDATED,
+    /**
+     * Type nullability is known from a particular code shape.
+     * While it may differ from one defined by the language constructs only,
+     * it's believed to be correct and more helpful to users. 
+     */
+    KNOWN,
     /**
      * Type nullability is depicted explicitly by means of the language.
      * Currently, not possible in Java, but may be used in other languages like Kotlin.

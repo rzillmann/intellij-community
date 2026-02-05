@@ -1,6 +1,5 @@
 package com.intellij.terminal.frontend.view.impl
 
-import com.intellij.codeInsight.completion.CompletionPhase
 import com.intellij.codeInsight.inline.completion.InlineCompletion
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.actionSystem.DataSink
@@ -8,7 +7,6 @@ import com.intellij.openapi.actionSystem.PlatformDataKeys
 import com.intellij.openapi.actionSystem.UiDataProvider
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.application.ModalityState
-import com.intellij.openapi.application.UiWithModelAccess
 import com.intellij.openapi.application.asContextElement
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.event.MockDocumentEvent
@@ -37,10 +35,22 @@ import com.intellij.util.AwaitCancellationAndInvoke
 import com.intellij.util.asDisposable
 import com.intellij.util.awaitCancellationAndInvoke
 import com.intellij.util.ui.components.BorderLayoutPanel
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineName
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.channels.trySendBlocking
-import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.job
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.annotations.VisibleForTesting
 import org.jetbrains.plugins.terminal.TerminalPanelMarker
@@ -49,7 +59,6 @@ import org.jetbrains.plugins.terminal.block.completion.spec.impl.TerminalCommand
 import org.jetbrains.plugins.terminal.block.output.TerminalOutputEditorInputMethodSupport
 import org.jetbrains.plugins.terminal.block.output.TerminalTextHighlighter
 import org.jetbrains.plugins.terminal.block.reworked.TerminalAiInlineCompletion
-import org.jetbrains.plugins.terminal.block.reworked.TerminalAliasesStorage
 import org.jetbrains.plugins.terminal.block.reworked.TerminalSessionModel
 import org.jetbrains.plugins.terminal.block.reworked.TerminalSessionModelImpl
 import org.jetbrains.plugins.terminal.block.reworked.lang.TerminalOutputPsiFile
@@ -65,9 +74,23 @@ import org.jetbrains.plugins.terminal.session.TerminalGridSize
 import org.jetbrains.plugins.terminal.session.TerminalStartupOptions
 import org.jetbrains.plugins.terminal.session.impl.TerminalHyperlinkId
 import org.jetbrains.plugins.terminal.session.impl.TerminalSession
-import org.jetbrains.plugins.terminal.view.*
-import org.jetbrains.plugins.terminal.view.impl.*
-import org.jetbrains.plugins.terminal.view.shellIntegration.*
+import org.jetbrains.plugins.terminal.view.TerminalContentChangeEvent
+import org.jetbrains.plugins.terminal.view.TerminalCursorOffsetChangeEvent
+import org.jetbrains.plugins.terminal.view.TerminalOffset
+import org.jetbrains.plugins.terminal.view.TerminalOutputModel
+import org.jetbrains.plugins.terminal.view.TerminalOutputModelListener
+import org.jetbrains.plugins.terminal.view.TerminalOutputModelsSet
+import org.jetbrains.plugins.terminal.view.TerminalSendTextBuilder
+import org.jetbrains.plugins.terminal.view.impl.MutableTerminalOutputModel
+import org.jetbrains.plugins.terminal.view.impl.MutableTerminalOutputModelImpl
+import org.jetbrains.plugins.terminal.view.impl.TerminalOutputModelsSetImpl
+import org.jetbrains.plugins.terminal.view.impl.TerminalSendTextBuilderImpl
+import org.jetbrains.plugins.terminal.view.impl.TerminalSendTextOptions
+import org.jetbrains.plugins.terminal.view.shellIntegration.TerminalBlocksModel
+import org.jetbrains.plugins.terminal.view.shellIntegration.TerminalCommandBlock
+import org.jetbrains.plugins.terminal.view.shellIntegration.TerminalOutputStatus
+import org.jetbrains.plugins.terminal.view.shellIntegration.TerminalShellIntegration
+import org.jetbrains.plugins.terminal.view.shellIntegration.getTypedCommandText
 import java.awt.Component
 import java.awt.Dimension
 import java.awt.Point
@@ -161,6 +184,7 @@ class TerminalViewImpl(
     val alternateBufferModel = MutableTerminalOutputModelImpl(alternateBufferEditor.document, maxOutputLength = 0)
     val alternateBufferModelController = TerminalOutputModelControllerImpl(alternateBufferModel)
     val alternateBufferEventsHandler = TerminalEventsHandlerImpl(
+      terminalView = this,
       sessionModel,
       alternateBufferEditor,
       encodingManager,
@@ -169,6 +193,7 @@ class TerminalViewImpl(
       scrollingModel = null,
       alternateBufferModel,
       shellIntegrationDeferred = null,
+      startupOptionsDeferred = null,
       typeAhead = null,
     )
     configureOutputEditor(
@@ -208,6 +233,7 @@ class TerminalViewImpl(
     outputEditor.putUserData(TerminalTypeAhead.KEY, outputModelController)
 
     outputEditorEventsHandler = TerminalEventsHandlerImpl(
+      terminalView = this,
       sessionModel,
       outputEditor,
       encodingManager,
@@ -216,6 +242,7 @@ class TerminalViewImpl(
       scrollingModel,
       outputModel,
       shellIntegrationDeferred,
+      startupOptionsDeferred,
       typeAhead = outputModelController
     )
 
@@ -254,11 +281,6 @@ class TerminalViewImpl(
       coroutineScope = hyperlinkScope,
     )
 
-    outputEditor.putUserData(CompletionPhase.CUSTOM_CODE_COMPLETION_ACTION_ID, "Terminal.CommandCompletion.Gen2")
-
-    val terminalAliasesStorage = TerminalAliasesStorage()
-    outputEditor.putUserData(TerminalAliasesStorage.KEY, terminalAliasesStorage)
-
     controller = TerminalSessionController(
       sessionModel,
       outputModelController,
@@ -273,7 +295,7 @@ class TerminalViewImpl(
       outputModelController,
       sessionModel,
       shellIntegrationDeferred,
-      terminalAliasesStorage,
+      startupOptionsDeferred,
       coroutineScope.childScope("TerminalShellIntegrationEventsHandler"),
     )
     controller.addEventsHandler(shellIntegrationEventsHandler)
@@ -321,10 +343,12 @@ class TerminalViewImpl(
         )
       }
 
+      val startupOptions = startupOptionsDeferred.await()
       configureCommandCompletion(
         outputEditor,
         sessionModel,
         shellIntegration,
+        startupOptions.envVariables,
         coroutineScope.childScope("TerminalCommandCompletion")
       )
     }
@@ -343,7 +367,7 @@ class TerminalViewImpl(
     }
   }
 
-  override fun getCurrentDirectory(): String {
+  override fun getCurrentDirectory(): String? {
     return sessionModel.terminalState.value.currentDirectory
   }
 
@@ -407,7 +431,11 @@ class TerminalViewImpl(
         if (state.isAlternateScreenBuffer != isAlternateScreenBuffer) {
           isAlternateScreenBuffer = state.isAlternateScreenBuffer
 
+          // Check the whole terminal panel to not miss the case of focus in a search bar.
+          // And check both editors because buffer change requests can arrive in a row, before the previous focus change is processed.
           val terminalWasFocused = terminalPanel.isFocusAncestor()
+                                   || outputEditor.component.isFocusAncestor()
+                                   || alternateBufferEditor.component.isFocusAncestor()
           val editor = if (state.isAlternateScreenBuffer) alternateBufferEditor else outputEditor
           terminalPanel.setTerminalContent(editor)
           terminalSearchController.finishSearchSession()
@@ -495,7 +523,7 @@ class TerminalViewImpl(
     if (document.textLength == 0 || document.lineCount == 0) return
 
     val visibleArea = editor.scrollingModel.visibleArea
-    val screenTopLine = editor.xyToLogicalPosition(visibleArea.location).line
+    val screenTopLine = editor.xyToLogicalPosition(visibleArea.location).line.coerceAtMost(document.lineCount - 1)
     val screenBottomPoint = Point(visibleArea.x + visibleArea.width, visibleArea.y + visibleArea.height)
     val screenBottomLine = editor.xyToLogicalPosition(screenBottomPoint).line.coerceAtMost(document.lineCount - 1)
     val screenStartOffset = editor.document.getLineStartOffset(screenTopLine)
@@ -518,7 +546,7 @@ class TerminalViewImpl(
   ) {
     InlineCompletion.install(editor, coroutineScope)
     // Inline completion handler needs to be manually disposed
-    coroutineScope.awaitCancellationAndInvoke(Dispatchers.UiWithModelAccess) {
+    coroutineScope.awaitCancellationAndInvoke(Dispatchers.EDT) {
       InlineCompletion.remove(editor)
     }
 
@@ -559,12 +587,13 @@ class TerminalViewImpl(
     editor: Editor,
     sessionModel: TerminalSessionModel,
     shellIntegration: TerminalShellIntegration,
+    envVariables: Map<String, String>,
     coroutineScope: CoroutineScope,
   ) {
     val eelDescriptor = LocalEelDescriptor // TODO: it should be determined by where shell is running to work properly in WSL and Docker
     val services = TerminalCommandCompletionServices(
       commandSpecsManager = ShellCommandSpecsManagerImpl.getInstance(),
-      runtimeContextProvider = ShellRuntimeContextProviderReworkedImpl(project, sessionModel, eelDescriptor),
+      runtimeContextProvider = ShellRuntimeContextProviderReworkedImpl(project, sessionModel, envVariables, eelDescriptor),
       dataGeneratorsExecutor = ShellDataGeneratorsExecutorReworkedImpl(
         shellIntegration,
         coroutineScope.childScope("ShellDataGeneratorsExecutorReworkedImpl")
@@ -595,6 +624,13 @@ class TerminalViewImpl(
       updateFocusListeners(initialContent, initialContent)
     }
 
+    @Suppress("unused")
+    @ApiStatus.Internal
+    @VisibleForTesting
+    fun getActiveOutputModel(): TerminalOutputModel {
+      return outputModels.active.value
+    }
+
     override fun uiDataSnapshot(sink: DataSink) {
       sink[TerminalView.DATA_KEY] = this@TerminalViewImpl
       sink[TerminalActionUtil.EDITOR_KEY] = curEditor
@@ -606,6 +642,14 @@ class TerminalViewImpl(
       val hyperlinkFacade = if (isAlternateScreenBuffer) alternateBufferHyperlinkFacade else outputHyperlinkFacade
       sink[TerminalHyperlinkId.KEY] = hyperlinkFacade.getHoveredHyperlinkId()
       sink.setNull(PlatformDataKeys.COPY_PROVIDER)
+
+      // Add selection text to the data context, so features like Search Everywhere and Find in Files
+      // can use it as an initial query.
+      val selection = textSelectionModel.selection
+      if (selection != null) {
+        val selectionText = outputModels.active.value.getText(selection.startOffset, selection.endOffset).toString()
+        sink[PlatformDataKeys.PREDEFINED_TEXT] = selectionText
+      }
     }
 
     fun setTerminalContent(editor: Editor) {

@@ -23,7 +23,9 @@ import com.intellij.ui.dsl.builder.bindText
 import com.intellij.ui.dsl.builder.panel
 import com.intellij.ui.dsl.gridLayout.UnscaledGaps
 import com.intellij.ui.hover.HoverListener
+import com.intellij.ui.util.preferredHeight
 import com.intellij.util.SlowOperations
+import com.intellij.util.ui.JBUI
 import com.jetbrains.python.PyBundle.message
 import com.jetbrains.python.pathValidation.PlatformAndRoot.Companion.getPlatformAndRoot
 import com.jetbrains.python.pathValidation.ValidationRequest
@@ -69,7 +71,10 @@ internal class ComboBoxWithBrowseButtonEditor<T, P : PathHolder>(
         cell(component)
           .customize(UnscaledGaps(0))
           .resizableColumn()
-          .applyToComponent { border = BorderFactory.createEmptyBorder() }
+          .applyToComponent {
+            border = BorderFactory.createEmptyBorder()
+            minimumSize = JBUI.emptySize()
+          }
 
         iconLabel = cell(JLabel(AllIcons.General.OpenDisk))
           .customize(UnscaledGaps(0))
@@ -122,7 +127,7 @@ internal class ComboBoxWithBrowseButtonEditor<T, P : PathHolder>(
                   is FileSystem.Target -> {
                     val targetType = fileSystem.targetEnvironmentConfiguration.getTargetType()
                     if (targetType is BrowsableTargetEnvironmentType) {
-                      val descriptor = FileChooserDescriptorFactory.singleDir().withTitle(browseTitle)
+                      val descriptor = FileChooserDescriptorFactory.singleFile().withTitle(browseTitle)
                       val hints = TargetBrowserHints(showLocalFsInBrowser = true, descriptor)
 
                       val actionListener = targetType.createBrowser(
@@ -183,8 +188,8 @@ internal class ComboBoxWithBrowseButtonEditor<T, P : PathHolder>(
 
 class ManualPathEntryDialog(
   title: @NlsContexts.DialogTitle String,
-  width: Int,
-  val targetEnvironmentConfiguration: TargetEnvironmentConfiguration,
+  private val width: Int,
+  private val targetEnvironmentConfiguration: TargetEnvironmentConfiguration,
 ) : DialogWrapper(null) {
 
   var path: String = ""
@@ -192,7 +197,6 @@ class ManualPathEntryDialog(
 
   init {
     this.title = title
-    setSize(width, size.height)
     isResizable = false
     init()
   }
@@ -213,6 +217,8 @@ class ManualPathEntryDialog(
           }
           .focused()
       }
+    }.also {
+      it.preferredSize = JBUI.size(width, it.preferredHeight)
     }
   }
 }

@@ -1,12 +1,29 @@
 // Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.plugins.gitlab.mergerequest.ui.editor
 
-import com.intellij.collaboration.async.*
-import com.intellij.collaboration.ui.codereview.editor.*
-import com.intellij.collaboration.util.*
+import com.intellij.collaboration.async.combineState
+import com.intellij.collaboration.async.launchNow
+import com.intellij.collaboration.async.mapStatefulToStateful
+import com.intellij.collaboration.async.stateInNow
+import com.intellij.collaboration.async.transformConsecutiveSuccesses
+import com.intellij.collaboration.ui.codereview.editor.CodeReviewEditorGutterActionableChangesModel
+import com.intellij.collaboration.ui.codereview.editor.CodeReviewEditorGutterChangesModel
+import com.intellij.collaboration.ui.codereview.editor.CodeReviewEditorGutterControlsModel
+import com.intellij.collaboration.ui.codereview.editor.CodeReviewEditorInlaysModel
+import com.intellij.collaboration.ui.codereview.editor.CodeReviewNavigableEditorViewModel
+import com.intellij.collaboration.ui.codereview.editor.MutableCodeReviewEditorGutterChangesModel
+import com.intellij.collaboration.ui.codereview.editor.ReviewInEditorUtil
+import com.intellij.collaboration.ui.codereview.editor.asLst
+import com.intellij.collaboration.util.ComputedResult
+import com.intellij.collaboration.util.ExcludingApproximateChangedRangesShifter
+import com.intellij.collaboration.util.Hideable
+import com.intellij.collaboration.util.RefComparisonChange
+import com.intellij.collaboration.util.getOrNull
+import com.intellij.collaboration.util.syncOrToggleAll
 import com.intellij.diff.util.LineRange
 import com.intellij.diff.util.Range
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.project.Project
 import com.intellij.util.cancelOnDispose
 import com.intellij.util.concurrency.annotations.RequiresEdt
 import kotlinx.coroutines.CoroutineScope
@@ -15,12 +32,14 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import org.jetbrains.plugins.gitlab.mergerequest.GitLabMergeRequestsPreferences
+import org.jetbrains.plugins.gitlab.util.GitLabStatistics
 
 /**
  * A wrapper over [GitLabMergeRequestEditorReviewFileViewModel] to encapsulate LST integration
  */
 internal class GitLabMergeRequestEditorReviewUIModel internal constructor(
   private val cs: CoroutineScope,
+  private val project: Project,
   private val preferences: GitLabMergeRequestsPreferences,
   private val fileVm: GitLabMergeRequestEditorReviewFileViewModel,
   private val changesModel: MutableCodeReviewEditorGutterChangesModel = MutableCodeReviewEditorGutterChangesModel(),
@@ -88,6 +107,7 @@ internal class GitLabMergeRequestEditorReviewUIModel internal constructor(
 
   override fun toggleComments(lineIdx: Int) {
     inlays.value.asSequence().filter { it.line.value == lineIdx }.filterIsInstance<Hideable>().syncOrToggleAll()
+    GitLabStatistics.logToggledComments(project)
   }
 
   fun cancelNewDiscussion(originalLine: Int) {
@@ -114,6 +134,8 @@ internal class GitLabMergeRequestEditorReviewUIModel internal constructor(
     postReviewRanges.value = changedRanges
     changesModel.setChanges(ExcludingApproximateChangedRangesShifter.shift(fileVm.changedRanges, changedRanges).map(Range::asLst))
   }
+
+  override val canNavigate: Boolean get() = fileVm.canNavigate
 
   override fun canGotoNextComment(threadId: String): Boolean = fileVm.lookupNextComment(threadId, ::additionalIsVisible) != null
   override fun canGotoNextComment(line: Int): Boolean = fileVm.lookupNextComment(line.shiftLineFromAfterApproximate(), ::additionalIsVisible) != null

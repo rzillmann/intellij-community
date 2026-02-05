@@ -7,11 +7,10 @@ import com.intellij.ui.ScrollPaneFactory;
 import com.intellij.ui.treeStructure.Tree;
 import com.intellij.util.ui.components.BorderLayoutPanel;
 import com.intellij.xdebugger.impl.ui.tree.XDebuggerTree;
-import com.intellij.xdebugger.impl.ui.tree.XDebuggerTreeState;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 
-import javax.swing.*;
+import javax.swing.JPanel;
 
 @ApiStatus.Internal
 public final class DebuggerTreeWithHistoryPanel<D> extends DebuggerTreeWithHistoryContainer<D> {
@@ -47,7 +46,7 @@ public final class DebuggerTreeWithHistoryPanel<D> extends DebuggerTreeWithHisto
   }
 
   public void rebuild() {
-    myTree.invokeLater(() -> myTree.rebuildAndRestore(XDebuggerTreeState.saveState(myTree)));
+    myTree.invokeLater(() -> myTree.rebuild());
   }
 
   public @NotNull XDebuggerTree getTree() {

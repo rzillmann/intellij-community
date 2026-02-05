@@ -53,7 +53,6 @@ import org.jetbrains.idea.maven.server.RemotePathTransformerFactory
 import org.jetbrains.idea.maven.utils.MavenLog
 import org.jetbrains.idea.maven.utils.MavenProgressIndicator
 import org.jetbrains.idea.maven.utils.MavenProgressIndicator.MavenProgressTracker
-import org.jetbrains.idea.maven.utils.MavenUtil
 import org.junit.Assume.assumeTrue
 import java.awt.HeadlessException
 import java.io.IOException
@@ -85,7 +84,7 @@ abstract class MavenTestCase : UsefulTestCase() {
 
   var modelVersion: String
     get() = myModelVersion ?: MavenConstants.MODEL_VERSION_4_0_0
-    set(value : String) {
+    set(value: String) {
       myModelVersion = value
     }
 
@@ -124,6 +123,7 @@ abstract class MavenTestCase : UsefulTestCase() {
   protected fun useModel410() {
     myModelVersion = "4.1.0"
   }
+
   override fun setUp() {
     super.setUp()
 
@@ -146,7 +146,6 @@ abstract class MavenTestCase : UsefulTestCase() {
 
     mavenGeneralSettings.isAlwaysUpdateSnapshots = true
 
-    MavenUtil.cleanAllRunnables()
     MavenSettingsCache.getInstance(project).reload()
 
     EdtTestUtil.runInEdtAndWait<IOException> {
@@ -170,7 +169,7 @@ abstract class MavenTestCase : UsefulTestCase() {
     val jdkPath = EelTestJdkProvider.getJdkPath()
     if (myJdk == null && jdkPath != null) {
       myJdk = JavaSdk.getInstance().createJdk("Maven Test JDK", jdkPath.toString())
-      val jdkTable = ProjectJdkTable.getInstance()
+      val jdkTable = ProjectJdkTable.getInstance(project)
       WriteAction.runAndWait<RuntimeException> { jdkTable.addJdk(myJdk!!) }
     }
     if (myJdk != null) {
@@ -181,16 +180,10 @@ abstract class MavenTestCase : UsefulTestCase() {
   private fun tearDownJdk() {
     if (myJdk != null) {
       WriteAction.runAndWait<RuntimeException> {
-        val jdkTable = ProjectJdkTable.getInstance()
+        val jdkTable = ProjectJdkTable.getInstance(project)
         jdkTable.removeJdk(myJdk!!)
       }
     }
-  }
-
-  protected fun waitForMavenUtilRunnablesComplete() {
-    PlatformTestUtil.waitWithEventsDispatching(
-      { "Waiting for MavenUtils runnables completed" + MavenUtil.uncompletedRunnables },
-      { MavenUtil.noUncompletedRunnables() }, 15)
   }
 
   private fun isNetworkNameError(t: Throwable, message: String): Boolean {
@@ -228,8 +221,8 @@ abstract class MavenTestCase : UsefulTestCase() {
       },
       ThrowableRunnable { MavenServerManager.getInstance().closeAllConnectorsAndWait() },
       ThrowableRunnable { checkAllMavenConnectorsDisposed() },
-      ThrowableRunnable { myProject = null },
       ThrowableRunnable { tearDownJdk() },
+      ThrowableRunnable { myProject = null },
       ThrowableRunnable {
         val defaultProject = ProjectManager.getInstance().defaultProject
         val mavenIndicesManager = defaultProject.getServiceIfCreated(MavenIndicesManager::class.java)
@@ -486,7 +479,7 @@ abstract class MavenTestCase : UsefulTestCase() {
 
   protected fun refreshFiles(files: List<VirtualFile>) {
     val relativePaths = files.map { dir.relativize(it.path.toNioPathOrNull()!!) }
-    MavenLog.LOG.warn("Refreshing files: $relativePaths")
+    MavenLog.LOG.debug("Refreshing files: $relativePaths")
     LocalFileSystem.getInstance().refreshFiles(files)
   }
 
@@ -634,7 +627,7 @@ abstract class MavenTestCase : UsefulTestCase() {
 
   private fun setFileContent(file: Path, content: String) {
     val relativePath = dir.relativize(file)
-    MavenLog.LOG.warn("Writing content to $relativePath")
+    MavenLog.LOG.debug("Writing content to $relativePath")
     Files.write(file, content.toByteArray(StandardCharsets.UTF_8))
   }
 
@@ -646,6 +639,13 @@ abstract class MavenTestCase : UsefulTestCase() {
     for (i in expected.indices) {
       val expectedElement = expected[i]
       val actualElement = actualList[i]
+      if (actualElement != expectedElement) {
+        failNotEquals(
+          "collections have different elements or order",
+          expected.joinToString("\n"),
+          actual.joinToString("\n"),
+        )
+      }
       assertEquals(s, expectedElement, actualElement)
     }
   }
@@ -745,7 +745,7 @@ abstract class MavenTestCase : UsefulTestCase() {
     }
   }
 
-  protected fun getRelativePath(base: Path, path: String) : String {
+  protected fun getRelativePath(base: Path, path: String): String {
     return base.relativize(Path.of(path)).toCanonicalPath()
   }
 
@@ -756,6 +756,14 @@ abstract class MavenTestCase : UsefulTestCase() {
 
   protected fun assumeOnLocalEnvironmentOnly(cause: String) {
     assumeTrue("Unable to run the test in non-local environment: $cause", LocalEelDescriptor == project.getEelDescriptor())
+  }
+
+  protected fun setRawPomFile(content: String) {
+    Files.write(projectPath.resolve("pom.xml"), content.toByteArray(StandardCharsets.UTF_8))
+    projectRoot.refresh(false, false)
+    val f = projectRoot.findChild("pom.xml") ?: throw AssertionError("can't find pom.xml in vfs")
+    myProjectPom = f
+    refreshFiles(listOf(f))
   }
 
   companion object {

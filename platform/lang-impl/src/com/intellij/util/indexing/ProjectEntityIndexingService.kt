@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2026 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.util.indexing
 
 import com.intellij.ide.lightEdit.LightEdit
@@ -21,20 +21,31 @@ import com.intellij.platform.workspace.storage.EntityChange
 import com.intellij.platform.workspace.storage.EntityStorage
 import com.intellij.platform.workspace.storage.WorkspaceEntity
 import com.intellij.util.SmartList
-import com.intellij.util.indexing.BuildableRootsChangeRescanningInfoImpl.BuiltRescanningInfo
 import com.intellij.util.indexing.EntityIndexingServiceImpl.WorkspaceEntitiesRootsChangedRescanningInfo
 import com.intellij.util.indexing.EntityIndexingServiceImpl.WorkspaceEventRescanningInfo
 import com.intellij.util.indexing.dependenciesCache.DependenciesIndexedStatusService
 import com.intellij.util.indexing.dependenciesCache.DependenciesIndexedStatusService.StatusMark
-import com.intellij.util.indexing.roots.*
-import com.intellij.util.indexing.roots.IndexableEntityProvider.*
+import com.intellij.util.indexing.roots.GenericDependencyIterator
+import com.intellij.util.indexing.roots.IndexableEntityProvider
+import com.intellij.util.indexing.roots.IndexableEntityProvider.Enforced
+import com.intellij.util.indexing.roots.IndexableEntityProvider.IndexableIteratorBuilder
+import com.intellij.util.indexing.roots.IndexableFilesIterator
+import com.intellij.util.indexing.roots.WorkspaceIndexingRootsBuilder
 import com.intellij.util.indexing.roots.builders.IndexableIteratorBuilders
 import com.intellij.util.indexing.roots.kind.LibraryOrigin
-import com.intellij.workspaceModel.core.fileIndex.*
+import com.intellij.util.indexing.roots.processLibraryEntity
+import com.intellij.workspaceModel.core.fileIndex.DependencyDescription
 import com.intellij.workspaceModel.core.fileIndex.DependencyDescription.OnParent
+import com.intellij.workspaceModel.core.fileIndex.EntityStorageKind
+import com.intellij.workspaceModel.core.fileIndex.WorkspaceFileIndexChangedEvent
+import com.intellij.workspaceModel.core.fileIndex.WorkspaceFileIndexContributor
+import com.intellij.workspaceModel.core.fileIndex.WorkspaceFileIndexListener
+import com.intellij.workspaceModel.core.fileIndex.WorkspaceFileSet
+import com.intellij.workspaceModel.core.fileIndex.WorkspaceFileSetWithCustomData
 import com.intellij.workspaceModel.core.fileIndex.impl.ModuleRelatedRootData
 import com.intellij.workspaceModel.core.fileIndex.impl.WorkspaceFileIndexImpl.Companion.EP_NAME
 import com.intellij.workspaceModel.core.fileIndex.impl.getEntityPointer
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
@@ -76,34 +87,55 @@ class ProjectEntityIndexingService(
     if (!Registry.`is`("use.workspace.file.index.for.partial.scanning")) return
     if (FileBasedIndex.getInstance() !is FileBasedIndexImpl) return
     if (LightEdit.owns(project)) return
-    if (invalidateProjectFilterIfFirstScanningNotRequested(project)) return
 
     if (ModalityState.defaultModalityState() === ModalityState.any()) {
       LOG.error("Unexpected modality: should not be ANY. Replace with NON_MODAL (130820241337)")
     }
 
     if (event.registeredFileSets.isNotEmpty() || event.removedFileSets.isNotEmpty()) {
-      val parameters =  computeScanningParametersFromWFIEvent(event)
-      UnindexedFilesScanner(project, parameters).queue()
+      val registeredIndexableFileSets = event.registeredFileSets.filter { it.kind.isIndexable }
+      val removedIndexableFileSets = event.removedFileSets.filter { it.kind.isIndexable }
+
+      if (registeredIndexableFileSets.isNotEmpty() || removedIndexableFileSets.isNotEmpty()) {
+        if (invalidateProjectFilterIfFirstScanningNotRequested(project)) return
+
+        val event  = WorkspaceFileIndexChangedEvent(
+          removedFileSets = removedIndexableFileSets,
+          registeredFileSets = registeredIndexableFileSets,
+          storageBefore = event.storageBefore,
+          storageAfter = event.storageAfter,
+        )
+        val parameters =  computeScanningParametersFromWFIEvent(event)
+        UnindexedFilesScanner(project, parameters).queue()
+      }
     }
   }
 
   private fun computeScanningParametersFromWFIEvent(event: WorkspaceFileIndexChangedEvent): Deferred<ScanningParameters> {
-    return scope.async {
-      ReadAction.nonBlocking(Callable {
-        val iterators = ArrayList<IndexableFilesIterator>()
-
-        //generateIteratorsFromWFIChangedEvent(event.removedFileSets, event.storageBefore, iterators)
-        generateIteratorsFromWFIChangedEvent(event.registeredFileSets, event.storageAfter, iterators)
-
-        return@Callable if (iterators.isEmpty()) {
-          CancelledScanning
-        }
-        else {
-          ScanningIterators("Changes from WorkspaceFileIndex", predefinedIndexableFilesIterators = iterators)
-        }
-      }).executeSynchronously()
+    return if (Registry.`is`("create.coroutines.for.wfi.events.processing")) {
+      scope.async {
+        processWfiEvent(event)
+      }
     }
+    else {
+      CompletableDeferred(processWfiEvent(event))
+    }
+  }
+
+  private fun processWfiEvent(event: WorkspaceFileIndexChangedEvent): ScanningParameters {
+    return ReadAction.nonBlocking(Callable {
+      val iterators = ArrayList<IndexableFilesIterator>()
+
+      //generateIteratorsFromWFIChangedEvent(event.removedFileSets, event.storageBefore, iterators)
+      generateIteratorsFromWFIChangedEvent(event.registeredFileSets, event.storageAfter, iterators)
+
+      return@Callable if (iterators.isEmpty()) {
+        CancelledScanning
+      }
+      else {
+        ScanningIterators("Changes from WorkspaceFileIndex (${iterators.size} iterators)", predefinedIndexableFilesIterators = iterators)
+      }
+    }).executeSynchronously()
   }
 
   private enum class Change {
@@ -133,7 +165,6 @@ class ProjectEntityIndexingService(
     for (fileSet in fileSets) {
       fileSet as WorkspaceFileSetWithCustomData<*>
       val entityPointer = fileSet.getEntityPointer() ?: continue
-      if (!fileSet.kind.isIndexable) continue
       if (fileSet.data is ModuleRelatedRootData) continue
       if (fileSet.kind.isContent) continue
 
@@ -202,9 +233,6 @@ class ProjectEntityIndexingService(
             ref.resolve(entityStorage)
           }
           builders.addAll(getBuildersOnWorkspaceEntitiesRootsChange(project, entities, entityStorage))
-        }
-        else if (change is BuiltRescanningInfo) {
-          builders.addAll(getBuildersOnBuildableChangeInfo(change))
         }
         else {
           LOG.warn("Unexpected change " + change.javaClass + " " + change + ", full reindex requested")
@@ -325,20 +353,9 @@ class ProjectEntityIndexingService(
           uncheckedProvider as (IndexableEntityProvider<E>)
           val generated = when (change) {
             Change.Added -> uncheckedProvider.getAddedEntityIteratorBuilders(newEntity!!, project)
-            Change.Replaced -> uncheckedProvider.getReplacedEntityIteratorBuilders(oldEntity!!, newEntity!!, project)
-            Change.Removed -> uncheckedProvider.getRemovedEntityIteratorBuilders(oldEntity!!, project)
+            else -> { emptyList() }
           }
           builders.addAll(generated)
-        }
-
-        if (change == Change.Replaced && uncheckedProvider is Enforced<*>) {
-          for (dependency in uncheckedProvider.dependencies) {
-            if (entityClass == dependency.getParentClass()) {
-              @Suppress("UNCHECKED_CAST")
-              dependency as DependencyOnParent<E>
-              builders.addAll(dependency.getReplacedEntityIteratorBuilders(oldEntity!!, newEntity!!))
-            }
-          }
         }
       }
     }
@@ -477,23 +494,6 @@ class ProjectEntityIndexingService(
         collectIteratorBuildersOnChange(Change.Added, null, entity, project, builders, descriptionsBuilder, entityStorage)
       }
       builders.addAll(descriptionsBuilder.createBuilders(project))
-      return builders
-    }
-
-    private fun getBuildersOnBuildableChangeInfo(
-      info: BuiltRescanningInfo,
-    ): MutableCollection<out IndexableIteratorBuilder> {
-      val builders = SmartList<IndexableIteratorBuilder>()
-      val instance = IndexableIteratorBuilders
-      if (info.hasInheritedSdk) {
-        builders.addAll(instance.forInheritedSdk())
-      }
-      for (sdk in info.sdks) {
-        builders.add(instance.forSdk(sdk.first, sdk.second))
-      }
-      for (library in info.libraries) {
-        builders.addAll(instance.forLibraryEntity(library, true))
-      }
       return builders
     }
   }

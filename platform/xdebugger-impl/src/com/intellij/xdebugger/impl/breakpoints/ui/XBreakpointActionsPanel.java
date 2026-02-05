@@ -2,6 +2,8 @@
 package com.intellij.xdebugger.impl.breakpoints.ui;
 
 import com.intellij.openapi.project.Project;
+import com.intellij.platform.debugger.impl.shared.proxy.XBreakpointProxy;
+import com.intellij.platform.debugger.impl.shared.proxy.XLineBreakpointProxy;
 import com.intellij.ui.components.JBCheckBox;
 import com.intellij.util.ui.JBUI;
 import com.intellij.util.ui.UIUtil;
@@ -10,16 +12,17 @@ import com.intellij.xdebugger.XExpression;
 import com.intellij.xdebugger.XSourcePosition;
 import com.intellij.xdebugger.evaluation.XDebuggerEditorsProvider;
 import com.intellij.xdebugger.impl.XDebuggerUtilImpl;
-import com.intellij.xdebugger.impl.breakpoints.XBreakpointProxy;
-import com.intellij.xdebugger.impl.breakpoints.XLineBreakpointProxy;
 import com.intellij.xdebugger.impl.ui.DebuggerUIUtil;
 import com.intellij.xdebugger.impl.ui.XDebuggerExpressionComboBox;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import javax.swing.*;
-import java.awt.*;
+import javax.swing.JCheckBox;
+import javax.swing.JComponent;
+import javax.swing.JLabel;
+import javax.swing.JPanel;
+import java.awt.BorderLayout;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 

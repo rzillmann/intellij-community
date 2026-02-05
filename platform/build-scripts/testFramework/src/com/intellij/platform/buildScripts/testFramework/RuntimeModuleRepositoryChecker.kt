@@ -14,12 +14,14 @@ import com.intellij.platform.runtime.repository.RuntimeModuleId
 import com.intellij.platform.runtime.repository.RuntimeModuleRepository
 import com.intellij.platform.runtime.repository.serialization.RuntimeModuleRepositorySerialization
 import com.intellij.util.containers.FList
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 import org.assertj.core.api.SoftAssertions
 import org.jetbrains.intellij.build.BuildContext
+import org.jetbrains.intellij.build.hasModuleOutputPath
 import org.jetbrains.intellij.build.impl.MODULE_DESCRIPTORS_COMPACT_PATH
 import org.jetbrains.intellij.build.impl.SUPPORTED_DISTRIBUTIONS
 import org.jetbrains.intellij.build.impl.getOsAndArchSpecificDistDirectory
-import org.jetbrains.intellij.build.impl.hasModuleOutputPath
 import java.io.IOException
 import java.nio.file.Path
 import kotlin.io.path.ExperimentalPathApi
@@ -61,7 +63,7 @@ internal class RuntimeModuleRepositoryChecker private constructor(
   }
   
   companion object {
-    suspend fun checkProductModules(productModulesModule: String, context: BuildContext, softly: SoftAssertions) {
+    fun checkProductModules(productModulesModule: String, context: BuildContext, softly: SoftAssertions) {
       createCheckers(context).forEach {
         it().use { checker ->
           checker.checkProductModules(productModulesModule, softly)
@@ -72,7 +74,7 @@ internal class RuntimeModuleRepositoryChecker private constructor(
     /**
      * Verifies that the bundled plugins specified in product-modules.xml file in [productModulesModule] are present in the distribution.
      */
-    suspend fun checkBundledPluginsArePresent(productModulesModule: String, context: BuildContext, isEmbeddedVariant: Boolean, softly: SoftAssertions) {
+    fun checkBundledPluginsArePresent(productModulesModule: String, context: BuildContext, isEmbeddedVariant: Boolean, softly: SoftAssertions) {
       createCheckers(context).forEach {
         it().use { checker ->
           checker.checkBundledPluginsArePresent(productModulesModule, softly, isEmbeddedVariant)
@@ -85,7 +87,7 @@ internal class RuntimeModuleRepositoryChecker private constructor(
      * separate product: JARs referenced from its modules must not include resources from modules not included to the product, or they are
      * split by packages in a way that the class-loader may load relevant classes only.
      */
-    suspend fun checkIntegrityOfEmbeddedFrontend(productModulesModule: String, context: BuildContext, softly: SoftAssertions) {
+    fun checkIntegrityOfEmbeddedFrontend(productModulesModule: String, context: BuildContext, softly: SoftAssertions) {
       createCheckers(context).forEach {
         it().use { checker ->
           checker.checkIntegrityOfEmbeddedFrontend(productModulesModule, softly)
@@ -108,9 +110,10 @@ internal class RuntimeModuleRepositoryChecker private constructor(
         }
     }
   }
+
   private val moduleRepositoryData by lazy { RuntimeModuleRepositorySerialization.loadFromCompactFile(descriptorsFile) }
 
-  private suspend fun checkProductModules(productModulesModule: String, softly: SoftAssertions) {
+  private fun checkProductModules(productModulesModule: String, softly: SoftAssertions) {
     try {
       val productModules = loadProductModules(productModulesModule)
       val serviceModuleMapping = ServiceModuleMapping.buildMapping(productModules, includeDebugInfoInErrorMessage = true)
@@ -164,7 +167,7 @@ internal class RuntimeModuleRepositoryChecker private constructor(
     }
   }
 
-  private suspend fun checkIntegrityOfEmbeddedFrontend(productModulesModule: String, softly: SoftAssertions) {
+  private fun checkIntegrityOfEmbeddedFrontend(productModulesModule: String, softly: SoftAssertions) {
     val productModules = loadProductModules(productModulesModule)
 
     val allProductModules = LinkedHashMap<RuntimeModuleId, FList<String>>()
@@ -197,8 +200,8 @@ internal class RuntimeModuleRepositoryChecker private constructor(
         //additional libraries shouldn't cause problems because their resources should not be loaded unless they are requested from modules
         continue
       }
-      val module = context.findModule(rawModuleId)
-      if (module != null && context.hasModuleOutputPath(module, "${module.name}.xml")) {
+      val module = context.outputProvider.findModule(rawModuleId)
+      if (module != null && hasModuleOutputPath(module = module, relativePath = "${module.name}.xml", outputProvider = context.outputProvider)) {
         // such a descriptor indicates that it's a module in plugin model V2, and its ClassLoader ignores classes from irrelevant packages,
         // so including its JAR to classpath should not cause problems
         continue
@@ -236,7 +239,7 @@ internal class RuntimeModuleRepositoryChecker private constructor(
     }
   }
 
-  private suspend fun checkBundledPluginsArePresent(productModulesModule: String, softly: SoftAssertions, isEmbeddedVariant: Boolean) {
+  private fun checkBundledPluginsArePresent(productModulesModule: String, softly: SoftAssertions, isEmbeddedVariant: Boolean) {
     val rawProductModules = loadRawProductModules(productModulesModule)
     val productName = context.applicationInfo.productNameWithEdition
     val currentDistributionName = if (isEmbeddedVariant) productName else "'$productName Frontend'"
@@ -283,10 +286,13 @@ internal class RuntimeModuleRepositoryChecker private constructor(
     }
   }
 
-  private suspend fun loadProductModules(productModulesModule: String): ProductModules {
+  private fun loadProductModules(productModulesModule: String): ProductModules {
     val relativePath = "META-INF/$productModulesModule/product-modules.xml"
     val debugName = "($relativePath file in $productModulesModule)"
-    val content = context.readFileContentFromModuleOutput(context.findRequiredModule(productModulesModule), relativePath)
+    @Suppress("RAW_RUN_BLOCKING")
+    val content = runBlocking(Dispatchers.IO) {
+      context.outputProvider.readFileContentFromModuleOutput(context.findRequiredModule(productModulesModule), relativePath)
+    }
                   ?: throw MalformedRepositoryException("File '$relativePath' is not found in module $productModulesModule output")
     try {
       return ProductModulesSerialization.loadProductModules(content.inputStream(), debugName, ProductMode.FRONTEND, repository)
@@ -295,11 +301,14 @@ internal class RuntimeModuleRepositoryChecker private constructor(
       throw MalformedRepositoryException("Failed to load module group from $debugName", e)
     }
   }
-  
-  private suspend fun loadRawProductModules(productModulesModule: String): RawProductModules {
+
+  private fun loadRawProductModules(productModulesModule: String): RawProductModules {
     val relativePath = "META-INF/$productModulesModule/product-modules.xml"
     val debugName = "($relativePath file in $productModulesModule)"
-    val content = context.readFileContentFromModuleOutput(context.findRequiredModule(productModulesModule), relativePath)
+    @Suppress("RAW_RUN_BLOCKING")
+    val content = runBlocking(Dispatchers.IO) {
+      context.outputProvider.readFileContentFromModuleOutput(context.findRequiredModule(productModulesModule), relativePath)
+    }
                   ?: throw MalformedRepositoryException("File '$relativePath' is not found in module $productModulesModule output")
     try {
       return ProductModulesSerialization.readProductModulesAndMergeIncluded(content.inputStream(), debugName, ResourceFileResolver.createDefault(repository))
@@ -309,16 +318,6 @@ internal class RuntimeModuleRepositoryChecker private constructor(
     }
   }
 
-  private fun RuntimeModuleRepository.collectDependencies(moduleDescriptor: RuntimeModuleDescriptor, path: FList<String>, result: MutableMap<RuntimeModuleId, FList<String>> = LinkedHashMap()): MutableMap<RuntimeModuleId, FList<String>> {
-    if (result.putIfAbsent(moduleDescriptor.moduleId, path) == null) {
-      val newPath = path.prepend(moduleDescriptor.moduleId.stringId)
-      for (dependency in moduleDescriptor.dependencies) {
-        collectDependencies(dependency, newPath, result)
-      }
-    }
-    return result
-  }
-
   override fun close() {
     if (osSpecificDistPath != null) {
       osSpecificFilePaths.forEach {
@@ -326,4 +325,18 @@ internal class RuntimeModuleRepositoryChecker private constructor(
       }
     }
   }
+}
+
+private fun RuntimeModuleRepository.collectDependencies(
+  moduleDescriptor: RuntimeModuleDescriptor,
+  path: FList<String>,
+  result: MutableMap<RuntimeModuleId, FList<String>> = LinkedHashMap(),
+): MutableMap<RuntimeModuleId, FList<String>> {
+  if (result.putIfAbsent(moduleDescriptor.moduleId, path) == null) {
+    val newPath = path.prepend(moduleDescriptor.moduleId.stringId)
+    for (dependency in moduleDescriptor.dependencies) {
+      collectDependencies(dependency, newPath, result)
+    }
+  }
+  return result
 }

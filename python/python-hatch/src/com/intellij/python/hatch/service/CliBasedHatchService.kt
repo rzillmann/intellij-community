@@ -7,7 +7,13 @@ import com.intellij.platform.eel.getOr
 import com.intellij.platform.eel.provider.asEelPath
 import com.intellij.platform.eel.provider.asNioPath
 import com.intellij.platform.eel.provider.getEelDescriptor
-import com.intellij.python.hatch.*
+import com.intellij.platform.eel.provider.toEelApi
+import com.intellij.python.hatch.EnvironmentCreationHatchError
+import com.intellij.python.hatch.FileSystemOperationHatchError
+import com.intellij.python.hatch.HatchService
+import com.intellij.python.hatch.HatchVirtualEnvironment
+import com.intellij.python.hatch.ProjectStructure
+import com.intellij.python.hatch.PythonVirtualEnvironment
 import com.intellij.python.hatch.cli.ENV_TYPE_VIRTUAL
 import com.intellij.python.hatch.cli.HatchEnvironment
 import com.intellij.python.hatch.cli.HatchEnvironments
@@ -18,9 +24,13 @@ import com.intellij.python.pyproject.PY_PROJECT_TOML
 import com.jetbrains.python.PythonBinary
 import com.jetbrains.python.Result
 import com.jetbrains.python.errorProcessing.PyResult
-import kotlinx.coroutines.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withContext
 import java.nio.file.Path
 import kotlin.io.path.exists
 import kotlin.io.path.isDirectory
@@ -61,7 +71,7 @@ internal class CliBasedHatchService private constructor(
     }
   }
 
-  override suspend fun isHatchManagedProject(): PyResult<Boolean> {
+  override suspend fun isHatchManagedProject(): Boolean {
     val isHatchManaged = withContext(Dispatchers.IO) {
       when {
         workingDirectoryPath.resolve("hatch.toml").exists() -> true
@@ -72,7 +82,7 @@ internal class CliBasedHatchService private constructor(
         }
       }
     }
-    return Result.success(isHatchManaged)
+    return isHatchManaged
   }
 
 

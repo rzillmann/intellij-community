@@ -10,11 +10,11 @@ import com.intellij.execution.configurations.CompositeParameterTargetedValue
 import com.intellij.execution.configurations.ParametersList
 import com.intellij.execution.configurations.SimpleJavaParameters
 import com.intellij.ide.fileTemplates.FileTemplateManager
+import com.intellij.ide.plugins.PluginManagerCore
 import com.intellij.notification.Notification
 import com.intellij.notification.NotificationType
 import com.intellij.notification.Notifications
 import com.intellij.openapi.application.*
-import com.intellij.openapi.application.PathManager
 import com.intellij.openapi.application.PathManager.getSystemDir
 import com.intellij.openapi.application.impl.ApplicationInfoImpl
 import com.intellij.openapi.application.impl.LaterInvocator
@@ -70,7 +70,6 @@ import org.jdom.JDOMException
 import org.jdom.Namespace
 import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.annotations.NonNls
-import org.jetbrains.annotations.TestOnly
 import org.jetbrains.idea.maven.MavenVersionAwareSupportExtension
 import org.jetbrains.idea.maven.buildtool.MavenSyncConsole
 import org.jetbrains.idea.maven.dom.MavenDomUtil
@@ -111,7 +110,9 @@ import java.util.stream.Stream
 import java.util.zip.CRC32
 import javax.xml.parsers.ParserConfigurationException
 import javax.xml.parsers.SAXParserFactory
-import kotlin.io.path.exists
+import javax.xml.stream.XMLInputFactory
+import javax.xml.stream.XMLStreamException
+import javax.xml.stream.XMLStreamReader
 import kotlin.io.path.isDirectory
 
 object MavenUtil {
@@ -130,7 +131,6 @@ object MavenUtil {
     "http://maven.apache.org/EXTENSIONS/1.1.0",
     "http://maven.apache.org/EXTENSIONS/1.2.0"
   )
-  private val runnables: MutableSet<Runnable?> = Collections.newSetFromMap<Runnable?>(IdentityHashMap<Runnable?, Boolean?>())
   const val INTELLIJ_PLUGIN_ID: String = "org.jetbrains.idea.maven"
 
   @ApiStatus.Experimental
@@ -209,58 +209,8 @@ object MavenUtil {
   }
 
   fun invokeLater(p: Project, state: ModalityState, r: Runnable) {
-    startTestRunnable(r)
-    ApplicationManager.getApplication().invokeLater(Runnable {
-      runAndFinishTestRunnable(r)
-    }, state, p.getDisposed())
+    ApplicationManager.getApplication().invokeLater(r, state, p.getDisposed())
   }
-
-
-  private fun startTestRunnable(r: Runnable?) {
-    if (!ApplicationManager.getApplication().isUnitTestMode()) return
-    synchronized(runnables) {
-      runnables.add(r)
-    }
-  }
-
-  private fun runAndFinishTestRunnable(r: Runnable) {
-    if (!ApplicationManager.getApplication().isUnitTestMode()) {
-      r.run()
-      return
-    }
-
-    try {
-      r.run()
-    }
-    finally {
-      synchronized(runnables) {
-        runnables.remove(r)
-      }
-    }
-  }
-
-  @TestOnly
-  fun noUncompletedRunnables(): Boolean {
-    synchronized(runnables) {
-      return runnables.isEmpty()
-    }
-  }
-
-  fun cleanAllRunnables() {
-    synchronized(runnables) {
-      runnables.clear()
-    }
-  }
-
-  @get:TestOnly
-  val uncompletedRunnables: MutableList<Runnable?>
-    get() {
-      val result: MutableList<Runnable?>
-      synchronized(runnables) {
-        result = ArrayList<Runnable?>(runnables)
-      }
-      return result
-    }
 
   @JvmStatic
   fun invokeAndWait(p: Project, r: Runnable) {
@@ -268,34 +218,32 @@ object MavenUtil {
   }
 
   fun invokeAndWait(p: Project?, state: ModalityState, r: Runnable) {
-    startTestRunnable(r)
-    ApplicationManager.getApplication().invokeAndWait(DisposeAwareRunnable.create(Runnable { runAndFinishTestRunnable(r) }, p), state)
+    ApplicationManager.getApplication().invokeAndWait(DisposeAwareRunnable.create(r, p), state)
   }
+
 
 
   @JvmStatic
   fun invokeAndWaitWriteAction(p: Project, r: Runnable) {
-    startTestRunnable(r)
     if (ApplicationManager.getApplication().isWriteAccessAllowed()) {
-      runAndFinishTestRunnable(r)
+      r.run()
     }
     else if (ApplicationManager.getApplication().isDispatchThread()) {
       ApplicationManager.getApplication().runWriteAction(r)
     }
     else {
       ApplicationManager.getApplication().invokeAndWait(DisposeAwareRunnable.create(
-        Runnable { ApplicationManager.getApplication().runWriteAction(Runnable { runAndFinishTestRunnable(r) }) }, p),
+        Runnable { ApplicationManager.getApplication().runWriteAction(r) }, p),
                                                         ModalityState.defaultModalityState())
     }
   }
 
   fun runDumbAware(project: Project, r: Runnable) {
-    startTestRunnable(r)
     if (isDumbAware(r)) {
-      runAndFinishTestRunnable(r)
+      r.run()
     }
     else {
-      DumbService.getInstance(project).runWhenSmart(DisposeAwareRunnable.create(Runnable { runAndFinishTestRunnable(r) }, project))
+      DumbService.getInstance(project).runWhenSmart(DisposeAwareRunnable.create(r, project))
     }
   }
 
@@ -309,8 +257,7 @@ object MavenUtil {
       runDumbAware(project, runnable)
     }
     else {
-      startTestRunnable(runnable)
-      StartupManager.getInstance(project).runAfterOpened(Runnable { runAndFinishTestRunnable(runnable) })
+      StartupManager.getInstance(project).runAfterOpened(runnable)
     }
   }
 
@@ -349,24 +296,73 @@ object MavenUtil {
     return ContainerUtil.groupBy<String, MavenProject>(projects, NullableFunction { getBaseDir(tree.findRootProject(it).directoryFile).toString() })
   }
 
+
+  private fun isDotMvnRoot(dir: VirtualFile): Boolean {
+    val child = dir.findChild(".mvn")
+    if (child != null && child.isDirectory()) {
+      if (MavenLog.LOG.isTraceEnabled) {
+        MavenLog.LOG.trace("found .mvn in " + child)
+      }
+      return true
+    }
+    return false
+  }
+
+  private fun isRootPomXmlMvnRoot(dir: VirtualFile): Boolean {
+    val child = dir.findChild("pom.xml")
+    if (child != null && child.isFile) {
+      if (MavenLog.LOG.isTraceEnabled) {
+        MavenLog.LOG.trace("found pom.xml in $child, checking for root")
+      }
+      try {
+        child.inputStream.use {
+          val parser = XMLInputFactory.newFactory().createXMLStreamReader(it)
+          if (parser.nextTag() != XMLStreamReader.START_ELEMENT
+              || parser.getLocalName() != "project") {
+            if (MavenLog.LOG.isTraceEnabled) {
+              MavenLog.LOG.trace("pom.xml in $child, is invalid pom xml")
+            }
+            return false
+          }
+          for (i in 0 until parser.getAttributeCount()) {
+            if ("root" == parser.getAttributeLocalName(i)) {
+              val value = parser.getAttributeValue(i).toBoolean()
+              if (MavenLog.LOG.isTraceEnabled) {
+                MavenLog.LOG.trace("pom.xml in $child root=$value")
+              }
+              return value
+            }
+          }
+          if (MavenLog.LOG.isTraceEnabled) {
+            MavenLog.LOG.trace("pom.xml in $child does not contain root tag")
+          }
+          return false
+
+        }
+      }
+      catch (_: IOException) {
+        return false
+      }
+      catch (_: XMLStreamException) {
+        return false
+      }
+    }
+    return false
+  }
+
   @JvmStatic
   fun getVFileBaseDir(file: VirtualFile): VirtualFile {
     var baseDir = if (file.isDirectory() || file.getParent() == null) file else file.getParent()
     var dir = baseDir
     do {
-      val child = dir.findChild(".mvn")
-
-      if (child != null && child.isDirectory()) {
-        if (MavenLog.LOG.isTraceEnabled()) {
-          MavenLog.LOG.trace("found .mvn in " + child)
-        }
+      if (isDotMvnRoot(dir) || isRootPomXmlMvnRoot(dir)) {
         baseDir = dir
         break
       }
     }
     while ((dir.getParent().also { dir = it }) != null)
     if (MavenLog.LOG.isTraceEnabled()) {
-      MavenLog.LOG.trace("return " + baseDir + " as baseDir")
+      MavenLog.LOG.trace("return $baseDir as baseDir")
     }
     return baseDir
   }
@@ -536,19 +532,9 @@ object MavenUtil {
     val manager = FileTemplateManager.getInstance(project)
     val fileTemplate = manager.getJ2eeTemplate(templateName)
     val allProperties = manager.getDefaultProperties()
-    if (!interactive) {
-      allProperties.putAll(properties)
-    }
+    allProperties.putAll(properties)
     allProperties.putAll(conditions!!)
     var text = fileTemplate.getText(allProperties)
-    val pattern = Pattern.compile("\\$\\{(.*?)}")
-    val matcher = pattern.matcher(text)
-    val builder = StringBuilder()
-    while (matcher.find()) {
-      matcher.appendReplacement(builder, "\\$" + StringUtil.toUpperCase(matcher.group(1)) + "\\$")
-    }
-    matcher.appendTail(builder)
-    text = builder.toString()
 
     val template = TemplateManager.getInstance(project).createTemplate("", "", text) as TemplateImpl
     for (i in 0..<template.getSegmentsCount()) {
@@ -1731,7 +1717,9 @@ object MavenUtil {
     }
 
     val mavenProjectsManager = MavenProjectsManager.getInstance(project)
-    if (mavenProjectsManager.findProject(file) != null) return true
+    if (mavenProjectsManager.isMavenizedProject) {
+      if (mavenProjectsManager.findProject(file) != null) return true
+    }
 
     return ReadAction.compute<Boolean, RuntimeException>(ThrowableComputable {
       if (project.isDisposed()) return@ThrowableComputable false
@@ -1894,7 +1882,7 @@ object MavenUtil {
   }
 
   fun suggestProjectSdk(project: Project): Sdk? {
-    val projectJdkTable = ProjectJdkTable.getInstance()
+    val projectJdkTable = ProjectJdkTable.getInstance(project)
     val sdkType = ExternalSystemJdkUtil.getJavaSdkType()
     return projectJdkTable.getSdksOfType(sdkType)
       .filterNotNull()
@@ -1924,14 +1912,6 @@ object MavenUtil {
   fun shouldKeepPreviousResolutionResults(readingProblems: Collection<MavenProjectProblem>): Boolean {
     return !shouldResetDependenciesAndFolders(readingProblems)
   }
-
-  @ApiStatus.ScheduledForRemoval
-  @Deprecated("use MavenUtil.resolveSuperPomFile")
-  fun getEffectiveSuperPom(project: Project, workingDir: String): VirtualFile? {
-    val distribution = MavenDistributionsCache.getInstance(project).getMavenDistribution(workingDir)
-    return resolveSuperPomFile(distribution.mavenHome, MavenConstants.SUPER_POM_4_0_XML)
-  }
-
 
   @JvmStatic
   @Deprecated("use MavenUtil.resolveSuperPomFile")
@@ -1978,20 +1958,17 @@ object MavenUtil {
   }
 
   @JvmStatic
-  fun isRunningFromSources(): Boolean {
-    return path != null && (path.endsWith("production") || path.parent.endsWith("production"))
-  }
+  fun isRunningFromSources(): Boolean = PluginManagerCore.isRunningFromSources()
 
+  @RequiresBackgroundThread
   fun isMaven410(xmlns: String?, schemaLocation: String?): Boolean {
     if (xmlns == null || schemaLocation == null) return false
-    val schemaLocations = schemaLocation.split(' ')
-    return (xmlns == MAVEN_4_XLMNS || xmlns == MAVEN_4_XLMNS_HTTPS)
-           && schemaLocations.all {
-      it == MAVEN_4_XLMNS ||
-      it == MAVEN_4_XLMNS_HTTPS ||
-      it == MAVEN_4_XSD ||
-      it == MAVEN_4_XSD_HTTPS
+    val xmlns410 = xmlns == MAVEN_4_XMLNS || xmlns == MAVEN_4_XMLNS_HTTPS
+    if (!xmlns410) return false
+    val schemaLocations = schemaLocation.split("\\s+".toRegex())
+      .filter { it.isNotBlank() }
+    return schemaLocations.all {
+      Maven4SchemaVersionChecker.is410Xsd(it)
     }
-
   }
 }

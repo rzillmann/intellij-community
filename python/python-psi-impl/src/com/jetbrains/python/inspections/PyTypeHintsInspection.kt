@@ -39,15 +39,74 @@ import com.jetbrains.python.codeInsight.typing.PyTypingTypeProvider
 import com.jetbrains.python.codeInsight.typing.PyTypingTypeProvider.isBitwiseOrUnionAvailable
 import com.jetbrains.python.documentation.PythonDocumentationProvider
 import com.jetbrains.python.inspections.quickfix.PyUnpackTypeVarTupleQuickFix
-import com.jetbrains.python.psi.*
+import com.jetbrains.python.psi.FutureFeature
+import com.jetbrains.python.psi.LanguageLevel
+import com.jetbrains.python.psi.PyAnnotation
+import com.jetbrains.python.psi.PyAnnotationOwner
+import com.jetbrains.python.psi.PyArgumentList
+import com.jetbrains.python.psi.PyAssignmentStatement
+import com.jetbrains.python.psi.PyBinaryExpression
+import com.jetbrains.python.psi.PyCallExpression
+import com.jetbrains.python.psi.PyClass
+import com.jetbrains.python.psi.PyElement
+import com.jetbrains.python.psi.PyElementGenerator
+import com.jetbrains.python.psi.PyEllipsisLiteralExpression
+import com.jetbrains.python.psi.PyExpression
+import com.jetbrains.python.psi.PyExpressionStatement
+import com.jetbrains.python.psi.PyFile
+import com.jetbrains.python.psi.PyFunction
+import com.jetbrains.python.psi.PyKeywordArgument
+import com.jetbrains.python.psi.PyListLiteralExpression
+import com.jetbrains.python.psi.PyNamedParameter
+import com.jetbrains.python.psi.PyNoneLiteralExpression
+import com.jetbrains.python.psi.PyParenthesizedExpression
+import com.jetbrains.python.psi.PyPlainStringElement
+import com.jetbrains.python.psi.PyQualifiedExpression
+import com.jetbrains.python.psi.PyQualifiedNameOwner
+import com.jetbrains.python.psi.PyRecursiveElementVisitor
+import com.jetbrains.python.psi.PyReferenceExpression
+import com.jetbrains.python.psi.PyStarExpression
+import com.jetbrains.python.psi.PyStatement
+import com.jetbrains.python.psi.PyStringLiteralExpression
+import com.jetbrains.python.psi.PySubscriptionExpression
+import com.jetbrains.python.psi.PyTargetExpression
+import com.jetbrains.python.psi.PyTupleExpression
+import com.jetbrains.python.psi.PyTypeAliasStatement
+import com.jetbrains.python.psi.PyTypeCommentOwner
+import com.jetbrains.python.psi.PyTypeDeclarationStatement
+import com.jetbrains.python.psi.PyTypeParameter
+import com.jetbrains.python.psi.PyTypeParameterListOwner
+import com.jetbrains.python.psi.PyTypedElement
+import com.jetbrains.python.psi.PyUtil
+import com.jetbrains.python.psi.PyWithAncestors
 import com.jetbrains.python.psi.impl.PyBuiltinCache
 import com.jetbrains.python.psi.impl.PyEvaluator
 import com.jetbrains.python.psi.impl.PyPsiUtils
 import com.jetbrains.python.psi.impl.stubs.PyTypingAliasStubType
 import com.jetbrains.python.psi.resolve.PyResolveContext
 import com.jetbrains.python.psi.resolve.PyResolveUtil
-import com.jetbrains.python.psi.types.*
+import com.jetbrains.python.psi.types.PyClassLikeType
+import com.jetbrains.python.psi.types.PyClassType
+import com.jetbrains.python.psi.types.PyCollectionType
+import com.jetbrains.python.psi.types.PyConcatenateType
+import com.jetbrains.python.psi.types.PyInstantiableType
+import com.jetbrains.python.psi.types.PyLiteralType
+import com.jetbrains.python.psi.types.PyNarrowedType
+import com.jetbrains.python.psi.types.PyParamSpecType
+import com.jetbrains.python.psi.types.PyPositionalVariadicType
+import com.jetbrains.python.psi.types.PySelfType
+import com.jetbrains.python.psi.types.PyTupleType
+import com.jetbrains.python.psi.types.PyType
+import com.jetbrains.python.psi.types.PyTypeChecker
+import com.jetbrains.python.psi.types.PyTypeParameterMapping
+import com.jetbrains.python.psi.types.PyTypeParameterType
+import com.jetbrains.python.psi.types.PyTypeVarTupleType
+import com.jetbrains.python.psi.types.PyTypeVarType
 import com.jetbrains.python.psi.types.PyTypeVarType.Variance
+import com.jetbrains.python.psi.types.PyTypedDictType
+import com.jetbrains.python.psi.types.PyTypingNewType
+import com.jetbrains.python.psi.types.PyUnpackedTupleType
+import com.jetbrains.python.psi.types.TypeEvalContext
 import com.jetbrains.python.sdk.legacy.PythonSdkUtil
 
 class PyTypeHintsInspection : PyInspection() {
@@ -71,7 +130,7 @@ class PyTypeHintsInspection : PyInspection() {
       val calleeQName = callee?.let { PyResolveUtil.resolveImportedElementQNameLocally(it) } ?: emptyList()
 
       if (QualifiedName.fromDottedString(PyTypingTypeProvider.TYPE_VAR) in calleeQName ||
-        QualifiedName.fromDottedString(PyTypingTypeProvider.TYPE_VAR_EXT) in calleeQName) {
+          QualifiedName.fromDottedString(PyTypingTypeProvider.TYPE_VAR_EXT) in calleeQName) {
         val target = getTargetFromAssignment(node)
 
         checkTypeVarPlacement(node, target)
@@ -135,7 +194,8 @@ class PyTypeHintsInspection : PyInspection() {
       val typeExpression = node.typeExpression ?: return
       if (!isValidTypeHint(typeExpression, myTypeEvalContext)) {
         registerProblem(typeExpression, PyPsiBundle.message("INSP.type.hints.type.hint.is.not.valid"))
-      } else {
+      }
+      else {
         val typeExpression = node.typeExpression
         if (typeExpression != null) {
           if (PyTypingTypeProvider.getType(typeExpression, myTypeEvalContext) == null) {
@@ -200,6 +260,7 @@ class PyTypeHintsInspection : PyInspection() {
         if (type is PyTypeParameterType && type.scopeOwner == null && !isInsideTypeParameterDefault(node)) {
           registerProblem(node, PyPsiBundle.message("INSP.type.hints.unbound.type.variable"))
         }
+        checkSelfType(node)
       }
 
       if (!insideTypeHint) {
@@ -207,7 +268,8 @@ class PyTypeHintsInspection : PyInspection() {
       }
 
       if (node.referencedName == PyNames.CANONICAL_SELF) {
-        val typeName = myTypeEvalContext.getType(node)?.name
+        val refType = myTypeEvalContext.getType(node)
+        val typeName = (if (refType is PySelfType) refType.scopeClassType else refType)?.name
         if (typeName != null && typeName != PyNames.CANONICAL_SELF) {
           registerProblem(node, PyPsiBundle.message("INSP.type.hints.invalid.type.self"), ProblemHighlightType.GENERIC_ERROR, null,
                           ReplaceWithTypeNameQuickFix(typeName))
@@ -227,6 +289,27 @@ class PyTypeHintsInspection : PyInspection() {
       }
       else if (resolvesToAnyOfQualifiedNames(node, PyTypingTypeProvider.TYPE_ALIAS, PyTypingTypeProvider.TYPE_ALIAS_EXT)) {
         registerProblem(node, PyPsiBundle.message("INSP.type.hints.type.alias.must.be.used.as.standalone.type.hint"))
+      }
+    }
+
+    private fun checkSelfType(node: PyReferenceExpression) {
+      if (resolvesToAnyOfQualifiedNames(node, PyTypingTypeProvider.SELF, PyTypingTypeProvider.SELF_EXT)) {
+        val selfType = Ref.deref(PyTypingTypeProvider.getType(node, myTypeEvalContext)) as? PySelfType
+        if (selfType == null) { // we don't infer Self type outside a class
+          registerProblem(node, PyPsiBundle.message("INSP.type.hints.self.use.outside.class"))
+          return
+        }
+        else {
+          val argList = PsiTreeUtil.getParentOfType(node, PyArgumentList::class.java)
+          if (argList != null && argList.parent is PyClass) {
+            registerProblem(node, PyPsiBundle.message("INSP.type.hints.self.cannot.use.self.in.this.context"))
+            return
+          }
+          if (selfType.scopeClassType.getAncestorTypes(myTypeEvalContext)
+              .contains(PyBuiltinCache.getInstance(node).typeType?.toClass())) {
+            registerProblem(node, PyPsiBundle.message("INSP.type.hints.self.cannot.use.self.in.metaclass"))
+          }
+        }
       }
     }
 
@@ -325,11 +408,6 @@ class PyTypeHintsInspection : PyInspection() {
         }
       }
 
-      val classParent = PsiTreeUtil.getParentOfType(node, PyClass::class.java)
-      if (classParent == null) {
-        registerProblemForSelves(PyPsiBundle.message("INSP.type.hints.self.use.outside.class"))
-      }
-
       val functionParent = PsiTreeUtil.getParentOfType(node, PyFunction::class.java)
       if (functionParent != null) {
         if (PyAstFunction.Modifier.STATICMETHOD == functionParent.modifier && PyNames.NEW != functionParent.name) {
@@ -381,10 +459,10 @@ class PyTypeHintsInspection : PyInspection() {
         }
       }
 
-
       checkTypeCommentAndParameters(node)
       checkTypeVarsInFunctionAnnotations(node)
       reportTypeParametersUsedByOuterScope(node)
+      checkInitSelfParameterAnnotation(node)
     }
 
     override fun visitPyTargetExpression(node: PyTargetExpression) {
@@ -666,7 +744,7 @@ class PyTypeHintsInspection : PyInspection() {
                         PyPsiBundle.message("INSP.type.hints.typed.dict.type.cannot.be.used.in.isinstance.tests"),
                         ProblemHighlightType.GENERIC_ERROR)
       }
-      if (type is PyTypingNewType) {
+      if (Ref.deref(PyTypingTypeProvider.getType(base, myTypeEvalContext)) is PyTypingNewType) {
         registerProblem(base,
                         PyPsiBundle.message("INSP.type.hints.new.type.type.cannot.be.used.in.isinstance.tests"),
                         ProblemHighlightType.GENERIC_ERROR)
@@ -1077,8 +1155,14 @@ class PyTypeHintsInspection : PyInspection() {
     }
 
     private fun checkGenericTypeParameterization(node: PySubscriptionExpression) {
-      val declaration = node.operand.reference
-        ?.let { PyResolveUtil.resolveDeclaration(it, resolveContext) }
+      val operandRefExpression = node.operand as? PyReferenceExpression ?: return
+      val declaration = multiFollowAssignmentsChain(operandRefExpression) {
+        return@multiFollowAssignmentsChain when {
+          PyTypingTypeProvider.isExplicitTypeAlias(it, myTypeEvalContext) -> false
+          PyTypingAliasStubType.getAssignedValueStubLike(it) is PyReferenceExpression -> followNotTypingOpaque(it)
+          else -> false
+        }
+      }.firstOrNull()
 
       when (declaration) {
         is PyTargetExpression -> checkTypeAliasParameterization(node, declaration)
@@ -1115,11 +1199,9 @@ class PyTypeHintsInspection : PyInspection() {
 
     private fun checkTypeAliasParameterization(node: PySubscriptionExpression, declaration: PyTargetExpression) {
       val assignedValue = PyTypingAliasStubType.getAssignedValueStubLike(declaration) ?: return
-      if (PyTypingTypeProvider.resolveToQualifiedNames(assignedValue, myTypeEvalContext)
-          .any { PyTypingTypeProvider.OPAQUE_NAMES.contains(it) }) return
       val assignedValueType = Ref.deref(PyTypingTypeProvider.getType(assignedValue, myTypeEvalContext)) ?: return
 
-      val isExplicitTypeAlias = declaration.annotationValue != null
+      val isExplicitTypeAlias = PyTypingTypeProvider.isExplicitTypeAlias(declaration, myTypeEvalContext)
       val generics = collectTypeParametersFromTypeAlias(assignedValue, assignedValueType, isExplicitTypeAlias)
       if (generics.isEmpty) {
         registerProblem(node.indexExpression, PyPsiBundle.message("INSP.type.hints.generic.type.alias.is.not.generic.or.already.parameterized"), ProblemHighlightType.WARNING)
@@ -1416,7 +1498,7 @@ class PyTypeHintsInspection : PyInspection() {
       }
       else if (hasSelf && actualParametersSize == commentParametersSize) {
         val actualSelfType =
-          (myTypeEvalContext.getType(cls!!) as? PyInstantiableType<*>)
+          (myTypeEvalContext.getType(cls) as? PyInstantiableType<*>)
             ?.let { if (modifier == PyAstFunction.Modifier.CLASSMETHOD) it.toClass() else it.toInstance() }
           ?: return
 
@@ -1456,6 +1538,27 @@ class PyTypeHintsInspection : PyInspection() {
         if (type is PyTypeVarType && type.variance == Variance.CONTRAVARIANT) {
           registerProblem(returnAnnotation, PyPsiBundle.message("INSP.type.hints.cannot.use.contravariant.in.return.type"))
         }
+      }
+    }
+
+    private fun checkInitSelfParameterAnnotation(function: PyFunction) {
+      // Report the use of class-scoped type vars in a type hint for `self` parameter of the `__init__` method,
+      // which is not allowed
+      if (function.name != PyNames.INIT) return
+
+      val method = function.asMethod() ?: return
+      val containingClass = method.containingClass ?: return
+
+      val selfParameter = function.parameterList.parameters.firstOrNull()
+      if (selfParameter !is PyNamedParameter) return
+
+      val selfAnnotationValue = selfParameter.annotation?.value ?: return
+      val selfAnnotationType = PyTypingTypeProvider.getType(selfAnnotationValue, myTypeEvalContext) ?: return
+
+      val generics = PyTypeChecker.collectGenerics(selfAnnotationType.get(), myTypeEvalContext)
+      if (generics.typeVars.any { it.scopeOwner === containingClass }) {
+        registerProblem(selfAnnotationValue,
+                        PyPsiBundle.message("INSP.type.hints.cannot.use.class.scope.type.variables.in.annotation.for.self.parameter.of__init__"))
       }
     }
 

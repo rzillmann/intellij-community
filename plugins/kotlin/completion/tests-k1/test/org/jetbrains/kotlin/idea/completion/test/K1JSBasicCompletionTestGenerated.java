@@ -1,4 +1,4 @@
-// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2026 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 
 package org.jetbrains.kotlin.idea.completion.test;
 
@@ -620,9 +620,29 @@ public abstract class K1JSBasicCompletionTestGenerated extends AbstractK1JSBasic
                 runTest("../testData/basic/common/callableReference/ExpressionQualifier.kt");
             }
 
+            @TestMetadata("ExtensionOnNestedClasses.kt")
+            public void testExtensionOnNestedClasses() throws Exception {
+                runTest("../testData/basic/common/callableReference/ExtensionOnNestedClasses.kt");
+            }
+
             @TestMetadata("GenericConstructor.kt")
             public void testGenericConstructor() throws Exception {
                 runTest("../testData/basic/common/callableReference/GenericConstructor.kt");
+            }
+
+            @TestMetadata("GenericExtensionCallableReference.kt")
+            public void testGenericExtensionCallableReference() throws Exception {
+                runTest("../testData/basic/common/callableReference/GenericExtensionCallableReference.kt");
+            }
+
+            @TestMetadata("GenericExtensionCallableReferenceWithTypeAlias.kt")
+            public void testGenericExtensionCallableReferenceWithTypeAlias() throws Exception {
+                runTest("../testData/basic/common/callableReference/GenericExtensionCallableReferenceWithTypeAlias.kt");
+            }
+
+            @TestMetadata("GenericNestedClassesExtensionReference.kt")
+            public void testGenericNestedClassesExtensionReference() throws Exception {
+                runTest("../testData/basic/common/callableReference/GenericNestedClassesExtensionReference.kt");
             }
 
             @TestMetadata("HigherOrderFunction.kt")
@@ -734,6 +754,16 @@ public abstract class K1JSBasicCompletionTestGenerated extends AbstractK1JSBasic
                 runTest("../testData/basic/common/constructor/MultipleConstructors.kt");
             }
 
+            @TestMetadata("NestedEnum.kt")
+            public void testNestedEnum() throws Exception {
+                runTest("../testData/basic/common/constructor/NestedEnum.kt");
+            }
+
+            @TestMetadata("NestedObject.kt")
+            public void testNestedObject() throws Exception {
+                runTest("../testData/basic/common/constructor/NestedObject.kt");
+            }
+
             @TestMetadata("PreferConstructorInReturn.kt")
             public void testPreferConstructorInReturn() throws Exception {
                 runTest("../testData/basic/common/constructor/PreferConstructorInReturn.kt");
@@ -752,6 +782,40 @@ public abstract class K1JSBasicCompletionTestGenerated extends AbstractK1JSBasic
             @TestMetadata("SubclassConstructor.kt")
             public void testSubclassConstructor() throws Exception {
                 runTest("../testData/basic/common/constructor/SubclassConstructor.kt");
+            }
+        }
+
+        @RunWith(JUnit3RunnerWithInners.class)
+        @TestMetadata("../testData/basic/common/contextSensitiveResolution")
+        public static class ContextSensitiveResolution extends AbstractK1JSBasicCompletionTest {
+            @java.lang.Override
+            @org.jetbrains.annotations.NotNull
+            public final KotlinPluginMode getPluginMode() {
+                return KotlinPluginMode.K1;
+            }
+
+            private void runTest(String testDataFilePath) throws Exception {
+                KotlinTestUtils.runTest(this::doTest, this, testDataFilePath);
+            }
+
+            @TestMetadata("NoEnumValueIfDisabled.kt")
+            public void testNoEnumValueIfDisabled() throws Exception {
+                runTest("../testData/basic/common/contextSensitiveResolution/NoEnumValueIfDisabled.kt");
+            }
+
+            @TestMetadata("ShowQualifiedExtensionFunctions.kt")
+            public void testShowQualifiedExtensionFunctions() throws Exception {
+                runTest("../testData/basic/common/contextSensitiveResolution/ShowQualifiedExtensionFunctions.kt");
+            }
+
+            @TestMetadata("ShowQualifiedFields.kt")
+            public void testShowQualifiedFields() throws Exception {
+                runTest("../testData/basic/common/contextSensitiveResolution/ShowQualifiedFields.kt");
+            }
+
+            @TestMetadata("ShowQualifiedMethods.kt")
+            public void testShowQualifiedMethods() throws Exception {
+                runTest("../testData/basic/common/contextSensitiveResolution/ShowQualifiedMethods.kt");
             }
         }
 
@@ -3084,6 +3148,16 @@ public abstract class K1JSBasicCompletionTestGenerated extends AbstractK1JSBasic
                 KotlinTestUtils.runTest(this::doTest, this, testDataFilePath);
             }
 
+            @TestMetadata("PreferExpectedTypeTypeAlias.kt")
+            public void testPreferExpectedTypeTypeAlias() throws Exception {
+                runTest("../testData/basic/common/typeAliasTypes/PreferExpectedTypeTypeAlias.kt");
+            }
+
+            @TestMetadata("PreferExpectedTypeTypeAliasReverse.kt")
+            public void testPreferExpectedTypeTypeAliasReverse() throws Exception {
+                runTest("../testData/basic/common/typeAliasTypes/PreferExpectedTypeTypeAliasReverse.kt");
+            }
+
             @TestMetadata("TypeAliasParameter.kt")
             public void testTypeAliasParameter() throws Exception {
                 runTest("../testData/basic/common/typeAliasTypes/TypeAliasParameter.kt");
@@ -3252,6 +3326,11 @@ public abstract class K1JSBasicCompletionTestGenerated extends AbstractK1JSBasic
                 runTest("../testData/basic/common/CallLocalLambda.kt");
             }
 
+            @TestMetadata("chainCompletionDontDuplicate.kt")
+            public void testChainCompletionDontDuplicate() throws Exception {
+                runTest("../testData/basic/common/chainCompletionDontDuplicate.kt");
+            }
+
             @TestMetadata("classObjectElementsInClass.kt")
             public void testClassObjectElementsInClass() throws Exception {
                 runTest("../testData/basic/common/classObjectElementsInClass.kt");
@@ -3300,6 +3379,16 @@ public abstract class K1JSBasicCompletionTestGenerated extends AbstractK1JSBasic
             @TestMetadata("DataClassMembers2.kt")
             public void testDataClassMembers2() throws Exception {
                 runTest("../testData/basic/common/DataClassMembers2.kt");
+            }
+
+            @TestMetadata("DebounceDurationPreferringCompletion.kt")
+            public void testDebounceDurationPreferringCompletion() throws Exception {
+                runTest("../testData/basic/common/DebounceDurationPreferringCompletion.kt");
+            }
+
+            @TestMetadata("DelayDurationPreferringCompletion.kt")
+            public void testDelayDurationPreferringCompletion() throws Exception {
+                runTest("../testData/basic/common/DelayDurationPreferringCompletion.kt");
             }
 
             @TestMetadata("DoWhile.kt")
@@ -3877,6 +3966,11 @@ public abstract class K1JSBasicCompletionTestGenerated extends AbstractK1JSBasic
                 runTest("../testData/basic/common/NoEnumMembersFromImplicitQualifier.kt");
             }
 
+            @TestMetadata("NoExtensionForNull.kt")
+            public void testNoExtensionForNull() throws Exception {
+                runTest("../testData/basic/common/NoExtensionForNull.kt");
+            }
+
             @TestMetadata("NoExtensionsAfterQualifier.kt")
             public void testNoExtensionsAfterQualifier() throws Exception {
                 runTest("../testData/basic/common/NoExtensionsAfterQualifier.kt");
@@ -3950,6 +4044,11 @@ public abstract class K1JSBasicCompletionTestGenerated extends AbstractK1JSBasic
             @TestMetadata("PreferExceptionsInCatch.kt")
             public void testPreferExceptionsInCatch() throws Exception {
                 runTest("../testData/basic/common/PreferExceptionsInCatch.kt");
+            }
+
+            @TestMetadata("PreferExceptionsInThrow.kt")
+            public void testPreferExceptionsInThrow() throws Exception {
+                runTest("../testData/basic/common/PreferExceptionsInThrow.kt");
             }
 
             @TestMetadata("PreferLessParameters.kt")

@@ -38,38 +38,32 @@ object LambdaTestModel : Ext(LambdaTestRoot) {
     field("cause", LambdaRdTestSessionExceptionCause.nullable)
   }
 
-  private val LambdaRdKeyValueEntry = structdef {
-    field("key", string)
-    field("value", string)
-  }
-
   private val LambdaRdTestActionParameters = structdef {
     field("reference", string)
-    // Can't use maps in struct
-    field("parameters", immutableList(LambdaRdKeyValueEntry).nullable)
+    field("testClass", string)
+    field("testMethod", string)
+    field("methodArgumentssBase64", immutableList(string))
   }
 
-  private val LambdaRdSerializedLambda = structdef {
-    field("clazzName", string)
-    field("methodName", string)
+  private val LambdaRdSerialized = structdef {
+    field("stepName", string)
     field("serializedDataBase64", string)
     field("classPath", immutableList(string))
+    field("parametersBase64", immutableList(string))
+    field("globalTestScope", bool)
   }
 
   private val LambdaRdTestSession = classdef {
     field("rdIdeType", LambdaRdIdeType)
     property("ready", bool.nullable)
     signal("sendException", LambdaRdTestSessionException).async
-    call("closeAllOpenedProjects", void, bool).async
     call("runLambda", LambdaRdTestActionParameters, void).async
-    call("runSerializedLambda", LambdaRdSerializedLambda, void).async
-    call("requestFocus", bool, bool).async
-    call("isFocused", void, bool).async
-    call("visibleFrameNames", void, immutableList(string)).async
-    call("projectsNames", void, immutableList(string)).async
-    call("makeScreenshot", string, bool).async
+    call("runSerializedLambda", LambdaRdSerialized, string).async
+    call("beforeEach", string, void).async
+    call("beforeAll", string, void).async
+    call("afterEach", string, void).async
+    call("afterAll", string, void).async
     call("isResponding", void, bool).async
-    call("projectsAreInitialised", void, bool).async
   }
 
   init {

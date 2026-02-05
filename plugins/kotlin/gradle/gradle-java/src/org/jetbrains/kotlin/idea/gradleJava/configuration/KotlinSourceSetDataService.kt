@@ -19,10 +19,18 @@ import com.intellij.openapi.roots.ModifiableRootModel
 import com.intellij.openapi.util.io.FileUtil
 import org.jetbrains.kotlin.cli.common.arguments.K2JSCompilerArguments
 import org.jetbrains.kotlin.cli.common.arguments.K2JVMCompilerArguments
-import org.jetbrains.kotlin.config.*
+import org.jetbrains.kotlin.config.ExternalSystemRunTask
+import org.jetbrains.kotlin.config.JvmTarget
+import org.jetbrains.kotlin.config.KotlinModuleKind
+import org.jetbrains.kotlin.config.SourceKotlinRootType
+import org.jetbrains.kotlin.config.TestSourceKotlinRootType
 import org.jetbrains.kotlin.idea.base.codeInsight.tooling.tooling
 import org.jetbrains.kotlin.idea.base.externalSystem.KotlinGradleFacade
-import org.jetbrains.kotlin.idea.facet.*
+import org.jetbrains.kotlin.idea.facet.KotlinFacet
+import org.jetbrains.kotlin.idea.facet.applyCompilerArgumentsToFacetSettings
+import org.jetbrains.kotlin.idea.facet.configureFacet
+import org.jetbrains.kotlin.idea.facet.getOrCreateFacet
+import org.jetbrains.kotlin.idea.facet.noVersionAutoAdvance
 import org.jetbrains.kotlin.idea.gradle.configuration.KotlinSourceSetInfo
 import org.jetbrains.kotlin.idea.gradle.configuration.findChildModuleById
 import org.jetbrains.kotlin.idea.gradle.configuration.kotlinAndroidSourceSets
@@ -143,21 +151,21 @@ class KotlinSourceSetDataService : AbstractProjectDataService<GradleSourceSetDat
         ): Collection<SimplePlatform> {
             if (this is JvmIdePlatformKind) {
                 val jvmTarget = inferJvmTarget(mainModuleNode, sourceSetInfo)
-                return JvmPlatforms.jvmPlatformByTargetVersion(jvmTarget)
+                return JvmPlatforms.jvmPlatformByTargetVersion(jvmTarget).componentPlatforms
             }
 
             if (this is NativeIdePlatformKind) {
-                return NativePlatforms.nativePlatformByTargetNames(sourceSetModuleData.konanTargets)
+                return NativePlatforms.nativePlatformByTargetNames(sourceSetModuleData.konanTargets).componentPlatforms
             }
 
             if (this is WasmIdePlatformKind) {
-                return WasmPlatforms.wasmPlatformByTargetNames(sourceSetModuleData.wasmTargets)
+                return WasmPlatforms.wasmPlatformByTargetNames(sourceSetModuleData.wasmTargets).componentPlatforms
             }
 
             return if (isHmppModule) {
                 this.defaultPlatform.filter { it.isRelevantFor(projectPlatforms) }
             } else {
-                this.defaultPlatform
+                this.defaultPlatform.componentPlatforms
             }
         }
 

@@ -14,7 +14,11 @@ import java.awt.Component
 import java.awt.Container
 import java.lang.reflect.Field
 import java.lang.reflect.InaccessibleObjectException
-import java.util.*
+import java.time.Instant
+import java.time.ZoneId
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 import java.util.function.Supplier
 import javax.swing.JComponent
 import javax.xml.parsers.DocumentBuilderFactory
@@ -28,13 +32,15 @@ class XpathDataModelCreator(val onlyVisibleComponents: Boolean = true) {
     parentElement: Element,
     hierarchy: ComponentHierarchy,
     component: Component,
-    targetComponent: Component? = null
+    targetComponent: Component? = null,
   ) {
     val element = createElement(doc, component, targetComponent)
     parentElement.appendChild(element)
 
     val allChildren = hierarchy.childrenOf(component)
-    val filteredChildren = allChildren.filter(componentFilter)
+    val filteredChildren = elementProcessors.fold(allChildren.filter(componentFilter)) { items, processor ->
+      processor.filterChildItems(component, items, onlyVisibleComponents)
+    }
     val exceptionChildren = if (System.getProperty("os.name").startsWith("mac", true)) {
       allChildren.filter {
         it.javaClass.name.contains("DialogWrapperPeerImpl")
@@ -299,6 +305,12 @@ class XpathDataModelCreator(val onlyVisibleComponents: Boolean = true) {
           else hierarchy.childrenOf(rootComponent).takeIf { it.isNotEmpty() } ?: listOf(rootComponent)
         }
         else {
+          // Add timestamp
+          rootElement.appendChild(doc.createElement("timestamp").apply {
+            val timestamp = ZonedDateTime.ofInstant(Instant.ofEpochMilli(System.currentTimeMillis()), ZoneId.systemDefault())
+              .format(DateTimeFormatter.ofPattern("HH:mm:ss dd/MM/yyyy"))
+            appendChild(doc.createTextNode("Hierarchy collected at: $timestamp"))
+          })
           hierarchy.roots()
         }
         containers.filter { it.isShowing || !onlyVisibleComponents || it.javaClass.name.endsWith("SharedOwnerFrame") }.forEach {

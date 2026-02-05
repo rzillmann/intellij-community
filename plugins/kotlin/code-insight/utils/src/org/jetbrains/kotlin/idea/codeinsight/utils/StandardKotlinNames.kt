@@ -1,9 +1,10 @@
-// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2026 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.kotlin.idea.codeinsight.utils
 
 import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.kotlin.builtins.StandardNames
 import org.jetbrains.kotlin.builtins.StandardNames.BUILT_INS_PACKAGE_FQ_NAME
+import org.jetbrains.kotlin.name.CallableId
 import org.jetbrains.kotlin.name.ClassId
 import org.jetbrains.kotlin.name.FqName
 import org.jetbrains.kotlin.name.JvmStandardClassIds
@@ -22,8 +23,19 @@ object StandardKotlinNames {
     }
     object Collections {
         @JvmField val asSequence: FqName = BASE_COLLECTIONS_PACKAGE + "asSequence"
+        @JvmField val filter: FqName = BASE_COLLECTIONS_PACKAGE + "filter"
+        @JvmField val filterIsInstance: FqName = BASE_COLLECTIONS_PACKAGE + "filterIsInstance"
+        @JvmField val filterNotNull: FqName = BASE_COLLECTIONS_PACKAGE + "filterNotNull"
+        @JvmField val flatMap: FqName = BASE_COLLECTIONS_PACKAGE + "flatMap"
+        @JvmField val flatten: FqName = BASE_COLLECTIONS_PACKAGE + "flatten"
         @JvmField val map: FqName = BASE_COLLECTIONS_PACKAGE + "map"
         @JvmField val mapIndexed: FqName = BASE_COLLECTIONS_PACKAGE + "mapIndexed"
+        @JvmField val emptyList: FqName = BASE_COLLECTIONS_PACKAGE + "emptyList"
+        @JvmField val emptyMap: FqName = BASE_COLLECTIONS_PACKAGE + "emptyMap"
+        @JvmField val emptySet: FqName = BASE_COLLECTIONS_PACKAGE + "emptySet"
+        @JvmField val listOf: FqName = BASE_COLLECTIONS_PACKAGE + "listOf"
+        @JvmField val mapOf: FqName = BASE_COLLECTIONS_PACKAGE + "mapOf"
+        @JvmField val setOf: FqName = BASE_COLLECTIONS_PACKAGE + "setOf"
 
         @JvmField val transformations: List<FqName> =
             collectionTransformationFunctionNames.map { BASE_COLLECTIONS_PACKAGE + it }
@@ -42,6 +54,7 @@ object StandardKotlinNames {
         @JvmField val enumEntries: FqName = BASE_ENUMS_PACKAGE + "enumEntries"
         @JvmField val enumValues: FqName = BUILT_INS_PACKAGE_FQ_NAME + "enumValues"
         @JvmField val enumValueOf: FqName = BUILT_INS_PACKAGE_FQ_NAME + "enumValueOf"
+        @JvmField val enumEntriesTopLevelFunction: CallableId = CallableId(BASE_ENUMS_PACKAGE, enumEntries.shortName())
     }
 
     @JvmField val exceptionClassId: ClassId = ClassId(BUILT_INS_PACKAGE_FQ_NAME, Name.identifier("Exception"))
@@ -55,6 +68,10 @@ object StandardKotlinNames {
         @JvmField val asSequence: FqName = BASE_SEQUENCES_PACKAGE + "asSequence"
 
         @JvmField val Sequence: FqName = BASE_SEQUENCES_PACKAGE + "Sequence"
+
+        @JvmField val sequence: FqName = BASE_SEQUENCES_PACKAGE + "sequence"
+        @JvmField val yield: FqName = BASE_SEQUENCES_PACKAGE + "SequenceScope.yield"
+        @JvmField val yieldAll: FqName = BASE_SEQUENCES_PACKAGE + "SequenceScope.yieldAll"
 
         @JvmField val terminations: List<FqName> =
             collectionTerminationFunctionNames.map { BASE_SEQUENCES_PACKAGE + it }

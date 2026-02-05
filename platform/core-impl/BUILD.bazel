@@ -17,7 +17,7 @@ jvm_library(
   deps = [
     "//platform/core-api:core",
     "@lib//:kotlin-stdlib",
-    "@lib//:kotlinx-coroutines-core",
+    "//libraries/kotlinx/coroutines/core",
     "//platform/util/jdom",
     "//libraries/fastutil",
     "//platform/util-class-loader:util-classLoader",
@@ -34,6 +34,7 @@ jvm_library(
     "//platform/util/coroutines",
     "//platform/plugins/parser/impl",
     "//platform/syntax/syntax-api:syntax",
+    "//platform/eel",
   ],
   exports = ["@lib//:kotlin-stdlib"]
 )

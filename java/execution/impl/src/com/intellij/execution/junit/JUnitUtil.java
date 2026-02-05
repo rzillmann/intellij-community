@@ -1,10 +1,14 @@
-// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2026 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.execution.junit;
 
 import com.intellij.codeInsight.AnnotationUtil;
 import com.intellij.codeInsight.MetaAnnotationUtil;
 import com.intellij.codeInsight.TestFrameworks;
-import com.intellij.execution.*;
+import com.intellij.execution.CantRunException;
+import com.intellij.execution.ExecutionBundle;
+import com.intellij.execution.JUnitRecognizer;
+import com.intellij.execution.Location;
+import com.intellij.execution.PsiLocation;
 import com.intellij.execution.junit2.info.MethodLocation;
 import com.intellij.execution.testframework.SourceScope;
 import com.intellij.openapi.application.ReadAction;
@@ -16,19 +20,49 @@ import com.intellij.openapi.project.DumbService;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Condition;
 import com.intellij.openapi.util.ThrowableComputable;
-import com.intellij.psi.*;
+import com.intellij.psi.CommonClassNames;
+import com.intellij.psi.JavaDirectoryService;
+import com.intellij.psi.JavaPsiFacade;
+import com.intellij.psi.PsiAnnotation;
+import com.intellij.psi.PsiAnnotationMemberValue;
+import com.intellij.psi.PsiClass;
+import com.intellij.psi.PsiClassObjectAccessExpression;
+import com.intellij.psi.PsiClassOwner;
+import com.intellij.psi.PsiDirectory;
+import com.intellij.psi.PsiElement;
+import com.intellij.psi.PsiManager;
+import com.intellij.psi.PsiMethod;
+import com.intellij.psi.PsiModifier;
+import com.intellij.psi.PsiModifierList;
+import com.intellij.psi.PsiNameValuePair;
+import com.intellij.psi.PsiPackage;
+import com.intellij.psi.PsiPrimitiveType;
+import com.intellij.psi.PsiType;
+import com.intellij.psi.PsiTypeElement;
+import com.intellij.psi.PsiTypes;
 import com.intellij.psi.search.GlobalSearchScope;
 import com.intellij.psi.search.searches.ClassInheritorsSearch;
-import com.intellij.psi.util.*;
+import com.intellij.psi.util.CachedValueProvider;
+import com.intellij.psi.util.CachedValuesManager;
+import com.intellij.psi.util.InheritanceUtil;
+import com.intellij.psi.util.PsiClassUtil;
+import com.intellij.psi.util.PsiModificationTracker;
+import com.intellij.psi.util.PsiUtil;
 import com.intellij.testIntegration.JavaTestFramework;
 import com.intellij.testIntegration.TestFramework;
 import com.intellij.util.ArrayUtil;
 import com.intellij.util.containers.ContainerUtil;
+import com.siyeh.ig.junit.JUnitCommonClassNames;
 import com.siyeh.ig.psiutils.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import java.util.*;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Set;
 
 import static com.intellij.codeInsight.AnnotationUtil.CHECK_HIERARCHY;
 import static com.siyeh.ig.junit.JUnitCommonClassNames.ORG_JUNIT_JUPITER_API_METHOD_ORDERER_DEFAULT;
@@ -72,11 +106,14 @@ public final class JUnitUtil {
 
   private static final List<String> STATIC_CONFIGS = Arrays.asList(
     BEFORE_CLASS_ANNOTATION_NAME, AFTER_CLASS_ANNOTATION_NAME, PARAMETRIZED_PARAMETERS_ANNOTATION_NAME);
-  private static final List<String> STATIC_5_CONFIGS = Arrays.asList(BEFORE_ALL_ANNOTATION_NAME, AFTER_ALL_ANNOTATION_NAME);
+  private static final List<String> STATIC_5_CONFIGS =
+    Arrays.asList(BEFORE_ALL_ANNOTATION_NAME, AFTER_ALL_ANNOTATION_NAME,
+                  JUnitCommonClassNames.ORG_JUNIT_PLATFORM_SUITE_API_BEFORESUITE, JUnitCommonClassNames.ORG_JUNIT_PLATFORM_SUITE_API_AFTERSUITE);
 
   private static final Collection<String> CONFIGURATIONS_ANNOTATION_NAME =
-    List.of(DATA_POINT, AFTER_ANNOTATION_NAME, BEFORE_ANNOTATION_NAME, AFTER_CLASS_ANNOTATION_NAME, BEFORE_CLASS_ANNOTATION_NAME,
-            BEFORE_ALL_ANNOTATION_NAME, AFTER_ALL_ANNOTATION_NAME, RULE_ANNOTATION);
+    List.of(DATA_POINT, AFTER_ANNOTATION_NAME, BEFORE_ANNOTATION_NAME, AFTER_EACH_ANNOTATION_NAME, BEFORE_EACH_ANNOTATION_NAME,
+            AFTER_CLASS_ANNOTATION_NAME, BEFORE_CLASS_ANNOTATION_NAME, BEFORE_ALL_ANNOTATION_NAME, AFTER_ALL_ANNOTATION_NAME, RULE_ANNOTATION,
+            JUnitCommonClassNames.ORG_JUNIT_PLATFORM_SUITE_API_AFTERSUITE, JUnitCommonClassNames.ORG_JUNIT_PLATFORM_SUITE_API_BEFORESUITE);
 
   public static final String PARAMETERIZED_CLASS_NAME = "org.junit.runners.Parameterized";
   public static final String SUITE_CLASS_NAME = "org.junit.runners.Suite";
@@ -135,10 +172,10 @@ public final class JUnitUtil {
     if (psiMethod.isConstructor()) return false;
     if (psiMethod.hasModifierProperty(PsiModifier.PRIVATE)) return false;
     if (isTestAnnotated(psiMethod, true)) return !psiMethod.hasModifierProperty(PsiModifier.STATIC);
+    if (AnnotationUtil.isAnnotated(psiMethod, CONFIGURATIONS_ANNOTATION_NAME, 0)) return false;
     if (aClass != null && MetaAnnotationUtil.isMetaAnnotatedInHierarchy(aClass, Collections.singletonList(CUSTOM_TESTABLE_ANNOTATION))) return true;
     if (!psiMethod.hasModifierProperty(PsiModifier.PUBLIC)) return false;
     if (psiMethod.hasModifierProperty(PsiModifier.ABSTRACT)) return false;
-    if (AnnotationUtil.isAnnotated(psiMethod, CONFIGURATIONS_ANNOTATION_NAME, 0)) return false;
     if (checkClass && checkRunWith) {
       PsiAnnotation annotation = getRunWithAnnotation(aClass);
       if (annotation != null) {
@@ -339,6 +376,7 @@ public final class JUnitUtil {
           ProgressManager.checkCanceled();
           if (!method.hasModifierProperty(PsiModifier.PRIVATE) &&
               !method.hasModifierProperty(PsiModifier.STATIC) &&
+              !method.hasModifierProperty(PsiModifier.ABSTRACT) &&
               MetaAnnotationUtil.isMetaAnnotated(method, CUSTOM_TESTABLE_ANNOTATION_LIST)) {
             hasAnnotation = true;
             break;

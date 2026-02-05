@@ -6,7 +6,6 @@ import com.intellij.diagnostic.PluginException
 import com.intellij.ide.plugins.cl.PluginClassLoader
 import com.intellij.ide.plugins.cl.ResolveScopeManager
 import com.intellij.openapi.diagnostic.Logger
-import com.intellij.openapi.diagnostic.debug
 import com.intellij.openapi.extensions.PluginId
 import com.intellij.util.lang.ClassPath
 import com.intellij.util.lang.ResourceFile
@@ -17,7 +16,8 @@ import java.lang.invoke.MethodHandles
 import java.lang.invoke.MethodType
 import java.nio.file.Files
 import java.nio.file.Path
-import java.util.*
+import java.util.Collections
+import java.util.IdentityHashMap
 import java.util.function.BiFunction
 import java.util.function.Function
 
@@ -52,12 +52,7 @@ class ClassLoaderConfigurator(
     }
   }
 
-  fun configureDescriptorDynamic(subDescriptor: IdeaPluginDescriptorImpl): Boolean {
-    assert(subDescriptor is ContentModuleDescriptor || subDescriptor is DependsSubDescriptor) { subDescriptor }
-    if (subDescriptor is DependsSubDescriptor) {
-      subDescriptor.isMarkedForLoading = false
-      return false
-    }
+  fun configureDescriptorDynamic(subDescriptor: ContentModuleDescriptor): Boolean {
     val mainDescriptor = subDescriptor.getMainDescriptor()
     val pluginId = mainDescriptor.pluginId
     assert(pluginId == subDescriptor.pluginId) { "pluginId '$pluginId' != moduleDescriptor.pluginId '${subDescriptor.pluginId}'"}
@@ -65,7 +60,7 @@ class ClassLoaderConfigurator(
     (mainDescriptor.pluginClassLoader as? PluginClassLoader)?.let {
       mainToClassPath.put(pluginId, MainPluginDescriptorClassPathInfo(classLoader = it))
     }
-    return configureModule(subDescriptor as ContentModuleDescriptor)
+    return configureModule(subDescriptor)
   }
 
   fun configure() {
@@ -103,7 +98,7 @@ class ClassLoaderConfigurator(
     // if the module depends on an unavailable plugin, it will not be loaded
     val missingDependency = dependencies.find { it.pluginClassLoader == null }
     if (missingDependency != null) {
-      LOG.debug { "content module $module is missing dependency $missingDependency" }
+      LOG.warn("content module's dependency's classloader is not configured:\ncontent module = $module\ndependency module = $missingDependency")
       return false
     }
 
@@ -153,7 +148,6 @@ class ClassLoaderConfigurator(
                                       || module.moduleId.name == "intellij.rider.plugins.unity.test.cases"
                                       || module.moduleId.name == "intellij.rider.plugins.unreal.link.test.cases"
                                       || module.moduleId.name == "intellij.rider.test.cases.qodana"
-                                      || module.moduleId.name == "intellij.rider.test.cases.supplementary"
                                       || module.moduleId.name == "intellij.rider.test.cases.consoles"
                                       || module.moduleId.name == "intellij.rider.test.cases.rdct")
       module.pluginClassLoader = PluginClassLoader(

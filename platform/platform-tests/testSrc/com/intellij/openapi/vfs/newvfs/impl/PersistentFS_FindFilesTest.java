@@ -34,7 +34,11 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.BiConsumer;
 
 import static java.util.concurrent.TimeUnit.MINUTES;
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 @TestApplication
 @ExtendWith(CheckVFSHealthExtension.class)
@@ -131,11 +135,13 @@ public class PersistentFS_FindFilesTest {
     forRandomValidFilesInVFS(pFS, filesToTrial, (fileId, file) -> {
 
       String path = file.getPath();
-      NewVirtualFile fileFoundByPath = VfsImplUtil.findFileByPath(file.getFileSystem(), path);
+      NewVirtualFileSystem fileSystem = file.getFileSystem();
+      @SuppressWarnings("removal")
+      NewVirtualFile fileFoundByPath = VfsImplUtil.findFileByPath(fileSystem, path);
       assertEquals(
         file,
         fileFoundByPath,
-        () -> ".findFileByPath( file.getPath(=" + path + ") ) should resolve to the file itself"
+        () -> ".findFileByPath( " + fileSystem + ", file.getPath(=" + path + ") ) should resolve to the file itself"
       );
     });
   }
@@ -147,13 +153,14 @@ public class PersistentFS_FindFilesTest {
     forRandomValidFilesInVFS(pFS, filesToTrial, (fileId, file) -> {
 
       String path = file.getPath();
-      Pair<NewVirtualFile, NewVirtualFile> result = NewVirtualFileSystem.findCachedFileByPath(file.getFileSystem(), path);
+      NewVirtualFileSystem fileSystem = file.getFileSystem();
+      Pair<NewVirtualFile, NewVirtualFile> result = NewVirtualFileSystem.findCachedFileByPath(fileSystem, path);
       //file is guaranteed to be cached, since we load its path from the VFS:
       NewVirtualFile fileFoundByPath = result.first;
       assertEquals(
         file,
         fileFoundByPath,
-        () -> ".findCachedFileByPath( file.getPath(=" + path + ") ) should resolve to the file itself"
+        () -> ".findCachedFileByPath( " + fileSystem + ", file.getPath(=" + path + ") ) should resolve to the file itself"
       );
     });
   }
@@ -165,14 +172,17 @@ public class PersistentFS_FindFilesTest {
     forRandomValidFilesInVFS(pFS, filesToTrial, (fileId, file) -> {
 
       String path = file.getPath();
-      FileNavigator.NavigateResult<VirtualFile> result = NewVirtualFileSystem.findCachedOrTransientFileByPath(file.getFileSystem(), path);
-      assertTrue(result.isResolved(),
-                 () -> ".findCachedOrTransientFileByPath( file.getPath(=" + path + ") ) should resolve to the file itself");
+      NewVirtualFileSystem fileSystem = file.getFileSystem();
+      FileNavigator.NavigateResult<VirtualFile> result = NewVirtualFileSystem.findCachedOrTransientFileByPath(fileSystem, path);
+      assertTrue(
+        result.isResolved(),
+        () -> ".findCachedOrTransientFileByPath( " + fileSystem + ", file.getPath(=" + path + ") ) should resolve to the file itself"
+      );
       //the file is on the stack, hence, it can't be removed from the cache => [findFileByPathIfCached() == findFileByPath()]
       assertEquals(
         file,
         result.resolvedFileOr(null),
-        () -> ".findFileByPathIfCached( file.getPath(=" + path + ") ) should resolve to the file itself"
+        () -> ".findCachedOrTransientFileByPath( " + fileSystem + ", file.getPath(=" + path + ") ) should resolve to the file itself"
       );
     });
   }
@@ -184,12 +194,14 @@ public class PersistentFS_FindFilesTest {
     forRandomValidFilesInVFS(pFS, filesToTrial, (fileId, file) -> {
 
       String path = file.getPath();
+      NewVirtualFileSystem fileSystem = file.getFileSystem();
       String nonCanonicalPath = path.replace("/", "/./"); // [/a] -> [/./a]
-      NewVirtualFile fileFoundByNonCanonicalPath = VfsImplUtil.findFileByPath(file.getFileSystem(), nonCanonicalPath);
+      @SuppressWarnings("removal")
+      NewVirtualFile fileFoundByNonCanonicalPath = VfsImplUtil.findFileByPath(fileSystem, nonCanonicalPath);
       assertEquals(
         file,
         fileFoundByNonCanonicalPath,
-        () -> ".findFileByPath( file.getPath(!canonical=" + nonCanonicalPath + ") ) should resolve to the file itself"
+        () -> ".findFileByPath( " + fileSystem + ", file.getPath(!canonical=" + nonCanonicalPath + ") ) should resolve to the file itself"
       );
     });
   }
@@ -239,6 +251,7 @@ public class PersistentFS_FindFilesTest {
 
       String nonCanonicalPath = path.replaceAll("([\\w+\\-.@\\s]+)/", "$1/../$1/");// [/a/] -> [/a/../a/]
 
+      @SuppressWarnings("removal")
       NewVirtualFile fileFoundByNonCanonicalPath = VfsImplUtil.findFileByPath(fileSystem, nonCanonicalPath);
       if (!file.equals(fileFoundByNonCanonicalPath)) {
         if (!hasSymlinkInThePath(path)) {

@@ -6,27 +6,28 @@ import com.intellij.ide.util.PropertiesComponent;
 import com.intellij.openapi.Disposable;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.util.Disposer;
-import com.intellij.openapi.util.SystemInfo;
+import com.intellij.openapi.util.SystemInfoRt;
 import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.util.registry.Registry;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.remote.RemoteSshProcess;
 import com.intellij.ui.ExperimentalUI;
+import com.intellij.util.concurrency.ThreadingAssertions;
+import com.intellij.util.concurrency.annotations.RequiresBackgroundThread;
+import com.intellij.util.concurrency.annotations.RequiresReadLockAbsence;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.containers.MultiMap;
 import com.jediterm.core.input.KeyEvent;
 import com.jediterm.terminal.ProcessTtyConnector;
 import com.jediterm.terminal.TerminalStarter;
 import com.jediterm.terminal.TtyConnector;
-import com.jediterm.terminal.model.TerminalModelListener;
-import com.jediterm.terminal.model.TerminalTextBuffer;
 import com.pty4j.unix.UnixPtyProcess;
 import com.pty4j.windows.conpty.WinConPtyProcess;
 import com.pty4j.windows.winpty.WinPtyProcess;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import org.jetbrains.plugins.terminal.util.TerminalUtilKt;
+import org.jetbrains.plugins.terminal.util.TerminalEelProcessesKt;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -39,16 +40,43 @@ public final class TerminalUtil {
 
   private TerminalUtil() {}
 
+  /**
+   * Determines if any command is running in the terminal by checking if the shell has any child processes.
+   * This method may access the file system and launch external processes,
+   * so it is prohibited to call it on EDT or under read action.
+   */
+  @SuppressWarnings("UsagesOfObsoleteApi")  // Can't use just only annotations because they generate throwing assertions
+  @RequiresReadLockAbsence(generateAssertion = false)
+  @RequiresBackgroundThread(generateAssertion = false)
   public static boolean hasRunningCommands(@NotNull TtyConnector connector) throws IllegalStateException {
+    ThreadingAssertions.softAssertBackgroundThread();
+    ThreadingAssertions.softAssertNoReadAccess();
+
     if (!connector.isConnected()) return false;
     ProcessTtyConnector processTtyConnector = ShellTerminalWidget.getProcessTtyConnector(connector);
     if (processTtyConnector == null) return true;
-    return hasRunningCommands(processTtyConnector.getProcess());
+    Process javaProcess = processTtyConnector.getProcess();
+    Boolean localResult = localProcessHasRunningCommands(javaProcess);
+    if (localResult != null) return localResult;
+    if (processTtyConnector instanceof LocalTerminalTtyConnector localConnector) {
+      return TerminalEelProcessesKt.hasRunningCommandsBlocking(localConnector.getShellEelProcess());
+    }
+    if (javaProcess instanceof RemoteSshProcess) {
+      // No way to determine if `RemoteSshProcess` has child processes.
+      // However, SSH processes spawned via EelApi are covered by
+      // `org.jetbrains.plugins.terminal.util.TerminalEelProcessesKt.hasRunningCommands`
+      return true;
+    }
+    LOG.warn("Cannot determine if there are running processes: " + SystemInfoRt.OS_NAME + ", " + javaProcess.getClass().getName());
+    return false;
   }
 
-  private static boolean hasRunningCommands(@NotNull Process process) throws IllegalStateException {
-    if (process instanceof RemoteSshProcess) return true;
-    if (SystemInfo.isUnix && process instanceof UnixPtyProcess) {
+  /**
+   * Kept as a safe implementation in 2025.3.x.
+   * To be merged into {@link TerminalEelProcessesKt#hasRunningCommands} in 2026.1
+   */
+  private static @Nullable Boolean localProcessHasRunningCommands(@NotNull Process process) throws IllegalStateException {
+    if (process instanceof UnixPtyProcess) {
       int shellPid = (int)process.pid();
       MultiMap<Integer, Integer> pidToChildPidsMap = MultiMap.create();
       UnixProcessManager.processPSOutput(UnixProcessManager.getPSCmd(false, false), s -> {
@@ -60,7 +88,7 @@ public final class TerminalUtil {
       });
       return !pidToChildPidsMap.get(shellPid).isEmpty();
     }
-    if (SystemInfo.isWindows && process instanceof WinPtyProcess winPty) {
+    if (process instanceof WinPtyProcess winPty) {
       try {
         String executable = FileUtil.toSystemIndependentName(StringUtil.notNullize(getExecutable(winPty)));
         int consoleProcessCount = winPty.getConsoleProcessCount();
@@ -86,8 +114,7 @@ public final class TerminalUtil {
         throw new IllegalStateException(e);
       }
     }
-    LOG.warn("Cannot determine if there are running processes: " + SystemInfo.OS_NAME + ", " + process.getClass().getName());
-    return false;
+    return null;
   }
 
   private static @Nullable String getExecutable(@NotNull WinPtyProcess process) {
@@ -164,15 +191,5 @@ public final class TerminalUtil {
   @ApiStatus.Internal
   public static void setGenOneTerminalVisibilityValue(boolean isVisible) {
     PropertiesComponent.getInstance().setValue(GEN_ONE_OPTION_VISIBLE_PROPERTY, Boolean.toString(isVisible));
-  }
-
-  /**
-   * @deprecated Do not use.
-   */
-  @Deprecated(forRemoval = true)
-  public static void addModelListener(@NotNull TerminalTextBuffer textBuffer,
-                                      @NotNull Disposable parentDisposable,
-                                      @NotNull TerminalModelListener listener) {
-    TerminalUtilKt.addModelListener(textBuffer, parentDisposable, listener);
   }
 }

@@ -65,7 +65,7 @@ jvm_library(
     "//java/debugger/impl",
     "//platform/util/jdom",
     "//java/compiler/impl",
-    "@lib//:kotlinx-coroutines-core",
+    "//libraries/kotlinx/coroutines/core",
     "//platform/object-serializer:objectSerializer-annotations",
     "//plugins/completion-ml-ranking",
     "//plugins/performanceTesting/core:performanceTesting",
@@ -76,9 +76,10 @@ jvm_library(
     "//platform/platform-impl/ui",
     "//java/debugger/shared",
     "//platform/eel-provider",
+    "//platform/execution",
   ],
   exports = ["//plugins/gradle:gradle-common"],
-  runtime_deps = ["@lib//ant/lib:ant-antlr"]
+  runtime_deps = ["@lib//ant/lib:ant"]
 )
 ### auto-generated section `build intellij.gradle.java` end
 
@@ -92,7 +93,13 @@ resourcegroup(
 jvm_library(
   name = "java-tests",
   visibility = ["//visibility:public"],
-  srcs = glob([], allow_empty = True)
+  srcs = glob([], allow_empty = True),
+  runtime_deps = [
+    "//platform/observable",
+    "//platform/external-system-api/dependency-updater",
+    "//platform/core-ui",
+    "//plugins/gradle/tooling-extension-impl:toolingExtension-impl",
+  ]
 )
 
 jvm_library(
@@ -121,6 +128,7 @@ jvm_library(
     "//java/testFramework",
     "//platform/observable",
     "//java/java-runtime:rt",
+    "//plugins/gradle/properties",
     "//plugins/gradle/java",
     "//plugins/gradle:gradle-tests_test_lib",
     "//plugins/gradle/tooling-extension-impl:toolingExtension-tests_test_lib",
@@ -148,7 +156,7 @@ jvm_library(
     "//plugins/toml/core",
     "//plugins/gradle/intellij.gradle.analysis:analysis",
     "//android/gradle-dsl-toml",
-    "@lib//:kotlinx-coroutines-core",
+    "//libraries/kotlinx/coroutines/core",
     "//platform/testFramework/junit5",
     "//platform/testFramework/junit5:junit5_test_lib",
     "//tools/intellij.tools.ide.metrics.benchmark:ide-metrics-benchmark",
@@ -163,7 +171,10 @@ jvm_library(
     "//platform/smRunner",
     "//platform/smRunner:smRunner_test_lib",
     "//platform/statistics/testFramework",
-  ]
+    "//platform/execution",
+    "//platform/refactoring",
+  ],
+  runtime_deps = [":java-tests"]
 )
 ### auto-generated section `build intellij.gradle.java.tests` end
 

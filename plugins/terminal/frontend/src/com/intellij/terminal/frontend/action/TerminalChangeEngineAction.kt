@@ -31,7 +31,7 @@ internal sealed class TerminalChangeEngineAction(private val engine: TerminalEng
       askForFeedbackIfReworkedTerminalDisabled(project, TerminalOptionsProvider.instance.terminalEngine, engine)
       TerminalOptionsProvider.instance.terminalEngine = engine
       // Call save manually, because otherwise this change will be synced to backend only at some time later.
-      saveSettingsForRemoteDevelopment(application)
+      saveSettingsForRemoteDevelopment(e.coroutineScope, application)
 
       createTerminalTab(
         project,

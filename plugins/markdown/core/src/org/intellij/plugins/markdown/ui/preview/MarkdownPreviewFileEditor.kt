@@ -2,9 +2,6 @@
 package org.intellij.plugins.markdown.ui.preview
 
 import com.intellij.ide.DataManager
-import com.intellij.notification.Notification
-import com.intellij.notification.NotificationType
-import com.intellij.notification.Notifications
 import com.intellij.openapi.actionSystem.DataKey
 import com.intellij.openapi.actionSystem.ex.ActionUtil
 import com.intellij.openapi.actionSystem.impl.SimpleDataContext
@@ -29,13 +26,14 @@ import com.intellij.openapi.util.UserDataHolderBase
 import com.intellij.openapi.util.registry.Registry
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.ui.awt.RelativePoint
-import com.intellij.util.PlatformUtils
 import com.intellij.util.concurrency.annotations.RequiresEdt
 import com.intellij.util.ui.StartupUiUtil
 import com.intellij.util.ui.UIUtil
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
 import org.intellij.plugins.markdown.MarkdownBundle
@@ -78,7 +76,12 @@ class MarkdownPreviewFileEditor(
   init {
     document.addDocumentListener(ReparseContentDocumentListener(), this)
 
-    coroutineScope.launch(Dispatchers.EDT) { attachHtmlPanel() }
+    coroutineScope.launch {
+      mainEditor.filterNotNull().first()
+      coroutineScope.launch(Dispatchers.EDT) {
+        attachHtmlPanel()
+      }
+    }
 
     val messageBusConnection = project.messageBus.connect(this)
     val settingsChangedListener = UpdatePanelOnSettingsChangedListener()

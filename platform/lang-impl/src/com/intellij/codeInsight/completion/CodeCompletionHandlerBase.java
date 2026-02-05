@@ -9,18 +9,36 @@ import com.intellij.codeInsight.completion.actions.BaseCodeCompletionAction;
 import com.intellij.codeInsight.completion.impl.CompletionServiceImpl;
 import com.intellij.codeInsight.editorActions.smartEnter.SmartEnterProcessor;
 import com.intellij.codeInsight.editorActions.smartEnter.SmartEnterProcessors;
-import com.intellij.codeInsight.lookup.*;
+import com.intellij.codeInsight.lookup.AutoCompletionPolicy;
+import com.intellij.codeInsight.lookup.Lookup;
+import com.intellij.codeInsight.lookup.LookupArranger;
+import com.intellij.codeInsight.lookup.LookupElement;
+import com.intellij.codeInsight.lookup.LookupFocusDegree;
+import com.intellij.codeInsight.lookup.LookupManager;
 import com.intellij.codeInsight.lookup.impl.LookupImpl;
 import com.intellij.featureStatistics.FeatureUsageTracker;
 import com.intellij.ide.DataManager;
 import com.intellij.lang.Language;
-import com.intellij.openapi.actionSystem.*;
+import com.intellij.openapi.Disposable;
+import com.intellij.openapi.actionSystem.ActionManager;
+import com.intellij.openapi.actionSystem.AnAction;
+import com.intellij.openapi.actionSystem.DataContext;
+import com.intellij.openapi.actionSystem.IdeActions;
+import com.intellij.openapi.actionSystem.OverridingAction;
 import com.intellij.openapi.actionSystem.impl.ActionManagerImpl;
-import com.intellij.openapi.application.*;
+import com.intellij.openapi.application.Application;
+import com.intellij.openapi.application.ApplicationManager;
+import com.intellij.openapi.application.ModalityState;
+import com.intellij.openapi.application.ReadAction;
+import com.intellij.openapi.application.WriteAction;
 import com.intellij.openapi.application.ex.ApplicationManagerEx;
 import com.intellij.openapi.command.CommandProcessor;
 import com.intellij.openapi.diagnostic.Logger;
-import com.intellij.openapi.editor.*;
+import com.intellij.openapi.editor.Caret;
+import com.intellij.openapi.editor.Document;
+import com.intellij.openapi.editor.Editor;
+import com.intellij.openapi.editor.EditorModificationUtil;
+import com.intellij.openapi.editor.EditorModificationUtilEx;
 import com.intellij.openapi.editor.actionSystem.EditorActionManager;
 import com.intellij.openapi.editor.actionSystem.TypedAction;
 import com.intellij.openapi.editor.ex.DocumentEx;
@@ -50,7 +68,11 @@ import com.intellij.util.indexing.DumbModeAccessType;
 import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.context.Context;
 import kotlinx.coroutines.Deferred;
-import org.jetbrains.annotations.*;
+import org.jetbrains.annotations.ApiStatus;
+import org.jetbrains.annotations.NonNls;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.List;
 import java.util.Objects;
@@ -77,7 +99,7 @@ public class CodeCompletionHandlerBase {
   final boolean invokedExplicitly;
   final boolean synchronous;
   final boolean autopopup;
-  private static int ourAutoInsertItemTimeout = Registry.intValue("ide.completion.auto.insert.item.timeout", 2000);
+  private static int ourAutoInsertItemTimeout = getDefaultAutoInsertTimeout();
 
   private final Tracer completionTracer = TelemetryManager.getInstance().getTracer(CodeCompletion);
 
@@ -155,8 +177,7 @@ public class CodeCompletionHandlerBase {
     invokeCompletionWithTracing(project, editor, time, hasModifiers, editor.getCaretModel().getPrimaryCaret());
   }
 
-  @ApiStatus.Internal
-  protected void invokeCompletion(@NotNull Project project, @NotNull Editor editor, int time, boolean hasModifiers, @NotNull Caret caret) {
+  private void invokeCompletion(@NotNull Project project, @NotNull Editor editor, int time, boolean hasModifiers, @NotNull Caret caret) {
     markCaretAsProcessed(caret);
 
     if (invokedExplicitly) {
@@ -277,11 +298,10 @@ public class CodeCompletionHandlerBase {
     return lookup;
   }
 
-  @ApiStatus.Internal
-  protected void doComplete(@NotNull CompletionInitializationContextImpl initContext,
-                            boolean hasModifiers,
-                            boolean isValidContext,
-                            long startingTime) {
+  private void doComplete(@NotNull CompletionInitializationContextImpl initContext,
+                          boolean hasModifiers,
+                          boolean isValidContext,
+                          long startingTime) {
     Editor editor = initContext.getEditor();
     CompletionAssertions.checkEditorValid(editor);
 
@@ -308,7 +328,7 @@ public class CodeCompletionHandlerBase {
     if (synchronous && isValidContext) {
       OffsetsInFile hostCopyOffsets = withTimeout(calcSyncTimeOut(startingTime), () -> {
         PsiDocumentManager.getInstance(initContext.getProject()).commitAllDocuments();
-        return CompletionInitializationUtil.insertDummyIdentifier(initContext, indicator).get();
+        return CompletionInitializationUtil.insertDummyIdentifier(initContext, indicator).ensureUpdatedAndGetNewOffsets();
       });
       if (hostCopyOffsets != null) {
         trySynchronousCompletion(initContext, hasModifiers, startingTime, indicator, hostCopyOffsets);
@@ -336,7 +356,7 @@ public class CodeCompletionHandlerBase {
       .expireWith(phase)
       .withDocumentsCommitted(indicator.getProject())
       .finishOnUiThread(ModalityState.defaultModalityState(), applyPsiChanges -> {
-        OffsetsInFile hostCopyOffsets = applyPsiChanges.get();
+        OffsetsInFile hostCopyOffsets = applyPsiChanges.ensureUpdatedAndGetNewOffsets();
 
         if (phase instanceof CompletionPhase.CommittingDocuments) {
           ((CompletionPhase.CommittingDocuments)phase).replaced = true;
@@ -713,7 +733,13 @@ public class CodeCompletionHandlerBase {
 
     WatchingInsertionContext context =
       CompletionUtil.createInsertionContext(lookupItems, item, completionChar, editor, psiFile, caretOffset, idEndOffset, offsetMap);
+
     int initialStartOffset = Math.max(0, caretOffset - item.getLookupString().length());
+    if (item instanceof CompletionItemLookupElement) {
+      // No additional special handling should be performed; 
+      // everything is already done inside LookupImpl::insertItem
+      return context;
+    }
     ApplicationManager.getApplication().runWriteAction(() -> {
       try {
         if (caretOffset < idEndOffset && completionChar == Lookup.REPLACE_SELECT_CHAR) {
@@ -825,15 +851,13 @@ public class CodeCompletionHandlerBase {
     };
   }
 
-  @ApiStatus.Internal
-  protected static void clearCaretMarkers(@NotNull Editor editor) {
+  private static void clearCaretMarkers(@NotNull Editor editor) {
     for (Caret caret : editor.getCaretModel().getAllCarets()) {
       caret.putUserData(CARET_PROCESSED, null);
     }
   }
 
-  @ApiStatus.Internal
-  protected static void markCaretAsProcessed(@NotNull Caret caret) {
+  private static void markCaretAsProcessed(@NotNull Caret caret) {
     caret.putUserData(CARET_PROCESSED, Boolean.TRUE);
   }
 
@@ -854,15 +878,20 @@ public class CodeCompletionHandlerBase {
     return ProgressIndicatorUtils.withTimeout(maxDurationMillis, task);
   }
 
-  @ApiStatus.Internal
-  protected static int calcSyncTimeOut(long startTime) {
+  private static int calcSyncTimeOut(long startTime) {
     return (int)Math.max(300, ourAutoInsertItemTimeout - (System.currentTimeMillis() - startTime));
   }
 
   @TestOnly
-  public static void setAutoInsertTimeout(int timeout) {
+  public static void setAutoInsertTimeout(int timeout, @NotNull Disposable parentDisposable) {
     ourAutoInsertItemTimeout = timeout;
+    Disposer.register(parentDisposable, () -> ourAutoInsertItemTimeout = getDefaultAutoInsertTimeout());
   }
+
+  private static int getDefaultAutoInsertTimeout() {
+    return Registry.intValue("ide.completion.auto.insert.item.timeout", 2000);
+  }
+
 
   protected boolean isTestingCompletionQualityMode() {
     return false;

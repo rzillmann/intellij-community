@@ -4,7 +4,6 @@ package com.intellij.openapi.vcs.changes.ui
 import com.intellij.icons.AllIcons
 import com.intellij.ide.IdeBundle
 import com.intellij.ide.actions.ToolWindowEmptyStateAction.rebuildContentUi
-import com.intellij.ide.trustedProjects.TrustedProjects
 import com.intellij.openapi.actionSystem.ActionGroup
 import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.project.Project
@@ -17,10 +16,11 @@ import com.intellij.ui.IconManager
 import com.intellij.ui.JBColor
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.StatusText
+import com.intellij.vcs.commit.CommitModeManager
 import java.util.function.Supplier
 import javax.swing.UIManager
 
-private class ChangeViewToolWindowFactory : VcsToolWindowFactory() {
+internal class ChangeViewToolWindowFactory : VcsToolWindowFactory() {
   private val shouldShowWithoutActiveVcs = Registry.get("vcs.empty.toolwindow.show")
 
   override fun init(window: ToolWindow) {
@@ -57,14 +57,14 @@ private class ChangeViewToolWindowFactory : VcsToolWindowFactory() {
     }
   }
 
-  override fun isAvailable(project: Project) = TrustedProjects.isProjectTrusted(project)
+  override fun isAvailable(project: Project) = canBeAvailableInProject(project)
 
   private fun showInStripeWithoutActiveVcs(project: Project): Boolean {
     return shouldShowWithoutActiveVcs.asBoolean() || ProjectLevelVcsManager.getInstance(project).hasAnyMappings()
   }
 }
 
-private class CommitToolWindowFactory : VcsToolWindowFactory() {
+internal class CommitToolWindowFactory : VcsToolWindowFactory() {
   override fun init(window: ToolWindow) {
     super.init(window)
 
@@ -75,11 +75,10 @@ private class CommitToolWindowFactory : VcsToolWindowFactory() {
     setCommitViewEmptyState(state, project)
   }
 
-  override fun isAvailable(project: Project): Boolean {
-    return ProjectLevelVcsManager.getInstance(project).hasAnyMappings() &&
-           ChangesViewContentManager.isCommitToolWindowShown(project) &&
-           TrustedProjects.isProjectTrusted(project)
-  }
+  override fun isAvailable(project: Project): Boolean =
+    canBeAvailableInProject(project) &&
+    ProjectLevelVcsManager.getInstance(project).hasAnyMappings() &&
+    CommitModeManager.isCommitToolWindowEnabled(project)
 
   override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
     super.createToolWindowContent(project, toolWindow)

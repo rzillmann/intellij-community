@@ -12,12 +12,14 @@ import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.FileEditorManagerEvent
 import com.intellij.openapi.fileEditor.FileEditorManagerListener
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.registry.Registry
 import com.intellij.openapi.wm.ex.WelcomeScreenProjectProvider.Companion.isWelcomeScreenProject
 import com.intellij.openapi.wm.impl.welcomeScreen.recentProjects.ProjectCollectors
 import com.intellij.openapi.wm.impl.welcomeScreen.recentProjects.RecentProjectFilteringTree
 import com.intellij.openapi.wm.impl.welcomeScreen.recentProjects.RecentProjectPanelComponentFactory
 import com.intellij.platform.ide.nonModalWelcomeScreen.GoFileDragAndDropHandler
 import com.intellij.platform.ide.nonModalWelcomeScreen.NonModalWelcomeScreenBundle
+import com.intellij.platform.ide.nonModalWelcomeScreen.isNonModalWelcomeScreenEnabled
 import com.intellij.platform.ide.nonModalWelcomeScreen.rightTab.WelcomeScreenRightTabVirtualFile
 import com.intellij.ui.ExperimentalUI
 import com.intellij.ui.IconManager
@@ -41,7 +43,7 @@ import javax.swing.ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED
 
 @ApiStatus.Internal
 class WelcomeScreenLeftPanel(private val project: Project) : ProjectViewPane(project) {
-  private var recentProjectTreeComponent: JComponent? = null
+  private var searchField: SearchTextField? = null
 
   override fun getTitle(): String = NonModalWelcomeScreenBundle.message("welcome.screen.project.view.title")
 
@@ -49,9 +51,11 @@ class WelcomeScreenLeftPanel(private val project: Project) : ProjectViewPane(pro
 
   override fun getIcon(): Icon = IconManager.getInstance().getPlatformIcon(PlatformIcons.Folder)
 
-  override fun isInitiallyVisible(): Boolean = isWelcomeScreenProject(project)
+  override fun isInitiallyVisible(): Boolean = isWelcomeScreenProject(project) && isNonModalWelcomeScreenEnabled
 
-  override fun isDefaultPane(project: Project): Boolean = isWelcomeScreenProject(project)
+  override fun isDefaultPane(project: Project): Boolean {
+    return !Registry.`is`("ide.welcome.screen.change.project.view.depending.on.opened.file", false) && isWelcomeScreenProject(project)
+  }
 
   override fun getWeight(): Int = -10 // TODO: Increase weight?
 
@@ -90,7 +94,6 @@ class WelcomeScreenLeftPanel(private val project: Project) : ProjectViewPane(pro
 
     val projectFilteringTree = createRecentProjectTree()
     setupDragAndDrop(projectFilteringTree.component)
-    recentProjectTreeComponent = projectFilteringTree.component
 
     val topPanel = JBPanel<JBPanel<*>>().apply {
       layout = BoxLayout(this, BoxLayout.Y_AXIS)
@@ -109,17 +112,18 @@ class WelcomeScreenLeftPanel(private val project: Project) : ProjectViewPane(pro
   }
 
   override fun getComponentToFocus(): JComponent? {
-    return recentProjectTreeComponent
+    return searchField
   }
 
   override fun dispose() {
-    recentProjectTreeComponent = null
+    searchField = null
     super.dispose()
   }
 
   private fun searchPanel(recentProjectTree: RecentProjectFilteringTree) = panel {
     row {
       val projectSearch = createProjectSearchField(recentProjectTree)
+      searchField = projectSearch
       cell(projectSearch)
         .align(AlignX.FILL)
         .customize(UnscaledGaps(top = 4, bottom = 4, left = 20, right = 20))
@@ -133,7 +137,7 @@ class WelcomeScreenLeftPanel(private val project: Project) : ProjectViewPane(pro
       treeBackground = null
     ).apply {
       tree.emptyText.text = NonModalWelcomeScreenBundle.message("welcome.screen.no.recent.projects")
-      selectLastOpenedProject()
+      selectLastOpenedProjectOrTheFirstInTree()
     }
 
   private fun createProjectSearchField(recentProjectTree: RecentProjectFilteringTree): SearchTextField =

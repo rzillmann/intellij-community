@@ -4,7 +4,6 @@ package com.intellij.xdebugger.impl.ui.tree.actions;
 import com.intellij.openapi.actionSystem.ActionUpdateThread;
 import com.intellij.openapi.actionSystem.AnActionEvent;
 import com.intellij.openapi.actionSystem.Presentation;
-import com.intellij.openapi.actionSystem.remoting.ActionRemoteBehaviorSpecification;
 import com.intellij.xdebugger.impl.ui.tree.SetValueInplaceEditor;
 import com.intellij.xdebugger.impl.ui.tree.nodes.WatchNode;
 import com.intellij.xdebugger.impl.ui.tree.nodes.XValueNodeImpl;
@@ -12,7 +11,7 @@ import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 
 @ApiStatus.Internal
-public class XSetValueAction extends XDebuggerTreeActionBase implements ActionRemoteBehaviorSpecification.FrontendOtherwiseBackend {
+public class XSetValueAction extends XDebuggerTreeSplitActionBase {
   @Override
   public @NotNull ActionUpdateThread getActionUpdateThread() {
     return ActionUpdateThread.BGT;

@@ -25,9 +25,19 @@ import com.jetbrains.python.psi.PyClass;
 import com.jetbrains.python.psi.PyPsiFacade;
 import com.jetbrains.python.psi.impl.PyBuiltinCache;
 import one.util.streamex.StreamEx;
-import org.jetbrains.annotations.*;
+import org.jetbrains.annotations.ApiStatus;
+import org.jetbrains.annotations.Contract;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.UnmodifiableView;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Optional;
+import java.util.Set;
 import java.util.function.BinaryOperator;
 import java.util.function.Function;
 import java.util.stream.Collector;
@@ -85,9 +95,9 @@ public final class PyTypeUtil {
    * Returns members of certain type from {@link PyClassLikeType}.
    */
   public static @NotNull <T extends PsiElement> List<T> getMembersOfType(final @NotNull PyClassLikeType type,
-                                                                final @NotNull Class<T> expectedMemberType,
-                                                                boolean inherited,
-                                                                final @NotNull TypeEvalContext context) {
+                                                                         final @NotNull Class<T> expectedMemberType,
+                                                                         boolean inherited,
+                                                                         final @NotNull TypeEvalContext context) {
 
     final List<T> result = new ArrayList<>();
     type.visitMembers(t -> {
@@ -104,9 +114,10 @@ public final class PyTypeUtil {
 
   /**
    * Search for data in dataholder or members of union recursively
+   *
    * @param type start point
-   * @param key key to search
-   * @param <T> result tyoe
+   * @param key  key to search
+   * @param <T>  result tyoe
    * @return data or null if not found
    */
   public static @Nullable <T> T findData(final @NotNull PyType type, final @NotNull Key<T> key) {
@@ -159,6 +170,9 @@ public final class PyTypeUtil {
     if (type instanceof PyUnsafeUnionType weakUnionType) {
       return StreamEx.of(weakUnionType.getMembers());
     }
+    if (type instanceof PyIntersectionType intersectionType) {
+      return StreamEx.of(intersectionType.getMembers());
+    }
     return StreamEx.of(type);
   }
 
@@ -184,7 +198,7 @@ public final class PyTypeUtil {
   public static @NotNull Collector<Ref<PyType>, ?, Ref<PyType>> toUnionFromRef(@Nullable PyType streamSource) {
     return toUnionFromRef(streamSource instanceof PyUnsafeUnionType ? PyUnsafeUnionType::unsafeUnion : PyUnionType::union);
   }
-  
+
   private static @NotNull Collector<Ref<PyType>, ?, Ref<PyType>> toUnionFromRef(@NotNull BinaryOperator<PyType> unionReduction) {
     return Collectors.reducing(null, (accType, hintType) -> {
       if (hintType == null) {
@@ -215,8 +229,14 @@ public final class PyTypeUtil {
     return Collectors.collectingAndThen(Collectors.toList(), PyUnionType::union);
   }
 
+  @ApiStatus.Experimental
   public static @NotNull Collector<@Nullable PyType, ?, @Nullable PyType> toUnsafeUnion() {
     return Collectors.collectingAndThen(Collectors.toList(), PyUnsafeUnionType::unsafeUnion);
+  }
+
+  @ApiStatus.Experimental
+  public static @NotNull Collector<@Nullable PyType, ?, @Nullable PyType> toIntersection() {
+    return Collectors.collectingAndThen(Collectors.toList(), PyIntersectionType::intersection);
   }
 
   public static @NotNull Collector<@Nullable PyType, ?, @Nullable PyType> toUnion(@Nullable PyType streamSource) {
@@ -247,7 +267,7 @@ public final class PyTypeUtil {
                                                      new PyClassTypeImpl(superClass, false));
     return PyTypeChecker.convertToType(type, superClassType, context);
   }
-  
+
   public static boolean inheritsAny(@NotNull PyType type, @NotNull TypeEvalContext context) {
     return type instanceof PyClassLikeType classLikeType && classLikeType.getAncestorTypes(context).contains(null);
   }

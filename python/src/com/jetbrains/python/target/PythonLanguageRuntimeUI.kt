@@ -26,9 +26,15 @@ import com.jetbrains.python.newProjectWizard.projectPath.ProjectPathFlows
 import com.jetbrains.python.onFailure
 import com.jetbrains.python.sdk.ModuleOrProject
 import com.jetbrains.python.sdk.add.collector.PythonNewInterpreterAddedCollector
-import com.jetbrains.python.sdk.add.v2.*
+import com.jetbrains.python.sdk.add.v2.FileSystem
+import com.jetbrains.python.sdk.add.v2.PathHolder
+import com.jetbrains.python.sdk.add.v2.PythonAddCustomInterpreter
+import com.jetbrains.python.sdk.add.v2.PythonInterpreterSelectionMode
+import com.jetbrains.python.sdk.add.v2.PythonLocalAddInterpreterModel
 import com.jetbrains.python.sdk.configurePythonSdk
+import com.jetbrains.python.sdk.service.PySdkService.Companion.pySdkService
 import com.jetbrains.python.util.ShowingMessageErrorSync
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.supervisorScope
 import java.awt.Dimension
 import java.nio.file.Path
@@ -63,6 +69,7 @@ class PythonLanguageRuntimeUI(
       module = module,
       errorSink = ShowingMessageErrorSync,
       limitExistingEnvironments = true,
+      bestGuessCreateSdkInfo = CompletableDeferred(value = null)
     )
 
     val dialogPanel = panel {
@@ -113,6 +120,7 @@ class PythonLanguageRuntimeUI(
 
       sdk?.let {
         configurePythonSdk(project, module, it)
+        project.pySdkService.persistSdk(it)
         PythonNewInterpreterAddedCollector.logPythonNewInterpreterAdded(it, false)
       }
 

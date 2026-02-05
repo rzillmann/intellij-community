@@ -17,8 +17,6 @@ import com.intellij.openapi.wm.impl.customFrameDecorations.header.titleLabel.Sim
 import com.intellij.openapi.wm.impl.headertoolbar.MainToolbar
 import com.intellij.openapi.wm.impl.headertoolbar.computeMainActionGroups
 import com.intellij.platform.util.coroutines.childScope
-import com.intellij.ui.BorderPainter
-import com.intellij.ui.DefaultBorderPainter
 import com.intellij.ui.UIBundle
 import com.intellij.ui.mac.MacFullScreenControlsManager
 import com.intellij.ui.mac.MacMainFrameDecorator
@@ -28,10 +26,19 @@ import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.JBValue
 import com.jetbrains.JBR
 import com.jetbrains.WindowDecorations
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
-import java.awt.*
+import kotlinx.coroutines.job
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.awt.Container
+import java.awt.Dimension
+import java.awt.Graphics
+import java.awt.Graphics2D
+import java.awt.GridBagConstraints
+import java.awt.GridBagLayout
 import java.awt.event.WindowAdapter
 import java.awt.event.WindowEvent
 import java.beans.PropertyChangeListener
@@ -71,8 +78,6 @@ internal class MacToolbarFrameHeader(
   }
 
   val customTitleBar: WindowDecorations.CustomTitleBar?
-
-  internal var borderPainter: BorderPainter = DefaultBorderPainter()
 
   init {
     // a colorful toolbar
@@ -132,9 +137,8 @@ internal class MacToolbarFrameHeader(
     repaintWhenProjectGradientOffsetChanged(this)
   }
 
-  override fun getComponentGraphics(graphics: Graphics?): Graphics? {
-    val componentGraphics = super.getComponentGraphics(graphics)
-    return InternalUICustomization.getInstance()?.transformGraphics(this, componentGraphics) ?: componentGraphics
+  override fun getComponentGraphics(graphics: Graphics): Graphics {
+    return InternalUICustomization.runGlobalCGTransformWithInactiveFrameSupport(this, super.getComponentGraphics(graphics))
   }
 
   private fun isCompactHeaderFast(): Boolean {
@@ -156,11 +160,6 @@ internal class MacToolbarFrameHeader(
 
   private fun getPreferredHeight(): Int {
     return CustomWindowHeaderUtil.getPreferredWindowHeaderHeight(view is CompactHeaderView)
-  }
-
-  override fun paint(g: Graphics) {
-    super.paint(g)
-    borderPainter.paintAfterChildren(this, g)
   }
 
   override fun paintComponent(g: Graphics) {

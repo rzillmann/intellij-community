@@ -7,6 +7,7 @@ import git4idea.i18n.GitBundle
 import git4idea.inMemory.GitObjectRepository
 import git4idea.inMemory.chainCommits
 import git4idea.inMemory.rebase.log.GitInMemoryCommitEditingOperation
+import org.jetbrains.annotations.Nls
 import org.jetbrains.annotations.NonNls
 
 internal class GitInMemoryRewordOperation(
@@ -18,9 +19,8 @@ internal class GitInMemoryRewordOperation(
     private val LOG = logger<GitInMemoryRewordOperation>()
   }
 
-  @NonNls
-  override val reflogMessage: String = "reword $targetCommitMetadata"
-  override val failureTitle: String = GitBundle.message("in.memory.rebase.log.reword.failed.title")
+  override val operationName: @Nls String = GitBundle.message("action.Git.Reword.Commit.operation.name", targetCommitMetadata)
+  override val failureTitle: @NonNls String = GitBundle.message("in.memory.rebase.log.reword.failed.title")
 
   override suspend fun editCommits(): CommitEditingResult {
     val targetCommit = baseToHeadCommitsRange.first()
@@ -30,6 +30,6 @@ internal class GitInMemoryRewordOperation(
     val newHead = objectRepo.chainCommits(rewordedTargetCommit, baseToHeadCommitsRange.drop(1))
 
     LOG.info("Finish computing new head for reword operation")
-    return CommitEditingResult(newHead, rewordedTargetCommit)
+    return CommitEditingResult(newHead, requiresWorkingTreeUpdate = false, commitToFocus = rewordedTargetCommit)
   }
 }

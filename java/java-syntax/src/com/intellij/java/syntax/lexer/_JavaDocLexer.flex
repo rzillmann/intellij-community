@@ -14,6 +14,8 @@ import kotlin.jvm.JvmStatic
   private var mySnippetBracesLevel = 0;
   /* Enable markdown support for java 23 */
   private var myMarkdownMode = false;
+  /** Whether comment data should take into account spaces, on used with [myMarkdownMode] */
+  private var commentDataWithSpaces = false;
 
   constructor(isJdk15Enabled: Boolean) {
     myJdk15Enabled = isJdk15Enabled;
@@ -22,6 +24,7 @@ import kotlin.jvm.JvmStatic
   /** Should be called right after a reset */
   public fun setMarkdownMode(isEnabled: Boolean) {
     myMarkdownMode = isEnabled;
+    if (!myMarkdownMode) commentDataWithSpaces = false;
   }
 
   public fun checkAhead(c: Char): Boolean {
@@ -94,7 +97,11 @@ LEADING_TOKEN_MARKDOWN="///"
 }
 
 <COMMENT_DATA_START> {WHITE_DOC_SPACE_CHAR}+ { return JavaDocSyntaxTokenType.DOC_SPACE; }
-<COMMENT_DATA> {WHITE_DOC_SPACE_NO_LR}+ { return JavaDocSyntaxTokenType.DOC_COMMENT_DATA; }
+<COMMENT_DATA> {WHITE_DOC_SPACE_NO_LR}+ { return when(commentDataWithSpaces) {
+          true -> JavaDocSyntaxTokenType.DOC_SPACE
+          false -> JavaDocSyntaxTokenType.DOC_COMMENT_DATA
+        }
+      }
 <COMMENT_DATA> [\n\r]+{WHITE_DOC_SPACE_CHAR}* { return JavaDocSyntaxTokenType.DOC_SPACE; }
 
 <DOC_TAG_VALUE> {WHITE_DOC_SPACE_CHAR}+ { yybegin(COMMENT_DATA); return JavaDocSyntaxTokenType.DOC_SPACE; }
@@ -133,10 +140,12 @@ LEADING_TOKEN_MARKDOWN="///"
       }
 
       // According to the JFlex user guide, lookahead should be avoided.
+      (\\\\) { yybegin(COMMENT_DATA); return JavaDocSyntaxTokenType.DOC_COMMENT_DATA; }
       (\\\[) { yybegin(COMMENT_DATA); return JavaDocSyntaxTokenType.DOC_COMMENT_DATA; }
       (\\\]) { yybegin(COMMENT_DATA); return JavaDocSyntaxTokenType.DOC_COMMENT_DATA; }
       (\\\() { yybegin(COMMENT_DATA); return JavaDocSyntaxTokenType.DOC_COMMENT_DATA; }
       (\\\)) { yybegin(COMMENT_DATA); return JavaDocSyntaxTokenType.DOC_COMMENT_DATA; }
+      (\\\`) { yybegin(COMMENT_DATA); return JavaDocSyntaxTokenType.DOC_COMMENT_DATA; }
 
       [,] {
           yybegin(COMMENT_DATA);
@@ -181,6 +190,7 @@ LEADING_TOKEN_MARKDOWN="///"
       \[ {
         yybegin(COMMENT_DATA);
         if(myMarkdownMode) {
+          commentDataWithSpaces = true;
           return JavaDocSyntaxTokenType.DOC_LBRACKET;
         }
         return JavaDocSyntaxTokenType.DOC_COMMENT_DATA;
@@ -188,6 +198,7 @@ LEADING_TOKEN_MARKDOWN="///"
       \] {
         yybegin(COMMENT_DATA);
         if(myMarkdownMode) {
+          commentDataWithSpaces = false;
           return JavaDocSyntaxTokenType.DOC_RBRACKET;
         }
         return JavaDocSyntaxTokenType.DOC_COMMENT_DATA;
@@ -219,8 +230,8 @@ LEADING_TOKEN_MARKDOWN="///"
   }
 }
 
-<INLINE_TAG_NAME> "@code" { yybegin(CODE_TAG_SPACE); return JavaDocSyntaxTokenType.DOC_TAG_NAME; }
-<INLINE_TAG_NAME> "@literal" { yybegin(CODE_TAG_SPACE); return JavaDocSyntaxTokenType.DOC_TAG_NAME; }
+<INLINE_TAG_NAME> "@"("code"|"literal") { yybegin(CODE_TAG_SPACE); return JavaDocSyntaxTokenType.DOC_TAG_NAME; }
+<INLINE_TAG_NAME> "@"("return"|"summary") { yybegin(DOC_TAG_VALUE); return JavaDocSyntaxTokenType.DOC_TAG_NAME; }
 <INLINE_TAG_NAME> "@snippet" { yybegin(SNIPPET_TAG_COMMENT_DATA_UNTIL_COLON); return JavaDocSyntaxTokenType.DOC_TAG_NAME; }
 <INLINE_TAG_NAME> "@"{INLINE_TAG_IDENTIFIER} { yybegin(TAG_DOC_SPACE); return JavaDocSyntaxTokenType.DOC_TAG_NAME; }
 <COMMENT_DATA_START, COMMENT_DATA, TAG_DOC_SPACE, DOC_TAG_VALUE, CODE_TAG, CODE_TAG_SPACE, SNIPPET_ATTRIBUTE_VALUE_DOUBLE_QUOTES,
@@ -228,7 +239,7 @@ SNIPPET_ATTRIBUTE_VALUE_SINGLE_QUOTES, SNIPPET_TAG_COMMENT_DATA_UNTIL_COLON> "}"
 
 <COMMENT_DATA_START, COMMENT_DATA, DOC_TAG_VALUE> . { yybegin(COMMENT_DATA); return JavaDocSyntaxTokenType.DOC_COMMENT_DATA; }
 <CODE_TAG, CODE_TAG_SPACE> . { yybegin(CODE_TAG); return JavaDocSyntaxTokenType.DOC_COMMENT_DATA; }
-<COMMENT_DATA_START> "@"("author"|"code"|"deprecated"|"docRoot"|"hidden"|"index"|"implNote"|"literal"|"return"|"serial"|"summary") { yybegin(DOC_TAG_VALUE); return JavaDocSyntaxTokenType.DOC_TAG_NAME; }
+<COMMENT_DATA_START> "@"("author"|"deprecated"|"hidden"|"index"|"implNote"|"return"|"serial") { yybegin(DOC_TAG_VALUE); return JavaDocSyntaxTokenType.DOC_TAG_NAME; }
 <COMMENT_DATA_START> "@"{TAG_IDENTIFIER} { yybegin(TAG_DOC_SPACE); return JavaDocSyntaxTokenType.DOC_TAG_NAME; }
 
 <SNIPPET_ATTRIBUTE_VALUE_DOUBLE_QUOTES> {

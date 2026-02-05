@@ -9,6 +9,78 @@ com.intellij.codeInsight.editorActions.TextBlockTransferableData
 f:com.intellij.execution.filters.HyperlinkInfoBaseKt
 com.intellij.execution.ui.FragmentWrapper
 - a:getComponentToRegister():javax.swing.JComponent
+f:com.intellij.execution.ui.utils.Fragment
+- com.intellij.execution.ui.utils.AbstractFragmentBuilder
+- build():com.intellij.execution.ui.SettingsEditorFragment
+- f:getApply():kotlin.jvm.functions.Function2
+- f:getCommandLinePosition():I
+- f:getEditorGetter():kotlin.jvm.functions.Function1
+- f:getHint():java.lang.String
+- f:getId():java.lang.String
+- f:getName():java.lang.String
+- f:getOnToggle():kotlin.jvm.functions.Function1
+- f:getReset():kotlin.jvm.functions.Function2
+- f:getValidation():kotlin.jvm.functions.Function2
+- f:getVisible():kotlin.jvm.functions.Function1
+- f:isRemovable():Z
+- f:setApply(kotlin.jvm.functions.Function2):V
+- f:setCommandLinePosition(I):V
+- f:setEditorGetter(kotlin.jvm.functions.Function1):V
+- f:setHint(java.lang.String):V
+- f:setName(java.lang.String):V
+- f:setOnToggle(kotlin.jvm.functions.Function1):V
+- f:setRemovable(Z):V
+- f:setReset(kotlin.jvm.functions.Function2):V
+- f:setValidation(kotlin.jvm.functions.Function2):V
+- f:setVisible(kotlin.jvm.functions.Function1):V
+f:com.intellij.execution.ui.utils.FragmentsBuilder
+- f:asFragment(javax.swing.JComponent,java.lang.String,kotlin.jvm.functions.Function1):com.intellij.execution.ui.SettingsEditorFragment
+- f:build():java.util.List
+- f:customFragment(com.intellij.execution.ui.SettingsEditorFragment):com.intellij.execution.ui.SettingsEditorFragment
+- f:fragment(java.lang.String,javax.swing.JComponent,kotlin.jvm.functions.Function1):com.intellij.execution.ui.SettingsEditorFragment
+- f:getFullId():java.lang.String
+- f:group(java.lang.String,java.lang.String,kotlin.jvm.functions.Function1):com.intellij.execution.ui.NestedGroupFragment
+- f:tag(java.lang.String,java.lang.String,kotlin.jvm.functions.Function1):com.intellij.execution.ui.SettingsEditorFragment
+- f:variantableTag(java.lang.String,java.lang.String,kotlin.jvm.functions.Function1):V
+- f:withCustomBuilder(com.intellij.execution.ui.utils.AbstractFragmentBuilder,kotlin.jvm.functions.Function1):com.intellij.execution.ui.SettingsEditorFragment
+f:com.intellij.execution.ui.utils.FragmentsDslBuilderKt
+- sf:fragmentsBuilder(java.lang.String,java.lang.String):com.intellij.execution.ui.utils.FragmentsBuilder
+f:com.intellij.execution.ui.utils.Group
+- com.intellij.execution.ui.utils.AbstractFragmentBuilder
+- build():com.intellij.execution.ui.NestedGroupFragment
+- f:getApplyVisibility():kotlin.jvm.functions.Function2
+- f:getChildren():kotlin.jvm.functions.Function1
+- f:getChildrenGroupName():java.lang.String
+- f:getId():java.lang.String
+- f:getName():java.lang.String
+- f:getParentId():java.lang.String
+- f:getVisible():kotlin.jvm.functions.Function1
+- f:setApplyVisibility(kotlin.jvm.functions.Function2):V
+- f:setChildren(kotlin.jvm.functions.Function1):V
+- f:setChildrenGroupName(java.lang.String):V
+- f:setVisible(kotlin.jvm.functions.Function1):V
+f:com.intellij.execution.ui.utils.Tag
+- com.intellij.execution.ui.utils.AbstractFragmentBuilder
+- build():com.intellij.execution.ui.SettingsEditorFragment
+- f:getGetter():kotlin.jvm.functions.Function1
+- f:getId():java.lang.String
+- f:getName():java.lang.String
+- f:getSetter():kotlin.jvm.functions.Function2
+- f:getToolTip():java.lang.String
+- f:getValidation():kotlin.jvm.functions.Function2
+- f:setGetter(kotlin.jvm.functions.Function1):V
+- f:setSetter(kotlin.jvm.functions.Function2):V
+- f:setToolTip(java.lang.String):V
+- f:setValidation(kotlin.jvm.functions.Function2):V
+f:com.intellij.execution.ui.utils.VariantableTag
+- com.intellij.execution.ui.utils.AbstractFragmentBuilder
+- build():com.intellij.execution.ui.SettingsEditorFragment
+- f:getId():java.lang.String
+- f:getName():java.lang.String
+- f:getVisible():kotlin.jvm.functions.Function1
+- f:setVisible(kotlin.jvm.functions.Function1):V
+- f:variant(java.lang.Object,java.lang.String,java.lang.String,java.lang.String,kotlin.jvm.functions.Function1,kotlin.jvm.functions.Function2,kotlin.jvm.functions.Function1):V
+- bs:variant$default(com.intellij.execution.ui.utils.VariantableTag,java.lang.Object,java.lang.String,java.lang.String,java.lang.String,kotlin.jvm.functions.Function1,kotlin.jvm.functions.Function2,kotlin.jvm.functions.Function1,I,java.lang.Object):V
 com.intellij.featureStatistics.ApplicabilityFilter
 - a:getPrefix():java.lang.String
 - a:isApplicable(java.lang.String,com.intellij.openapi.project.Project):Z
@@ -158,6 +230,18 @@ com.intellij.ide.warmup.WarmupConfigurator
 - a:runWarmup(com.intellij.openapi.project.Project,kotlin.coroutines.Continuation):java.lang.Object
 com.intellij.ide.warmup.WarmupStatus
 - sf:Companion:com.intellij.ide.warmup.WarmupStatus$Companion
+a:com.intellij.ide.wizard.AbstractWizard
+- p:getHelpID():java.lang.String
+- p:getHelpId():java.lang.String
+f:com.intellij.internal.inspector.PropertyBean
+- sf:Companion:com.intellij.internal.inspector.PropertyBean$Companion
+- <init>(java.lang.String,java.lang.Object):V
+- <init>(java.lang.String,java.lang.Object,Z):V
+- b:<init>(java.lang.String,java.lang.Object,Z,I,kotlin.jvm.internal.DefaultConstructorMarker):V
+- f:getChanged():Z
+- f:getPropertyName():java.lang.String
+- f:getPropertyValue():java.lang.Object
+f:com.intellij.internal.inspector.PropertyBean$Companion
 com.intellij.internal.inspector.UiInspectorTreeRendererContextProvider
 - a:getUiInspectorContext(javax.swing.JTree,java.lang.Object,I):java.util.List
 com.intellij.openapi.GitRepositoryInitializer
@@ -410,6 +494,7 @@ com.intellij.openapi.options.colors.ColorAndFontDescriptorsProvider
 - a:getAttributeDescriptors():com.intellij.openapi.options.colors.AttributesDescriptor[]
 - a:getColorDescriptors():com.intellij.openapi.options.colors.ColorDescriptor[]
 - a:getDisplayName():java.lang.String
+- getId():java.lang.String
 com.intellij.openapi.options.colors.ColorSettingsPage
 - com.intellij.openapi.options.colors.ColorAndFontDescriptorsProvider
 - sf:EP_NAME:com.intellij.openapi.extensions.ExtensionPointName
@@ -445,7 +530,9 @@ com.intellij.openapi.ui.DialogBuilder$ActionDescriptor
 com.intellij.openapi.ui.DialogBuilder$CustomizableAction
 - a:setText(java.lang.String):V
 a:com.intellij.openapi.ui.DialogWrapper
+- f:isMaximizable():Z
 - setDoNotAskOption(com.intellij.openapi.ui.DialogWrapper$DoNotAskOption):V
+- f:setMaximizable(Z):V
 com.intellij.openapi.ui.DialogWrapper$DoNotAskOption
 - com.intellij.openapi.ui.DoNotAskOption
 a:com.intellij.openapi.ui.DialogWrapper$DoNotAskOption$Adapter
@@ -454,6 +541,9 @@ a:com.intellij.openapi.ui.DialogWrapper$DoNotAskOption$Adapter
 - <init>():V
 com.intellij.openapi.ui.DialogWrapperDialog
 - a:getDialogWrapper():com.intellij.openapi.ui.DialogWrapper
+a:com.intellij.openapi.ui.DialogWrapperPeer
+- isMaximizable():Z
+- setMaximizable(Z):V
 com.intellij.openapi.ui.ErrorBorderCapable
 com.intellij.openapi.ui.GenericListComponentUpdater
 - a:paintBusy(Z):V
@@ -906,9 +996,8 @@ com.intellij.ui.SimpleColoredComponent$FragmentTextClipper
 com.intellij.ui.SimpleListCellRenderer$Customizer
 - a:customize(com.intellij.ui.components.JBLabel,java.lang.Object,I):V
 c:com.intellij.ui.components.AnActionLink
-- sf:Companion:com.intellij.ui.components.AnActionLink$Companion
 - <init>(java.lang.String,com.intellij.openapi.actionSystem.AnAction,java.lang.String,com.intellij.openapi.actionSystem.Presentation):V
-f:com.intellij.ui.components.AnActionLink$Companion
+f:com.intellij.ui.components.BulkListModelKt
 com.intellij.ui.components.Interpolable
 - a:getTargetValue():I
 - a:getValue():I
@@ -919,6 +1008,60 @@ c:com.intellij.ui.components.JBLoadingPanel
 com.intellij.ui.components.JBLoadingPanelListener
 - a:onLoadingFinish():V
 - a:onLoadingStart():V
+c:com.intellij.ui.components.JBScrollPane
+- javax.swing.JScrollPane
+- sf:IGNORE_SCROLLBAR_IN_INSETS:com.intellij.openapi.util.Key
+- sf:IGNORE_SCROLL_LATCHING:com.intellij.openapi.util.Key
+- <init>():V
+- <init>(I):V
+- <init>(I,I):V
+- <init>(java.awt.Component):V
+- <init>(java.awt.Component,I,I):V
+- s:canBePreprocessed(java.awt.event.MouseEvent,javax.swing.JScrollBar):Z
+- createHorizontalScrollBar():javax.swing.JScrollBar
+- s:createIndentBorder():com.intellij.ui.components.JBScrollPane$ViewportBorder
+- createVerticalScrollBar():javax.swing.JScrollBar
+- p:createViewport():javax.swing.JViewport
+- getBackground():java.awt.Color
+- getStatusComponent():javax.swing.JComponent
+- isOptimizedDrawingEnabled():Z
+- isOverlappingScrollBar():Z
+- paint(java.awt.Graphics):V
+- p:paintBorder(java.awt.Graphics):V
+- p:paintChildren(java.awt.Graphics):V
+- p:processMouseWheelEvent(java.awt.event.MouseWheelEvent):V
+- setOverlappingScrollBar(Z):V
+- setStatusComponent(javax.swing.JComponent):V
+- setUI(javax.swing.plaf.ScrollPaneUI):V
+- p:setupCorners():V
+- verticalScrollBarNeedsSpace():Z
+e:com.intellij.ui.components.JBScrollPane$Alignment
+- java.lang.Enum
+- sf:BOTTOM:com.intellij.ui.components.JBScrollPane$Alignment
+- sf:LEFT:com.intellij.ui.components.JBScrollPane$Alignment
+- sf:RIGHT:com.intellij.ui.components.JBScrollPane$Alignment
+- sf:TOP:com.intellij.ui.components.JBScrollPane$Alignment
+- s:get(javax.swing.JComponent):com.intellij.ui.components.JBScrollPane$Alignment
+- s:valueOf(java.lang.String):com.intellij.ui.components.JBScrollPane$Alignment
+- s:values():com.intellij.ui.components.JBScrollPane$Alignment[]
+e:com.intellij.ui.components.JBScrollPane$Flip
+- java.lang.Enum
+- sf:BOTH:com.intellij.ui.components.JBScrollPane$Flip
+- sf:HORIZONTAL:com.intellij.ui.components.JBScrollPane$Flip
+- sf:NONE:com.intellij.ui.components.JBScrollPane$Flip
+- sf:VERTICAL:com.intellij.ui.components.JBScrollPane$Flip
+- s:valueOf(java.lang.String):com.intellij.ui.components.JBScrollPane$Flip
+- s:values():com.intellij.ui.components.JBScrollPane$Flip[]
+c:com.intellij.ui.components.JBScrollPane$Layout
+- javax.swing.ScrollPaneLayout
+- <init>():V
+- addLayoutComponent(java.lang.String,java.awt.Component):V
+- layoutContainer(java.awt.Container):V
+- preferredLayoutSize(java.awt.Container):java.awt.Dimension
+- syncWithScrollPane(javax.swing.JScrollPane):V
+c:com.intellij.ui.components.JBScrollPane$ViewportBorder
+- javax.swing.border.LineBorder
+- paintBorder(java.awt.Component,java.awt.Graphics,I,I,I,I):V
 com.intellij.ui.components.Magnificator
 - sf:CLIENT_PROPERTY_KEY:com.intellij.openapi.util.Key
 - a:magnify(D,java.awt.Point):java.awt.Point
@@ -1107,6 +1250,7 @@ com.intellij.ui.tabs.JBEditorTabsBase
 - com.intellij.ui.tabs.JBTabs
 com.intellij.ui.tabs.JBTabPainter
 - sf:Companion:com.intellij.ui.tabs.JBTabPainter$Companion
+- fillBackground(java.awt.Component,java.awt.Graphics2D,java.awt.Rectangle):V
 - a:fillBackground(java.awt.Graphics2D,java.awt.Rectangle):V
 - a:getBackgroundColor():java.awt.Color
 - getCustomBackground(java.awt.Color,Z,Z,Z):java.awt.Color
@@ -1167,6 +1311,7 @@ com.intellij.ui.tabs.JBTabsEx
 - a:sortTabs(java.util.Comparator):V
 - a:updateTabActions(Z):V
 com.intellij.ui.tabs.JBTabsPresentation
+- a:getShowBorder():Z
 - a:getTabsPosition():com.intellij.ui.tabs.JBTabsPosition
 - a:isHideTabs():Z
 - a:setAlphabeticalMode(Z):com.intellij.ui.tabs.JBTabsPresentation
@@ -1177,6 +1322,7 @@ com.intellij.ui.tabs.JBTabsPresentation
 - a:setInnerInsets(java.awt.Insets):com.intellij.ui.tabs.JBTabsPresentation
 - a:setPaintBlocked(Z,Z):V
 - a:setPaintFocus(Z):com.intellij.ui.tabs.JBTabsPresentation
+- a:setShowBorder(Z):V
 - a:setSideComponentBefore(Z):com.intellij.ui.tabs.JBTabsPresentation
 - a:setSideComponentOnTabs(Z):com.intellij.ui.tabs.JBTabsPresentation
 - a:setSideComponentVertical(Z):com.intellij.ui.tabs.JBTabsPresentation
@@ -1248,6 +1394,13 @@ com.intellij.ui.viewModel.extraction.ToolWindowViewModelListener
 - sf:TOPIC:com.intellij.util.messages.Topic
 - a:toolWindowChanged(java.lang.String):V
 - a:toolWindowsChanged():V
+c:com.intellij.util.net.HttpProxyConfigurable
+- com.intellij.openapi.options.ConfigurableBase
+- com.intellij.openapi.options.Configurable$NoMargin
+- <init>():V
+- p:createUi():com.intellij.openapi.options.ConfigurableUi
+- s:editConfigurable(javax.swing.JComponent):Z
+- p:getSettings():com.intellij.util.net.ProxySettings
 com.intellij.util.net.JdkProxyProvider
 - sf:Companion:com.intellij.util.net.JdkProxyProvider$Companion
 - s:ensureDefault():V
@@ -1292,8 +1445,6 @@ com.intellij.util.net.ProxySettings
 - s:getInstance():com.intellij.util.net.ProxySettings
 - a:getProxyConfiguration():com.intellij.util.net.ProxyConfiguration
 com.intellij.util.net.ProxySettingsOverrideProvider
-- sf:Companion:com.intellij.util.net.ProxySettingsOverrideProvider$Companion
-- s:areProxySettingsOverridden():Z
 - a:getProxyConfigurationProvider():com.intellij.util.net.ProxyConfigurationProvider
 - a:getShouldUserSettingsBeOverriden():Z
 com.intellij.util.ui.ComponentWithEmptyText

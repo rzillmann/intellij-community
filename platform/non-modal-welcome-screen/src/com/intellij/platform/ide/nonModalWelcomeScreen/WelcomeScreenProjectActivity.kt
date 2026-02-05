@@ -11,12 +11,11 @@ import com.intellij.openapi.startup.ProjectActivity
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.wm.ex.WelcomeScreenProjectProvider.Companion.isWelcomeScreenProject
 import com.intellij.openapi.wm.impl.CloseProjectWindowHelper
-import com.intellij.platform.ide.nonModalWelcomeScreen.rightTab.WelcomeScreenRightTab
 import com.intellij.platform.ide.nonModalWelcomeScreen.rightTab.WelcomeScreenRightTabVirtualFile
 import com.intellij.util.application
 import com.intellij.util.asSafely
 
-private class WelcomeScreenProjectActivity : ProjectActivity {
+internal class WelcomeScreenProjectActivity : ProjectActivity {
   init {
     val app = ApplicationManager.getApplication()
     val isNotAvailable = app.isCommandLine || app.isHeadlessEnvironment || app.isUnitTestMode
@@ -29,19 +28,20 @@ private class WelcomeScreenProjectActivity : ProjectActivity {
     if (isWelcomeScreenProject(project)) {
       dropModalWelcomeScreenOnClose(project)
       subscribeToWelcomeScreenTabClose(project)
-      WelcomeScreenRightTab.show(project)
     }
   }
 
   private suspend fun dropModalWelcomeScreenOnClose(project: Project) {
-    CloseProjectWindowHelper.SHOW_WELCOME_FRAME_FOR_PROJECT.set(project, !isNonModalWelcomeScreenEnabled)
+    if (isNonModalWelcomeScreenEnabled) {
+      CloseProjectWindowHelper.SHOW_WELCOME_FRAME_FOR_PROJECT.set(project, false)
+    }
     subscribeToSettingsChanges(project)
   }
 
   private suspend fun subscribeToSettingsChanges(project: Project) {
     application
       .messageBus
-      .connect(WelcomeScreenScopeHolder.getInstanceAsync(project).coroutineScope)
+      .connect(WelcomeScreenProjectScopeHolder.getInstanceAsync(project).coroutineScope)
       .subscribe(AdvancedSettingsChangeListener.TOPIC,
                  object : AdvancedSettingsChangeListener {
                    override fun advancedSettingChanged(id: String, oldValue: Any, newValue: Any) {
@@ -64,7 +64,7 @@ private class WelcomeScreenProjectActivity : ProjectActivity {
   private suspend fun subscribeToWelcomeScreenTabClose(project: Project) {
     project
       .messageBus
-      .connect(WelcomeScreenScopeHolder.getInstanceAsync(project).coroutineScope)
+      .connect(WelcomeScreenProjectScopeHolder.getInstanceAsync(project).coroutineScope)
       .subscribe(FileEditorManagerListener.FILE_EDITOR_MANAGER,
                  object : FileEditorManagerListener {
                    override fun fileClosed(source: FileEditorManager, file: VirtualFile) {

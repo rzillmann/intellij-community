@@ -5,7 +5,11 @@ import ai.grazie.rules.RuleClient
 import ai.grazie.rules.settings.TextStyle
 import com.intellij.grazie.text.TextContent
 import com.intellij.grazie.text.TextContent.TextDomain
-import com.intellij.grazie.utils.TextStyleDomain.*
+import com.intellij.grazie.utils.TextStyleDomain.AIPrompt
+import com.intellij.grazie.utils.TextStyleDomain.CodeComment
+import com.intellij.grazie.utils.TextStyleDomain.CodeDocumentation
+import com.intellij.grazie.utils.TextStyleDomain.Commit
+import com.intellij.grazie.utils.TextStyleDomain.Other
 import com.intellij.openapi.util.TextRange
 import com.intellij.openapi.vcs.ui.CommitMessage
 import java.util.regex.Matcher
@@ -27,7 +31,7 @@ object Text {
   fun isQuote(char: Char) = char == '\'' || char == '\"'
 
   @JvmStatic
-  fun isSingleSentence(text: CharSequence) = !text.contains(Regex("\\.\\s"))
+  fun isSingleSentence(text: CharSequence): Boolean = !text.contains(Regex("[.?!]\\s"))
 
   @JvmStatic
   fun findParagraphRange(text: CharSequence, range: TextRange): TextRange {

@@ -11,6 +11,7 @@ import com.intellij.openapi.actionSystem.ActionGroup
 import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.DefaultActionGroup
+import com.intellij.openapi.application.WriteIntentReadAction
 import com.intellij.openapi.application.readAction
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
@@ -28,9 +29,13 @@ import com.jediterm.terminal.ui.TerminalAction
 import com.jediterm.terminal.ui.hyperlinks.LinkInfoEx
 import com.jediterm.terminal.ui.hyperlinks.LinkInfoEx.HoverConsumer
 import com.jediterm.terminal.ui.hyperlinks.LinkInfoEx.PopupMenuGroupProvider
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.launch
 import java.awt.Rectangle
 import java.awt.event.MouseEvent
 import java.util.concurrent.CompletableFuture
@@ -114,7 +119,9 @@ internal class JediTermHyperlinkFilterAdapter(
 
   private fun convertInfo(info: HyperlinkInfo): LinkInfo {
     val builder = LinkInfoEx.Builder().setNavigateCallback(Runnable {
-      info.navigate(project)
+      WriteIntentReadAction.run {
+        info.navigate(project)
+      }
     })
     if (info is HyperlinkWithPopupMenuInfo) {
       builder.setPopupMenuGroupProvider(object : PopupMenuGroupProvider {

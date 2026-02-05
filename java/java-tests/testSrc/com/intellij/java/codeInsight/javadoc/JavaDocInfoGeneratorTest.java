@@ -24,7 +24,23 @@ import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.platform.testFramework.core.FileComparisonFailedError;
 import com.intellij.pom.java.LanguageLevel;
-import com.intellij.psi.*;
+import com.intellij.psi.CommonClassNames;
+import com.intellij.psi.PsiAnnotation;
+import com.intellij.psi.PsiAnonymousClass;
+import com.intellij.psi.PsiClass;
+import com.intellij.psi.PsiDirectory;
+import com.intellij.psi.PsiElement;
+import com.intellij.psi.PsiField;
+import com.intellij.psi.PsiFile;
+import com.intellij.psi.PsiJavaCodeReferenceElement;
+import com.intellij.psi.PsiJavaFile;
+import com.intellij.psi.PsiLambdaExpression;
+import com.intellij.psi.PsiManager;
+import com.intellij.psi.PsiMethod;
+import com.intellij.psi.PsiPackage;
+import com.intellij.psi.PsiParameter;
+import com.intellij.psi.PsiReferenceList;
+import com.intellij.psi.PsiTypeElement;
 import com.intellij.psi.util.PsiTreeUtil;
 import com.intellij.testFramework.DumbModeTestUtils;
 import com.intellij.testFramework.IdeaTestUtil;
@@ -125,6 +141,10 @@ public class JavaDocInfoGeneratorTest extends JavaCodeInsightTestCase {
   public void testLegacySpacesInLiteral() { useJava7(); verifyJavaDoc(getTestClass()); }
   public void testLinkWithModule() { doTestClass(); }
   public void testLinkToModule() { doTestClass(); }
+  public void testLinkNested() { 
+    configureByFile();
+    verifyJavaDoc(getTestClass().getAllInnerClasses()[0].getMethods()[0]);
+  }
   public void testLinkWithLineBreak() { doTestClass(); }
   public void testDocumentationForJdkClassWithReferencesToClassesFromJavaLang() { useJava7(); doTestAtCaret(); }
   public void testDocumentationForUncheckedExceptionsInSupers() { useJava7(); doTestAtCaret(); }
@@ -199,11 +219,17 @@ public class JavaDocInfoGeneratorTest extends JavaCodeInsightTestCase {
     PsiClass outerClass = ((PsiJavaFile) myFile).getClasses()[1];
     verifyJavaDoc(outerClass.getMethods()[0]);
   }
+  public void testMarkdownInheritDocSingleLine() {
+    configureByFile();
+    PsiClass outerClass = ((PsiJavaFile) myFile).getClasses()[1];
+    verifyJavaDoc(outerClass.getMethods()[0]);
+  }
   public void testMarkdownInlineWithTags(){
     configureByFile();
     PsiClass outerClass = ((PsiJavaFile) myFile).getClasses()[0];
     verifyJavaDoc(outerClass.getMethods()[0]);
   }
+  public void testMarkdownParagraphSeparation() { doTestClass(); }
   public void testMarkdownJepExample(){ doTestMethod(); }
   public void testHtmlCodeInMarkdown() { doTestMethod(); }
   public void testMarkdownInlineCodeBlock() { doTestClass(); }
@@ -216,6 +242,9 @@ public class JavaDocInfoGeneratorTest extends JavaCodeInsightTestCase {
   public void testAllTags() { doTestAtCaret(); }
   public void testAllTagsMarkdown() { doTestAtCaret(); }
   public void testFragmentReference()  { doTestClass(); }
+  public void testPackageInfoMarkdown() { doTestPackageInfo(); }
+  public void testListInTags() { doTestMethod(); }
+  public void testParagraphInTagsMarkdown() { doTestMethod(); }
 
   public void testRepeatableAnnotations() {
     useJava8();

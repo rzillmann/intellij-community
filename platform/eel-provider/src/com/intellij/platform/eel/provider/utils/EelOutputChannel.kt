@@ -1,9 +1,12 @@
-// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2026 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.platform.eel.provider.utils
 
 import com.intellij.platform.eel.ReadResult
 import com.intellij.platform.eel.channels.EelReceiveChannel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combineTransform
@@ -56,11 +59,16 @@ interface EelOutputChannel {
   /**
    * Closes the channel similarly to sendEof, but if the channel is not already closed, can log an error or propagate it to the receiver.
    */
-  fun ensureClosed(error: Throwable? = null)
+  fun ensureClosed(lazyError: () -> Throwable? = { null })
 }
 
 @ApiStatus.Internal
-class EelOutputChannelImpl : EelOutputChannel, EelReceiveChannel {
+fun EelOutputChannel.ensureClosed(error: Throwable?) {
+  ensureClosed { error }
+}
+
+@ApiStatus.Internal
+class EelOutputChannelImpl(override val prefersDirectBuffers: Boolean) : EelOutputChannel, EelReceiveChannel {
   private var state: MutableStateFlow<State> = MutableStateFlow(State.default())
 
   /**
@@ -134,13 +142,15 @@ class EelOutputChannelImpl : EelOutputChannel, EelReceiveChannel {
     state.update { it.copy(closed = true) }
   }
 
-  override fun ensureClosed(error: Throwable?) {
-    val wasClosed = state.getAndUpdate {
-      it.copy(closed = true)
+  override fun ensureClosed(lazyError: () -> Throwable?) {
+    state.getAndUpdate {
+      if (!it.closed) {
+        it.copy(closed = true, closedWithError = lazyError())
+      }
+      else {
+        it
+      }
     }.closed
-    if (!wasClosed && error != null) {
-      state.update { it.copy(closedWithError = error) }
-    }
   }
 
   override suspend fun closeForReceive() {
@@ -197,7 +207,17 @@ suspend fun EelOutputChannel.sendWholeBuffer(src: ByteBuffer) {
 @ApiStatus.Internal
 @Throws(EelChannelClosedException::class)
 suspend fun EelOutputChannel.sendUntilEnd(flow: Flow<ByteArray>, end: Deferred<*>) {
-  val finished: Flow<Boolean> = flow { emit(false); end.await(); emit(true) }
+  val finished: Flow<Boolean> = flow {
+    emit(false)
+    try {
+      end.await()
+    }
+    catch (e: CancellationException) {
+      currentCoroutineContext().ensureActive()
+      throw RuntimeException(e)
+    }
+    emit(true)
+  }
   flow.collect { byteArray ->
     available.combineTransform(finished) { a, finished ->
       if (finished || a == 0) {
@@ -224,4 +244,4 @@ suspend fun EelOutputChannel.sendUntilEnd(flow: Flow<ByteArray>, end: Deferred<*
 
 
 @ApiStatus.Internal
-fun EelOutputChannel(): EelOutputChannel = EelOutputChannelImpl()
+fun EelOutputChannel(prefersDirectBuffers: Boolean): EelOutputChannel = EelOutputChannelImpl(prefersDirectBuffers)

@@ -6,14 +6,14 @@ import com.intellij.openapi.actionSystem.CommonDataKeys;
 import com.intellij.openapi.actionSystem.DataContext;
 import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.project.Project;
-import com.intellij.xdebugger.impl.breakpoints.XBreakpointProxy;
+import com.intellij.platform.debugger.impl.shared.proxy.XBreakpointProxy;
 import com.intellij.xdebugger.impl.breakpoints.XBreakpointUtil;
 import com.intellij.xdebugger.impl.ui.DebuggerUIUtil;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 
-import javax.swing.*;
-import java.awt.*;
+import javax.swing.JComponent;
+import java.awt.Point;
 
 @ApiStatus.Internal
 public class XDebuggerEditBreakpointActionHandler extends EditBreakpointActionHandler {

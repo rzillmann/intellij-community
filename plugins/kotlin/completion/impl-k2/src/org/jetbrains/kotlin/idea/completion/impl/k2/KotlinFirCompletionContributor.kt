@@ -2,9 +2,16 @@
 
 package org.jetbrains.kotlin.idea.completion
 
-import com.intellij.codeInsight.completion.*
+import com.intellij.codeInsight.completion.CompletionContributor
+import com.intellij.codeInsight.completion.CompletionInitializationContext
+import com.intellij.codeInsight.completion.CompletionParameters
+import com.intellij.codeInsight.completion.CompletionProvider
+import com.intellij.codeInsight.completion.CompletionResultSet
+import com.intellij.codeInsight.completion.CompletionSorter
+import com.intellij.codeInsight.completion.CompletionType
+import com.intellij.codeInsight.completion.CompletionUtil
+import com.intellij.codeInsight.completion.PrefixMatcher
 import com.intellij.codeInsight.lookup.LookupElement
-import com.intellij.openapi.util.registry.Registry
 import com.intellij.openapi.util.registry.RegistryManager
 import com.intellij.patterns.PlatformPatterns.psiElement
 import com.intellij.patterns.PsiJavaPatterns
@@ -13,10 +20,16 @@ import com.intellij.util.ProcessingContext
 import com.intellij.util.applyIf
 import org.jetbrains.kotlin.idea.completion.api.CompletionDummyIdentifierProviderService
 import org.jetbrains.kotlin.idea.completion.impl.k2.Completions
+import org.jetbrains.kotlin.idea.completion.impl.k2.K2CompletionRunner
+import org.jetbrains.kotlin.idea.completion.impl.k2.K2CompletionRunnerResult
+import org.jetbrains.kotlin.idea.completion.impl.k2.jfr.CompletionEvent
+import org.jetbrains.kotlin.idea.completion.impl.k2.jfr.CompletionSetupEvent
+import org.jetbrains.kotlin.idea.completion.impl.k2.jfr.timeEvent
 import org.jetbrains.kotlin.idea.completion.weighers.ExpectedTypeWeigher.MatchesExpectedType
 import org.jetbrains.kotlin.idea.completion.weighers.ExpectedTypeWeigher.matchesExpectedType
 import org.jetbrains.kotlin.idea.completion.weighers.Weighers.applyWeighers
 import org.jetbrains.kotlin.idea.util.positionContext.KotlinExpressionNameReferencePositionContext
+import org.jetbrains.kotlin.idea.util.positionContext.KotlinNameReferencePositionContext
 import org.jetbrains.kotlin.idea.util.positionContext.KotlinPositionContextDetector
 import org.jetbrains.kotlin.idea.util.positionContext.KotlinRawPositionContext
 import org.jetbrains.kotlin.kdoc.lexer.KDocTokens
@@ -80,8 +93,10 @@ private object KotlinFirCompletionProvider : CompletionProvider<CompletionParame
         context: ProcessingContext,
         result: CompletionResultSet,
     ) {
-        @Suppress("NAME_SHADOWING") val parameters = KotlinFirCompletionParameters.create(parameters)
-            ?: return
+        val completionSetupEvent = CompletionSetupEvent()
+        completionSetupEvent.begin()
+
+        val parameters = KotlinFirCompletionParameters.create(parameters) ?: return
         val position = parameters.position
 
         // no completion inside number literals
@@ -94,18 +109,57 @@ private object KotlinFirCompletionProvider : CompletionProvider<CompletionParame
             .withRelevanceSorter(parameters, positionContext)
             .withPrefixMatcher(parameters)
 
-        val addedResults = Completions.complete(
-            parameters = parameters,
+        completionSetupEvent.commit()
+
+        // First run regular completion
+        val completionResult = CompletionEvent().timeEvent {
+            Completions.complete(
+                parameters = parameters,
+                positionContext = positionContext,
+                resultSet = resultSet,
+            )
+        }
+
+        val addedElementsThroughChainCompletion = runChainCompletionIfNecessary(
+            completionResult = completionResult,
             positionContext = positionContext,
             resultSet = resultSet,
+            parameters = parameters
         )
 
         // If we have not found any results and we have an invocation count 1, we want to re-run completion because
         // it will also start looking in nested objects etc.
-        if (!addedResults && parameters.invocationCount == 1) {
-            val newParameters = KotlinFirCompletionParameters.Original.create(parameters.delegate.withInvocationCount(2)) ?: return
-            Completions.complete(newParameters, positionContext, resultSet)
+        if (completionResult.addedElements == 0 && !addedElementsThroughChainCompletion && parameters.invocationCount == 1) {
+            CompletionEvent(isRerun = true).timeEvent {
+                Completions.complete(parameters.copyForRerun(), positionContext, resultSet)
+            }
         }
+    }
+
+    /**
+     * Runs chain completion if
+     * - Chain completion is enabled
+     * - The position is a context where chain completion can yield results (i.e. a [KotlinNameReferencePositionContext])
+     * - The [completionResult] has some contributors that registered a chain completion contributor
+     *
+     * Returns true if any elements were added by chain completion, false otherwise.
+     */
+    private fun runChainCompletionIfNecessary(
+        completionResult: K2CompletionRunnerResult,
+        positionContext: KotlinRawPositionContext,
+        resultSet: CompletionResultSet,
+        parameters: KotlinFirCompletionParameters,
+    ): Boolean {
+        if (completionResult.registeredChainContributors.isEmpty()) return false
+        if (positionContext !is KotlinNameReferencePositionContext) return false
+        if (!RegistryManager.getInstance().`is`("kotlin.k2.chain.completion.enabled")) return false
+
+        return K2CompletionRunner.runChainCompletion(
+            originalPositionContext = positionContext,
+            completionResultSet = resultSet,
+            parameters = parameters,
+            chainCompletionContributors = completionResult.registeredChainContributors,
+        )
     }
 
     private fun registerRestartCompletion(

@@ -75,7 +75,7 @@ public class PyCollectionTypeImpl extends PyClassTypeImpl implements PyCollectio
   }
 
   @Override
-  public @NotNull PyClassLikeType toClass() {
+  public @NotNull PyClassType toClass() {
     return myIsDefinition ? this : withUserDataCopy(new PyCollectionTypeImpl(myClass, true, myElementTypes));
   }
 
@@ -115,7 +115,7 @@ public class PyCollectionTypeImpl extends PyClassTypeImpl implements PyCollectio
   @Override
   public String toString() {
     return ((isValid() ? "" : "[INVALID] ") + "PyCollectionClassType: " + getClassQName()) +
-           "[" + StringUtil.join(getElementTypes(), ", ") + "]";
+           "[" + StringUtil.join(getElementTypes(), item -> item == null ? "Any" : item.toString(), ", ") + "]";
   }
 
   @Override

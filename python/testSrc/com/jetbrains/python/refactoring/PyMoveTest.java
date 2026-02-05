@@ -3,9 +3,14 @@ package com.jetbrains.python.refactoring;
 
 import com.intellij.ide.fileTemplates.FileTemplate;
 import com.intellij.ide.fileTemplates.FileTemplateManager;
+import com.intellij.idea.TestFor;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.vfs.VirtualFile;
-import com.intellij.psi.*;
+import com.intellij.psi.PsiDirectory;
+import com.intellij.psi.PsiDocumentManager;
+import com.intellij.psi.PsiElement;
+import com.intellij.psi.PsiManager;
+import com.intellij.psi.PsiNamedElement;
 import com.intellij.psi.codeStyle.CommonCodeStyleSettings;
 import com.intellij.psi.search.GlobalSearchScope;
 import com.intellij.psi.search.ProjectScope;
@@ -19,7 +24,12 @@ import com.jetbrains.python.codeInsight.PyCodeInsightSettings;
 import com.jetbrains.python.fixtures.PyTestCase;
 import com.jetbrains.python.formatter.PyCodeStyleSettings;
 import com.jetbrains.python.namespacePackages.PyNamespacePackagesService;
-import com.jetbrains.python.psi.*;
+import com.jetbrains.python.psi.LanguageLevel;
+import com.jetbrains.python.psi.PyClass;
+import com.jetbrains.python.psi.PyElement;
+import com.jetbrains.python.psi.PyFile;
+import com.jetbrains.python.psi.PyFunction;
+import com.jetbrains.python.psi.PyTargetExpression;
 import com.jetbrains.python.psi.stubs.PyClassNameIndex;
 import com.jetbrains.python.psi.stubs.PyFunctionNameIndex;
 import com.jetbrains.python.psi.stubs.PyVariableNameIndex;
@@ -276,6 +286,35 @@ public class PyMoveTest extends PyTestCase {
     try {
       PyCodeInsightSettings.getInstance().PREFER_FROM_IMPORT = false;
       doMoveSymbolTest("bar", "b.py");
+    }
+    finally {
+      PyCodeInsightSettings.getInstance().PREFER_FROM_IMPORT = defaultImportStyle;
+    }
+  }
+
+  @TestFor(issues="PY-6591")
+  public void testImportForMovedElementWithPreferredQualifiedImportStyleModule() {
+    final boolean defaultImportStyle = PyCodeInsightSettings.getInstance().PREFER_FROM_IMPORT;
+    try {
+      PyCodeInsightSettings.getInstance().PREFER_FROM_IMPORT = false;
+      doMoveSymbolTest("usage", "lib/dst.py");
+    }
+    finally {
+      PyCodeInsightSettings.getInstance().PREFER_FROM_IMPORT = defaultImportStyle;
+    }
+  }
+
+  @TestFor(issues="PY-6591")
+  public void testImportForMovedElementWithPreferredFromImportStyleModule() {
+    doMoveSymbolTest("usage", "lib/dst.py");
+  }
+
+  @TestFor(issues="PY-84659")
+  public void testQualifiedUsageRespectsPreferFromImport() {
+    final boolean defaultImportStyle = PyCodeInsightSettings.getInstance().PREFER_FROM_IMPORT;
+    try {
+      PyCodeInsightSettings.getInstance().PREFER_FROM_IMPORT = true;
+      doMoveSymbolTest("C", "lib/dst.py");
     }
     finally {
       PyCodeInsightSettings.getInstance().PREFER_FROM_IMPORT = defaultImportStyle;

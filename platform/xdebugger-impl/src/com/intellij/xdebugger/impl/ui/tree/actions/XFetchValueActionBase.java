@@ -2,12 +2,16 @@
 package com.intellij.xdebugger.impl.ui.tree.actions;
 
 import com.intellij.openapi.actionSystem.AnActionEvent;
+import com.intellij.openapi.actionSystem.remoting.ActionRemoteBehavior;
+import com.intellij.openapi.actionSystem.remoting.ActionRemoteBehaviorSpecification;
 import com.intellij.openapi.project.DumbAwareAction;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.ui.AppUIUtil;
 import com.intellij.util.SmartList;
+import com.intellij.xdebugger.XDebugProcess;
 import com.intellij.xdebugger.frame.XFullValueEvaluator;
+import com.intellij.xdebugger.frame.XValue;
 import com.intellij.xdebugger.impl.ui.DebuggerUIUtil;
 import com.intellij.xdebugger.impl.ui.tree.XDebuggerTree;
 import com.intellij.xdebugger.impl.ui.tree.nodes.HeadlessValueEvaluationCallback;
@@ -15,19 +19,47 @@ import com.intellij.xdebugger.impl.ui.tree.nodes.WatchNodeImpl;
 import com.intellij.xdebugger.impl.ui.tree.nodes.XValueNodeImpl;
 import it.unimi.dsi.fastutil.ints.Int2IntMap;
 import it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.List;
 
-public abstract class XFetchValueActionBase extends DumbAwareAction {
+/**
+ * Base class for actions that operate on frontend {@link XValueNodeImpl} UI nodes
+ * but still need access to backend {@link XValue} instances.
+ * <p>
+ * <strong>Note</strong>: This class is supposed to maintain backward compatibility for plugins during the migration to Split Mode.
+ * It bridges the gap by providing {@link XValueNodeImpl} nodes that expose backend {@link XValue}s obtained from plugin-specific {@link XDebugProcess}.
+ * <p>
+ * <li><strong>In Monolith Mode</strong>: the action works as it did before Split mode, providing nodes with backend {@link XValue}s.</li>
+ * </li><strong>In Remote Development</strong>: the action DOES NOT work. Since {@link XValueNodeImpl} is a frontend UI entity,
+ * it cannot be accessed from the backend.</li>
+ * <p>
+ * For the action which should operate on the frontend use {@link XFetchValueSplitActionBase} instead.
+ */
+public abstract class XFetchValueActionBase extends DumbAwareAction implements ActionRemoteBehaviorSpecification {
+  @ApiStatus.Internal
+  @Override
+  public @Nullable ActionRemoteBehavior getBehavior() {
+    return ActionRemoteBehavior.BackendOnly;
+  }
+
   @Override
   public void update(@NotNull AnActionEvent e) {
-    for (XValueNodeImpl node : XDebuggerTreeActionBase.getSelectedNodes(e.getDataContext())) {
+    for (XValueNodeImpl node : getNodes(e)) {
       if (isEnabled(e, node)) {
         return;
       }
     }
     e.getPresentation().setEnabled(false);
+  }
+
+  /**
+   * @return {@link XValueNodeImpl} node instances with corresponding backend {@link XValue}s.
+   */
+  @NotNull List<@NotNull XValueNodeImpl> getNodes(@NotNull AnActionEvent e) {
+    return XDebuggerTreeActionBase.getSelectedNodes(e.getDataContext());
   }
 
   protected boolean isEnabled(@NotNull AnActionEvent event, @NotNull XValueNodeImpl node) {
@@ -40,7 +72,7 @@ public abstract class XFetchValueActionBase extends DumbAwareAction {
 
   @Override
   public void actionPerformed(@NotNull AnActionEvent e) {
-    List<XValueNodeImpl> nodes = XDebuggerTreeActionBase.getSelectedNodes(e.getDataContext());
+    List<XValueNodeImpl> nodes = getNodes(e);
     if (nodes.isEmpty()) {
       return;
     }
@@ -69,25 +101,45 @@ public abstract class XFetchValueActionBase extends DumbAwareAction {
   }
 
   protected @NotNull ValueCollector createCollector(@NotNull AnActionEvent e) {
-    return new ValueCollector(XDebuggerTree.getTree(e.getDataContext()));
+    XDebuggerTree tree = XDebuggerTree.getTree(e.getDataContext());
+    return new ValueCollector(tree, e.getProject());
   }
 
   public class ValueCollector {
     private final List<String> values = new SmartList<>();
     private final Int2IntMap indents = new Int2IntOpenHashMap();
-    private final XDebuggerTree myTree;
+    private final Project myProject;
     private volatile boolean processed;
+    private XDebuggerTree myTree;
 
-    public ValueCollector(XDebuggerTree tree) {
+    /**
+     * @deprecated Use {@link #ValueCollector(Project)} instead
+     */
+    @Deprecated
+    public ValueCollector(@NotNull XDebuggerTree tree) {
+      this(tree.getProject());
       myTree = tree;
+    }
+
+    ValueCollector(@Nullable XDebuggerTree tree, Project project) {
+      this(project);
+      myTree = tree;
+    }
+
+    public ValueCollector(Project project) {
       indents.defaultReturnValue(-1);
+      myProject = project;
     }
 
     public void add(@NotNull String value) {
       values.add(value);
     }
 
-    public XDebuggerTree getTree() {
+    /**
+     * @deprecated Do not use. Override {@link XFetchValueActionBase#createCollector(AnActionEvent)} to access required state instead.
+     */
+    @Deprecated
+    public @Nullable XDebuggerTree getTree() {
       return myTree;
     }
 
@@ -97,8 +149,7 @@ public abstract class XFetchValueActionBase extends DumbAwareAction {
     }
 
     public void finish() {
-      Project project = myTree.getProject();
-      if (processed && !values.contains(null) && !project.isDisposed()) {
+      if (processed && !values.contains(null) && !myProject.isDisposed()) {
         int minIndent = Integer.MAX_VALUE;
         for (int indent : indents.values()) {
           minIndent = Math.min(minIndent, indent);
@@ -114,12 +165,21 @@ public abstract class XFetchValueActionBase extends DumbAwareAction {
           }
           sb.append(values.get(i));
         }
-        handleInCollector(project, sb.toString(), myTree);
+        handleInCollector(myProject, sb.toString(), myTree);
       }
     }
 
-    public void handleInCollector(final Project project, final String value, XDebuggerTree tree) {
-      handle(project, value, tree);
+    /**
+     * @deprecated Use {@link #handleInCollector(Project, String)} instead
+     */
+    @SuppressWarnings("DeprecatedIsStillUsed")
+    @Deprecated
+    public void handleInCollector(final Project project, final String value, XDebuggerTree ignoredTree) {
+      handleInCollector(project, value);
+    }
+
+    public void handleInCollector(final Project project, final String value) {
+      handle(project, value, myTree);
     }
 
     public int acquire() {
@@ -136,7 +196,17 @@ public abstract class XFetchValueActionBase extends DumbAwareAction {
     }
   }
 
-  protected abstract void handle(final Project project, final String value, XDebuggerTree tree);
+  /**
+   * @deprecated Use {@link #handle(Project, String)} instead
+   */
+  @Deprecated
+  protected void handle(final Project project, final String value, XDebuggerTree ignoredTree) {
+    handle(project, value);
+  }
+
+  protected void handle(final Project project, final String value) {
+    throw new AbstractMethodError();
+  }
 
   private static final class CopyValueEvaluationCallback extends HeadlessValueEvaluationCallback {
     private final int myValueIndex;

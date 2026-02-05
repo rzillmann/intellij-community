@@ -13,7 +13,11 @@ import com.intellij.openapi.options.ConfigurationException;
 import com.intellij.openapi.options.SearchableConfigurable;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.project.RootsChangeRescanningInfo;
-import com.intellij.openapi.ui.*;
+import com.intellij.openapi.ui.ComboBox;
+import com.intellij.openapi.ui.ComponentValidator;
+import com.intellij.openapi.ui.TextComponentAccessor;
+import com.intellij.openapi.ui.TextFieldWithBrowseButton;
+import com.intellij.openapi.ui.ValidationInfo;
 import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.util.NlsContexts;
 import com.intellij.openapi.util.NlsSafe;
@@ -36,14 +40,33 @@ import org.jetbrains.annotations.Nls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.idea.maven.utils.library.RepositoryLibraryDescription;
-import org.jetbrains.kotlin.cli.common.arguments.*;
-import org.jetbrains.kotlin.config.*;
+import org.jetbrains.kotlin.cli.common.arguments.CommonCompilerArguments;
+import org.jetbrains.kotlin.cli.common.arguments.FreezableKt;
+import org.jetbrains.kotlin.cli.common.arguments.K2JSCompilerArguments;
+import org.jetbrains.kotlin.cli.common.arguments.K2JVMCompilerArguments;
+import org.jetbrains.kotlin.cli.common.arguments.K2JsArgumentConstants;
+import org.jetbrains.kotlin.config.ApiVersion;
+import org.jetbrains.kotlin.config.CompilerSettings;
+import org.jetbrains.kotlin.config.IKotlinFacetSettings;
+import org.jetbrains.kotlin.config.JpsPluginSettings;
+import org.jetbrains.kotlin.config.JvmTarget;
+import org.jetbrains.kotlin.config.KotlinFacetSettingsKt;
+import org.jetbrains.kotlin.config.LanguageOrApiVersion;
+import org.jetbrains.kotlin.config.LanguageVersion;
+import org.jetbrains.kotlin.config.VersionView;
 import org.jetbrains.kotlin.idea.PluginStartupApplicationService;
 import org.jetbrains.kotlin.idea.base.compilerPreferences.KotlinBaseCompilerConfigurationUiBundle;
 import org.jetbrains.kotlin.idea.base.plugin.artifacts.KotlinArtifactConstants;
 import org.jetbrains.kotlin.idea.base.util.KotlinPlatformUtils;
 import org.jetbrains.kotlin.idea.base.util.ProjectStructureUtils;
-import org.jetbrains.kotlin.idea.compiler.configuration.*;
+import org.jetbrains.kotlin.idea.compiler.configuration.IdeKotlinVersion;
+import org.jetbrains.kotlin.idea.compiler.configuration.Kotlin2JsCompilerArgumentsHolder;
+import org.jetbrains.kotlin.idea.compiler.configuration.Kotlin2JvmCompilerArgumentsHolder;
+import org.jetbrains.kotlin.idea.compiler.configuration.KotlinCommonCompilerArgumentsHolder;
+import org.jetbrains.kotlin.idea.compiler.configuration.KotlinCompilerSettings;
+import org.jetbrains.kotlin.idea.compiler.configuration.KotlinCompilerWorkspaceSettings;
+import org.jetbrains.kotlin.idea.compiler.configuration.KotlinJpsPluginSettings;
+import org.jetbrains.kotlin.idea.compiler.configuration.KotlinJpsPluginSettingsKt;
 import org.jetbrains.kotlin.idea.facet.KotlinFacet;
 import org.jetbrains.kotlin.idea.util.application.ApplicationUtilsKt;
 import org.jetbrains.kotlin.platform.IdePlatformKind;
@@ -51,12 +74,24 @@ import org.jetbrains.kotlin.platform.PlatformUtilKt;
 import org.jetbrains.kotlin.platform.TargetPlatform;
 import org.jetbrains.kotlin.platform.impl.JsIdePlatformUtil;
 import org.jetbrains.kotlin.platform.impl.JvmIdePlatformKind;
-import org.jetbrains.kotlin.platform.impl.JvmIdePlatformUtil;
 import org.jetbrains.kotlin.platform.jvm.JdkPlatform;
 
-import javax.swing.*;
+import javax.swing.JCheckBox;
+import javax.swing.JComboBox;
+import javax.swing.JComponent;
+import javax.swing.JLabel;
+import javax.swing.JPanel;
+import javax.swing.JTextField;
 import javax.swing.event.PopupMenuEvent;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.SortedSet;
+import java.util.TreeSet;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -107,8 +142,6 @@ public class KotlinCompilerConfigurableTab implements SearchableConfigurable {
     private JCheckBox enableIncrementalCompilationForJvmCheckBox;
     private JCheckBox enableIncrementalCompilationForJsCheckBox;
     private JComboBox<String> moduleKindComboBox;
-    private JTextField scriptTemplatesField;
-    private JTextField scriptTemplatesClasspathField;
     private JPanel k2jvmPanel;
     private JPanel k2jsPanel;
     private JComboBox<String> jvmVersionComboBox;
@@ -118,7 +151,6 @@ public class KotlinCompilerConfigurableTab implements SearchableConfigurable {
     private JpsVersionItem defaultJpsVersionItem;
     private JComboBox<VersionView> languageVersionComboBox;
     private JComboBox<VersionView> apiVersionComboBox;
-    private JPanel scriptPanel;
     private JLabel warningLabel;
     private JTextField sourceMapPrefix;
     private JComboBox<String> sourceMapEmbedSources;
@@ -498,7 +530,7 @@ public class KotlinCompilerConfigurableTab implements SearchableConfigurable {
                 latestStableIndex = index;
             }
 
-            if (!LanguageVersionSettingsKt.isStableOrReadyForPreview(languageVersion)) {
+            if (!languageVersion.isStable()) {
                 continue;
             }
 
@@ -545,7 +577,6 @@ public class KotlinCompilerConfigurableTab implements SearchableConfigurable {
 
     public void setTargetPlatform(@Nullable IdePlatformKind targetPlatform) {
         k2jsPanel.setVisible(JsIdePlatformUtil.isJavaScript(targetPlatform));
-        scriptPanel.setVisible(JvmIdePlatformUtil.isJvm(targetPlatform));
     }
 
     private void fillModuleKindList() {
@@ -590,8 +621,6 @@ public class KotlinCompilerConfigurableTab implements SearchableConfigurable {
                jpsPluginSettings != null &&
                !getSelectedKotlinJpsPluginVersion().equals(KotlinJpsPluginSettingsKt.getVersionWithFallback(jpsPluginSettings)) ||
                !additionalArgsOptionsField.getText().equals(compilerSettings.getAdditionalArguments()) ||
-               isFieldModified(scriptTemplatesField, compilerSettings.getScriptTemplates()) ||
-               isFieldModified(scriptTemplatesClasspathField, compilerSettings.getScriptTemplatesClasspath()) ||
                isCheckboxModified(copyRuntimeFilesCheckBox, compilerSettings.getCopyJsLibraryFiles()) ||
                isBrowseFieldModified(outputDirectory, compilerSettings.getOutputDirectoryForJsLibraryFiles()) ||
 
@@ -689,8 +718,6 @@ public class KotlinCompilerConfigurableTab implements SearchableConfigurable {
         KotlinFacetSettingsKt.setApiVersionView(commonCompilerArguments, getSelectedAPIVersionView());
 
         compilerSettings.setAdditionalArguments(additionalArgsOptionsField.getText());
-        compilerSettings.setScriptTemplates(scriptTemplatesField.getText());
-        compilerSettings.setScriptTemplatesClasspath(scriptTemplatesClasspathField.getText());
         compilerSettings.setCopyJsLibraryFiles(copyRuntimeFilesCheckBox.isSelected());
         compilerSettings.setOutputDirectoryForJsLibraryFiles(outputDirectory.getText());
 
@@ -763,8 +790,6 @@ public class KotlinCompilerConfigurableTab implements SearchableConfigurable {
             setSelectedItem(apiVersionComboBox, getLatestStableVersion());
         }
         additionalArgsOptionsField.setText(compilerSettings.getAdditionalArguments());
-        scriptTemplatesField.setText(compilerSettings.getScriptTemplates());
-        scriptTemplatesClasspathField.setText(compilerSettings.getScriptTemplatesClasspath());
         copyRuntimeFilesCheckBox.setSelected(compilerSettings.getCopyJsLibraryFiles());
         outputDirectory.setText(compilerSettings.getOutputDirectoryForJsLibraryFiles());
 
@@ -846,14 +871,6 @@ public class KotlinCompilerConfigurableTab implements SearchableConfigurable {
 
     public JComboBox<String> getModuleKindComboBox() {
         return moduleKindComboBox;
-    }
-
-    public JTextField getScriptTemplatesField() {
-        return scriptTemplatesField;
-    }
-
-    public JTextField getScriptTemplatesClasspathField() {
-        return scriptTemplatesClasspathField;
     }
 
     public JComboBox<VersionView> getLanguageVersionComboBox() {

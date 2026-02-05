@@ -3,13 +3,16 @@
 package com.intellij.codeInsight.daemon.impl.quickfix;
 
 import com.intellij.codeInsight.CodeInsightBundle;
-import com.intellij.modcommand.*;
+import com.intellij.modcommand.ActionContext;
+import com.intellij.modcommand.FutureVirtualFile;
+import com.intellij.modcommand.ModCommand;
+import com.intellij.modcommand.ModCommandAction;
+import com.intellij.modcommand.ModMoveFile;
+import com.intellij.modcommand.Presentation;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.psi.PsiFile;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-
-import static com.intellij.codeInsight.completion.command.CommandCompletionServiceKt.COMMAND_COMPLETION_COPY;
 
 /**
  * A command to rename file; available only if target file does not exist
@@ -31,22 +34,19 @@ public class RenameFileModCommand implements ModCommandAction {
 
   @Override
   public @NotNull ModCommand perform(@NotNull ActionContext context) {
-    VirtualFile file = context.file().getVirtualFile();
-    return new ModMoveFile(file, new FutureVirtualFile(file.getParent(), myNewFileName, file.getFileType()));
+    PsiFile psiFile = context.file();
+    psiFile = psiFile.getOriginalFile();
+    VirtualFile virtualFile = psiFile.getVirtualFile();
+    return new ModMoveFile(virtualFile, new FutureVirtualFile(virtualFile.getParent(), myNewFileName, virtualFile.getFileType()));
   }
 
   @Override
   public @Nullable Presentation getPresentation(@NotNull ActionContext context) {
     PsiFile psiFile = context.file();
+    psiFile = psiFile.getOriginalFile();
     VirtualFile vFile = psiFile.getVirtualFile();
     if (vFile == null) return null;
     VirtualFile parent = vFile.getParent();
-    if (parent == null && psiFile.getUserData(COMMAND_COMPLETION_COPY) == Boolean.TRUE) {
-      psiFile = psiFile.getOriginalFile();
-      vFile = psiFile.getVirtualFile();
-      if (vFile == null) return null;
-      parent = vFile.getParent();
-    }
     if (parent == null) return null;
     VirtualFile newVFile = parent.findChild(myNewFileName);
     return newVFile == null || newVFile.equals(vFile) ? Presentation.of(getFamilyName()) : null;

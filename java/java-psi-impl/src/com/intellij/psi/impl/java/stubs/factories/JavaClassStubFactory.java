@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.psi.impl.java.stubs.factories;
 
 import com.intellij.lang.LighterAST;
@@ -6,7 +6,11 @@ import com.intellij.lang.LighterASTNode;
 import com.intellij.psi.JavaTokenType;
 import com.intellij.psi.PsiClass;
 import com.intellij.psi.impl.cache.RecordUtil;
-import com.intellij.psi.impl.java.stubs.*;
+import com.intellij.psi.impl.java.stubs.JavaClassElementType;
+import com.intellij.psi.impl.java.stubs.JavaStubElementType;
+import com.intellij.psi.impl.java.stubs.JavaStubElementTypes;
+import com.intellij.psi.impl.java.stubs.PsiClassStub;
+import com.intellij.psi.impl.java.stubs.PsiJavaFileStub;
 import com.intellij.psi.impl.java.stubs.impl.PsiClassStubImpl;
 import com.intellij.psi.impl.source.tree.JavaDocElementType;
 import com.intellij.psi.impl.source.tree.JavaElementType;
@@ -49,7 +53,7 @@ public class JavaClassStubFactory implements LightStubElementFactory<PsiClassStu
 
     for (final LighterASTNode child : tree.getChildren(node)) {
       final IElementType type = child.getTokenType();
-      if (type == JavaDocElementType.DOC_COMMENT) {
+      if (JavaDocElementType.DOC_COMMENT_TOKENS.contains(type)) {
         hasDocComment = true;
         isDeprecatedByComment = RecordUtil.isDeprecatedByDocComment(tree, child);
       }

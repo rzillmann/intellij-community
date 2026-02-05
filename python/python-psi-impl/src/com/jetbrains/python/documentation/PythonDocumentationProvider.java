@@ -10,11 +10,22 @@ import com.intellij.openapi.util.text.HtmlBuilder;
 import com.intellij.openapi.util.text.HtmlChunk;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vfs.VirtualFile;
-import com.intellij.psi.*;
+import com.intellij.psi.PsiDirectory;
+import com.intellij.psi.PsiElement;
+import com.intellij.psi.PsiFile;
+import com.intellij.psi.PsiFileSystemItem;
+import com.intellij.psi.PsiManager;
+import com.intellij.psi.PsiNamedElement;
+import com.intellij.psi.PsiReference;
+import com.intellij.psi.ResolveResult;
 import com.intellij.psi.tree.IElementType;
 import com.intellij.psi.util.PsiTreeUtil;
 import com.intellij.psi.util.QualifiedName;
-import com.jetbrains.python.*;
+import com.jetbrains.python.PyNames;
+import com.jetbrains.python.PyPsiBundle;
+import com.jetbrains.python.PyTokenTypes;
+import com.jetbrains.python.PythonDialectsTokenSetProvider;
+import com.jetbrains.python.PythonRuntimeService;
 import com.jetbrains.python.ast.PyAstSingleStarParameter;
 import com.jetbrains.python.ast.PyAstSlashParameter;
 import com.jetbrains.python.codeInsight.controlflow.ScopeOwner;
@@ -23,13 +34,39 @@ import com.jetbrains.python.codeInsight.typing.PyTypingTypeProvider;
 import com.jetbrains.python.documentation.PyTypeRenderer.Feature;
 import com.jetbrains.python.documentation.docstrings.DocStringUtil;
 import com.jetbrains.python.highlighting.PyHighlighter;
-import com.jetbrains.python.psi.*;
+import com.jetbrains.python.psi.PyArgumentList;
+import com.jetbrains.python.psi.PyAssignmentStatement;
+import com.jetbrains.python.psi.PyCallExpression;
+import com.jetbrains.python.psi.PyClass;
+import com.jetbrains.python.psi.PyDecoratable;
+import com.jetbrains.python.psi.PyDecorator;
+import com.jetbrains.python.psi.PyDecoratorList;
+import com.jetbrains.python.psi.PyDocStringOwner;
+import com.jetbrains.python.psi.PyExpression;
+import com.jetbrains.python.psi.PyFile;
+import com.jetbrains.python.psi.PyFunction;
+import com.jetbrains.python.psi.PyKeywordArgument;
+import com.jetbrains.python.psi.PyNamedParameter;
+import com.jetbrains.python.psi.PyReferenceExpression;
+import com.jetbrains.python.psi.PySingleStarParameter;
+import com.jetbrains.python.psi.PySlashParameter;
+import com.jetbrains.python.psi.PySubscriptionExpression;
+import com.jetbrains.python.psi.PyTargetExpression;
+import com.jetbrains.python.psi.PyTypeAliasStatement;
+import com.jetbrains.python.psi.PyTypeParameter;
+import com.jetbrains.python.psi.PyTypedElement;
+import com.jetbrains.python.psi.PyUtil;
 import com.jetbrains.python.psi.impl.ParamHelper;
 import com.jetbrains.python.psi.impl.PyBuiltinCache;
 import com.jetbrains.python.psi.impl.PyClassImpl;
 import com.jetbrains.python.psi.resolve.PyResolveContext;
 import com.jetbrains.python.psi.resolve.QualifiedNameFinder;
-import com.jetbrains.python.psi.types.*;
+import com.jetbrains.python.psi.types.PyCallableParameter;
+import com.jetbrains.python.psi.types.PyCollectionType;
+import com.jetbrains.python.psi.types.PyTupleType;
+import com.jetbrains.python.psi.types.PyType;
+import com.jetbrains.python.psi.types.PyTypeVisitor;
+import com.jetbrains.python.psi.types.TypeEvalContext;
 import one.util.streamex.StreamEx;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.Nls;
@@ -41,7 +78,11 @@ import java.util.Collections;
 import java.util.EnumSet;
 import java.util.List;
 
-import static com.jetbrains.python.documentation.PyDocSignaturesHighlighterKt.*;
+import static com.jetbrains.python.documentation.PyDocSignaturesHighlighterKt.functionNameTextAttribute;
+import static com.jetbrains.python.documentation.PyDocSignaturesHighlighterKt.highlightExpressionText;
+import static com.jetbrains.python.documentation.PyDocSignaturesHighlighterKt.paramNameTextAttribute;
+import static com.jetbrains.python.documentation.PyDocSignaturesHighlighterKt.styledReference;
+import static com.jetbrains.python.documentation.PyDocSignaturesHighlighterKt.styledSpan;
 import static com.jetbrains.python.psi.PyUtil.as;
 
 /**
@@ -148,7 +189,9 @@ public class PythonDocumentationProvider implements DocumentationProvider {
     return result.toFragment();
   }
 
-  static @NotNull HtmlChunk describeTypeParameter(@NotNull PyTypeParameter typeParameter, boolean showKind, @NotNull TypeEvalContext context) {
+  static @NotNull HtmlChunk describeTypeParameter(@NotNull PyTypeParameter typeParameter,
+                                                  boolean showKind,
+                                                  @NotNull TypeEvalContext context) {
     HtmlBuilder result = new HtmlBuilder();
     result.append(styledSpan(StringUtil.notNullize(typeParameter.getName()), PyHighlighter.PY_TYPE_PARAMETER));
     PyExpression boundExpression = typeParameter.getBoundExpression();
@@ -340,8 +383,8 @@ public class PythonDocumentationProvider implements DocumentationProvider {
    * In particular callables are rendered as {@code (p1: T1, p2: T2, ...) -> R}, not as {@code Callable[[T1, T2, ...], R]}.
    * To render a type as a valid expression for a type annotation use {@link #getTypeHint(PyType, TypeEvalContext)}.
    *
-   * @param type     the type to render
-   * @param context  TypeEvalContext instance to infer extra types with
+   * @param type    the type to render
+   * @param context TypeEvalContext instance to infer extra types with
    * @return string representation of the type
    * @see #getTypeHint(PyType, TypeEvalContext)
    */

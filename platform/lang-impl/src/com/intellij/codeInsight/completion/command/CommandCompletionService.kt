@@ -6,12 +6,18 @@ import com.intellij.codeInsight.completion.command.configuration.ApplicationComm
 import com.intellij.codeInsight.daemon.impl.HintRenderer
 import com.intellij.codeInsight.editorLineStripeHint.EditorLineStripeTextRenderer
 import com.intellij.codeInsight.highlighting.HighlightManager
-import com.intellij.codeInsight.lookup.*
+import com.intellij.codeInsight.lookup.CharFilter
 import com.intellij.codeInsight.lookup.CharFilter.CUSTOM_DEFAULT_CHAR_FILTERS
+import com.intellij.codeInsight.lookup.Lookup
+import com.intellij.codeInsight.lookup.LookupElement
+import com.intellij.codeInsight.lookup.LookupEvent
+import com.intellij.codeInsight.lookup.LookupListener
+import com.intellij.codeInsight.lookup.LookupManagerListener
 import com.intellij.codeInsight.lookup.impl.LookupCustomizer
 import com.intellij.codeInsight.lookup.impl.LookupImpl
 import com.intellij.codeInsight.template.impl.TemplateColors
 import com.intellij.codeInsight.template.postfix.completion.PostfixTemplateLookupElement
+import com.intellij.codeInsight.template.postfix.settings.PostfixTemplatesSettings
 import com.intellij.lang.Language
 import com.intellij.lang.LanguageExtension
 import com.intellij.lang.injection.InjectedLanguageManager
@@ -28,7 +34,11 @@ import com.intellij.openapi.editor.impl.EditorImpl
 import com.intellij.openapi.editor.markup.HighlighterLayer
 import com.intellij.openapi.editor.markup.HighlighterTargetArea
 import com.intellij.openapi.editor.markup.RangeHighlighter
-import com.intellij.openapi.util.*
+import com.intellij.openapi.util.Condition
+import com.intellij.openapi.util.Disposer
+import com.intellij.openapi.util.Key
+import com.intellij.openapi.util.TextRange
+import com.intellij.openapi.util.removeUserData
 import com.intellij.psi.PsiDocumentManager
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiFile
@@ -42,13 +52,6 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.min
 
 private const val MAX_COUNT_TO_SHOW_HINT = 5
-
-/**
- * Key representing whether this file is a copy for command completion analysis.
- */
-@JvmField
-@ApiStatus.Internal
-val COMMAND_COMPLETION_COPY: Key<Boolean?> = Key.create<Boolean>("completion.command.copy.file")
 
 /**
  * Service class responsible for managing and providing functionality for command completion within a project.
@@ -113,10 +116,11 @@ internal class CommandCompletionService(
     if (installed == true) return
     lookup.putUserData(INSTALLED_ADDITIONAL_MATCHER_KEY, true)
     lookup.showIfMeaningless() // stop hiding
+    val showPostfixAsSeparateGroup = PostfixTemplatesSettings.getInstance().isShowAsSeparateGroup
     if (completionFactory.supportFiltersWithDoublePrefix()) {
-      lookup.arranger.registerAdditionalMatcher(CommandCompletionLookupItemFilter)
+      lookup.arranger.registerAdditionalMatcher(CommandCompletionLookupItemFilter(showPostfixAsSeparateGroup))
     }
-    else {
+    else if (!showPostfixAsSeparateGroup) {
       lookup.arranger.registerAdditionalMatcher(NotPostfixCompletionLookupItemFilter)
     }
     lookup.arranger.prefixChanged(lookup)
@@ -132,7 +136,7 @@ internal class CommandCompletionService(
     if (showIfMeaningless) {
       lookup.showIfMeaningless() // stop hiding
     }
-    lookup.arranger.registerAdditionalMatcher(CommandCompletionLookupItemFilter)
+    lookup.arranger.registerAdditionalMatcher(CommandCompletionLookupItemFilter(PostfixTemplatesSettings.getInstance().isShowAsSeparateGroup))
     lookup.arranger.prefixChanged(lookup)
     lookup.requestResize()
     lookup.refreshUi(false, true)
@@ -181,9 +185,10 @@ internal class CommandCompletionService(
     lookup.putUserData(INSTALLED_HINT_KEY, true)
   }
 
-  private object CommandCompletionLookupItemFilter : Condition<LookupElement> {
+  private class CommandCompletionLookupItemFilter(private val showPostfixAsSeparateGroup: Boolean) : Condition<LookupElement> {
     override fun value(e: LookupElement?): Boolean {
-      return e != null && e.`as`(CommandCompletionLookupElement::class.java) != null
+      return e != null && (e.`as`(CommandCompletionLookupElement::class.java) != null ||
+                           (showPostfixAsSeparateGroup && e.`as`(PostfixTemplateLookupElement::class.java) != null))
     }
   }
 
@@ -351,7 +356,7 @@ private class CommandCompletionHighlightingListener(
  */
 @ApiStatus.Internal
 internal class CommandCompletionCharFilter : CharFilter() {
-  override fun acceptChar(c: Char, prefixLength: Int, lookup: Lookup?): Result? {
+  override fun acceptChar(c: Char, prefixLength: Int, lookup: Lookup): Result? {
     if (!ApplicationCommandCompletionService.getInstance().commandCompletionEnabled()) return null
     if (lookup !is LookupImpl) return null
     val completionService = lookup.project.service<CommandCompletionService>()

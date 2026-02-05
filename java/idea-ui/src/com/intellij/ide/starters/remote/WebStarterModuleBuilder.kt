@@ -15,7 +15,19 @@ import com.intellij.ide.starters.local.StarterModuleBuilder.Companion.preprocess
 import com.intellij.ide.starters.local.StarterModuleBuilder.Companion.preprocessModuleOpened
 import com.intellij.ide.starters.remote.wizard.WebStarterInitialStep
 import com.intellij.ide.starters.remote.wizard.WebStarterLibrariesStep
-import com.intellij.ide.starters.shared.*
+import com.intellij.ide.starters.shared.CustomizedMessages
+import com.intellij.ide.starters.shared.DEFAULT_MODULE_VERSION
+import com.intellij.ide.starters.shared.DependencyAvailable
+import com.intellij.ide.starters.shared.DependencyState
+import com.intellij.ide.starters.shared.PluginRecommendation
+import com.intellij.ide.starters.shared.StarterAppPackaging
+import com.intellij.ide.starters.shared.StarterAppType
+import com.intellij.ide.starters.shared.StarterConfigFileFormat
+import com.intellij.ide.starters.shared.StarterLanguage
+import com.intellij.ide.starters.shared.StarterLanguageLevel
+import com.intellij.ide.starters.shared.StarterProjectType
+import com.intellij.ide.starters.shared.StarterTestRunner
+import com.intellij.ide.starters.shared.StarterWizardSettings
 import com.intellij.ide.util.projectWizard.ModuleBuilder
 import com.intellij.ide.util.projectWizard.ModuleWizardStep
 import com.intellij.ide.util.projectWizard.SettingsStep
@@ -98,6 +110,7 @@ abstract class WebStarterModuleBuilder : ModuleBuilder() {
   protected open fun getDefaultLanguageLevel(): StarterLanguageLevel? = null
   protected open fun getApplicationTypes(): List<StarterAppType> = emptyList()
   protected open fun getPackagingTypes(): List<StarterAppPackaging> = emptyList()
+  protected open fun getConfigurationFileFormats(): List<StarterConfigFileFormat> = emptyList()
 
   protected open fun getFilePathsToOpen(): List<String> = emptyList()
 
@@ -119,7 +132,8 @@ abstract class WebStarterModuleBuilder : ModuleBuilder() {
       getApplicationTypes(),
       getTestFrameworks(),
       getCustomizedMessages(),
-      isShowProjectTypes()
+      isShowProjectTypes(),
+      getConfigurationFileFormats()
     )
   }
 
@@ -134,6 +148,7 @@ abstract class WebStarterModuleBuilder : ModuleBuilder() {
     starterContext.languageLevel = starterSettings.defaultLanguageLevel ?: starterSettings.languageLevels.firstOrNull()
     starterContext.packaging = starterSettings.packagingTypes.firstOrNull()
     starterContext.testFramework = starterSettings.testFrameworks.firstOrNull()
+    starterContext.configFileFormat = starterSettings.configurationFileFormats.firstOrNull()
 
     return createOptionsStep(WebStarterContextProvider(this, context, starterContext, starterSettings, parentDisposable))
   }

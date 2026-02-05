@@ -21,13 +21,21 @@ import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.StartupUiUtil.isUnderDarcula
 import com.intellij.util.ui.UIUtil
 import org.jetbrains.annotations.ApiStatus
-import java.awt.*
+import java.awt.BorderLayout
+import java.awt.Component
+import java.awt.Graphics
+import java.awt.GridBagConstraints
+import java.awt.GridBagLayout
 import java.awt.event.ActionEvent
 import java.awt.event.ActionListener
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import java.util.function.Consumer
-import javax.swing.*
+import javax.swing.JComponent
+import javax.swing.JPanel
+import javax.swing.JProgressBar
+import javax.swing.SwingConstants
+import javax.swing.SwingUtilities
 
 /**
  * This component was copy-pasted from `InlineProgressIndicator` with the following modification:
@@ -74,7 +82,7 @@ open class ProgressComponent(val isCompact: Boolean, val info: TaskInfo, progres
       createCompactTextAndProgress(component)
       component.add(createButtonPanel(
         eastButtons.map{ b: ProgressButton -> b.button }), BorderLayout.EAST)
-      component.setToolTipText(indicatorModel.title + ". " + IdeBundle.message("progress.text.clickToViewProgressWindow"))
+      component.setToolTipText(computeTooltipText(indicatorModel))
     }
     else {
       component.setLayout(BorderLayout())
@@ -328,6 +336,16 @@ open class ProgressComponent(val isCompact: Boolean, val info: TaskInfo, progres
       val wrapper = Wrapper(button)
       wrapper.setBorder(JBUI.Borders.empty(0, 3, 0, 2))
       return wrapper
+    }
+
+    @NlsContexts.Tooltip
+    fun computeTooltipText(indicatorModel: ProgressModel?): String {
+      return if (indicatorModel != null) {
+        indicatorModel.title + ". " + IdeBundle.message("progress.text.clickToViewProgressWindow")
+      }
+      else {
+        IdeBundle.message("progress.text.clickToViewProgressWindow")
+      }
     }
   }
 }

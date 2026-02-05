@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.history.integration;
 
 import com.intellij.history.core.LocalHistoryFacade;
@@ -24,7 +24,12 @@ import com.intellij.openapi.util.Clock;
 import com.intellij.openapi.util.Key;
 import com.intellij.openapi.util.Pair;
 import com.intellij.openapi.util.text.StringUtil;
-import com.intellij.openapi.vfs.*;
+import com.intellij.openapi.vfs.CharsetToolkit;
+import com.intellij.openapi.vfs.LocalFileSystem;
+import com.intellij.openapi.vfs.ReadonlyStatusHandler;
+import com.intellij.openapi.vfs.VersionManagingFileSystem;
+import com.intellij.openapi.vfs.VirtualFile;
+import com.intellij.openapi.vfs.VirtualFileManager;
 import com.intellij.openapi.vfs.encoding.EncodingRegistry;
 import com.intellij.openapi.vfs.ex.temp.TempFileSystem;
 import com.intellij.openapi.vfs.newvfs.ManagingFS;
@@ -42,7 +47,11 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.IOException;
 import java.nio.charset.Charset;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.List;
 
 public class IdeaGateway {
   private static final Logger LOG = Logger.getInstance(IdeaGateway.class);
@@ -236,12 +245,12 @@ public class IdeaGateway {
   }
 
   public static @NotNull Iterable<VirtualFile> iterateDBChildren(VirtualFile f) {
-    if (!(f instanceof NewVirtualFile nf)) return Collections.emptyList();
+    if (!(f instanceof NewVirtualFile nf) || !f.isValid()) return Collections.emptyList();
     return nf.iterInDbChildrenWithoutLoadingVfsFromOtherProjects();
   }
 
   public static @NotNull Iterable<VirtualFile> loadAndIterateChildren(VirtualFile f) {
-    if (!(f instanceof NewVirtualFile nf)) return Collections.emptyList();
+    if (!(f instanceof NewVirtualFile nf) || !f.isValid()) return Collections.emptyList();
     return Arrays.asList(nf.getChildren());
   }
 

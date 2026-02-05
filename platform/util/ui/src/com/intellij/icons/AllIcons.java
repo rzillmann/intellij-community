@@ -1,4 +1,4 @@
-// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2026 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.icons;
 
 import com.intellij.ui.IconManager;
@@ -26,6 +26,7 @@ public class AllIcons {
     /** 16x16 */ public static final @NotNull Icon AddList = load("expui/bookmarks/addBookmarksList.svg", "actions/addList.svg", 687312006, 2);
     /** 16x16 */ public static final @NotNull Icon AddMulticaret = load("expui/general/add.svg", "actions/AddMulticaret.svg", 14246848, 2);
     /** 16x16 */ public static final @NotNull Icon AddToDictionary = load("expui/actions/addToDictionary.svg", "actions/addToDictionary.svg", -854911886, 2);
+    /** 16x16 */ public static final @NotNull Icon AiIntentionBulb = load("expui/actions/aiIntentionBulb.svg", -2142579745, 2);
     /** 16x16 */ public static final @NotNull Icon Annotate = load("expui/general/listFiles.svg", "actions/annotate.svg", -264543398, 2);
     /** 16x16 */ public static final @NotNull Icon ArrowCollapse = load("expui/general/chevronLeft.svg", "actions/arrowCollapse.svg", -296923721, 2);
     /** 16x16 */ public static final @NotNull Icon ArrowExpand = load("expui/general/chevronRight.svg", "actions/arrowExpand.svg", 2111993468, 2);
@@ -724,6 +725,7 @@ public class AllIcons {
     /** 32x32 */ public static final @NotNull Icon FeedbackRatingOn = load("expui/ide/feedbackRatingOn.svg", "ide/feedbackRatingOn.svg", 1102075748, 0);
     /** 32x32 */ public static final @NotNull Icon FeedbackRatingOnFocused = load("ide/feedbackRatingOnFocused.svg", -1692491005, 0);
     /** 16x16 */ public static final @NotNull Icon Gift = load("expui/ide/gift.svg", "ide/gift.svg", -1423934596, 2);
+    /** 16x16 */ public static final @NotNull Icon GrayDot = load("ide/grayDot.svg", 699185880, 2);
     /** 16x16 */ public static final @NotNull Icon HectorOff = load("ide/hectorOff.svg", 756397077, 2);
     /** 16x16 */ public static final @NotNull Icon HectorOn = load("ide/hectorOn.svg", 1387966645, 2);
     /** 16x16 */ public static final @NotNull Icon HectorSyntax = load("ide/hectorSyntax.svg", -415840178, 2);
@@ -893,7 +895,7 @@ public class AllIcons {
   }
 
   public static final class Modules {
-    /** 16x16 */ public static final @NotNull Icon AddExcludedRoot = load("modules/addExcludedRoot.svg", -551171712, 2);
+    /** 16x16 */ public static final @NotNull Icon AddExcludedRoot = load("expui/actions/addExcludedRoot.svg", "modules/addExcludedRoot.svg", -551171712, 2);
     /** 16x16 */ public static final @NotNull Icon Annotation = load("expui/nodes/annotationFolder.svg", "modules/annotation.svg", 394273456, 0);
     /** 16x16 */ public static final @NotNull Icon EditFolder = load("expui/nodes/editFolder.svg", "modules/editFolder.svg", -260654478, 0);
     /** 16x16 */ public static final @NotNull Icon ExcludedGeneratedRoot = load("expui/nodes/excludedGenerated.svg", "modules/excludedGeneratedRoot.svg", -1551632995, 0);
@@ -967,7 +969,7 @@ public class AllIcons {
     /** 16x16 */ public static final @NotNull Icon Include = load("expui/nodes/include.svg", "nodes/include.svg", -1043076621, 0);
     /** 16x16 */ public static final @NotNull Icon Interface = load("expui/nodes/interface.svg", "nodes/interface.svg", -371611298, 1);
     /** 16x16 */ public static final @NotNull Icon JarDirectory = load("nodes/jarDirectory.svg", -692661187, 0);
-    /** 16x16 */ public static final @NotNull Icon JavaDocFolder = load("nodes/javaDocFolder.svg", 135532303, 0);
+    /** 16x16 */ public static final @NotNull Icon JavaDocFolder = load("expui/nodes/javaDocFolder.svg", "nodes/javaDocFolder.svg", 135532303, 0);
     /** 16x16 */ public static final @NotNull Icon JavaModule = load("expui/nodes/moduleJava.svg", "nodes/javaModule.svg", 2003423238, 0);
     /** 16x16 */ public static final @NotNull Icon JunitTestMark = load("expui/nodes/junitTestMark.svg", "nodes/junitTestMark.svg", -1344036663, 0);
     /** 16x16 */ public static final @NotNull Icon KeymapAnt = load("expui/nodes/folder.svg", "nodes/keymapAnt.svg", 1301975081, 0);
@@ -1096,7 +1098,8 @@ public class AllIcons {
     /** 40x40 */ public static final @NotNull Icon PluginLogo = load("expui/nodes/pluginLogo.svg", "plugins/pluginLogo.svg", 899855946, 0);
     /** 40x40 */ public static final @NotNull Icon PluginLogoDisabled = load("expui/nodes/pluginLogoDisabled.svg", "plugins/pluginLogoDisabled.svg", 1569910218, 0);
     /** 12x12 */ public static final @NotNull Icon Rating = load("plugins/rating.svg", 1714785539, 2);
-    /** 12x12 */ public static final @NotNull Icon Updated = load("plugins/updated.svg", 1725310914, 2);
+    /** 12x12 */ public static final @NotNull Icon Refresh = load("plugins/refresh.svg", -649384412, 2);
+    /** 12x12 */ public static final @NotNull Icon Updated = load("plugins/updated.svg", -191512259, 2);
   }
 
   public static final class Process {
@@ -1173,7 +1176,7 @@ public class AllIcons {
     /** 16x16 */ public static final @NotNull Icon ApacheIgnite = load("providers/apacheIgnite.svg", 550257054, 2);
     /** 16x16 */ public static final @NotNull Icon ApachePhoenix = load("providers/apachePhoenix.svg", 426659470, 0);
     /** 16x16 */ public static final @NotNull Icon Athena = load("providers/athena.svg", 1959048894, 0);
-    /** 16x16 */ public static final @NotNull Icon Azure = load("providers/azure.svg", 146675790, 0);
+    /** 16x16 */ public static final @NotNull Icon Azure = load("providers/azure.svg", 2141980648, 0);
     /** 16x16 */ public static final @NotNull Icon BigQuery = load("providers/bigQuery.svg", 1138709532, 0);
     /** 16x16 */ public static final @NotNull Icon Cassandra = load("providers/cassandra.svg", -819208447, 2);
     /** 16x16 */ public static final @NotNull Icon ClickHouse = load("providers/clickHouse.svg", -519696265, 0);
@@ -1356,7 +1359,7 @@ public class AllIcons {
     /** 16x16 */ public static final @NotNull Icon AddFolder = load("toolbarDecorator/addFolder.svg", 395130952, 2);
     /** 16x16 */ public static final @NotNull Icon AddIcon = load("toolbarDecorator/addIcon.svg", 928060610, 2);
     /** 16x16 */ public static final @NotNull Icon AddJira = load("toolbarDecorator/addJira.svg", -1559078405, 2);
-    /** 16x16 */ public static final @NotNull Icon AddLink = load("toolbarDecorator/addLink.svg", 740343788, 2);
+    /** 16x16 */ public static final @NotNull Icon AddLink = load("expui/actions/addLink.svg", "toolbarDecorator/addLink.svg", 740343788, 2);
     /** 16x16 */ public static final @NotNull Icon AddPattern = load("toolbarDecorator/addPattern.svg", 1133058713, 2);
     /** 16x16 */ public static final @NotNull Icon AddRemoteDatasource = load("toolbarDecorator/addRemoteDatasource.svg", -1532941571, 2);
     /** 16x16 */ public static final @NotNull Icon AddYouTrack = load("toolbarDecorator/addYouTrack.svg", -1383628266, 2);

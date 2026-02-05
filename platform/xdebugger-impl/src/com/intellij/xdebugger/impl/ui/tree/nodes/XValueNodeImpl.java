@@ -8,6 +8,7 @@ import com.intellij.openapi.util.Comparing;
 import com.intellij.openapi.util.NlsSafe;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vfs.VirtualFile;
+import com.intellij.platform.debugger.impl.shared.proxy.XDebugSessionProxy;
 import com.intellij.ui.ColoredTextContainer;
 import com.intellij.ui.SimpleTextAttributes;
 import com.intellij.util.ThreeState;
@@ -24,7 +25,6 @@ import com.intellij.xdebugger.frame.XValue;
 import com.intellij.xdebugger.frame.XValuePlace;
 import com.intellij.xdebugger.frame.presentation.XValuePresentation;
 import com.intellij.xdebugger.impl.XSourceKind;
-import com.intellij.xdebugger.impl.frame.XDebugSessionProxy;
 import com.intellij.xdebugger.impl.frame.XDebugView;
 import com.intellij.xdebugger.impl.frame.XValueMarkers;
 import com.intellij.xdebugger.impl.inline.XDebuggerInlayUtil;
@@ -42,7 +42,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.concurrency.Promise;
 
-import javax.swing.*;
+import javax.swing.Icon;
 import java.awt.event.MouseEvent;
 import java.util.Comparator;
 import java.util.concurrent.atomic.AtomicReference;
@@ -79,6 +79,11 @@ public class XValueNodeImpl extends XValueContainerNode<XValue> implements XValu
       }
       myText.append(XDebuggerUIConstants.getCollectingDataMessage(), XDebuggerUIConstants.COLLECTING_DATA_HIGHLIGHT_ATTRIBUTES);
     }
+  }
+
+  XValueNodeImpl(XValueNodeImpl node, @NotNull XValue value) {
+    super(node.getTree(), (XDebuggerTreeNode)node.getParent(), true, value);
+    myName = node.getName();
   }
 
   @Override
@@ -178,6 +183,7 @@ public class XValueNodeImpl extends XValueContainerNode<XValue> implements XValu
     });
   }
 
+  @Override
   public void addAdditionalHyperlink(@NotNull XDebuggerTreeNodeHyperlink link) {
     invokeNodeUpdate(() -> {
       if (!myAdditionalHyperLink.compareAndSet(null, link)) {
@@ -187,6 +193,7 @@ public class XValueNodeImpl extends XValueContainerNode<XValue> implements XValu
     });
   }
 
+  @Override
   public void clearAdditionalHyperlinks() {
     invokeNodeUpdate(() -> {
       myAdditionalHyperLink.set(null);
@@ -227,6 +234,7 @@ public class XValueNodeImpl extends XValueContainerNode<XValue> implements XValu
     }
   }
 
+  @ApiStatus.Internal
   @Override
   public @NotNull XValue getXValue() {
     return getValueContainer();

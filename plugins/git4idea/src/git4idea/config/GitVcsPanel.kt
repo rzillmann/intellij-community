@@ -20,6 +20,7 @@ import com.intellij.openapi.ui.ValidationInfo
 import com.intellij.openapi.ui.validation.DialogValidationRequestor
 import com.intellij.openapi.ui.validation.WHEN_TEXT_CHANGED
 import com.intellij.openapi.util.NlsSafe
+import com.intellij.openapi.util.registry.Registry
 import com.intellij.openapi.util.text.StringUtil
 import com.intellij.openapi.vcs.ProjectLevelVcsManager
 import com.intellij.openapi.vcs.VcsBundle
@@ -33,7 +34,19 @@ import com.intellij.ui.SimpleTextAttributes
 import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.TextComponentEmptyText
 import com.intellij.ui.components.fields.ExpandableTextField
-import com.intellij.ui.dsl.builder.*
+import com.intellij.ui.dsl.builder.AlignX
+import com.intellij.ui.dsl.builder.Cell
+import com.intellij.ui.dsl.builder.DslComponentProperty
+import com.intellij.ui.dsl.builder.MutableProperty
+import com.intellij.ui.dsl.builder.Panel
+import com.intellij.ui.dsl.builder.RightGap
+import com.intellij.ui.dsl.builder.RowLayout
+import com.intellij.ui.dsl.builder.VerticalComponentGap
+import com.intellij.ui.dsl.builder.bind
+import com.intellij.ui.dsl.builder.bindIntValue
+import com.intellij.ui.dsl.builder.bindItem
+import com.intellij.ui.dsl.builder.panel
+import com.intellij.ui.dsl.builder.selected
 import com.intellij.ui.dsl.listCellRenderer.listCellRenderer
 import com.intellij.ui.layout.AdvancedSettingsPredicate
 import com.intellij.ui.layout.ComponentPredicate
@@ -49,6 +62,8 @@ import com.intellij.vcs.log.ui.filter.FileFilterModel
 import com.intellij.vcs.log.ui.filter.StructureFilterPopupComponent
 import git4idea.GitVcs
 import git4idea.branch.GitBranchIncomingOutgoingManager
+import git4idea.cherrypick.EmptyCherryPickResolutionStrategy
+import git4idea.cherrypick.settingsMessage
 import git4idea.config.GitExecutableSelectorPanel.Companion.createGitExecutableSelectorRow
 import git4idea.config.gpg.GpgSignConfigurableRow.Companion.createGpgSignRow
 import git4idea.fetch.GitFetchTagsMode
@@ -258,7 +273,7 @@ internal class GitVcsPanel(private val project: Project) :
       }.bind({ projectSettings.updateMethod }, { projectSettings.updateMethod = it })
       buttonsGroup {
         row(message("settings.clean.working.tree")) {
-          GitSaveChangesPolicy.values().forEach { saveSetting ->
+          GitSaveChangesPolicy.entries.forEach { saveSetting ->
             radioButton(saveSetting.text, saveSetting)
           }
         }.layout(RowLayout.INDEPENDENT)
@@ -271,8 +286,7 @@ internal class GitVcsPanel(private val project: Project) :
     if (project.isDefault || GitRepositoryManager.getInstance(project).moreThanOneRoot()) {
       row {
         checkBox(cdSyncBranches(project))
-          .gap(RightGap.SMALL)
-        contextHelp(DvcsBundle.message("sync.setting.description", GitDisplayName.NAME))
+          .contextHelp(DvcsBundle.message("sync.setting.description", GitDisplayName.NAME))
       }
     }
     branchUpdateInfoRow()
@@ -300,6 +314,18 @@ internal class GitVcsPanel(private val project: Project) :
         }.bind({ applicationSettings.isCompareWithLocalInStashesEnabled }, { applicationSettings.isCompareWithLocalInStashesEnabled = it })
       }
     }
+
+    if (Registry.`is`("git.cherry.pick.use.git.sequencer"))
+      group(message("settings.cherry.pick")) {
+        buttonsGroup(message("settings.cherry.pick.empty.commit.group")) {
+          EmptyCherryPickResolutionStrategy.entries.forEach { strategy ->
+            row {
+              radioButton(text = strategy.settingsMessage, value = strategy)
+            }
+          }
+        }.bind({ applicationSettings.emptyCherryPickResolutionStrategy }, { applicationSettings.emptyCherryPickResolutionStrategy = it })
+      }
+
     for (configurable in configurables) {
       appendDslConfigurable(configurable)
     }
@@ -307,16 +333,10 @@ internal class GitVcsPanel(private val project: Project) :
 
   private fun Panel.fetchTagsRow() {
     row(message("settings.git.fetch.tags.label")) {
-      val listCellRenderer = listCellRenderer<GitFetchTagsMode?> {
-        val v = value
-        if (v != null) {
-          text(v.getModeName())
-          text(v.getDescription()) {
-            foreground = greyForeground
-          }
-        }
-        else {
-          text("")
+      val listCellRenderer = listCellRenderer<GitFetchTagsMode>("") {
+        text(value.getModeName())
+        text(value.getDescription()) {
+          foreground = greyForeground
         }
       }
       comboBox(EnumComboBoxModel(GitFetchTagsMode::class.java), renderer = listCellRenderer)

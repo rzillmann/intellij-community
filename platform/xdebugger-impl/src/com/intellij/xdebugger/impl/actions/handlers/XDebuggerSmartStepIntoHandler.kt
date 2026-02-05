@@ -9,6 +9,7 @@ import com.intellij.codeInsight.hint.HintUtil
 import com.intellij.codeInsight.unwrap.ScopeHighlighter
 import com.intellij.execution.filters.HyperlinkInfo
 import com.intellij.execution.impl.EditorHyperlinkSupport
+import com.intellij.ide.rpc.util.textRange
 import com.intellij.ide.ui.icons.icon
 import com.intellij.ide.util.PropertiesComponent
 import com.intellij.idea.AppMode
@@ -32,12 +33,20 @@ import com.intellij.openapi.fileEditor.TextEditor
 import com.intellij.openapi.fileEditor.ex.FileEditorManagerEx.Companion.getInstanceEx
 import com.intellij.openapi.ui.popup.PopupStep
 import com.intellij.openapi.ui.popup.util.BaseListPopupStep
-import com.intellij.openapi.util.*
+import com.intellij.openapi.util.Disposer
+import com.intellij.openapi.util.Key
+import com.intellij.openapi.util.NlsContexts
+import com.intellij.openapi.util.NlsSafe
+import com.intellij.openapi.util.Pair
+import com.intellij.openapi.util.Ref
+import com.intellij.openapi.util.TextRange
 import com.intellij.openapi.util.registry.Registry.Companion.`is`
 import com.intellij.openapi.wm.IdeFocusManager
 import com.intellij.platform.debugger.impl.rpc.XDebugSessionApi
 import com.intellij.platform.debugger.impl.rpc.XSmartStepIntoTargetDto
 import com.intellij.platform.debugger.impl.rpc.XSmartStepIntoTargetId
+import com.intellij.platform.debugger.impl.shared.performDebuggerActionAsync
+import com.intellij.platform.debugger.impl.shared.proxy.XDebugSessionProxy
 import com.intellij.ui.Hint
 import com.intellij.ui.LightweightHint
 import com.intellij.ui.ListActions
@@ -52,8 +61,6 @@ import com.intellij.xdebugger.XDebuggerBundle
 import com.intellij.xdebugger.XSourcePosition
 import com.intellij.xdebugger.impl.actions.XDebuggerActions
 import com.intellij.xdebugger.impl.actions.XDebuggerProxySuspendedActionHandler
-import com.intellij.xdebugger.impl.frame.XDebugSessionProxy
-import com.intellij.xdebugger.impl.performDebuggerActionAsync
 import com.intellij.xdebugger.impl.ui.DebuggerUIUtil
 import com.intellij.xdebugger.stepping.XSmartStepIntoVariant
 import com.intellij.xdebugger.ui.DebuggerColors
@@ -84,10 +91,7 @@ private fun XSmartStepIntoTargetDto.target(): XSmartStepIntoTarget {
     override fun getText(): @NlsSafe String? = this@target.text
     override fun getDescription(): @Nls String? = this@target.description
     override fun getIcon(): Icon? = this@target.iconId?.icon()
-    override fun getHighlightRange(): TextRange? {
-      val (start, end) = this@target.textRange ?: return null
-      return TextRange(start, end)
-    }
+    override fun getHighlightRange(): TextRange? = this@target.textRange?.textRange()
   })
 }
 
@@ -118,29 +122,33 @@ internal open class XDebuggerSmartStepIntoHandler : XDebuggerProxySuspendedActio
     val stepData = editor.getUserData(SMART_STEP_INPLACE_DATA)
     if (stepData != null) {
       stepData.stepIntoCurrent()
+      return
     }
-    else {
-      try {
-        val targets = computeTargets(session).map { it.target() }
-        withContext(Dispatchers.EDT) {
-          if (!handleSimpleCases(targets, session)) {
-            choose(targets, position, session, editor)
-          }
-        }
-      }
-      catch (ce: CancellationException) {
-        throw ce
-      }
-      catch (e: Throwable) {
-        LOG.error("Exception while smart step into, falling back to step into", e)
+    try {
+      val targets = computeTargets(session)?.map { it.target() }
+      if (targets == null) {
+        // fallback to step into
         session.stepInto(ignoreBreakpoints = false)
+        return
       }
+      withContext(Dispatchers.EDT) {
+        if (handleSimpleCases(targets, session)) return@withContext
+
+        choose(targets, position, session, editor)
+      }
+    }
+    catch (ce: CancellationException) {
+      throw ce
+    }
+    catch (e: Throwable) {
+      LOG.error("Exception while smart step into, falling back to step into", e)
+      session.stepInto(ignoreBreakpoints = false)
     }
   }
 
   protected open suspend fun computeTargets(
     session: XDebugSessionProxy,
-  ): List<XSmartStepIntoTargetDto> {
+  ): List<XSmartStepIntoTargetDto>? {
     return XDebugSessionApi.getInstance().computeSmartStepTargets(session.id)
   }
 
@@ -328,31 +336,31 @@ abstract class SmartStepEditorActionHandler(protected val myOriginalHandler: Edi
   }
 }
 
-private class UpHandler(original: EditorActionHandler) : SmartStepEditorActionHandler(original) {
+internal class UpHandler(original: EditorActionHandler) : SmartStepEditorActionHandler(original) {
   override fun myPerform(editor: Editor, caret: Caret?, dataContext: DataContext, stepData: SmartStepData) {
     stepData.selectNext(SmartStepData.Direction.UP)
   }
 }
 
-private class DownHandler(original: EditorActionHandler) : SmartStepEditorActionHandler(original) {
+internal class DownHandler(original: EditorActionHandler) : SmartStepEditorActionHandler(original) {
   override fun myPerform(editor: Editor, caret: Caret?, dataContext: DataContext, stepData: SmartStepData) {
     stepData.selectNext(SmartStepData.Direction.DOWN)
   }
 }
 
-private class LeftHandler(original: EditorActionHandler) : SmartStepEditorActionHandler(original) {
+internal class LeftHandler(original: EditorActionHandler) : SmartStepEditorActionHandler(original) {
   override fun myPerform(editor: Editor, caret: Caret?, dataContext: DataContext, stepData: SmartStepData) {
     stepData.selectNext(SmartStepData.Direction.LEFT)
   }
 }
 
-private class RightHandler(original: EditorActionHandler) : SmartStepEditorActionHandler(original) {
+internal class RightHandler(original: EditorActionHandler) : SmartStepEditorActionHandler(original) {
   override fun myPerform(editor: Editor, caret: Caret?, dataContext: DataContext, stepData: SmartStepData) {
     stepData.selectNext(SmartStepData.Direction.RIGHT)
   }
 }
 
-private class EscHandler(original: EditorActionHandler) : SmartStepEditorActionHandler(original) {
+internal class EscHandler(original: EditorActionHandler) : SmartStepEditorActionHandler(original) {
   override fun myPerform(editor: Editor, caret: Caret?, dataContext: DataContext, stepData: SmartStepData) {
     editor.getUserData(SMART_STEP_INPLACE_DATA)?.clear()
     if (myOriginalHandler.isEnabled(editor, caret, dataContext)) {

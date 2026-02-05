@@ -16,7 +16,13 @@ import com.intellij.util.system.OS
 import com.intellij.util.text.nullize
 import org.jetbrains.annotations.ApiStatus
 import java.io.IOException
-import java.nio.file.*
+import java.nio.file.AccessDeniedException
+import java.nio.file.DirectoryNotEmptyException
+import java.nio.file.FileAlreadyExistsException
+import java.nio.file.FileSystemException
+import java.nio.file.NoSuchFileException
+import java.nio.file.NotDirectoryException
+import java.nio.file.ReadOnlyFileSystemException
 
 @ApiStatus.Internal
 fun EelExecApi.fetchLoginShellEnvVariablesBlocking(): Map<String, String> {
@@ -60,11 +66,21 @@ fun <T, E : EelFsError> EelResult<T, E>.getOrThrowFileSystemException(): T =
 
 @Throws(FileSystemException::class)
 @ApiStatus.Internal
-suspend fun <T, E : EelFsError, O : OwnedBuilder<EelResult<T, E>>> O.getOrThrowFileSystemException(): T =
-  when (val v = eelIt()) {
-    is EelResult.Ok -> v.value
-    is EelResult.Error -> v.error.throwFileSystemException()
+suspend fun <T, E : EelFsError, O : OwnedBuilder<EelResult<T, E>>> O.getOrThrowFileSystemException(): T {
+  try {
+    val v = eelIt()
+    return when (v) {
+      is EelResult.Ok -> v.value
+      is EelResult.Error -> v.error.throwFileSystemException()
+    }
   }
+  catch (ioe: IOException) {
+    throw ioe
+  }
+  catch(t: Throwable) {
+    throw IOException(t.message.orEmpty(), t)
+  }
+}
 
 // TODO There's java.nio.file.FileSystemLoopException, so ELOOP should be added to all error codes for a decent support of all exceptions.
 @Throws(FileSystemException::class)

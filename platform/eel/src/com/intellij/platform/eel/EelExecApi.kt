@@ -1,4 +1,4 @@
-// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2026 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.platform.eel
 
 import com.intellij.platform.eel.EelExecApi.ExecuteProcessOptions
@@ -6,11 +6,21 @@ import com.intellij.platform.eel.channels.EelDelicateApi
 import com.intellij.platform.eel.channels.EelReceiveChannel
 import com.intellij.platform.eel.channels.EelSendChannel
 import com.intellij.platform.eel.path.EelPath
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.annotations.CheckReturnValue
-import java.util.*
+import org.jetbrains.annotations.VisibleForTesting
+import java.io.IOException
+import java.util.Collections
+import java.util.WeakHashMap
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * Methods related to process execution: start a process, collect stdin/stdout/stderr of the process, etc.
@@ -108,36 +118,106 @@ sealed interface EelExecApi {
    * This method is still not deprecated only because it has an automatically refreshable cache inside.
    * In contrast, [environmentVariables] only allows manually invalidating the cache.
    */
+  @OptIn(EelDelicateApi::class)
   @ApiStatus.Experimental
   @ApiStatus.Obsolete
-  suspend fun fetchLoginShellEnvVariables(): Map<String, String> =
-    when (this) {
+  suspend fun fetchLoginShellEnvVariables(): Map<String, String> {
+    return when (this) {
       is EelExecPosixApi -> {
         if (this is LocalEelExecApi) {
-          environmentVariables().minimal().eelIt().await()
+          @Suppress("checkedExceptions")
+          return environmentVariables().default().eelIt().await()
         }
-        else {
-          var now = 0L
-          // The previous implementation used the same timeout, and in the previous implementation it was chosen as a wild guess.
-          val cacheDuration = 10_000_000_000L
-          val expireAt = cacheForObsoleteEnvVarExpireAt.compute(descriptor) { _, expireAt ->
-            now = System.nanoTime()
-            if (expireAt != null && expireAt <= now) expireAt
-            else now + cacheDuration
-          }!!
-          environmentVariables().loginInteractive().onlyActual(expireAt <= now).eelIt().await()
+
+        var now = 0L
+        val cacheDuration = fetchLoginShellEnvVariablesCacheExpirationTime.inWholeNanoseconds
+
+        // The previous implementation used the same timeout, and in the previous implementation it was chosen as a wild guess.
+        val (expireAt, completedSuccessfullyLastTime) = cacheForObsoleteEnvVarExpireAt.compute(descriptor) { _, expireAtAndSucceeded ->
+          now = System.nanoTime()
+          when {
+            expireAtAndSucceeded != null && expireAtAndSucceeded.first <= now -> expireAtAndSucceeded
+            cacheDuration == Long.MAX_VALUE -> Long.MAX_VALUE to true
+            else -> now + cacheDuration to true
+          }
+        }!!
+        try {
+          when {
+            expireAt <= now -> {
+              val result = environmentVariables().loginInteractive().onlyActual(true).eelIt().await()
+              cacheForObsoleteEnvVarExpireAt.compute(descriptor) { _, expireAtAndSucceeded ->
+                if (expireAtAndSucceeded == expireAt to true)
+                  now + cacheDuration to true
+                else
+                  expireAtAndSucceeded
+              }
+              return result
+            }
+            completedSuccessfullyLastTime ->
+              return environmentVariables().loginInteractive().onlyActual(false).eelIt().await()
+
+            else -> Unit
+          }
         }
+        catch (err: Exception) {
+          cacheForObsoleteEnvVarExpireAt.compute(descriptor) { _, expireAtAndSucceeded ->
+            if (expireAtAndSucceeded == expireAt to true)
+              expireAt to false
+            else
+              expireAtAndSucceeded
+          }
+          when (err) {
+            is EnvironmentVariablesException -> Unit
+            is TimeoutCancellationException -> currentCoroutineContext().ensureActive()
+            else -> throw err
+          }
+        }
+        @Suppress("checkedExceptions")
+        environmentVariables().minimal().eelIt().await()
       }
-      is EelExecWindowsApi -> environmentVariables().eelIt().await()
+      is EelExecWindowsApi -> @Suppress("checkedExceptions") environmentVariables().eelIt().await()
     }
+  }
 
   /**
    * Gets the same environment variables on the remote machine as the user would get.
    *
+   * *Notice:* use [EelExecApi.expandPathEnvVar] or [EelOsFamily.expandPathEnvVar] for `PATH`.
+   *
    * See also [EelExecPosixApi.PosixEnvironmentVariablesOptions].
    */
   @ApiStatus.Experimental
-  fun environmentVariables(@GeneratedBuilder opts: EnvironmentVariablesOptions): Deferred<Map<String, String>>
+  fun environmentVariables(@GeneratedBuilder opts: EnvironmentVariablesOptions): EnvironmentVariablesDeferred
+
+  /**
+   * Indicates on the failure during fetching environment variables.
+   * As an API user, you can't gracefully handle this error. You can either ignore it or show the message to the user as a critical error.
+   * The message text may be localized with the locale of the remote machine.
+   */
+  @ApiStatus.Experimental
+  class EnvironmentVariablesException : EelError, IOException {
+    constructor(message: String) : super(message)
+    constructor(message: String, cause: Throwable) : super(message, cause)
+  }
+
+  /**
+   * This wrapper around [Deferred] exists only for pointing to the thrown error.
+   */
+  @ApiStatus.Experimental
+  class EnvironmentVariablesDeferred @ApiStatus.Internal constructor(
+    @ApiStatus.Experimental
+    val deferred: Deferred<Map<String, String>>
+  ) {
+    @ApiStatus.Experimental
+    @ThrowsChecked(EnvironmentVariablesException::class)
+    suspend fun await(): Map<String, String> = try {
+      deferred.await()
+    }
+    catch (e: CancellationException) {
+      currentCoroutineContext().ensureActive()
+      throw RuntimeException("Environment variables fetching was cancelled", e)
+    }
+  }
 
   interface EnvironmentVariablesOptions {
     /**
@@ -180,9 +260,6 @@ sealed interface EelExecApi {
   /**
    * Represents a callback script which can be called from command-line tools like `git`.
    * The script passes its input data to the IDE and then passes back the answer.
-   *
-   * It's important to call [ExternalCliEntrypoint.delete] after the process which could call the script finishes
-   * to avoid resource leak.
    */
   @ApiStatus.Internal
   interface ExternalCliEntrypoint {
@@ -193,6 +270,9 @@ sealed interface EelExecApi {
 
     /**
      * Listens to the invocations of the script and lets [processor] to answer the cli requests.
+     * Must be called exactly once, immediately after object creation.
+     * Consider using [CoroutineStart.ATOMIC] or [CoroutineStart.UNDISPATCHED] for launching [consumeInvocations]
+     * to guarantee that invocation actually happens.
      * Never exits normally, so should be canceled externally when not needed.
      */
     suspend fun consumeInvocations(processor: suspend (ExternalCliProcess) -> Int): Nothing
@@ -209,7 +289,7 @@ sealed interface EelExecApi {
     val args: List<String>
 
     /**
-     * Only the environment variables which are mentioned explicitly in [ExecuteProcessOptions.env] are guaranteed to be here.
+     * Only the environment variables mentioned explicitly in [ExternalCliOptions.envVariablesToCapture] are guaranteed to be here.
      */
     val environment: Map<String, String>
     val pid: EelApi.Pid
@@ -220,28 +300,53 @@ sealed interface EelExecApi {
 
     /**
      * Stop the callback script with exit code [exitCode].
-     * Should be called exactly once, after calling it [stdin] [stdout] and [stderr] should not be used.
+     * Should be called exactly once.
+     * After calling [exit], [stdin] [stdout] and [stderr] should not be used.
      */
     fun exit(exitCode: Int)
   }
 
   @ApiStatus.Internal
-  interface ExternalCliOptions {
-    val filePrefix: String
-    val envVariablesToCapture: List<String>
+  sealed class ExternalCliLifecycle {
+    /**
+     * The entrypoint is created with unique name and will be deleted after the client cancels [ExternalCliEntrypoint.consumeInvocations].
+     */
+    object Default : ExternalCliLifecycle()
+
+    /**
+     * Serving of the external cli entrypoint created with this lifecycle will be suspended instead of stopping
+     * when the client cancels [ExternalCliEntrypoint.consumeInvocations]. And subsequent [createExternalCli] calls
+     * can internally reuse the same entrypoint (in case of coinciding call options), making subsequent [createExternalCli] calls faster.
+     *
+     * Cancelling the [scope] deletes the entrypoint and cancels running [ExternalCliEntrypoint.consumeInvocations] if there is one.
+     */
+    class Reusable(val scope: CoroutineScope) : ExternalCliLifecycle()
   }
 
   @ApiStatus.Internal
-  // TODO remove when local implementation will implement the api properly
-  interface LocalExternalCliOptions : ExternalCliOptions {
-    val mainClass: Class<*>
-    val useBatchFile: Boolean
+  interface ExternalCliOptions {
+    /**
+     * Prefix for an entrypoint executable file that will be created. Since the path to the entrypoint is passed to some command-line tool,
+     * using a self-explaining prefix makes the command line more readable and easier to debug.
+     */
+    val filePrefix: String get() = ""
+
+    val lifecycle: ExternalCliLifecycle get() = ExternalCliLifecycle.Default
+
+    /**
+     * Allowlist of environment variables mentioned here will be captured by the entrypoint and returned in [ExternalCliProcess.environment].
+     * Capturing of other environment variables is not guaranteed.
+     * If no environment variables are specified, no environment variables will be captured.
+     */
+    val envVariablesToCapture: List<String> get() = emptyList()
   }
 
-  // TODO Generate builder?
+  /**
+   * It's obligatory to call [ExternalCliEntrypoint.consumeInvocations] on the resulting value.
+   */
   @CheckReturnValue
   @ApiStatus.Internal
-  suspend fun createExternalCli(options: ExternalCliOptions): ExternalCliEntrypoint
+  suspend fun createExternalCli(@GeneratedBuilder options: ExternalCliOptions): ExternalCliEntrypoint
 
   @Deprecated("Use spawnProcess instead")
   @ApiStatus.Internal
@@ -311,16 +416,29 @@ interface EelExecPosixApi : EelExecApi {
   @ApiStatus.Experimental
   override fun environmentVariables(
     @GeneratedBuilder(PosixEnvironmentVariablesOptions::class) opts: EelExecApi.EnvironmentVariablesOptions,
-  ): Deferred<Map<String, String>>
+  ): EelExecApi.EnvironmentVariablesDeferred
 
   interface PosixEnvironmentVariablesOptions : EelExecApi.EnvironmentVariablesOptions {
-    val mode: Mode get() = Mode.LOGIN_NON_INTERACTIVE
+    val mode: Mode get() = Mode.DEFAULT
 
     enum class Mode {
+      /**
+       * * On remote Eel it works like [LOGIN_NON_INTERACTIVE], but in case of an error it returns [MINIMAL] instead of throwing an exception.
+       * * On local Windows and Linux it always works like [MINIMAL]
+       *   because historically the IDE haven't called the shell for environment variables in most cases.
+       * * On local macOS it works like [LOGIN_NON_INTERACTIVE] + [MINIMAL], but it returns values cached at start
+       *   with no effect from the [onlyActual] option. This is the historical behaviour too.
+       *
+       * In this mode [EelExecApi.EnvironmentVariablesException] is not thrown.
+       */
+      DEFAULT,
+
       /**
        * The fastest way to get environment variables. It doesn't call shell scripts written by users.
        * At least, the environment variable `PATH` exists, but it may differ from what the user has in their `~/.profile` written.
        * No guarantee for other environment variables.
+       *
+       * In this mode [EelExecApi.EnvironmentVariablesException] is not thrown.
        */
       MINIMAL,
 
@@ -331,6 +449,8 @@ interface EelExecPosixApi : EelExecApi {
        * This mode may load not all environment variables, depending on what's written in user's configs
        * because default `~/.bashrc` files in some distros like Debian and Ubuntu contain strings like `[ -z "$PS1" ] && return`.
        * Often people put their adjustments at the bottom of the profile file, and therefore their code is not executed in the non-interactive mode.
+       *
+       * **Notice:** In this mode [EelExecApi.EnvironmentVariablesException] MAY be thrown.
        */
       LOGIN_NON_INTERACTIVE,
 
@@ -351,6 +471,8 @@ interface EelExecPosixApi : EelExecApi {
        * * `~/.bashrc` starts `screen` or `tmux`, the shell process hangs forever.
        * * `~/.bashrc` starts `ssh-agent`, and the operating system quickly becomes polluted with lots of unused SSH agents.
        * * `~/.bashrc` calls `curl` to write the current weather, news, jokes, etc. CPU consumption grows, IDE works slower.
+       *
+       * **Notice:** In this mode [EelExecApi.EnvironmentVariablesException] MAY be thrown.
        */
       @EelDelicateApi
       LOGIN_INTERACTIVE,
@@ -413,4 +535,16 @@ suspend fun EelExecApi.getShell(): Pair<EelPath, String> {
 @ApiStatus.Internal
 interface LocalEelExecApi
 
-private val cacheForObsoleteEnvVarExpireAt = Collections.synchronizedMap(WeakHashMap<EelDescriptor, Long>())
+/**
+ * Value:
+ * * Cache write time in nanoseconds
+ * * `true` if the cache corresponds to a success record, false otherwise.
+ */
+@ApiStatus.Internal
+@VisibleForTesting
+val cacheForObsoleteEnvVarExpireAt: MutableMap<EelDescriptor, Pair<Long, Boolean>> = Collections.synchronizedMap(WeakHashMap())
+
+// The previous implementation used the same timeout, and in the previous implementation it was chosen as a wild guess.
+@ApiStatus.Internal
+@VisibleForTesting
+var fetchLoginShellEnvVariablesCacheExpirationTime: Duration = 10.seconds

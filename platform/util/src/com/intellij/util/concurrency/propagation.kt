@@ -5,11 +5,15 @@
 
 package com.intellij.util.concurrency
 
-import com.intellij.concurrency.*
+import com.intellij.concurrency.ContextAwareCallable
+import com.intellij.concurrency.ContextAwareRunnable
+import com.intellij.concurrency.IntelliJContextElement
 import com.intellij.concurrency.client.captureClientIdInBiConsumer
 import com.intellij.concurrency.client.captureClientIdInCallable
 import com.intellij.concurrency.client.captureClientIdInFunction
 import com.intellij.concurrency.client.captureClientIdInRunnable
+import com.intellij.concurrency.currentThreadContext
+import com.intellij.concurrency.installThreadContext
 import com.intellij.openapi.application.AccessToken
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.progress.CeProcessCanceledException
@@ -19,7 +23,20 @@ import com.intellij.openapi.util.Ref
 import com.intellij.util.SmartList
 import com.intellij.util.SystemProperties
 import com.intellij.util.containers.forEachGuaranteed
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CompletableJob
+import kotlinx.coroutines.CoroutineName
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.Runnable
+import kotlinx.coroutines.async
+import kotlinx.coroutines.job
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.annotations.ApiStatus.Internal
 import org.jetbrains.annotations.NonNls
@@ -30,8 +47,13 @@ import java.util.concurrent.FutureTask
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.function.BiConsumer
 import java.util.function.Function
-import kotlin.coroutines.*
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.Continuation
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.coroutines.cancellation.CancellationException
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 import com.intellij.openapi.util.Pair as JBPair
 
 private val LOG = Logger.getInstance("#com.intellij.concurrency")
@@ -106,6 +128,11 @@ class BlockingJob(val blockingJob: Job) : AbstractCoroutineContextElement(Blocki
   }
 
   fun isRemembered(element: IntelliJContextElement): Boolean = rememberedElements.containsKey(element)
+
+  internal fun getRememberedCheckpoint(): ThreadScopeCheckpoint =
+    checkNotNull(rememberedElements.keys.find { it is ThreadScopeCheckpoint }) {
+      "BlockingJob should always remember a checkpoint"
+    } as ThreadScopeCheckpoint
 }
 
 /**
@@ -121,17 +148,15 @@ class BlockingJob(val blockingJob: Job) : AbstractCoroutineContextElement(Blocki
 class ThreadScopeCheckpoint(val context: CoroutineContext) : AbstractCoroutineContextElement(ThreadScopeCheckpoint), IntelliJContextElement {
   companion object : CoroutineContext.Key<ThreadScopeCheckpoint>
 
-  override fun produceChildElement(parentContext: CoroutineContext, isStructured: Boolean): IntelliJContextElement? {
-    return if (parentContext[BlockingJob] != null) {
-      this
-    }
-    else {
-      null
-    }
-  }
-
   override fun toString(): String {
     return "ThreadScopeCheckpoint"
+  }
+
+  override fun produceChildElement(parentContext: CoroutineContext, isStructured: Boolean): IntelliJContextElement? {
+    if (isStructured) return this
+    val blockingJob = parentContext[BlockingJob]
+    if (blockingJob == null) return null
+    return blockingJob.getRememberedCheckpoint()
   }
 
   fun startWaitingForChildren(): Job {

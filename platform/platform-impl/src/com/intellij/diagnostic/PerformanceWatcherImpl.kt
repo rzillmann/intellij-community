@@ -7,9 +7,16 @@ import com.intellij.ide.plugins.PluginManagerCore
 import com.intellij.internal.DebugAttachDetector
 import com.intellij.internal.statistic.utils.PluginInfo
 import com.intellij.internal.statistic.utils.getPluginInfoByDescriptor
-import com.intellij.openapi.application.*
+import com.intellij.openapi.application.AccessToken
+import com.intellij.openapi.application.ApplicationInfo
+import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.CoroutineSupport
+import com.intellij.openapi.application.ModalityState
+import com.intellij.openapi.application.PathManager
+import com.intellij.openapi.application.asContextElement
 import com.intellij.openapi.application.ex.ApplicationManagerEx
 import com.intellij.openapi.application.impl.ApplicationInfoImpl
+import com.intellij.openapi.application.ui
 import com.intellij.openapi.components.serviceAsync
 import com.intellij.openapi.diagnostic.Attachment
 import com.intellij.openapi.diagnostic.Logger
@@ -21,6 +28,7 @@ import com.intellij.openapi.util.SystemInfoRt
 import com.intellij.openapi.util.io.FileUtilRt
 import com.intellij.openapi.util.io.NioFiles
 import com.intellij.openapi.util.registry.RegistryManager
+import com.intellij.openapi.util.registry.RegistryValue
 import com.intellij.openapi.util.text.StringUtilRt
 import com.intellij.platform.diagnostic.telemetry.Scope
 import com.intellij.platform.diagnostic.telemetry.TelemetryManager
@@ -29,11 +37,20 @@ import com.intellij.util.concurrency.AppExecutorUtil
 import com.intellij.util.concurrency.AppScheduledExecutorService
 import com.intellij.util.concurrency.ThreadingAssertions
 import com.intellij.util.io.basicAttributesIfExists
+import com.intellij.util.io.blockingDispatcher
 import com.intellij.util.io.sanitizeFileName
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineName
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -52,7 +69,11 @@ import java.time.format.DateTimeFormatter
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.coroutines.coroutineContext
-import kotlin.io.path.*
+import kotlin.io.path.fileSize
+import kotlin.io.path.getLastModifiedTime
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.name
+import kotlin.io.path.useDirectoryEntries
 import kotlin.time.DurationUnit
 import kotlin.time.toDuration
 
@@ -80,8 +101,11 @@ internal class PerformanceWatcherImpl(private val coroutineScope: CoroutineScope
   private var lastSampling = System.nanoTime()
   private var currentEdtEventChecker: FreezeCheckerTask? = null
   private val jitWatcher = JitWatcher()
-  private val unresponsiveIntervalLazy by lazy {
+  private val edtUnresponsiveIntervalLazy: RegistryValue by lazy {
     RegistryManager.getInstance().get("performance.watcher.unresponsive.interval.ms")
+  }
+  private val pooledUnresponsiveIntervalLazy: RegistryValue by lazy {
+    RegistryManager.getInstance().get("performance.watcher.pooled.unresponsive.interval.ms")
   }
 
   private val isActive: Boolean = !ApplicationManager.getApplication().isHeadlessEnvironment
@@ -114,15 +138,22 @@ internal class PerformanceWatcherImpl(private val coroutineScope: CoroutineScope
     })
   }
 
-  override fun startEdtSampling() {
+  override fun startSampling() {
     if (!isActive) {
       return
     }
 
+    startEdtSampling()
+
+    CoroutineDispatcherWatcher(Dispatchers.Default, coroutineScope, ::pooledUnresponsiveInterval).watchDispatcher()
+    CoroutineDispatcherWatcher(Dispatchers.IO, coroutineScope, ::pooledUnresponsiveInterval).watchDispatcher()
+  }
+
+  private fun startEdtSampling() {
     LOG.debug("EDT sampling started")
     coroutineScope.launch(CoroutineName("EDT sampling")) {
       try {
-        val samplingIntervalMs = samplingInterval
+        val samplingIntervalMs = edtSamplingInterval
         @Suppress("KotlinConstantConditions")
         if (samplingIntervalMs <= 0) {
           return@launch
@@ -157,10 +188,14 @@ internal class PerformanceWatcherImpl(private val coroutineScope: CoroutineScope
         service.setNewThreadListener { _, _ ->
           val executorSize = service.backendPoolExecutorSize
           if (executorSize > reasonableThreadPoolSize.asInteger() + allAvailableProcessors) {
-            val message = "Too many threads: $executorSize created in the global Application pool. " +
-                          "($reasonableThreadPoolSize, available processors: $allAvailableProcessors)"
-            val file = dumpThreads(pathPrefix = "newPooledThread/", appendMillisecondsToFileName = true, contentsPrefix = message, stripDump = true)
-            LOG.info(message + if (file == null) "" else "; thread dump is saved to '$file'")
+            // if this listener is called on EDT, then thread dump collection leads to a freeze
+            @OptIn(DelicateCoroutinesApi::class)
+            launch(blockingDispatcher) {
+              val message = "Too many threads: $executorSize created in the global Application pool. " +
+                            "($reasonableThreadPoolSize, available processors: $allAvailableProcessors)"
+              val file = dumpThreads(pathPrefix = "newPooledThread/", appendMillisecondsToFileName = true, contentsPrefix = message, stripDump = true)
+              LOG.info(message + if (file == null) "" else "; thread dump is saved to '$file'")
+            }
           }
         }
       }
@@ -234,8 +269,14 @@ internal class PerformanceWatcherImpl(private val coroutineScope: CoroutineScope
   /** defines the freeze (ms)  */
   override val unresponsiveInterval: Int
     get() {
-      val value = unresponsiveIntervalLazy.asInteger()
+      val value = edtUnresponsiveIntervalLazy.asInteger()
       return if (value <= 0) 0 else value.coerceIn(500, 20000)
+    }
+
+  private val pooledUnresponsiveInterval: Int
+    get() {
+      val value = pooledUnresponsiveIntervalLazy.asInteger()
+      return if (value <= 0) 0 else value.coerceIn(500, 180000)
     }
 
   override fun smokeAndMirrors(name: @NonNls String): AccessToken {
@@ -454,6 +495,61 @@ internal class PerformanceWatcherImpl(private val coroutineScope: CoroutineScope
       return "$activityName took ${currentTime - startMillis}ms; general responsiveness: ${
         watcher.generalApdex.summarizePerformanceSince(startGeneralSnapshot)
       }; EDT responsiveness: ${watcher.swingApdex.summarizePerformanceSince(startSwingSnapshot)}"
+    }
+  }
+}
+
+private class CoroutineDispatcherWatcher(
+  private val dispatcher: CoroutineDispatcher,
+  private val coroutineScope: CoroutineScope,
+  private val getUnresponsiveIntervalMs: () -> Int,
+) {
+  private var lastSampleNs = System.nanoTime()
+
+  fun watchDispatcher() {
+    startPooledThreadSampling()
+    startPooledThreadWatcher()
+  }
+
+  private fun startPooledThreadSampling() {
+    LOG.debug("$dispatcher thread sampling started")
+    coroutineScope.launch(CoroutineName("$dispatcher sampling") + dispatcher) {
+      try {
+        while (true) {
+          delay(pooledSamplingInterval)
+          lastSampleNs = System.nanoTime()
+        }
+      }
+      finally {
+        LOG.debug("$dispatcher sampling stopped")
+      }
+    }
+  }
+
+  private fun startPooledThreadWatcher() {
+    LOG.debug("$dispatcher thread watcher started")
+    @Suppress("OPT_IN_USAGE")
+    coroutineScope.launch(CoroutineName("$dispatcher watcher") + blockingDispatcher) {
+      try {
+        var lastReportedNs = 0L
+
+        while (true) {
+          delay(pooledSamplingInterval)
+
+          val unresponsiveIntervalMs = getUnresponsiveIntervalMs()
+          if (TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - lastSampleNs) <= unresponsiveIntervalMs ||
+              TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - lastReportedNs) <= unresponsiveIntervalMs) {
+            continue
+          }
+
+          val file = PerformanceWatcher.getInstance().dumpThreads("$dispatcher", true, true)
+          LOG.info("Thread pool exhaustion: ${dispatcher} is not responding for $unresponsiveIntervalMs ms." + if (file == null) "" else "; thread dump is saved to '$file'")
+          lastReportedNs = System.nanoTime()
+        }
+      }
+      finally {
+        LOG.debug("$dispatcher watcher stopped")
+      }
     }
   }
 }
@@ -689,7 +785,8 @@ private fun ageInDays(file: Path): Long =
   (System.currentTimeMillis() - Files.getLastModifiedTime(file).toMillis()).toDuration(DurationUnit.MILLISECONDS).inWholeDays
 
 /** for [PerformanceListener.uiResponded] events (ms)  */
-private const val samplingInterval = 1000L
+private const val edtSamplingInterval = 1000L
+private const val pooledSamplingInterval = 1000L
 
 private fun buildName(): String = ApplicationInfo.getInstance().build.asString()
 

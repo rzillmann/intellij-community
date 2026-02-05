@@ -5,12 +5,13 @@ import com.intellij.errorreport.error.InternalEAPException
 import com.intellij.errorreport.error.UpdateAvailableException
 import com.intellij.ide.plugins.PluginManagerCore
 import com.intellij.internal.statistic.DeviceIdManager
+import com.intellij.internal.statistic.utils.getPluginInfoById
 import com.intellij.openapi.application.ApplicationNamesInfo
 import com.intellij.openapi.application.ex.ApplicationInfoEx
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.IdeaLoggingEvent
+import com.intellij.openapi.diagnostic.UnhandledException
 import com.intellij.openapi.diagnostic.logger
-import com.intellij.openapi.extensions.PluginId
 import com.intellij.openapi.updateSettings.impl.UpdateSettings
 import com.intellij.openapi.util.SystemInfo
 import com.intellij.openapi.util.io.BufferExposingByteArrayOutputStream
@@ -18,9 +19,15 @@ import com.intellij.platform.buildData.productInfo.CustomPropertyNames
 import com.intellij.platform.ide.productInfo.IdeProductInfo
 import com.intellij.platform.util.coroutines.childScope
 import com.intellij.ui.JBAccountInfoService
+import com.intellij.ui.LicensingFacade
 import com.intellij.util.system.CpuArch
 import com.intellij.util.system.OS
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URI
@@ -43,11 +50,9 @@ internal class ITNProxyCoroutineScopeHolder(coroutineScope: CoroutineScope) {
 }
 
 internal object ITNProxy {
-  internal const val EA_PLUGIN_ID = "com.intellij.sisyphus"
-
   private const val DEFAULT_USER = "idea_anonymous"
   private const val DEFAULT_PASS = "guest"
-  private const val NEW_THREAD_VIEW_URL = "https://jb-web.exa.aws.intellij.net/report/"
+  private const val DIOGEN_VIEW_URL = "https://diogen.labs.jb.gg/report/"
 
   internal val DEVICE_ID: String = DeviceIdManager.getOrGenerateId(object : DeviceIdManager.DeviceIdToken {}, "EA")
 
@@ -96,9 +101,16 @@ internal object ITNProxy {
     val lastActionId: String?,
   )
 
-  fun getBrowseUrl(threadId: Long): String? =
-    if (PluginManagerCore.isPluginInstalled(PluginId.getId(EA_PLUGIN_ID))) NEW_THREAD_VIEW_URL + threadId
-    else null
+  fun getBrowseUrl(threadId: Long): String? = when {
+    isInternalUser() -> DIOGEN_VIEW_URL + threadId
+    else -> null
+  }
+
+  private fun isInternalUser(): Boolean {
+    val isJetBrainsEmail = JBAccountInfoService.getInstance()?.userData?.email?.endsWith("@jetbrains.com") == true
+    val isJetBrainsTeam = LicensingFacade.getInstance()?.licensedTo?.contains("JetBrains Team") == true
+    return isJetBrainsEmail || isJetBrainsTeam
+  }
 
   private val httpClient by lazy {
     HttpClient.newBuilder()
@@ -131,7 +143,7 @@ internal object ITNProxy {
     }
     try {
       val reportId = responseText.trim()
-      LOG.info("report ID: ${reportId}, host ID: ${DEVICE_ID}")
+      LOG.info("report ID: ${reportId}")
       return reportId.toLong()
     }
     catch (_: NumberFormatException) {
@@ -178,8 +190,21 @@ internal object ITNProxy {
     append(builder, "plugin.version", error.pluginVersion)
     append(builder, "last.action", error.lastActionId)
 
+    val nonBundledPlugins = PluginManagerCore.loadedPlugins
+      .filter { !it.isBundled }
+      .map { it.pluginId }
+      .filter { getPluginInfoById(it).isSafeToReport() }
+
+    if (nonBundledPlugins.isNotEmpty()) {
+      append(builder, "plugins.nonbundled", nonBundledPlugins.joinToString(",") { it.idString })
+    }
+
     append(builder, "error.message", error.event.message?.trim { it <= ' ' } ?: "")
     append(builder, "error.stacktrace", error.event.throwableText)
+    (error.event.throwable as? UnhandledException)?.let {
+      append(builder, "error.unhandled.interactive", it.isInteractive.toString())
+    }
+
     append(builder, "error.description", error.comment)
     if (error.event.throwable is RecoveredThrowable) {
       append(builder, "error.redacted", "true")

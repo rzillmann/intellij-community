@@ -9,20 +9,24 @@ import com.intellij.openapi.Disposable;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.util.Pair;
+import com.intellij.platform.debugger.impl.ui.DebuggerUIUtilShared;
 import com.intellij.ui.ScrollPaneFactory;
 import com.intellij.xdebugger.XDebuggerBundle;
 import com.intellij.xdebugger.XSourcePosition;
 import com.intellij.xdebugger.evaluation.XDebuggerEditorsProvider;
 import com.intellij.xdebugger.impl.frame.XValueMarkers;
-import com.intellij.xdebugger.impl.ui.DebuggerUIUtil;
 import com.intellij.xdebugger.impl.ui.tree.nodes.XValueNodeImpl;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import javax.swing.*;
-import java.awt.*;
+import javax.swing.JComponent;
+import javax.swing.JPanel;
+import javax.swing.JScrollPane;
+import java.awt.BorderLayout;
+import java.awt.Image;
+import java.awt.Point;
 
 public final class XDebuggerTreePanel implements DnDSource {
   private final XDebuggerTree myTree;
@@ -35,7 +39,7 @@ public final class XDebuggerTreePanel implements DnDSource {
     myTree = new XDebuggerTree(project, editorsProvider, sourcePosition, popupActionGroupId, markers);
     myMainPanel = new JPanel(new BorderLayout());
     JScrollPane scrollPane = ScrollPaneFactory.createScrollPane(myTree, true);
-    myContentComponent = DebuggerUIUtil.wrapWithAntiFlickeringPanel(scrollPane);
+    myContentComponent = DebuggerUIUtilShared.wrapWithAntiFlickeringPanel(scrollPane);
     myMainPanel.add(myContentComponent, BorderLayout.CENTER);
     Disposer.register(parentDisposable, myTree);
     Disposer.register(parentDisposable, new Disposable() {

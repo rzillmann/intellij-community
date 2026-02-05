@@ -5,7 +5,13 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.openapi.components.serviceAsync
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
@@ -66,6 +72,7 @@ class IjentSessionRegistry(private val coroutineScope: CoroutineScope) {
    */
   @OptIn(ExperimentalCoroutinesApi::class)
   suspend fun get(ijentId: IjentId): IjentSession<IjentPosixApi> {
+    val currentDispatcher = currentCoroutineDispatcher()
     val bundle = ijents.compute(ijentId, @Suppress("NAME_SHADOWING") { ijentId, oldBundle ->
       require(oldBundle != null) {
         "Not registered: $ijentId"
@@ -84,7 +91,7 @@ class IjentSessionRegistry(private val coroutineScope: CoroutineScope) {
 
       val actualDeferred =
         reusedOldDeferred
-        ?: coroutineScope.async(start = CoroutineStart.LAZY) {
+        ?: coroutineScope.async(context = currentDispatcher, start = CoroutineStart.LAZY) {
           oldBundle.factory(ijentId)
         }
 

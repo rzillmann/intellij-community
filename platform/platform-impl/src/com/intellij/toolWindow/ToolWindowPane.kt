@@ -24,12 +24,16 @@ import com.intellij.openapi.wm.ToolWindowAnchor
 import com.intellij.openapi.wm.ToolWindowType
 import com.intellij.openapi.wm.WindowInfo
 import com.intellij.openapi.wm.impl.AbstractDroppableStripe
+import com.intellij.openapi.wm.impl.IdeFrameImpl
 import com.intellij.openapi.wm.impl.ToolWindowImpl
 import com.intellij.openapi.wm.impl.ToolWindowManagerImpl
 import com.intellij.openapi.wm.impl.ToolWindowManagerImpl.Companion.getAdjustedRatio
 import com.intellij.openapi.wm.impl.ToolWindowManagerImpl.Companion.getRegisteredMutableInfoOrLogError
 import com.intellij.openapi.wm.impl.WindowInfoImpl
-import com.intellij.ui.*
+import com.intellij.ui.ExperimentalUI
+import com.intellij.ui.JBColor
+import com.intellij.ui.OnePixelSplitter
+import com.intellij.ui.ScreenUtil
 import com.intellij.ui.awt.DevicePoint
 import com.intellij.ui.paint.PaintUtil
 import com.intellij.ui.scale.JBUIScale
@@ -43,7 +47,11 @@ import com.intellij.util.ui.UIUtil
 import kotlinx.coroutines.CoroutineScope
 import org.jetbrains.annotations.ApiStatus.Internal
 import org.jetbrains.annotations.VisibleForTesting
-import java.awt.*
+import java.awt.Component
+import java.awt.Dimension
+import java.awt.Graphics
+import java.awt.Graphics2D
+import java.awt.Image
 import java.awt.geom.Point2D
 import java.awt.image.BufferedImage
 import java.lang.ref.SoftReference
@@ -125,7 +133,6 @@ class ToolWindowPane private constructor(
 
   internal val frame: JFrame
 
-  internal var borderPainter: BorderPainter = DefaultBorderPainter()
   /**
    * This panel is the layered pane where all sliding tool windows are located. The DEFAULT
    * layer contains splitters. The PALETTE layer contains all sliding tool windows.
@@ -309,9 +316,11 @@ class ToolWindowPane private constructor(
     // can be null in tests
     val rootPane = rootPane
     val size = rootPane?.size ?: Dimension()
-    if (rootPane != null && size.height == 0 && size.width == 0) {
+    val aboutToBeMaximized = (frame as? IdeFrameImpl)?.isAboutToBeMaximized ?: false
+
+    if (rootPane != null && (aboutToBeMaximized || (size.height == 0 && size.width == 0))) {
       if (LOG.isDebugEnabled) {
-        LOG.debug("Postponing setting the weight of the anchor $anchor because the root pane size is $size")
+        LOG.debug("Postponing setting the weight of the anchor $anchor (size=$size, aboutToBeMaximized=$aboutToBeMaximized, state=${frame.extendedState})")
       }
       setAnchorWeightFutures[anchor] = UIUtil.runOnceWhenResized(rootPane) {
         if (LOG.isDebugEnabled) {
@@ -341,9 +350,7 @@ class ToolWindowPane private constructor(
         return
       }
     }
-    if (LOG.isDebugEnabled) {
-      LOG.debug("Set the size of the anchor $anchor to $anchorSize based on the root pane size $size and weight $weight")
-    }
+    LOG.debug { "Set the size of the anchor $anchor to $anchorSize based on the root pane size $size and weight $weight" }
   }
 
   internal fun setSideWeight(window: ToolWindowImpl, sideWeight: Float) {
@@ -396,11 +403,6 @@ class ToolWindowPane private constructor(
       revalidate()
       repaint()
     }
-  }
-
-  override fun paintChildren(g: Graphics) {
-    super.paintChildren(g)
-    borderPainter.paintAfterChildren(this, g)
   }
 
   val bottomHeight: Int

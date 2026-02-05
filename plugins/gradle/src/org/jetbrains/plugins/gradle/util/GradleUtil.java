@@ -37,7 +37,12 @@ import org.jetbrains.plugins.gradle.model.data.GradleProjectBuildScriptData;
 import org.jetbrains.plugins.gradle.settings.GradleProjectSettings;
 import org.jetbrains.plugins.gradle.settings.GradleSettings;
 
-import java.io.*;
+import java.io.BufferedReader;
+import java.io.BufferedWriter;
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.IOException;
+import java.io.OutputStreamWriter;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
@@ -410,14 +415,19 @@ public final class GradleUtil {
     if (manager instanceof GradleManager gradleManager) {
       String externalProjectPath = gradleManager.getAffectedExternalProjectPath(filePath, project);
       if (externalProjectPath != null) {
-        GradleSettings settings = GradleSettings.getInstance(project);
-        GradleProjectSettings projectSettings = settings.getLinkedProjectSettings(externalProjectPath);
-        if (projectSettings != null) {
-          return projectSettings.resolveGradleVersion();
+        GradleVersion versionByExternalProjectPath = getGradleVersion(externalProjectPath, project);
+        if (versionByExternalProjectPath != null) {
+          return versionByExternalProjectPath;
         }
       }
     }
     return GradleVersion.current();
+  }
+
+  public static @Nullable GradleVersion getGradleVersion(String externalProjectPath, Project project) {
+    GradleSettings settings = GradleSettings.getInstance(project);
+    GradleProjectSettings projectSettings = settings.getLinkedProjectSettings(externalProjectPath);
+    return projectSettings != null ? projectSettings.resolveGradleVersion() : null;
   }
 
   @SuppressWarnings("unused") // used externally

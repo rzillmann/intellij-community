@@ -32,7 +32,11 @@ import org.jetbrains.kotlin.idea.k2.codeinsight.quickFixes.createFromUsage.K2Cre
 import org.jetbrains.kotlin.load.java.NOT_NULL_ANNOTATIONS
 import org.jetbrains.kotlin.load.java.NULLABLE_ANNOTATIONS
 import org.jetbrains.kotlin.name.FqName
-import org.jetbrains.kotlin.psi.*
+import org.jetbrains.kotlin.psi.KtFile
+import org.jetbrains.kotlin.psi.KtNamedFunction
+import org.jetbrains.kotlin.psi.KtParameter
+import org.jetbrains.kotlin.psi.KtParameterList
+import org.jetbrains.kotlin.psi.KtPsiFactory
 import org.jetbrains.kotlin.types.Variance
 
 internal class ChangeMethodParameters(
@@ -154,8 +158,15 @@ internal class ChangeMethodParameters(
     }
 
     private fun doChangeParameter(project: Project, target: KtNamedFunction) {
+        val expectedParameters = request.expectedParameters.filter {
+            // we have to filter out synthetic parameters like `$completion`, `$continuation`, etc
+            it !is ChangeParametersRequest.ExistingParameterWrapper ||
+                    // see org.jetbrains.kotlin.light.classes.symbol.parameters.SymbolLightSuspendContinuationParameter.getKotlinOrigin
+                    it.existingKtParameter != null
+        }
+
         val parameterActions =
-            getParametersModifications(target, target.valueParameters, request.expectedParameters)
+            getParametersModifications(target, target.valueParameters, expectedParameters)
 
         val psiFactory = KtPsiFactory(project)
 

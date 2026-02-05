@@ -1,8 +1,9 @@
-<idea-plugin package="org.jetbrains.kotlin.idea.k2.codeinsight.fixes">
+<idea-plugin visibility="internal" package="org.jetbrains.kotlin.idea.k2.codeinsight.fixes">
   <dependencies>
     <module name="intellij.kotlin.refactorings"/>
     <module name="intellij.kotlin.codeInsight"/>
     <module name="intellij.kotlin.searching"/>
+    <module name="kotlin.code-insight.inspections.shared"/>
   </dependencies>
   <extensions defaultExtensionNs="org.jetbrains.kotlin">
     <codeinsight.quickfix.registrar implementation="org.jetbrains.kotlin.idea.k2.codeinsight.fixes.KotlinK2QuickFixRegistrar"/>

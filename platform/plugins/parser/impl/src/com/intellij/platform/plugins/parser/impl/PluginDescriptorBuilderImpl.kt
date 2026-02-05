@@ -1,7 +1,12 @@
 // Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.platform.plugins.parser.impl
 
-import com.intellij.platform.plugins.parser.impl.elements.*
+import com.intellij.platform.plugins.parser.impl.elements.ActionElement
+import com.intellij.platform.plugins.parser.impl.elements.ContentModuleElement
+import com.intellij.platform.plugins.parser.impl.elements.DependenciesElement
+import com.intellij.platform.plugins.parser.impl.elements.DependsElement
+import com.intellij.platform.plugins.parser.impl.elements.ExtensionElement
+import com.intellij.platform.plugins.parser.impl.elements.ModuleVisibilityValue
 import com.intellij.util.containers.Java11Shim
 import java.time.LocalDate
 
@@ -21,7 +26,7 @@ internal class PluginDescriptorBuilderImpl : PluginDescriptorBuilder {
   override var `package`: String? = null
   override var isSeparateJar: Boolean = false
 
-  override var visibility: ModuleVisibility = ModuleVisibility.PRIVATE
+  override var visibility: ModuleVisibilityValue = ModuleVisibilityValue.PRIVATE
   override var namespace: String? = null
 
   override var url: String? = null

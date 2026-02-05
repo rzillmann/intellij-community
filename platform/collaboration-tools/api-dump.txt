@@ -47,8 +47,6 @@ c:com.intellij.collaboration.api.dto.GraphQLNodesDTO
 - <init>():V
 - <init>(java.util.List):V
 - b:<init>(java.util.List,I,kotlin.jvm.internal.DefaultConstructorMarker):V
-- <init>(java.util.List,java.lang.Integer):V
-- b:<init>(java.util.List,java.lang.Integer,I,kotlin.jvm.internal.DefaultConstructorMarker):V
 - equals(java.lang.Object):Z
 - f:getNodes():java.util.List
 - hashCode():I
@@ -225,6 +223,9 @@ com.intellij.collaboration.auth.CredentialsRepository
 com.intellij.collaboration.auth.DefaultAccountHolder
 - a:getAccount():com.intellij.collaboration.auth.Account
 - a:setAccount(com.intellij.collaboration.auth.Account):V
+com.intellij.collaboration.auth.ObservableAccountsRepository
+- com.intellij.collaboration.auth.AccountsRepository
+- a:getAccountsFlow():kotlinx.coroutines.flow.StateFlow
 f:com.intellij.collaboration.auth.PasswordSafeCredentialsRepository
 - com.intellij.collaboration.auth.CredentialsRepository
 - <init>(java.lang.String,com.intellij.collaboration.auth.PasswordSafeCredentialsRepository$CredentialsMapper):V
@@ -353,6 +354,8 @@ com.intellij.collaboration.ui.codereview.diff.viewer.DiffMapped
 - a:getLocation():kotlinx.coroutines.flow.Flow
 - a:isVisible():kotlinx.coroutines.flow.Flow
 f:com.intellij.collaboration.ui.codereview.diff.viewer.DiffViewerUtilKt
+- sf:showCodeReview(com.intellij.diff.tools.util.base.DiffViewerBase,kotlin.jvm.functions.Function6,kotlin.coroutines.Continuation):java.lang.Object
+- sf:showCodeReview(com.intellij.openapi.editor.ex.EditorEx,com.intellij.collaboration.ui.codereview.editor.CodeReviewEditorModel,kotlin.jvm.functions.Function2,kotlin.coroutines.Continuation):java.lang.Object
 f:com.intellij.collaboration.ui.codereview.editor.action.CodeReviewEditorShowFileDiffAction
 - com.intellij.openapi.project.DumbAwareAction
 - <init>():V

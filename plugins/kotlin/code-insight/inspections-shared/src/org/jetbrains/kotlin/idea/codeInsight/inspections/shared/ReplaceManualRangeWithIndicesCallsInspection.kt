@@ -7,6 +7,7 @@ import com.intellij.modcommand.ModPsiUpdater
 import com.intellij.openapi.project.Project
 import com.intellij.psi.search.searches.ReferencesSearch
 import org.jetbrains.kotlin.analysis.api.KaSession
+import org.jetbrains.kotlin.analysis.api.resolution.successfulVariableAccessCall
 import org.jetbrains.kotlin.analysis.api.types.KaType
 import org.jetbrains.kotlin.idea.base.psi.replaced
 import org.jetbrains.kotlin.idea.base.psi.safeDeparenthesize
@@ -14,11 +15,28 @@ import org.jetbrains.kotlin.idea.base.resources.KotlinBundle
 import org.jetbrains.kotlin.idea.codeinsight.api.applicable.inspections.KotlinModCommandQuickFix
 import org.jetbrains.kotlin.idea.codeinsight.utils.ImplicitReceiverInfo
 import org.jetbrains.kotlin.idea.codeinsight.utils.LoopToCollectionTransformUtils
+import org.jetbrains.kotlin.idea.codeinsight.utils.RangeKtExpressionType
+import org.jetbrains.kotlin.idea.codeinsight.utils.RangeKtExpressionType.DOWN_TO
+import org.jetbrains.kotlin.idea.codeinsight.utils.RangeKtExpressionType.RANGE_TO
+import org.jetbrains.kotlin.idea.codeinsight.utils.RangeKtExpressionType.RANGE_UNTIL
+import org.jetbrains.kotlin.idea.codeinsight.utils.RangeKtExpressionType.UNTIL
 import org.jetbrains.kotlin.idea.codeinsight.utils.getImplicitReceiverInfo
-import org.jetbrains.kotlin.idea.codeInsight.hints.RangeKtExpressionType
 import org.jetbrains.kotlin.lexer.KtTokens
 import org.jetbrains.kotlin.name.StandardClassIds
-import org.jetbrains.kotlin.psi.*
+import org.jetbrains.kotlin.psi.KtArrayAccessExpression
+import org.jetbrains.kotlin.psi.KtBinaryExpression
+import org.jetbrains.kotlin.psi.KtConstantExpression
+import org.jetbrains.kotlin.psi.KtContainerNode
+import org.jetbrains.kotlin.psi.KtDotQualifiedExpression
+import org.jetbrains.kotlin.psi.KtExpression
+import org.jetbrains.kotlin.psi.KtForExpression
+import org.jetbrains.kotlin.psi.KtParenthesizedExpression
+import org.jetbrains.kotlin.psi.KtPsiFactory
+import org.jetbrains.kotlin.psi.KtPsiUtil
+import org.jetbrains.kotlin.psi.KtQualifiedExpression
+import org.jetbrains.kotlin.psi.KtSimpleNameExpression
+import org.jetbrains.kotlin.psi.KtThisExpression
+import org.jetbrains.kotlin.psi.createExpressionByPattern
 import org.jetbrains.kotlin.psi.psiUtil.getStrictParentOfType
 import org.jetbrains.kotlin.psi.psiUtil.parents
 import org.jetbrains.kotlin.renderer.render
@@ -30,7 +48,7 @@ import org.jetbrains.kotlin.util.match
 class ReplaceManualRangeWithIndicesCallsInspection : AbstractRangeInspection<ReplaceManualRangeWithIndicesCallsInspection.Context>() {
 
     data class Context(
-        val sizeCall: KtExpression?,
+        val explicitReceiver: KtExpression?,
         val suggestElementLoop: Boolean,
         val implicitReceiverInfo: ImplicitReceiverInfo?,
     )
@@ -46,107 +64,116 @@ class ReplaceManualRangeWithIndicesCallsInspection : AbstractRangeInspection<Rep
 
     override fun isApplicableByPsi(range: RangeExpression): Boolean {
         // Only ascending ranges are candidates for indices replacement
-        return when (range.type) {
-            RangeKtExpressionType.UNTIL, RangeKtExpressionType.RANGE_UNTIL, RangeKtExpressionType.RANGE_TO -> true
-            RangeKtExpressionType.DOWN_TO -> false
-        }
+        if (range.type == DOWN_TO) return false
+        
+        val (left, right) = range.arguments
+        
+        // Must start with 0 to be a candidate for indices replacement
+        if (left == null || !left.isIntConstantExpression(0)) return false
+        
+        // Must have a valid target expression that can be extracted
+        if (right == null) return false
+        
+        return extractTargetExpression(range.type, right) != null
     }
 
     override fun KaSession.prepareContext(range: RangeExpression): Context? {
-        val (left, right) = range.arguments
-
-        // Must start with 0 to be a candidate for indices replacement
-        if (left?.text != "0") return null
-
+        val (_, right) = range.arguments
+        
         // Must end with a size/length call
-        val sizeCall = right?.let { sizeOrLengthCall(range.type, it) } ?: return null
+        val sizeCall = right?.let { rightBound(range.type, it) } ?: return null
         val explicitReceiver = (sizeCall as? KtQualifiedExpression)?.receiverExpression
-
-        // Only support simple receivers to avoid complex transformations
-        if (explicitReceiver != null && !isSimpleReceiver(explicitReceiver)) return null
 
         val suggestElementLoop = shouldSuggestElementLoop(range, explicitReceiver)
         val implicitReceiverInfo = if (explicitReceiver == null) sizeCall.getImplicitReceiverInfo() else null
 
-        return Context(sizeCall, suggestElementLoop, implicitReceiverInfo)
+        return Context(explicitReceiver, suggestElementLoop, implicitReceiverInfo)
     }
 
-    private fun isSimpleReceiver(receiver: KtExpression): Boolean =
-        receiver is KtSimpleNameExpression || receiver is KtThisExpression
-
-    /**
-     * Checks if the expression is a size or length call suitable for indices replacement.
-     * Handles range types: `0..<size`, `0..size-1`, `0 until size`
-     */
-    private fun KaSession.sizeOrLengthCall(type: RangeKtExpressionType, expression: KtExpression): KtExpression? {
-        val target = extractSizeExpression(type, expression) ?: return null
-
-        if (!isSizeOrLengthSelector(target)) return null
-        if (isMapReceiver(target)) return null
-
-        return target
+    private fun KaSession.rightBound(type: RangeKtExpressionType, expression: KtExpression): KtExpression? {
+        val target = extractTargetExpression(type, expression) ?: return null
+        val selector = (target as? KtDotQualifiedExpression)?.selectorExpression ?: target
+        val receiverType = resolveReceiverType(target) ?: return null
+        
+        return when (selector.text) {
+            "size", "lastIndex" -> if (receiverType.isArrayOrPrimitiveArray || receiverType.isSubtypeOf(StandardClassIds.Collection)) target else null
+            "length" -> if (receiverType.isSubtypeOf(StandardClassIds.CharSequence)) target else null
+            else -> null
+        }
     }
-
-    private fun extractSizeExpression(type: RangeKtExpressionType, expression: KtExpression): KtExpression? {
+    
+    private fun extractTargetExpression(type: RangeKtExpressionType, expression: KtExpression): KtExpression? {
         return when (type) {
-            RangeKtExpressionType.UNTIL, RangeKtExpressionType.RANGE_UNTIL -> expression
-            RangeKtExpressionType.RANGE_TO -> (expression as? KtBinaryExpression)
-                ?.takeIf { it.operationToken == KtTokens.MINUS && it.right?.text == "1" }
-                ?.left
-            RangeKtExpressionType.DOWN_TO -> null
+            UNTIL, RANGE_UNTIL -> expression
+            RANGE_TO -> extractFromRangeToExpression(expression)
+            DOWN_TO -> null
         }
     }
 
-    private fun isSizeOrLengthSelector(target: KtExpression): Boolean {
-        val selector = (target as? KtDotQualifiedExpression)?.selectorExpression ?: target
-        return selector.text in setOf("size", "length")
+    private fun extractFromRangeToExpression(expression: KtExpression): KtExpression? {
+        // Handle arr.size - 1 pattern
+        if (expression is KtBinaryExpression && expression.operationToken == KtTokens.MINUS) {
+            val leftOperand = expression.left ?: return null
+            val rightOperand = expression.right ?: return null
+            return if (rightOperand.isIntConstantExpression(1)) leftOperand else null
+        }
+        
+        // Handle arr.lastIndex pattern
+        if (expression is KtDotQualifiedExpression) {
+            val selector = expression.selectorExpression
+            if (selector?.text == "lastIndex") {
+                return expression
+            }
+        }
+        
+        return null
     }
 
-    private fun KaSession.isMapReceiver(target: KtExpression): Boolean {
-        val explicitReceiver = (target as? KtDotQualifiedExpression)?.receiverExpression ?: return false
-        val receiverType = explicitReceiver.expressionType ?: return false
-        return isMapType(receiverType)
+    private fun KtExpression.isIntConstantExpression(value: Int): Boolean {
+        return (this as? KtConstantExpression)?.text?.toIntOrNull() == value
     }
 
-    /**
-     * Checks if the given type is a Map type. Maps are excluded because indices
-     * doesn't make semantic sense for key-value collections.
-     */
-    private fun KaSession.isMapType(type: KaType): Boolean {
-        val symbol = type.expandedSymbol ?: return false
-        val mapSymbol = findClass(StandardClassIds.Map) ?: return false
-        return symbol == mapSymbol || symbol.isSubClassOf(mapSymbol)
+    private fun KaSession.resolveReceiverType(expression: KtExpression): KaType? {
+        val resolvedCall = expression.resolveToCall()
+        val variableCall = resolvedCall?.successfulVariableAccessCall() ?: return null
+        val partiallyApplied = variableCall.partiallyAppliedSymbol
+        
+        // For member properties, use dispatchReceiver
+        // For extension properties (like lastIndex), use extensionReceiver
+        return partiallyApplied.dispatchReceiver?.type ?: partiallyApplied.extensionReceiver?.type
     }
 
     /**
      * Determines if we should suggest converting the index loop to an element loop.
-     * This checks if the loop parameter is used exactly once as an array index with the same receiver.
+     * This checks if the loop parameter is used only as array index(es) with the same receiver.
      */
     private fun shouldSuggestElementLoop(range: RangeExpression, explicitReceiver: KtExpression?): Boolean {
         val forExpression = findContainingForLoop(range) ?: return false
-        val loopUsage = findSingleLoopParameterUsage(forExpression) ?: return false
+        val loopParam = forExpression.loopParameter?.originalElement ?: return false
 
-        return isValidElementLoopCandidate(loopUsage, explicitReceiver)
+        val usages = ReferencesSearch.search(loopParam).findAll()
+        if (usages.isEmpty()) return false
+
+        // Check that all usages are valid array accesses with the same receiver
+        return usages.all { reference ->
+            val usage = reference.element
+            val arrayAccess = usage.parents.match(KtContainerNode::class, last = KtArrayAccessExpression::class)
+            arrayAccess != null && isValidElementLoopCandidate(arrayAccess, explicitReceiver)
+        }
     }
 
     private fun findContainingForLoop(range: RangeExpression): KtForExpression? =
         range.expression.parents.match(KtContainerNode::class, last = KtForExpression::class)
 
-    private fun findSingleLoopParameterUsage(forExpression: KtForExpression): KtArrayAccessExpression? {
-        val loopParam = forExpression.loopParameter?.originalElement ?: return null
-        val usage = ReferencesSearch.search(loopParam).asIterable().singleOrNull()?.element ?: return null
-        return usage.parents.match(KtContainerNode::class, last = KtArrayAccessExpression::class)
-    }
-
     private fun isValidElementLoopCandidate(arrayAccess: KtArrayAccessExpression, explicitReceiver: KtExpression?): Boolean {
         // Must use the loop parameter as the only index
         if (arrayAccess.indexExpressions.size != 1) return false
 
-        // Check if array receiver matches the size call receiver
+        // Check if the array receiver matches the size call receiver
         val receiversMatch = if (explicitReceiver != null) {
             // Explicit receiver case: arr.size -> arr[i]
-            (arrayAccess.arrayExpression as? KtSimpleNameExpression)?.reference?.resolve() ==
-                    (explicitReceiver as? KtSimpleNameExpression)?.reference?.resolve()
+            (arrayAccess.arrayExpression as? KtSimpleNameExpression)?.getReferencedName() ==
+                    (explicitReceiver as? KtSimpleNameExpression)?.getReferencedName()
         } else {
             // Implicit receiver case: size -> this[i]
             arrayAccess.arrayExpression is KtThisExpression
@@ -183,15 +210,10 @@ class ReplaceManualRangeWithIndicesCallsInspection : AbstractRangeInspection<Rep
             KotlinBundle.message("replace.manual.range.with.indices.call.quick.fix.text")
 
         override fun applyFix(project: Project, element: KtExpression, updater: ModPsiUpdater) {
-            val secondArg = element.getArguments()?.second
-            val receiver = when (secondArg) {
-                is KtBinaryExpression -> (secondArg.left as? KtDotQualifiedExpression)?.receiverExpression
-                is KtDotQualifiedExpression -> secondArg.receiverExpression
-                else -> null
-            }
+            val explicitReceiver = context.explicitReceiver
             val newReceiver = when {
-                receiver is KtThisExpression -> null
-                receiver != null -> receiver
+                explicitReceiver is KtThisExpression && explicitReceiver.labelQualifier == null -> null
+                explicitReceiver != null -> explicitReceiver
                 else -> context.implicitReceiverInfo?.takeUnless { it.isUnambiguousLabel }?.let { createImplicitThis(project, it) }
             }
             val psiFactory = KtPsiFactory(project)
@@ -202,28 +224,6 @@ class ReplaceManualRangeWithIndicesCallsInspection : AbstractRangeInspection<Rep
             }
             val replaced: KtExpression = element.replaced(newExpression)
             replaced.removeUnnecessaryParentheses()
-        }
-
-        /**
-         * Extracts the left and right arguments from various range expression types.
-         * Supports binary expressions (a..b) and function calls (a.rangeTo(b)).
-         */
-        private fun KtExpression.getArguments(): Pair<KtExpression?, KtExpression?>? = when (this) {
-            is KtBinaryExpression -> left to right
-
-            is KtDotQualifiedExpression, is KtSafeQualifiedExpression -> {
-                val qualified = this as KtQualifiedExpression
-                val call = qualified.selectorExpression as? KtCallExpression
-                val argument = call?.valueArguments?.singleOrNull()?.getArgumentExpression()
-                qualified.receiverExpression to argument
-            }
-
-            is KtCallExpression -> {
-                val argument = valueArguments.singleOrNull()?.getArgumentExpression()
-                null to argument
-            }
-
-            else -> null
         }
 
         private fun KtExpression.removeUnnecessaryParentheses() {
@@ -247,8 +247,28 @@ class ReplaceManualRangeWithIndicesCallsInspection : AbstractRangeInspection<Rep
             val loopRange = forExpression.loopRange ?: return
 
             val collection = resolveCollectionExpression(project)
-            val usageInfo = LoopToCollectionTransformUtils.findSingleArrayAccessUsage(loopParameter) ?: return
-            LoopToCollectionTransformUtils.transformLoop(project, usageInfo, loopParameter, loopRange, collection)
+
+            // Try a single usage first
+            val singleUsageInfo = LoopToCollectionTransformUtils.findSingleArrayAccessUsage(loopParameter)
+            if (singleUsageInfo != null) {
+                LoopToCollectionTransformUtils.transformLoop(project, listOf(singleUsageInfo), loopParameter, loopRange, collection)
+                return
+            }
+
+            // Handle multiple usages
+            val loopParam = loopParameter.originalElement ?: return
+            val usages = ReferencesSearch.search(loopParam).findAll()
+            val usageInfos = usages.mapNotNull { reference ->
+                val usage = reference.element
+                val arrayAccess = usage.parents.match(KtContainerNode::class, last = KtArrayAccessExpression::class)
+                if (arrayAccess != null) {
+                    LoopToCollectionTransformUtils.LoopUsageInfo(loopParameter, usage, arrayAccess)
+                } else null
+            }
+
+            if (usageInfos.isNotEmpty()) {
+                LoopToCollectionTransformUtils.transformLoop(project, usageInfos, loopParameter, loopRange, collection)
+            }
         }
 
         /**
@@ -257,7 +277,7 @@ class ReplaceManualRangeWithIndicesCallsInspection : AbstractRangeInspection<Rep
          */
         private fun resolveCollectionExpression(project: Project): KtExpression {
             // Use explicit receiver if available
-            (context.sizeCall as? KtQualifiedExpression)?.receiverExpression?.let { return it }
+            context.explicitReceiver?.let { return it }
 
             // For implicit receivers, only add explicit 'this@label' for ambiguous cases
             context.implicitReceiverInfo?.takeUnless { it.isUnambiguousLabel }?.let {

@@ -1,13 +1,29 @@
 // Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.codeInsight.completion.command.commands
 
-import com.intellij.codeInsight.completion.command.*
+import com.intellij.codeInsight.completion.command.CommandCompletionProviderContext
+import com.intellij.codeInsight.completion.command.CommandCompletionUnsupportedOperationException
+import com.intellij.codeInsight.completion.command.CommandProvider
+import com.intellij.codeInsight.completion.command.CompletionCommand
+import com.intellij.codeInsight.completion.command.HighlightInfoLookup
+import com.intellij.codeInsight.completion.command.MyEditor
 import com.intellij.codeInsight.completion.command.configuration.ApplicationCommandCompletionService
+import com.intellij.codeInsight.completion.command.createInjectedEditor
 import com.intellij.codeInsight.daemon.HighlightDisplayKey
-import com.intellij.codeInsight.daemon.impl.*
+import com.intellij.codeInsight.daemon.impl.DaemonProgressIndicator
+import com.intellij.codeInsight.daemon.impl.HighlightInfo
 import com.intellij.codeInsight.daemon.impl.HighlightInfo.IntentionActionDescriptor
+import com.intellij.codeInsight.daemon.impl.HighlightVisitorBasedInspection
+import com.intellij.codeInsight.daemon.impl.IntentionActionFilter
+import com.intellij.codeInsight.daemon.impl.SeverityRegistrar
+import com.intellij.codeInsight.daemon.impl.ShowIntentionsPass
 import com.intellij.codeInsight.daemon.impl.ShowIntentionsPass.IntentionsInfo
-import com.intellij.codeInsight.intention.*
+import com.intellij.codeInsight.intention.CommonIntentionAction
+import com.intellij.codeInsight.intention.CustomizableIntentionAction
+import com.intellij.codeInsight.intention.EmptyIntentionAction
+import com.intellij.codeInsight.intention.IntentionAction
+import com.intellij.codeInsight.intention.IntentionActionDelegate
+import com.intellij.codeInsight.intention.IntentionManager
 import com.intellij.codeInsight.intention.impl.CachedIntentions
 import com.intellij.codeInsight.intention.impl.IntentionActionWithTextCaching
 import com.intellij.codeInsight.intention.impl.ShowIntentionActionsHandler
@@ -41,7 +57,11 @@ import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.colors.CodeInsightColors
 import com.intellij.openapi.editor.colors.EditorColors
 import com.intellij.openapi.extensions.ExtensionPointName
-import com.intellij.openapi.progress.*
+import com.intellij.openapi.progress.EmptyProgressIndicator
+import com.intellij.openapi.progress.ProgressManager
+import com.intellij.openapi.progress.blockingContextToIndicator
+import com.intellij.openapi.progress.jobToIndicator
+import com.intellij.openapi.progress.runBlockingCancellable
 import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.IndexNotReadyException
 import com.intellij.openapi.project.PossiblyDumbAware
@@ -241,7 +261,7 @@ internal class DirectIntentionCommandProvider : CommandProvider {
           val profileToUse = getInstance(psiFile.project).getCurrentProfile()
           val inspectionWrapper = InspectionProfileWrapper(profileToUse)
           val inspectionTools = getInspectionTools(inspectionWrapper, originalFile)
-          val lineRange = getLineRange(topLevelFile, topLevelOffset)
+          val lineRange = getLineRange(topLevelFile, topLevelCurrentOffset)
           val indicator = EmptyProgressIndicator()
           val inspectionResult = jobToIndicator(coroutineContext.job, indicator) {
             if (!isInjected) {
@@ -280,6 +300,7 @@ internal class DirectIntentionCommandProvider : CommandProvider {
               for (i in 0..<fixes.size) {
                 val action = QuickFixWrapper.wrap(descriptor, i)
                 if (action is EmptyIntentionAction) continue
+                if (action is CustomizableIntentionAction && !action.isSelectable) continue
                 if (intentionCommandSkipper != null && intentionCommandSkipper.skip(action, psiFile, currentOffset)) continue
                 if (!isInjected && !ShowIntentionActionsHandler.availableFor(topLevelFile, topLevelEditor, topLevelOffset, action)) continue
                 if (isInjected && action.asModCommandAction() == null) continue
@@ -396,7 +417,7 @@ internal class DirectIntentionCommandProvider : CommandProvider {
               val suffix = "</html>"
               if (name.startsWith(prefix) && name.endsWith(suffix)) {
                 @Suppress("HardCodedStringLiteral")
-                name = name.substring(prefix.length, name.length - suffix.length)
+                name = name.replace(Regex("<[^>]+>"), "")
               }
               val command = DirectErrorFixCompletionCommand(presentableName = name,
                                                             priority = 100,

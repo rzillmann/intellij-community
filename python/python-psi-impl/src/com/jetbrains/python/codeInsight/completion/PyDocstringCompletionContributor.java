@@ -15,7 +15,12 @@
  */
 package com.jetbrains.python.codeInsight.completion;
 
-import com.intellij.codeInsight.completion.*;
+import com.intellij.codeInsight.completion.CompletionContributor;
+import com.intellij.codeInsight.completion.CompletionInitializationContext;
+import com.intellij.codeInsight.completion.CompletionParameters;
+import com.intellij.codeInsight.completion.CompletionProvider;
+import com.intellij.codeInsight.completion.CompletionResultSet;
+import com.intellij.codeInsight.completion.CompletionType;
 import com.intellij.codeInsight.lookup.AutoCompletionPolicy;
 import com.intellij.codeInsight.lookup.LookupElementBuilder;
 import com.intellij.openapi.module.Module;
@@ -116,7 +121,7 @@ public final class PyDocstringCompletionContributor extends CompletionContributo
     }
     final String text = file.getText();
     StringBuilder prefixBuilder = new StringBuilder();
-    while(offset > 0 && Character.isLetterOrDigit(text.charAt(offset))) {
+    while (offset > 0 && Character.isLetterOrDigit(text.charAt(offset))) {
       prefixBuilder.insert(0, text.charAt(offset));
       offset--;
     }

@@ -1,10 +1,12 @@
 // Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.jetbrains.python.psi.types;
 
+import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.roots.ProjectFileIndex;
 import com.intellij.openapi.util.Pair;
 import com.intellij.openapi.util.RecursionManager;
+import com.intellij.openapi.util.Ref;
 import com.intellij.openapi.util.registry.Registry;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vfs.VirtualFile;
@@ -13,10 +15,19 @@ import com.intellij.psi.PsiFile;
 import com.intellij.util.ArrayUtil;
 import com.intellij.util.ProcessingContext;
 import com.intellij.util.containers.CollectionFactory;
-import com.jetbrains.python.psi.*;
+import com.intellij.util.containers.HashingStrategy;
+import com.jetbrains.python.psi.AccessDirection;
+import com.jetbrains.python.psi.PyCallable;
+import com.jetbrains.python.psi.PyExpression;
+import com.jetbrains.python.psi.PyExpressionCodeFragment;
+import com.jetbrains.python.psi.PyFile;
+import com.jetbrains.python.psi.PyInstantTypeProvider;
+import com.jetbrains.python.psi.PyTypedElement;
 import com.jetbrains.python.psi.impl.PyTypeProvider;
 import com.jetbrains.python.psi.resolve.PyResolveContext;
 import com.jetbrains.python.psi.resolve.RatedResolveResult;
+import com.jetbrains.python.psi.types.external.ExternalPyTypeResolver;
+import com.jetbrains.python.psi.types.external.ExternalPyTypeResolverProvider;
 import com.jetbrains.python.pyi.PyiLanguageDialect;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
@@ -25,6 +36,7 @@ import org.jetbrains.annotations.Nullable;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentMap;
 import java.util.function.Function;
 
 
@@ -50,9 +62,28 @@ public sealed class TypeEvalContext {
 
   private final ThreadLocal<ProcessingContext> myProcessingContext = ThreadLocal.withInitial(ProcessingContext::new);
 
-  protected final Map<PyTypedElement, PyType> myEvaluated = CollectionFactory.createConcurrentSoftValueMap();
-  protected final Map<PyCallable, PyType> myEvaluatedReturn = CollectionFactory.createConcurrentSoftValueMap();
-  protected final Map<Pair<PyExpression, Object>, PyType> contextTypeCache = CollectionFactory.createConcurrentSoftValueMap();
+  private ExternalPyTypeResolver externalTypeResolver = null;
+  protected final Map<PyTypedElement, PyType> myEvaluated = getConcurrentMapForCaching();
+  protected final Map<PyCallable, PyType> myEvaluatedReturn = getConcurrentMapForCaching();
+  protected final Map<Pair<PyExpression, Object>, PyType> contextTypeCache = getConcurrentMapForCaching();
+
+  private static <T> @NotNull ConcurrentMap<@NotNull T, @NotNull PyType> getConcurrentMapForCaching() {
+    // In the current implementation, this value is only used to initialize the map and is basically ignored
+    // Just in case, set it to a reasonable value
+    // `Runtime.availableProcessors` shouldn't be called here, as that is a potentially expensive operation
+    int concurrencyLevel = 4;
+    if (Registry.is("python.typing.weak.keys.type.eval.context")) {
+      return CollectionFactory.createConcurrentWeakKeySoftValueMap(10, 0.75f, concurrencyLevel, HashingStrategy.canonical());
+    }
+    else if (Registry.is("python.typing.soft.keys.type.eval.context")) {
+      return CollectionFactory.createConcurrentSoftKeySoftValueMap(10, 0.75f, concurrencyLevel);
+    }
+    else {
+      return CollectionFactory.createConcurrentSoftValueMap();
+    }
+  }
+
+  protected static final Logger logger = Logger.getInstance(TypeEvalContext.class);
 
   private TypeEvalContext(boolean allowDataFlow, boolean allowStubToAST, boolean allowCallContext, @Nullable PsiFile origin) {
     this(new TypeEvalConstraints(allowDataFlow, allowStubToAST, allowCallContext, origin));
@@ -60,6 +91,9 @@ public sealed class TypeEvalContext {
 
   private TypeEvalContext(@NotNull TypeEvalConstraints constraints) {
     myConstraints = constraints;
+    if (constraints.myOrigin != null) {
+      externalTypeResolver = ExternalPyTypeResolverProvider.createTypeResolver(constraints.myOrigin.getProject());
+    }
   }
 
   @Override
@@ -201,7 +235,7 @@ public sealed class TypeEvalContext {
       return null;
     }
     AssumptionContext context = new AssumptionContext(this, element, type);
-    R result = null;
+    R result;
     try {
       result = func.apply(context);
     }
@@ -216,6 +250,11 @@ public sealed class TypeEvalContext {
     return this instanceof AssumptionContext;
   }
 
+  @ApiStatus.Internal
+  public boolean isKnown(PyTypedElement element) {
+    return getKnownType(element) != null;
+  }
+
   protected @Nullable PyType getKnownType(final @NotNull PyTypedElement element) {
     if (element instanceof PyInstantTypeProvider) {
       return element.getType(this, Key.INSTANCE);
@@ -225,6 +264,7 @@ public sealed class TypeEvalContext {
       assertValid(cachedType, element);
       return cachedType;
     }
+
     return null;
   }
 
@@ -244,11 +284,14 @@ public sealed class TypeEvalContext {
   }
 
   private @NotNull TypeEvalContext getLibraryContext(@NotNull Project project) {
+    // code completion will always have a new PsiFile, use the original file instead
+    PsiFile origin = myConstraints.myOrigin != null
+                     ? myConstraints.myOrigin.getOriginalFile()
+                     : null;
     TypeEvalConstraints constraints = new TypeEvalConstraints(myConstraints.myAllowDataFlow,
                                                               myConstraints.myAllowStubToAST,
                                                               myConstraints.myAllowCallContext,
-                                                              // code completion will always have a new PsiFile, use original file instead
-                                                              myConstraints.myOrigin != null ? myConstraints.myOrigin.getOriginalFile() : null);
+                                                              origin);
     return project.getService(TypeEvalContextCache.class).getLibraryContext(new LibraryTypeEvalContext(constraints));
   }
 
@@ -269,17 +312,29 @@ public sealed class TypeEvalContext {
     if (knownType != null) {
       return knownType == PyNullType.INSTANCE ? null : knownType;
     }
+
+    PsiFile file = element.getContainingFile();
+
     return RecursionManager.doPreventingRecursion(
       Pair.create(element, this),
       false,
       () -> {
-        PyType type = element.getType(this, Key.INSTANCE);
+        PyType type;
+
+        if (externalTypeResolver != null && externalTypeResolver.isSupportedForResolve(element)) {
+          type = Ref.deref(externalTypeResolver.resolveType(element, this instanceof LibraryTypeEvalContext));
+        }
+        else {
+          type = element.getType(this, Key.INSTANCE);
+        }
+
         assertValid(type, element);
         myEvaluated.put(element, type == null ? PyNullType.INSTANCE : type);
         return type;
       }
     );
   }
+
 
   public @Nullable PyType getReturnType(final @NotNull PyCallable callable) {
     if (canDelegateToLibraryContext(callable)) {
@@ -368,7 +423,11 @@ public sealed class TypeEvalContext {
   }
 
   private static boolean inPyiFile(@NotNull PsiElement element) {
-    if (isPyiFile(element.getContainingFile())) {
+    PsiFile containingFile = element.getContainingFile();
+    if (containingFile == null) {
+      return false;
+    }
+    if (isPyiFile(containingFile)) {
       return true;
     }
     PsiFile contextFile = getContextFile(element);
@@ -392,7 +451,7 @@ public sealed class TypeEvalContext {
   }
 
   private static class PyNullType implements PyType {
-    private PyNullType() {}
+    private PyNullType() { }
 
     @Override
     public @Nullable List<? extends RatedResolveResult> resolveMember(@NotNull String name,
@@ -473,7 +532,7 @@ public sealed class TypeEvalContext {
     }
   }
 
-  final static class LibraryTypeEvalContext extends TypeEvalContext {
+  private final static class LibraryTypeEvalContext extends TypeEvalContext {
     private LibraryTypeEvalContext(@NotNull TypeEvalConstraints constraints) {
       super(constraints);
     }
@@ -485,7 +544,7 @@ public sealed class TypeEvalContext {
     }
   }
 
-  final static class OptimizedTypeEvalContext extends TypeEvalContext {
+  private final static class OptimizedTypeEvalContext extends TypeEvalContext {
     private volatile TypeEvalContext codeInsightFallback;
 
     OptimizedTypeEvalContext(boolean allowDataFlow, boolean allowStubToAST, boolean allowCallContext, @Nullable PsiFile origin) {

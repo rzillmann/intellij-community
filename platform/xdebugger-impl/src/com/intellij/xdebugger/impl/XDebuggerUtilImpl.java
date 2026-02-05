@@ -6,7 +6,12 @@ import com.intellij.execution.ui.ConsoleView;
 import com.intellij.execution.ui.ConsoleViewContentType;
 import com.intellij.icons.AllIcons;
 import com.intellij.lang.Language;
-import com.intellij.openapi.actionSystem.*;
+import com.intellij.openapi.actionSystem.AnActionEvent;
+import com.intellij.openapi.actionSystem.CommonDataKeys;
+import com.intellij.openapi.actionSystem.DataContext;
+import com.intellij.openapi.actionSystem.DataKey;
+import com.intellij.openapi.actionSystem.IdeActions;
+import com.intellij.openapi.actionSystem.PlatformDataKeys;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.ModalityState;
 import com.intellij.openapi.application.ReadAction;
@@ -15,7 +20,11 @@ import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.editor.markup.HighlighterTargetArea;
 import com.intellij.openapi.editor.markup.RangeHighlighter;
-import com.intellij.openapi.fileEditor.*;
+import com.intellij.openapi.fileEditor.FileDocumentManager;
+import com.intellij.openapi.fileEditor.FileEditor;
+import com.intellij.openapi.fileEditor.FileEditorManager;
+import com.intellij.openapi.fileEditor.OpenFileDescriptor;
+import com.intellij.openapi.fileEditor.TextEditor;
 import com.intellij.openapi.fileTypes.StdFileTypes;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.DoNotAskOption;
@@ -26,9 +35,24 @@ import com.intellij.openapi.util.Ref;
 import com.intellij.openapi.util.TextRange;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vfs.VirtualFile;
+import com.intellij.platform.debugger.impl.shared.DebuggerAsyncActionUtilsKt;
 import com.intellij.platform.debugger.impl.shared.XDebuggerUtilImplShared;
+import com.intellij.platform.debugger.impl.shared.proxy.XBreakpointManagerProxy;
+import com.intellij.platform.debugger.impl.shared.proxy.XBreakpointProxy;
+import com.intellij.platform.debugger.impl.shared.proxy.XDebugManagerProxy;
+import com.intellij.platform.debugger.impl.shared.proxy.XDebugSessionProxy;
+import com.intellij.platform.debugger.impl.shared.proxy.XLineBreakpointHighlighterRange;
+import com.intellij.platform.debugger.impl.shared.proxy.XLineBreakpointInstallationInfo;
+import com.intellij.platform.debugger.impl.shared.proxy.XLineBreakpointProxy;
+import com.intellij.platform.debugger.impl.shared.proxy.XLineBreakpointTypeProxy;
 import com.intellij.pom.Navigatable;
-import com.intellij.psi.*;
+import com.intellij.psi.PsiComment;
+import com.intellij.psi.PsiDocumentManager;
+import com.intellij.psi.PsiElement;
+import com.intellij.psi.PsiFile;
+import com.intellij.psi.PsiLanguageInjectionHost;
+import com.intellij.psi.PsiManager;
+import com.intellij.psi.PsiWhiteSpace;
 import com.intellij.psi.impl.source.tree.injected.InjectedLanguageUtil;
 import com.intellij.psi.util.PsiTreeUtil;
 import com.intellij.ui.SimpleColoredText;
@@ -39,26 +63,38 @@ import com.intellij.util.ModalityUiUtil;
 import com.intellij.util.Processor;
 import com.intellij.util.SmartList;
 import com.intellij.util.containers.ContainerUtil;
-import com.intellij.xdebugger.*;
-import com.intellij.xdebugger.breakpoints.*;
+import com.intellij.xdebugger.XDebugSession;
+import com.intellij.xdebugger.XDebuggerBundle;
+import com.intellij.xdebugger.XDebuggerManager;
+import com.intellij.xdebugger.XDebuggerUtil;
+import com.intellij.xdebugger.XExpression;
+import com.intellij.xdebugger.XSourcePosition;
+import com.intellij.xdebugger.breakpoints.SuspendPolicy;
+import com.intellij.xdebugger.breakpoints.XBreakpoint;
+import com.intellij.xdebugger.breakpoints.XBreakpointManager;
+import com.intellij.xdebugger.breakpoints.XBreakpointProperties;
+import com.intellij.xdebugger.breakpoints.XBreakpointType;
+import com.intellij.xdebugger.breakpoints.XLineBreakpoint;
+import com.intellij.xdebugger.breakpoints.XLineBreakpointType;
 import com.intellij.xdebugger.breakpoints.ui.XBreakpointGroupingRule;
 import com.intellij.xdebugger.evaluation.EvaluationMode;
 import com.intellij.xdebugger.frame.XExecutionStack;
 import com.intellij.xdebugger.frame.XStackFrame;
 import com.intellij.xdebugger.frame.XSuspendContext;
 import com.intellij.xdebugger.frame.XValueContainer;
-import com.intellij.xdebugger.impl.breakpoints.*;
+import com.intellij.xdebugger.impl.breakpoints.XBreakpointBase;
+import com.intellij.xdebugger.impl.breakpoints.XBreakpointManagerImpl;
+import com.intellij.xdebugger.impl.breakpoints.XBreakpointUtil;
+import com.intellij.xdebugger.impl.breakpoints.XExpressionImpl;
 import com.intellij.xdebugger.impl.breakpoints.ui.grouping.XBreakpointFileGroupingRule;
 import com.intellij.xdebugger.impl.evaluate.ValueLookupManagerController;
-import com.intellij.xdebugger.impl.frame.XDebugManagerProxy;
-import com.intellij.xdebugger.impl.frame.XDebugSessionProxy;
 import com.intellij.xdebugger.impl.frame.XStackFrameContainerEx;
+import com.intellij.xdebugger.impl.proxy.MonolithLineBreakpointProxy;
 import com.intellij.xdebugger.impl.settings.XDebuggerSettingManagerImpl;
 import com.intellij.xdebugger.impl.ui.DebuggerUIUtil;
 import com.intellij.xdebugger.impl.ui.tree.XDebuggerTree;
-import com.intellij.xdebugger.impl.ui.tree.XDebuggerTreeState;
 import com.intellij.xdebugger.impl.ui.tree.actions.XDebuggerTreeActionBase;
-import com.intellij.xdebugger.impl.util.XDebugMonolithUtils;
+import com.intellij.platform.debugger.impl.ui.XDebuggerEntityConverter;
 import com.intellij.xdebugger.settings.XDebuggerSettings;
 import com.intellij.xdebugger.ui.DebuggerColors;
 import kotlin.Unit;
@@ -69,16 +105,20 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.concurrency.Promise;
 import org.jetbrains.concurrency.Promises;
 
-import javax.swing.*;
+import javax.swing.Icon;
+import javax.swing.JList;
 import javax.swing.event.ListSelectionEvent;
 import javax.swing.event.ListSelectionListener;
 import java.awt.event.MouseEvent;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.Iterator;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Function;
 import java.util.stream.Stream;
 
-import static com.intellij.xdebugger.impl.breakpoints.XBreakpointTypeProxyKt.asProxy;
 import static org.jetbrains.concurrency.Promises.asPromise;
 import static org.jetbrains.concurrency.Promises.rejectedPromise;
 
@@ -305,16 +345,18 @@ public class XDebuggerUtilImpl extends XDebuggerUtil {
     final @Nullable Editor editor,
     boolean canRemove
   ) {
-    var proxyTypes = ContainerUtil.map(types, t -> asProxy(t, project));
+    var proxyTypes = XDebugManagerProxy.getInstance().getBreakpointManagerProxy(project).getLineBreakpointTypes().stream()
+      .filter(type -> ContainerUtil.exists(types, t -> t.getId().equals(type.getId())))
+      .toList();
     var future = toggleAndReturnLineBreakpointProxy(
       project, proxyTypes, position, selectVariantByPositionColumn,
       temporary, editor, canRemove, false, null);
     return asPromise(future).then(b -> {
       if (b == null) return null;
-      if (b instanceof XLineBreakpointProxy.Monolith monolith) {
+      if (b instanceof MonolithLineBreakpointProxy monolith) {
         return monolith.getBreakpoint();
       }
-      XBreakpointBase<?, ?, ?> monolithBreakpoint = XDebugMonolithUtils.findBreakpointById(b.getId());
+      XBreakpoint<?> monolithBreakpoint = XDebuggerEntityConverter.getBreakpoint(b.getId());
       if (monolithBreakpoint instanceof XLineBreakpoint<?> lineBreakpoint) {
         return lineBreakpoint;
       }
@@ -604,11 +646,13 @@ public class XDebuggerUtilImpl extends XDebuggerUtil {
   }
 
   /**
-   * @see CoroutineUtilsKt#performDebuggerActionAsync
+   * @see DebuggerAsyncActionUtilsKt#performDebuggerActionAsync
    */
   public static void performDebuggerAction(@NotNull AnActionEvent e, @NotNull Runnable action) {
-    action.run();
-    reshowInlayRunToCursor(e);
+    DebuggerAsyncActionUtilsKt.performDebuggerAction(e.getProject(), e.getDataContext(), () -> {
+      action.run();
+      return Unit.INSTANCE;
+    });
   }
 
   public static void reshowInlayRunToCursor(@NotNull AnActionEvent e) {
@@ -703,6 +747,10 @@ public class XDebuggerUtilImpl extends XDebuggerUtil {
     return XDebuggerSettingManagerImpl.getInstanceImpl().getSettings(aClass);
   }
 
+  /**
+   * @deprecated Use {@link XDebuggerTreeActionBase#getSelectedValue(DataContext)} instead.
+   */
+  @Deprecated
   @Override
   public XValueContainer getValueContainer(DataContext dataContext) {
     return XDebuggerTreeActionBase.getSelectedValue(dataContext);
@@ -871,37 +919,12 @@ public class XDebuggerUtilImpl extends XDebuggerUtil {
     return null;
   }
 
-  /**
-   * The returned Navigatable overrides requesting focus based on whether the editor area is focused or not.
-   */
-  public static @NotNull Navigatable wrapKeepEditorAreaFocusNavigatable(@NotNull Project project, @NotNull Navigatable navigatable) {
-    return new Navigatable() {
-      @Override
-      public void navigate(boolean requestFocus) {
-        boolean isEditorAreaFocused = FileEditorManager.getInstance(project).getFocusedEditor() != null;
-        navigatable.navigate(requestFocus && isEditorAreaFocused);
-      }
-
-      @Override
-      public boolean canNavigate() { return navigatable.canNavigate(); }
-
-      @Override
-      public boolean canNavigateToSource() { return navigatable.canNavigateToSource(); }
-    };
-  }
-
   public static void rebuildAllSessionsViews(@Nullable Project project) {
-    if (project == null) return;
-    XDebugManagerProxy.getInstance().getSessions(project).stream()
-      .filter(XDebugSessionProxy::isSuspended)
-      .forEach(XDebugSessionProxy::rebuildViews);
+    DebuggerUIUtil.rebuildAllSessionsViews(project);
   }
 
   public static void rebuildTreeAndViews(XDebuggerTree tree) {
-    if (tree.isDetached()) {
-      tree.rebuildAndRestore(XDebuggerTreeState.saveState(tree));
-    }
-    rebuildAllSessionsViews(tree.getProject());
+    DebuggerUIUtil.rebuildTreeAndViews(tree);
   }
 
   @Override

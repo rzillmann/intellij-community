@@ -17,7 +17,6 @@ package com.intellij.xdebugger.impl.ui.tree.actions;
 
 import com.intellij.openapi.actionSystem.ActionUpdateThread;
 import com.intellij.openapi.actionSystem.AnActionEvent;
-import com.intellij.openapi.actionSystem.remoting.ActionRemoteBehaviorSpecification;
 import com.intellij.openapi.ide.CopyPasteManager;
 import com.intellij.xdebugger.impl.ui.tree.nodes.XValueNodeImpl;
 import org.jetbrains.annotations.ApiStatus;
@@ -26,7 +25,7 @@ import org.jetbrains.annotations.NotNull;
 import java.awt.datatransfer.StringSelection;
 
 @ApiStatus.Internal
-public class XCopyNameAction extends XDebuggerTreeActionBase implements ActionRemoteBehaviorSpecification.FrontendOtherwiseBackend {
+public class XCopyNameAction extends XDebuggerTreeSplitActionBase {
 
   @Override
   protected void perform(XValueNodeImpl node, @NotNull String nodeName, AnActionEvent e) {

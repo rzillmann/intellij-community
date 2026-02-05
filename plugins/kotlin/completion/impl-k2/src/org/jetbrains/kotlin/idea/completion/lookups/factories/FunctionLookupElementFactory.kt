@@ -3,8 +3,6 @@
 package org.jetbrains.kotlin.idea.completion.lookups.factories
 
 import com.intellij.codeInsight.AutoPopupController
-import com.intellij.codeInsight.completion.CodeCompletionHandlerBase
-import com.intellij.codeInsight.completion.CompletionType
 import com.intellij.codeInsight.completion.InsertionContext
 import com.intellij.codeInsight.lookup.Lookup
 import com.intellij.codeInsight.lookup.LookupElement
@@ -25,22 +23,42 @@ import org.jetbrains.kotlin.analysis.api.components.upperBoundIfFlexible
 import org.jetbrains.kotlin.analysis.api.signatures.KaCallableSignature
 import org.jetbrains.kotlin.analysis.api.signatures.KaFunctionSignature
 import org.jetbrains.kotlin.analysis.api.signatures.KaVariableSignature
-import org.jetbrains.kotlin.analysis.api.symbols.*
-import org.jetbrains.kotlin.analysis.api.types.*
+import org.jetbrains.kotlin.analysis.api.symbols.KaFunctionSymbol
+import org.jetbrains.kotlin.analysis.api.symbols.KaNamedClassSymbol
+import org.jetbrains.kotlin.analysis.api.symbols.KaNamedFunctionSymbol
+import org.jetbrains.kotlin.analysis.api.symbols.KaTypeParameterSymbol
+import org.jetbrains.kotlin.analysis.api.symbols.KaValueParameterSymbol
+import org.jetbrains.kotlin.analysis.api.symbols.typeParameters
+import org.jetbrains.kotlin.analysis.api.types.KaClassType
+import org.jetbrains.kotlin.analysis.api.types.KaFunctionType
+import org.jetbrains.kotlin.analysis.api.types.KaType
+import org.jetbrains.kotlin.analysis.api.types.KaTypeParameterType
+import org.jetbrains.kotlin.analysis.api.types.KaUsualClassType
 import org.jetbrains.kotlin.builtins.StandardNames
 import org.jetbrains.kotlin.idea.base.analysis.api.utils.findSamSymbolOrNull
 import org.jetbrains.kotlin.idea.base.analysis.api.utils.isPossiblySubTypeOf
 import org.jetbrains.kotlin.idea.base.analysis.api.utils.shortenReferencesInRange
 import org.jetbrains.kotlin.idea.base.analysis.withRootPrefixIfNeeded
-import org.jetbrains.kotlin.idea.completion.acceptOpeningBrace
 import org.jetbrains.kotlin.idea.base.serialization.names.KotlinNameSerializer
+import org.jetbrains.kotlin.idea.completion.acceptOpeningBrace
 import org.jetbrains.kotlin.idea.completion.contributors.helpers.insertString
 import org.jetbrains.kotlin.idea.completion.contributors.helpers.insertStringAndInvokeCompletion
 import org.jetbrains.kotlin.idea.completion.handlers.isCharAt
 import org.jetbrains.kotlin.idea.completion.impl.k2.handlers.TrailingLambdaInsertionHandler
 import org.jetbrains.kotlin.idea.completion.impl.k2.weighers.TrailingLambdaWeigher.hasTrailingLambda
-import org.jetbrains.kotlin.idea.completion.lookups.*
+import org.jetbrains.kotlin.idea.completion.lookups.CallableInsertionOptions
+import org.jetbrains.kotlin.idea.completion.lookups.CallableInsertionStrategy
+import org.jetbrains.kotlin.idea.completion.lookups.CompletionShortNamesRenderer
+import org.jetbrains.kotlin.idea.completion.lookups.ImportStrategy
+import org.jetbrains.kotlin.idea.completion.lookups.KotlinCallableLookupObject
+import org.jetbrains.kotlin.idea.completion.lookups.QuotedNamesAwareInsertionHandler
+import org.jetbrains.kotlin.idea.completion.lookups.TailTextProvider
+import org.jetbrains.kotlin.idea.completion.lookups.addImportIfRequired
 import org.jetbrains.kotlin.idea.completion.lookups.factories.FunctionCallLookupObject.Companion.hasReceiver
+import org.jetbrains.kotlin.idea.completion.lookups.indexOfSkippingSpace
+import org.jetbrains.kotlin.idea.completion.lookups.skipSpaces
+import org.jetbrains.kotlin.idea.completion.lookups.updateLookupElementBuilderToInsertTypeQualifierOnSuper
+import org.jetbrains.kotlin.idea.completion.lookups.withCallableSignatureInfo
 import org.jetbrains.kotlin.lexer.KtTokens
 import org.jetbrains.kotlin.name.Name
 import org.jetbrains.kotlin.psi.KtFile
@@ -405,12 +423,12 @@ internal object FunctionInsertionHandler : QuotedNamesAwareInsertionHandler() {
                 }
 
                 context.laterRunnable = if (insertLambda) Runnable {
-                    CodeCompletionHandlerBase(
-                        /* completionType = */ CompletionType.BASIC,
-                        /* invokedExplicitly = */ false,
-                        /* autopopup = */ true,
-                        /* synchronous = */ false,
-                    ).invokeCompletion(project, editor)
+                    // We schedule auto-popup after moving the caret into the lambda.
+                    // It needs to be auto-popup rather than invoking completion manually,
+                    // otherwise pressing space will cause completion to insert the item, which is
+                    // not always wanted, see: KTIJ-36825
+                    AutoPopupController.getInstance(project)
+                        .scheduleAutoPopup(editor)
                 } else Runnable {
                     AutoPopupController.getInstance(project)
                         .autoPopupParameterInfo(editor, offsetElement)

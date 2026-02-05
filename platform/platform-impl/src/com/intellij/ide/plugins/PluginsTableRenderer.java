@@ -20,14 +20,20 @@ import com.intellij.ui.speedSearch.SpeedSearchSupply;
 import com.intellij.ui.speedSearch.SpeedSearchUtil;
 import com.intellij.util.text.DateFormatUtil;
 import com.intellij.util.text.Matcher;
+import com.intellij.util.text.matching.MatchingMode;
 import com.intellij.util.ui.JBUI;
 import com.intellij.util.ui.StartupUiUtil;
 import com.intellij.util.ui.UIUtil;
 import org.jetbrains.annotations.ApiStatus;
 
-import javax.swing.*;
+import javax.swing.Icon;
+import javax.swing.JLabel;
+import javax.swing.JPanel;
+import javax.swing.JTable;
 import javax.swing.table.DefaultTableCellRenderer;
-import java.awt.*;
+import java.awt.Color;
+import java.awt.Component;
+import java.awt.Font;
 import java.text.DecimalFormat;
 import java.util.Objects;
 
@@ -106,7 +112,7 @@ public class PluginsTableRenderer extends DefaultTableCellRenderer {
                                                            UIUtil.getListForeground(isSelected, hasFocus),
                                                            JBColor.RED,
                                                            SimpleTextAttributes.STYLE_PLAIN);
-      Matcher matcher = NameUtil.buildMatcher("*" + query, NameUtil.MatchingCaseSensitivity.NONE);
+      Matcher matcher = NameUtil.buildMatcher("*" + query, MatchingMode.IGNORE_CASE);
 
       String category = myPluginDescriptor.getDisplayCategory() == null ? null : StringUtil.toUpperCase(myPluginDescriptor.getDisplayCategory());
       if (category != null) {

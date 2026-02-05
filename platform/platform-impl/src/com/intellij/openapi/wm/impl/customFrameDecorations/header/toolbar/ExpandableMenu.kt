@@ -19,12 +19,25 @@ import com.intellij.ui.dsl.builder.panel
 import com.intellij.util.IJSwingUtilities
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.job
-import java.awt.*
+import java.awt.BorderLayout
+import java.awt.Color
+import java.awt.Dimension
+import java.awt.Graphics
+import java.awt.Graphics2D
+import java.awt.Rectangle
+import java.awt.Window
 import java.awt.event.ComponentAdapter
 import java.awt.event.ComponentEvent
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
-import javax.swing.*
+import javax.swing.JComponent
+import javax.swing.JFrame
+import javax.swing.JLayeredPane
+import javax.swing.JPanel
+import javax.swing.JRootPane
+import javax.swing.MenuElement
+import javax.swing.MenuSelectionManager
+import javax.swing.SwingUtilities
 import javax.swing.event.ChangeListener
 
 
@@ -136,10 +149,10 @@ internal class ExpandableMenu(
 
     val subElements = menu.popupMenu.subElements
     if (subElements.isEmpty()) {
-      MenuSelectionManager.defaultManager().selectedPath = arrayOf(ideMenu, menu)
+      MenuSelectionManager.defaultManager().selectedPath = arrayOf<MenuElement>(ideMenu, menu)
     }
     else {
-      MenuSelectionManager.defaultManager().selectedPath = arrayOf(ideMenu, menu, menu.popupMenu, subElements[0])
+      MenuSelectionManager.defaultManager().selectedPath = arrayOf<MenuElement>(ideMenu, menu, menu.popupMenu, subElements[0])
     }
   }
 

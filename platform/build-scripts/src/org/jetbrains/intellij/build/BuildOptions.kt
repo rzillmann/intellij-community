@@ -5,7 +5,8 @@ import kotlinx.collections.immutable.PersistentList
 import kotlinx.collections.immutable.PersistentMap
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toPersistentMap
-import org.jetbrains.annotations.ApiStatus
+import org.jetbrains.annotations.ApiStatus.Experimental
+import org.jetbrains.annotations.ApiStatus.Internal
 import org.jetbrains.annotations.TestOnly
 import org.jetbrains.intellij.build.BuildOptions.Companion.BUILD_STEPS_TO_SKIP_PROPERTY
 import org.jetbrains.intellij.build.BuildOptions.Companion.INTELLIJ_BUILD_COMPILER_CLASSES_ARCHIVES_METADATA
@@ -26,12 +27,12 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
 
 data class BuildOptions(
-  @ApiStatus.Internal @JvmField val jarCacheDir: Path? = null,
-  @ApiStatus.Internal @JvmField val compressZipFiles: Boolean = true,
+  @Internal @JvmField val jarCacheDir: Path? = null,
+  @Internal @JvmField var compressZipFiles: Boolean = true,
   /** See [GlobalOptions.BUILD_DATE_IN_SECONDS]. */
   @JvmField val buildDateInSeconds: Long = computeBuildDateInSeconds(),
-  @ApiStatus.Internal @JvmField val printFreeSpace: Boolean = true,
-  @ApiStatus.Internal @JvmField val validateImplicitPlatformModule: Boolean = true,
+  @Internal @JvmField val printFreeSpace: Boolean = true,
+  @Internal @JvmField val validateImplicitPlatformModule: Boolean = true,
   @JvmField var skipDependencySetup: Boolean = false,
 
   /**
@@ -43,6 +44,12 @@ data class BuildOptions(
   @JvmField var isInDevelopmentMode: Boolean = getBooleanProperty("intellij.build.dev.mode", System.getenv("TEAMCITY_VERSION") == null && System.getenv("GITHUB_ACTIONS") == null),
   @JvmField var useCompiledClassesFromProjectOutput: Boolean = getBooleanProperty(USE_COMPILED_CLASSES_PROPERTY, isInDevelopmentMode),
 
+  /**
+   * In addition to production compilation sources, allow various functions to use and traverse test output.
+   * It is necessary. e.g., to run tests in a dev-build-provided environment.
+   */
+  var useTestCompilationOutput: Boolean = getBooleanProperty(USE_TEST_COMPILATION_OUTPUT_PROPERTY, defaultValue = USE_TEST_COMPILATION_OUTPUT_DEFAULT_VALUE),
+
   @JvmField val cleanOutDir: Boolean = getBooleanProperty(CLEAN_OUTPUT_DIRECTORY_PROPERTY, true),
 
   @JvmField var classOutDir: String? = System.getProperty(PROJECT_CLASSES_OUTPUT_DIRECTORY_PROPERTY),
@@ -52,7 +59,7 @@ data class BuildOptions(
    * If `true` and [ProductProperties.embeddedFrontendRootModule] is not null, the JAR files in the distribution will be adjusted
    * to allow starting JetBrains Client directly from the IDE's distribution.
    */
-  @ApiStatus.Experimental @JvmField var enableEmbeddedFrontend: Boolean = getBooleanProperty("intellij.build.enable.embedded.jetbrains.client", true),
+  @Experimental @JvmField var enableEmbeddedFrontend: Boolean = getBooleanProperty("intellij.build.enable.embedded.jetbrains.client", true),
 
   /**
    * By default, the build process produces temporary and resulting files under `<projectHome>/out/<productName>` directory.
@@ -63,7 +70,9 @@ data class BuildOptions(
   /**
    * Pass comma-separated names of build steps (see below) to [BUILD_STEPS_TO_SKIP_PROPERTY] system property to skip them when building locally.
    */
-  @JvmField var buildStepsToSkip: Set<String> = System.getProperty(BUILD_STEPS_TO_SKIP_PROPERTY, "").split(',').dropLastWhile { it.isEmpty() }
+  @JvmField var buildStepsToSkip: Set<String> = System.getProperty(BUILD_STEPS_TO_SKIP_PROPERTY, "")
+    .split(',')
+    .dropLastWhile { it.isEmpty() }
     .filterNot { it.isBlank() }
     .toMutableSet()
     .apply {
@@ -76,6 +85,8 @@ data class BuildOptions(
       add(REPAIR_UTILITY_BUNDLE_STEP)
       // IJI-1070
       add(LIBRARY_URL_CHECK_STEP)
+      // IJI-725
+      add(FUS_METADATA_BUNDLE_STEP)
     },
   /**
    * If `true`, write all compilation messages into a separate file (`compilation.log`).
@@ -128,7 +139,7 @@ data class BuildOptions(
 
     /**
      * If this value is set no distributions of the product will be produced,
-     * only [non-bundled plugins][ProductModulesLayout.pluginModulesToPublish] will be built.
+     * only [non-bundled plugins][org.jetbrains.intellij.build.productLayout.ProductModulesLayout.pluginModulesToPublish] will be built.
      */
     const val OS_NONE: String = "none"
 
@@ -187,7 +198,7 @@ data class BuildOptions(
     const val LOCALIZE_STEP: String = "localize"
 
     @JvmField
-    @ApiStatus.Internal
+    @Internal
     val WIN_SIGN_OPTIONS: PersistentMap<String, String> = System.getProperty("intellij.build.win.sign.options", "")
       .splitToSequence(';')
       .filter { !it.isBlank() }
@@ -237,6 +248,13 @@ data class BuildOptions(
      * By default, a build cleans up the output directory before compilation. Use this property to change the behavior.
      */
     const val CLEAN_OUTPUT_DIRECTORY_PROPERTY: String = "intellij.build.clean.output.root"
+
+    /**
+     * In addition to production compilation sources, allow various functions to use and traverse test output.
+     * It is necessary. e.g., to run tests in a dev-build-provided environment.
+     */
+    const val USE_TEST_COMPILATION_OUTPUT_PROPERTY: String = "idea.build.pack.test.source.enabled"
+    const val USE_TEST_COMPILATION_OUTPUT_DEFAULT_VALUE: Boolean = false
 
     /**
      * If `false` build scripts compile project classes to a special output directory (to not interfere with the default project output if
@@ -379,6 +397,11 @@ data class BuildOptions(
   var useLocalNSIS: String? = null
 
   /**
+   * When `true`, builds and uses a local version of `jetbraind`.
+   */
+  var useLocalJetbrainsDaemon: Boolean = getBooleanProperty("intellij.build.local.jetbrainsd", false)
+
+  /**
    * When `true`, cross-platform distribution will be packed using zip64 in AlwaysWithCompatibility mode.
    */
   var useZip64ForCrossPlatformDistribution: Boolean = getBooleanProperty("intellij.build.cross.platform.dist.zip64", false)
@@ -436,10 +459,10 @@ data class BuildOptions(
   val bundledPluginDirectoriesToSkip: Set<String> = getSetProperty("intellij.build.bundled.plugin.dirs.to.skip")
 
   /**
-   * Specifies a list of directory names for non-bundled plugins (determined by [ProductModulesLayout.pluginModulesToPublish] and
-   * [ProductModulesLayout.buildAllCompatiblePlugins]) which should be actually built. This option can be used to speed up updating
-   * the IDE from sources. By default, all plugins determined by [ProductModulesLayout.pluginModulesToPublish] and
-   * [ProductModulesLayout.buildAllCompatiblePlugins] are built.
+   * Specifies a list of directory names for non-bundled plugins (determined by [org.jetbrains.intellij.build.productLayout.ProductModulesLayout.pluginModulesToPublish] and
+   * [org.jetbrains.intellij.build.productLayout.ProductModulesLayout.buildAllCompatiblePlugins]) which should be actually built. This option can be used to speed up updating
+   * the IDE from sources. By default, all plugins determined by [org.jetbrains.intellij.build.productLayout.ProductModulesLayout.pluginModulesToPublish] and
+   * [org.jetbrains.intellij.build.productLayout.ProductModulesLayout.buildAllCompatiblePlugins] are built.
    * To skip building all non-bundled plugins, set the property to `none`.
    */
   val nonBundledPluginDirectoriesToInclude: Set<String> = getSetProperty("intellij.build.non.bundled.plugin.dirs.to.include")
@@ -448,7 +471,7 @@ data class BuildOptions(
    * If this option is set to `true` and [ProductProperties.rootModuleForModularLoader] is non-null, a file containing module descriptors
    * will be added to the distribution (IJPL-109), and launchers will use it to start the IDE (IJPL-128).
    */
-  @ApiStatus.Experimental
+  @Experimental
   var useModularLoader: Boolean = getBooleanProperty("intellij.build.use.modular.loader", true)
 
   /**
@@ -458,7 +481,7 @@ data class BuildOptions(
    * This option doesn't make sense if [modular loader][BuildContext.useModularLoader] is used
    * (in this case, the generation is always enabled).
    */
-  @ApiStatus.Experimental
+  @Experimental
   var generateRuntimeModuleRepository: Boolean = getBooleanProperty("intellij.build.generate.runtime.module.repository", true)
 
   /**
@@ -472,13 +495,13 @@ data class BuildOptions(
    */
   var runtimeDebug: Boolean = parseBooleanValue(System.getProperty("intellij.build.bundled.jre.debug", "false"))
 
-  @ApiStatus.Internal
+  @Internal
   var skipCustomResourceGenerators: Boolean = false
 
   var resolveDependenciesMaxAttempts: Int = System.getProperty(RESOLVE_DEPENDENCIES_MAX_ATTEMPTS_PROPERTY)?.toInt() ?: 2
   var resolveDependenciesDelayMs: Long = System.getProperty(RESOLVE_DEPENDENCIES_DELAY_MS_PROPERTY)?.toLong() ?: 1_000
 
-  var randomSeedNumber: Long = 0
+  var randomSeedNumber: Long = System.getProperty("intellij.build.randomSeed")?.takeIf { it.isNotBlank() }?.toLong() ?: Random.nextLong()
 
   /**
    * Use [BuildContext.isNightlyBuild] to get the actual nightly flag in build scripts.
@@ -491,7 +514,7 @@ data class BuildOptions(
   var storeGitRevision: Boolean = getBooleanProperty("intellij.build.store.git.revision", true)
 
   /**
-   * Specifies an additional list of compatible plugin names which should not be built, see [ProductModulesLayout.compatiblePluginsToIgnore]
+   * Specifies an additional list of compatible plugin names which should not be built, see [org.jetbrains.intellij.build.productLayout.ProductModulesLayout.compatiblePluginsToIgnore]
    */
   var compatiblePluginsToIgnore: Set<String> = getSetProperty("intellij.build.compatible.plugins.to.ignore")
 
@@ -500,11 +523,11 @@ data class BuildOptions(
    * won't be affected by [PluginBundlingRestrictions.includeInDistribution]
    */
   @set:TestOnly
-  @ApiStatus.Internal
+  @Internal
   var useReleaseCycleRelatedBundlingRestrictionsForContentReport: Boolean = true
 
   @set:TestOnly
-  @ApiStatus.Internal
+  @Internal
   var buildStepListener: BuildStepListener = BuildStepListener()
 
   init {
@@ -521,8 +544,6 @@ data class BuildOptions(
 
     val targetArchProperty = System.getProperty(TARGET_ARCH_PROPERTY)?.takeIf { it.isNotBlank() }
     targetArch = if (targetArchProperty == ARCH_CURRENT) JvmArchitecture.currentJvmArch else targetArchProperty?.let(JvmArchitecture::valueOf)
-    val randomSeedString = System.getProperty("intellij.build.randomSeed")
-    randomSeedNumber = if (randomSeedString.isNullOrBlank()) Random.nextLong() else randomSeedString.toLong()
   }
 }
 

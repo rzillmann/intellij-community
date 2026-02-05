@@ -14,9 +14,12 @@ import com.jetbrains.python.errorProcessing.ErrorSink
 import com.jetbrains.python.errorProcessing.PyResult
 import com.jetbrains.python.errorProcessing.emit
 import com.jetbrains.python.newProject.collector.InterpreterStatisticsInfo
-import com.jetbrains.python.sdk.*
+import com.jetbrains.python.sdk.ModuleOrProject
+import com.jetbrains.python.sdk.baseDir
 import com.jetbrains.python.sdk.flavors.PythonSdkFlavor
-import com.jetbrains.python.sdk.legacy.PythonSdkUtil
+import com.jetbrains.python.sdk.installExecutableViaPythonScript
+import com.jetbrains.python.sdk.persist
+import com.jetbrains.python.sdk.setAssociationToModule
 import com.jetbrains.python.statistics.InterpreterCreationMode
 import com.jetbrains.python.statistics.InterpreterType
 import kotlinx.coroutines.CoroutineScope
@@ -33,11 +36,6 @@ internal abstract class CustomNewEnvironmentCreator<P : PathHolder>(
   internal lateinit var basePythonComboBox: PythonInterpreterComboBox<P>
   internal lateinit var executablePath: ValidatedPathField<Version, P, ValidatedPath.Executable<P>>
 
-  open suspend fun onBinarySelection(pathOnFileSystem: P): ValidatedPath.Executable<P> {
-    val binaryToExec = model.fileSystem.getBinaryToExec(pathOnFileSystem)
-    return ValidatedPath.Executable(pathOnFileSystem, binaryToExec.getToolVersion(name))
-  }
-
   override fun setupUI(panel: Panel, validationRequestor: DialogValidationRequestor) {
     with(panel) {
       basePythonComboBox = pythonInterpreterComboBox(
@@ -45,7 +43,7 @@ internal abstract class CustomNewEnvironmentCreator<P : PathHolder>(
         title = message("sdk.create.custom.base.python"),
         selectedSdkProperty = model.state.baseInterpreter,
         validationRequestor = validationRequestor,
-        onPathSelected = model::addManuallyAddedInterpreter,
+        onPathSelected = model::addManuallyAddedSystemPython,
       )
 
       executablePath = validatablePathField(
@@ -71,26 +69,15 @@ internal abstract class CustomNewEnvironmentCreator<P : PathHolder>(
   }
 
   override suspend fun getOrCreateSdk(moduleOrProject: ModuleOrProject): PyResult<Sdk> {
-    savePathToExecutableToProperties(null)
-
-    // todo think about better error handling
-    val selectedBasePython = model.state.baseInterpreter.get()!!
-    val basePythonBinaryPath = model.installPythonIfNeeded(selectedBasePython)
-
     val module = when (moduleOrProject) {
       is ModuleOrProject.ModuleAndProject -> moduleOrProject.module
       is ModuleOrProject.ProjectOnly -> null
     }
-    val moduleBasePath = module?.basePath?.let { Path.of(it) }
+    val moduleBasePath = module?.baseDir?.path?.let { Path.of(it) }
                          ?: model.projectPathFlows.projectPath.first()
                          ?: error("module base path can't be recognized, both module and project are nulls")
 
-    val newSdk = setupEnvSdk(
-      moduleBasePath = moduleBasePath,
-      baseSdks = PythonSdkUtil.getAllSdks(),
-      basePythonBinaryPath = basePythonBinaryPath,
-      installPackages = false
-    ).getOr { return it }
+    val newSdk = setupEnvSdk(moduleBasePath).getOr { return it }
 
     newSdk.persist()
     if (module != null) {
@@ -98,7 +85,6 @@ internal abstract class CustomNewEnvironmentCreator<P : PathHolder>(
       module.baseDir?.refresh(true, false)
     }
 
-    model.addInterpreter(newSdk)
 
     return Result.success(newSdk)
   }
@@ -151,7 +137,10 @@ internal abstract class CustomNewEnvironmentCreator<P : PathHolder>(
     val installedSdk = when (baseInterpreter) {
       is InstallableSelectableInterpreter -> installBaseSdk(baseInterpreter.sdk, model.existingSdks)
         ?.let {
-          val sdkWrapper = model.fileSystem.wrapSdk(it)
+          val sdkWrapper =
+            runWithModalProgressBlocking(ModalTaskOwner.guess(), message("sdk.create.custom.venv.progress.title.detect.executable")) {
+              model.fileSystem.wrapSdk(it)
+            }
           val installed = model.addInstalledInterpreter(sdkWrapper.homePath, baseInterpreter.pythonInfo)
           model.state.baseInterpreter.set(installed)
           installed
@@ -169,7 +158,7 @@ internal abstract class CustomNewEnvironmentCreator<P : PathHolder>(
       when (val r = installExecutableViaPythonScript(pythonExecutable, "-n", name, *versionArgs.toTypedArray())) {
         is Result.Success -> {
           val pathHolder = PathHolder.Eel(r.result)
-          savePathToExecutableToProperties(pathHolder)
+          savePathToExecutableToProperties(pathHolder as? P)
         }
         is Result.Failure -> {
           errorSink.emit(r.error)
@@ -184,20 +173,14 @@ internal abstract class CustomNewEnvironmentCreator<P : PathHolder>(
 
   internal open val installationVersion: String? = null
 
-
-  /**
-   * Saves the provided path to an executable in the properties of the environment
-   *
-   * @param [path] The path to the executable that needs to be saved. This may be null when tries to find automatically.
-   */
-  internal abstract suspend fun savePathToExecutableToProperties(pathHolder: PathHolder?)
-
-  protected abstract suspend fun setupEnvSdk(moduleBasePath: Path, baseSdks: List<Sdk>, basePythonBinaryPath: P?, installPackages: Boolean): PyResult<Sdk>
+  protected abstract suspend fun setupEnvSdk(moduleBasePath: Path): PyResult<Sdk>
 
   internal open fun onVenvSelectExisting() {}
 }
 
-private fun <P : PathHolder> PythonAddInterpreterModel<P>.installPythonIfNeeded(interpreter: PythonSelectableInterpreter<P>): P? {
+internal suspend fun <P : PathHolder> PythonMutableTargetAddInterpreterModel<P>.getOrInstallBasePython(): P? {
+  val interpreter = requireNotNull(state.baseInterpreter.get()) { "wrong state: base interpreter is not selected" }
+
   // todo use target config
   val path = if (interpreter is InstallableSelectableInterpreter<P>) {
     installBaseSdk(interpreter.sdk, existingSdks)?.let { fileSystem.wrapSdk(it) }?.homePath

@@ -7,14 +7,31 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.NlsSafe
-import com.intellij.platform.debugger.impl.rpc.*
+import com.intellij.platform.debugger.impl.rpc.XSourcePositionDto
+import com.intellij.platform.debugger.impl.rpc.XValueAdvancedPresentationPart
+import com.intellij.platform.debugger.impl.rpc.XValueApi
+import com.intellij.platform.debugger.impl.rpc.XValueDto
+import com.intellij.platform.debugger.impl.rpc.XValueDtoWithPresentation
+import com.intellij.platform.debugger.impl.rpc.XValueMarkerDto
+import com.intellij.platform.debugger.impl.rpc.XValueSerializedPresentation
+import com.intellij.platform.debugger.impl.rpc.xExpression
 import com.intellij.platform.debugger.impl.shared.FrontendDescriptorStateManager
+import com.intellij.platform.debugger.impl.shared.XValueStateFlows
 import com.intellij.platform.util.coroutines.childScope
-import com.intellij.util.ConcurrencyUtil
 import com.intellij.util.ThreeState
 import com.intellij.xdebugger.Obsolescent
 import com.intellij.xdebugger.XExpression
-import com.intellij.xdebugger.frame.*
+import com.intellij.xdebugger.frame.XCompositeNode
+import com.intellij.xdebugger.frame.XDescriptor
+import com.intellij.xdebugger.frame.XInlineDebuggerDataCallback
+import com.intellij.xdebugger.frame.XNamedValue
+import com.intellij.xdebugger.frame.XNavigatable
+import com.intellij.xdebugger.frame.XPinToTopData
+import com.intellij.xdebugger.frame.XReferrersProvider
+import com.intellij.xdebugger.frame.XValue
+import com.intellij.xdebugger.frame.XValueModifier
+import com.intellij.xdebugger.frame.XValueNode
+import com.intellij.xdebugger.frame.XValuePlace
 import com.intellij.xdebugger.frame.presentation.XValuePresentation
 import com.intellij.xdebugger.impl.pinned.items.PinToTopMemberValue
 import com.intellij.xdebugger.impl.pinned.items.PinToTopParentValue
@@ -22,13 +39,18 @@ import com.intellij.xdebugger.impl.rpc.sourcePosition
 import com.intellij.xdebugger.impl.ui.XValueTextProvider
 import com.intellij.xdebugger.impl.ui.tree.XValueExtendedPresentation
 import com.intellij.xdebugger.impl.ui.tree.nodes.XValueNodeEx
-import com.intellij.xdebugger.impl.util.XDebugMonolithUtils
+import com.intellij.platform.debugger.impl.ui.XDebuggerEntityConverter
 import kotlinx.coroutines.*
-import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.future.asCompletableFuture
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.concurrency.Promise
-import org.jetbrains.concurrency.asCompletableFuture
 import org.jetbrains.concurrency.asPromise
 import java.util.concurrent.CompletableFuture
 
@@ -38,10 +60,10 @@ class FrontendXValue private constructor(
   private val cs: CoroutineScope,
   val xValueDto: XValueDto,
   hasParentValue: Boolean,
-  presentation: Flow<XValueSerializedPresentation>,
+  flows: XValueStateFlows,
 ) : XValue(), XValueTextProvider, PinToTopParentValue, PinToTopMemberValue {
-  
-  private val statePresentation = cs.async { presentation.stateIn(cs) }
+
+  private val statePresentation = cs.async { flows.presentationFlow.stateIn(cs) }
 
   init {
     cs.launch {
@@ -68,16 +90,18 @@ class FrontendXValue private constructor(
   var canMarkValue: Boolean = false
     private set
 
-  private val xValueContainer = FrontendXValueContainer(project, cs, hasParentValue) {
-    XValueApi.getInstance().computeChildren(xValueDto.id)
-  }
+  private val xValueContainer = FrontendXValueContainer(project, cs, hasParentValue, xValueDto.id)
 
-  private val fullValueEvaluator = xValueDto.fullValueEvaluator.toFlow().map { evaluatorDto ->
+  private val fullValueEvaluator = flows.fullValueEvaluatorFlow.map { evaluatorDto ->
     if (evaluatorDto == null) {
       return@map null
     }
     // TODO: should we strict the coroutine scope?
     FrontendXFullValueEvaluator(cs, xValueDto.id, evaluatorDto)
+  }.stateIn(cs, SharingStarted.Eagerly, null)
+
+  private val additionalLink = flows.additionalLinkFlow.map {
+    it?.hyperlink(cs)
   }.stateIn(cs, SharingStarted.Eagerly, null)
 
   private val textProvider = xValueDto.textProvider?.toFlow()
@@ -132,10 +156,6 @@ class FrontendXValue private constructor(
     return canNavigateToTypeSource
   }
 
-  override fun canNavigateToTypeSourceAsync(): Promise<Boolean?>? {
-    return canNavigateToTypeSourceAsync()?.asCompletableFuture()?.asPromise()
-  }
-
   override fun computeInlineDebuggerData(callback: XInlineDebuggerDataCallback): ThreeState {
     cs.launch {
       val (canCompute, positionFlow) = XValueApi.getInstance().computeInlineData(xValueDto.id) ?: return@launch
@@ -173,14 +193,27 @@ class FrontendXValue private constructor(
     if (initialFullValueEvaluator != null) {
       node.setFullValueEvaluator(initialFullValueEvaluator)
     }
-    node.childCoroutineScope(parentScope = cs, "FrontendXValue#computePresentation").launch(Dispatchers.EDT) {
+    cs.launch(Dispatchers.EDT) {
+      val job = currentCoroutineContext().job
       launch {
-        fullValueEvaluator.collectLatest { evaluator ->
+        fullValueEvaluator.collectLatestWhileNotObsolete(job, node) { evaluator ->
           if (evaluator != null) {
             node.setFullValueEvaluator(evaluator)
           }
           else if (node is XValueNodeEx) {
             node.clearFullValueEvaluator()
+          }
+        }
+      }
+      if (node is XValueNodeEx) {
+        launch {
+          additionalLink.collectLatestWhileNotObsolete(job, node) { link ->
+            if (link != null) {
+              node.addAdditionalHyperlink(link)
+            }
+            else {
+              node.clearAdditionalHyperlinks()
+            }
           }
         }
       }
@@ -193,7 +226,7 @@ class FrontendXValue private constructor(
             XValueApi.getInstance().computeTooltipPresentation(xValueDto.id)
           }
         }
-        presentationFlow.collectLatest {
+        presentationFlow.collectLatestWhileNotObsolete(job, node) {
           node.setPresentation(it)
         }
       }
@@ -232,7 +265,7 @@ class FrontendXValue private constructor(
 
   override fun getReferrersProvider(): XReferrersProvider? {
     // TODO referrersProvider is only supported in monolith
-    return XDebugMonolithUtils.findXValueById(xValueDto.id)?.referrersProvider
+    return XDebuggerEntityConverter.getValue(xValueDto.id)?.referrersProvider
   }
 
   override fun shouldShowTextValue(): Boolean = textProvider?.value?.shouldShowTextValue ?: false
@@ -306,26 +339,29 @@ class FrontendXValue private constructor(
   }
 
   companion object {
-
-    fun asFrontendXValue(value: XValue): FrontendXValue {
-      return asFrontendXValueOrNull(value) ?: error("XValue is not a FrontendXValue: $value")
-    }
-
     fun asFrontendXValueOrNull(value: XValue): FrontendXValue? {
       return value as? FrontendXValue ?: (value as? FrontendXNamedValue)?.delegate
     }
 
     @JvmStatic
-    fun create(project: Project, evaluatorCoroutineScope: CoroutineScope, xValueDto: XValueDto, hasParentValue: Boolean): XValue {
-      // TODO[IJPL-160146]: Is it ok to dispose only when evaluator is changed?
-      //   So, XValues will live more than popups where they appeared
-      //   But it is needed for Mark object functionality at least.
-      //   Since we cannot dispose XValue when evaluation popup is closed
-      //   because it getting closed when Mark Object dialog is shown,
-      //   so we cannot refer to the backend's xValue
-      val cs = evaluatorCoroutineScope.childScope("FrontendXValue")
-      val presentation = xValueDto.presentation.toFlow()
-      val frontendXValue = FrontendXValue(project, cs, xValueDto, hasParentValue, presentation)
+    fun create(project: Project, containerScope: CoroutineScope, dto: XValueDtoWithPresentation, hasParentValue: Boolean): XValue {
+      val flows = XValueStateFlows(
+        dto.presentation.toFlow(),
+        dto.fullValueEvaluator.toFlow(),
+        dto.additionalLink.toFlow()
+      )
+      return create(project, containerScope, dto.value, flows, hasParentValue)
+    }
+
+    internal fun create(
+      project: Project,
+      containerScope: CoroutineScope,
+      xValueDto: XValueDto,
+      flows: XValueStateFlows,
+      hasParentValue: Boolean,
+    ): XValue {
+      val cs = containerScope.childScope("FrontendXValue")
+      val frontendXValue = FrontendXValue(project, cs, xValueDto, hasParentValue, flows)
       val name = xValueDto.name
       return if (name != null) FrontendXNamedValue(frontendXValue, name) else frontendXValue
     }
@@ -373,16 +409,14 @@ private fun renderAdvancedPresentation(renderer: XValuePresentation.XValueTextRe
   }
 }
 
-internal fun Obsolescent.childCoroutineScope(parentScope: CoroutineScope, name: String): CoroutineScope {
-  val obsolescent = this
-  val scope = parentScope.childScope(name)
-  parentScope.launch(context = Dispatchers.IO, start = CoroutineStart.UNDISPATCHED) {
-    while (!obsolescent.isObsolete) {
-      delay(ConcurrencyUtil.DEFAULT_TIMEOUT_MS)
+private suspend fun <T> Flow<T>.collectLatestWhileNotObsolete(job: Job, obsolescent: Obsolescent, block: suspend (T) -> Unit) {
+  collectLatest {
+    if (obsolescent.isObsolete) {
+      job.cancel()
+      return@collectLatest
     }
-    scope.cancel()
+    block(it)
   }
-  return scope
 }
 
 @Service(Service.Level.PROJECT)

@@ -2,6 +2,7 @@
 package git4idea.branch;
 
 import com.intellij.concurrency.JobScheduler;
+import com.intellij.dvcs.repo.RepositoryExtKt;
 import com.intellij.externalProcessAuthHelper.AuthenticationMode;
 import com.intellij.openapi.Disposable;
 import com.intellij.openapi.application.ApplicationManager;
@@ -17,7 +18,7 @@ import com.intellij.openapi.util.NotNullLazyValue;
 import com.intellij.openapi.util.Pair;
 import com.intellij.openapi.util.registry.Registry;
 import com.intellij.openapi.util.text.StringUtil;
-import com.intellij.platform.vcs.impl.shared.rpc.RepositoryId;
+import com.intellij.platform.vcs.impl.shared.RepositoryId;
 import com.intellij.util.Alarm;
 import com.intellij.util.EnvironmentUtil;
 import com.intellij.util.concurrency.annotations.RequiresEdt;
@@ -36,14 +37,23 @@ import com.intellij.vcs.log.Hash;
 import com.intellij.vcsUtil.VcsFileUtil;
 import git4idea.GitLocalBranch;
 import git4idea.GitRemoteBranch;
-import git4idea.commands.*;
+import git4idea.commands.Git;
+import git4idea.commands.GitAuthenticationListener;
+import git4idea.commands.GitCommand;
+import git4idea.commands.GitCommandResult;
+import git4idea.commands.GitLineHandler;
 import git4idea.config.GitVcsSettings;
 import git4idea.config.GitVersionSpecialty;
 import git4idea.history.GitHistoryUtils;
 import git4idea.i18n.GitBundle;
 import git4idea.push.GitPushSupport;
 import git4idea.push.GitPushTarget;
-import git4idea.repo.*;
+import git4idea.repo.GitBranchTrackInfo;
+import git4idea.repo.GitRefUtil;
+import git4idea.repo.GitRemote;
+import git4idea.repo.GitRepository;
+import git4idea.repo.GitRepositoryChangeListener;
+import git4idea.repo.GitRepositoryManager;
 import kotlin.text.StringsKt;
 import one.util.streamex.StreamEx;
 import org.jetbrains.annotations.ApiStatus;
@@ -52,7 +62,15 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.nio.file.Path;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.Semaphore;
@@ -177,7 +195,7 @@ public final class GitBranchIncomingOutgoingManager implements GitRepositoryChan
         Integer outgoing = getOutgoingFor(r, localBranch);
         if (incoming == null && outgoing == null) return null;
 
-        return new Pair<>(r.getRpcId(), new GitInOutCountersInRepo(incoming, outgoing));
+        return new Pair<>(RepositoryExtKt.repositoryId(r), new GitInOutCountersInRepo(incoming, outgoing));
       })
       .filter(Objects::nonNull)
       .collect(Collectors.toMap(pair -> pair.first, pair -> pair.second));
@@ -310,7 +328,7 @@ public final class GitBranchIncomingOutgoingManager implements GitRepositoryChan
 
   private static @NotNull Map<RepositoryId, Map<String, Integer>> mapState(@NotNull Map<GitRepository, Map<GitLocalBranch, Integer>> projectState) {
     var result = new HashMap<RepositoryId, Map<String, Integer>>();
-    projectState.forEach((repo, branches) -> result.put(repo.getRpcId(), remapLocalBranchToName(branches)));
+    projectState.forEach((repo, branches) -> result.put(RepositoryExtKt.repositoryId(repo), remapLocalBranchToName(branches)));
     return result;
   }
 

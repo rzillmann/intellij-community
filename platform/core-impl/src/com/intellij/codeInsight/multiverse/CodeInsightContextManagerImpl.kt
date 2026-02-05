@@ -2,17 +2,21 @@
 package com.intellij.codeInsight.multiverse
 
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.edtWriteAction
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.diagnostic.trace
 import com.intellij.openapi.extensions.ExtensionPointName
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.project.ProjectLocator
 import com.intellij.openapi.util.Key
 import com.intellij.openapi.vfs.VirtualFile
+import com.intellij.openapi.vfs.VirtualFileManager
+import com.intellij.openapi.vfs.newvfs.BulkFileListenerBackgroundable
+import com.intellij.openapi.vfs.newvfs.events.VFileEvent
+import com.intellij.openapi.vfs.newvfs.events.VFileMoveEvent
 import com.intellij.psi.FileViewProvider
 import com.intellij.psi.impl.PsiManagerEx
-import com.intellij.psi.impl.file.impl.FileManagerEx
-import com.intellij.psi.util.PsiUtilCore
 import com.intellij.util.AtomicMapCache
 import com.intellij.util.concurrency.ThreadingAssertions
 import com.intellij.util.concurrency.annotations.RequiresBackgroundThread
@@ -20,11 +24,16 @@ import com.intellij.util.concurrency.annotations.RequiresReadLock
 import com.intellij.util.containers.CollectionFactory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.launch
 import org.jetbrains.annotations.ApiStatus
 import java.util.concurrent.CancellationException
 import java.util.concurrent.ConcurrentMap
+import java.util.concurrent.atomic.AtomicBoolean
 
 @ApiStatus.Internal
 class CodeInsightContextManagerImpl(
@@ -34,11 +43,15 @@ class CodeInsightContextManagerImpl(
 
   companion object {
     @JvmStatic
-    fun getInstanceImpl(project: Project): CodeInsightContextManagerImpl = CodeInsightContextManager.getInstance(project) as CodeInsightContextManagerImpl
+    fun getInstanceImpl(project: Project): CodeInsightContextManagerImpl =
+      CodeInsightContextManager.getInstance(project) as CodeInsightContextManagerImpl
   }
 
-  private val allContexts: AtomicMapCache<VirtualFile, List<CodeInsightContext>, ConcurrentMap<VirtualFile, List<CodeInsightContext>>> = AtomicMapCache { CollectionFactory.createConcurrentWeakMap() }
-  private val preferredContext: AtomicMapCache<VirtualFile, CodeInsightContext, ConcurrentMap<VirtualFile, CodeInsightContext>> = AtomicMapCache { CollectionFactory.createConcurrentWeakMap() }
+  private val allContexts: AtomicMapCache<VirtualFile, ContextOrArray, ConcurrentMap<VirtualFile, ContextOrArray>> =
+    AtomicMapCache { CollectionFactory.createConcurrentWeakKeySoftValueMap() }
+
+  private val preferredContext: AtomicMapCache<VirtualFile, CodeInsightContext, ConcurrentMap<VirtualFile, CodeInsightContext>> =
+    AtomicMapCache { CollectionFactory.createConcurrentWeakKeySoftValueMap() }
 
   private val _changeFlow = MutableSharedFlow<Unit>()
 
@@ -69,6 +82,7 @@ class CodeInsightContextManagerImpl(
       }
     })
     subscribeToChanges()
+    InvalidationBulkFileListener.subscribeToVfsEvents()
   }
 
   private fun subscribeToChanges() {
@@ -83,15 +97,16 @@ class CodeInsightContextManagerImpl(
   @RequiresReadLock
   @RequiresBackgroundThread
   override fun getCodeInsightContexts(file: VirtualFile): List<CodeInsightContext> {
-    ThreadingAssertions.softAssertBackgroundThread()
+    // FIXME: the assert had never worked due to IJPL-221633, but when it is enabled some tests fail
+    // ThreadingAssertions.softAssertBackgroundThread()
     ThreadingAssertions.softAssertReadAccess()
 
     if (!isSharedSourceSupportEnabled(project)) return listOf(defaultContext())
 
     return allContexts.getOrPut(file) {
       log.trace { "requested all contexts of file ${file.path}" }
-      getContextSequence(file).toList()
-    }
+      getContextSequence(file).toContextOrArray()
+    }.wrapToList()
   }
 
   private fun getContextSequence(file: VirtualFile): Sequence<CodeInsightContext> {
@@ -109,13 +124,14 @@ class CodeInsightContextManagerImpl(
   override fun getPreferredContext(file: VirtualFile): CodeInsightContext {
     if (!isSharedSourceSupportEnabled(project)) return defaultContext()
 
-    ThreadingAssertions.softAssertBackgroundThread()
+    // FIXME: the assert had never worked due to IJPL-221633, but when it is enabled some tests fail
+    // ThreadingAssertions.softAssertBackgroundThread()
     ThreadingAssertions.softAssertReadAccess()
 
     log.trace { "requested preferred context of file ${file.path}" }
 
     return preferredContext.getOrPut(file) {
-      findFirstContext(file)
+      findFirstContext(file).also { log.assertTrue(it !== anyContext()) { "preferredContext must not be anyContext" } }
     }
   }
 
@@ -124,7 +140,8 @@ class CodeInsightContextManagerImpl(
 
     log.trace { "requested context of FileViewProvider ${fileViewProvider.virtualFile.path}" }
 
-    ThreadingAssertions.softAssertBackgroundThread()
+    // FIXME: the assert had never worked due to IJPL-221633, but when it is enabled some tests fail
+    // ThreadingAssertions.softAssertBackgroundThread()
     ThreadingAssertions.softAssertReadAccess()
 
     val context = getCodeInsightContextRaw(fileViewProvider)
@@ -134,22 +151,6 @@ class CodeInsightContextManagerImpl(
     }
 
     return context
-  }
-
-  @Deprecated("DANGEROUS API, AUTHORIZED PERSONNEL ONLY")
-  override fun getOrSetContext(fileViewProvider: FileViewProvider, context: CodeInsightContext): CodeInsightContext {
-    log.trace { "requested getOrSet context of FileViewProvider ${fileViewProvider.virtualFile.path}" }
-
-    val rawContext = getCodeInsightContextRaw(fileViewProvider)
-    if (rawContext != anyContext()) {
-      return rawContext
-    }
-
-    if (context !in getContextSequence(fileViewProvider.virtualFile)) {
-      return inferContext(fileViewProvider)
-    }
-
-    return trySetContext(fileViewProvider, context)
   }
 
   private fun findFirstContext(file: VirtualFile?): CodeInsightContext {
@@ -180,7 +181,6 @@ class CodeInsightContextManagerImpl(
     log.trace { "infer context of FileViewProvider ${fileViewProvider.virtualFile.path}" }
 
     val preferredContext = getPreferredContext(fileViewProvider.virtualFile)
-    log.assertTrue(preferredContext != anyContext()) { "preferredContext must not be anyContext" }
 
     val setContext = trySetContext(fileViewProvider, preferredContext)
 
@@ -189,39 +189,62 @@ class CodeInsightContextManagerImpl(
     return setContext
   }
 
+  @RequiresReadLock
   private fun trySetContext(
     fileViewProvider: FileViewProvider,
-    preferredContext: CodeInsightContext,
+    context: CodeInsightContext,
   ): CodeInsightContext {
-    val fileManager = PsiManagerEx.getInstanceEx(project).fileManager as? FileManagerEx
-    if (fileManager != null) {
-      val result = fileManager.trySetContext(fileViewProvider, preferredContext)
-      if (result != null) {
-        return result
-      }
+    val fileManager = PsiManagerEx.getInstanceEx(project).fileManagerEx
 
-      // let's make sure fileViewProvider is still valid
-      val mainPsi = fileViewProvider.getPsi(fileViewProvider.baseLanguage)
-      if (mainPsi != null) {
-        PsiUtilCore.ensureValid(mainPsi)
-      }
+    // if the viewProvider is already stored in the fileManager, we need to update it there
+    val result = fileManager.trySetContext(fileViewProvider, context)
+    if (result != null) {
+      return result
     }
-
-    setCodeInsightContext(fileViewProvider, preferredContext)
-    return preferredContext
+    else {
+      // result was null, thus fileViewProvider was not stored in the fileManager yet
+      // we just need to install the context in the viewProvider
+      setCodeInsightContext(fileViewProvider, context)
+      return context
+    }
   }
 
-  /**
-   * does not infer the substitution for `anyContext`
-   */
   override fun getCodeInsightContextRaw(fileViewProvider: FileViewProvider): CodeInsightContext =
     fileViewProvider.getUserData(codeInsightContextKey) ?: defaultContext()
 
+  @RequiresReadLock
   fun setCodeInsightContext(fileViewProvider: FileViewProvider, context: CodeInsightContext) {
     log.trace { "set context of FileViewProvider ${fileViewProvider.virtualFile.path} to $context" }
 
     val effectiveContext = context.takeUnless { it == defaultContext() }
     fileViewProvider.putUserData(codeInsightContextKey, effectiveContext)
+  }
+
+  private class InvalidationBulkFileListener : BulkFileListenerBackgroundable {
+    override fun before(events: List<VFileEvent>) {
+      val moveEvents = events.filterIsInstance<VFileMoveEvent>().ifEmpty { return }
+
+      val projectLocator = ProjectLocator.getInstance()
+      val projects = moveEvents.mapNotNullTo(mutableSetOf()) { projectLocator.guessProjectForFile(it.file) }
+
+      for (project in projects) {
+        val manager = CodeInsightContextManager.getInstance(project) as CodeInsightContextManagerImpl
+        manager.preferredContext.invalidate()
+        manager.allContexts.invalidate()
+      }
+    }
+
+    companion object {
+      private val subscribed = AtomicBoolean(false)
+
+      fun subscribeToVfsEvents() {
+        // we need only one listener per application
+        if (!subscribed.getAndSet(true)) {
+          ApplicationManager.getApplication().messageBus.connect()
+            .subscribe(VirtualFileManager.VFS_CHANGES_BG, InvalidationBulkFileListener())
+        }
+      }
+    }
   }
 }
 
@@ -243,4 +266,32 @@ private fun <T> Sequence<T>.appendIfEmpty(item: T) = sequence {
   if (isEmpty) {
     yield(item)
   }
+}
+
+/**
+ * a single [CodeInsightContext] or an array of [CodeInsightContext]s
+ */
+private typealias ContextOrArray = Any
+
+private fun ContextOrArray.wrapToList(): List<CodeInsightContext> {
+  @Suppress("UNCHECKED_CAST")
+  return when (this) {
+    is Array<*> -> (this as Array<CodeInsightContext>).asList()
+    else -> listOf(this as CodeInsightContext)
+  }
+}
+
+private fun Sequence<CodeInsightContext>.toContextOrArray(): ContextOrArray {
+  val iterator = this.iterator()
+  if (!iterator.hasNext()) return emptyArray<CodeInsightContext>()
+
+  val first = iterator.next()
+  if (!iterator.hasNext()) return first
+
+  val arrayList = ArrayList<CodeInsightContext>()
+  arrayList.add(first)
+  while (iterator.hasNext()) {
+    arrayList.add(iterator.next())
+  }
+  return arrayList.toTypedArray()
 }

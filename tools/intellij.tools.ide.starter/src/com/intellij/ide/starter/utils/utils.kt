@@ -9,6 +9,7 @@ import com.intellij.openapi.util.SystemInfo
 import com.intellij.tools.ide.util.common.logError
 import com.intellij.tools.ide.util.common.logOutput
 import com.intellij.util.io.createParentDirectories
+import com.intellij.util.system.OS
 import java.io.File
 import java.io.PrintWriter
 import java.io.StringWriter
@@ -40,12 +41,12 @@ fun getThrowableText(t: Throwable): String {
  * In case of success - return T
  * In case of error - print error to stderr and return null
  */
-inline fun <T> catchAll(message: String? = null, action: () -> T): T? = try {
-  if (message != null) logOutput("Performing '$message' with catching all exceptions")
+inline fun <T> catchAll(message: String = "", action: () -> T): T? = try {
+  if (message.isNotEmpty()) logOutput("Performing '$message' with catching all exceptions")
   action()
 }
 catch (t: Throwable) {
-  logError("CatchAll ${message?.let { "for '$it' " }}swallowed error: ${t.message}")
+  logError("CatchAll ${if (message.isNotEmpty()) "for '$message' " else ""} swallowed error: ${t.message}")
   logError(getThrowableText(t))
   null
 }
@@ -67,7 +68,12 @@ fun takeScreenshot(logsDir: Path, screenshotName: String, ignoreExceptions: Bool
     screenshotJar.copyTo(screenshotTool.createParentDirectories().outputStream())
   }
 
-  val javaPath = ProcessHandle.current().info().command().orElseThrow().toString()
+  val javaPath = ProcessHandle.current().info().command().orElseGet {
+    // for local runs on mac
+    val javaHome = System.getProperty("java.home")
+    val javaBin = if (OS.CURRENT == OS.Windows) "java.exe" else "java"
+    Path.of(javaHome, "bin", javaBin).toString()
+  }
   val stdOut = ExecOutputRedirect.ToStdOut("[take-screenshot-out]")
   val stdErr = ExecOutputRedirect.ToStdOut("[take-screenshot-err]")
   try {

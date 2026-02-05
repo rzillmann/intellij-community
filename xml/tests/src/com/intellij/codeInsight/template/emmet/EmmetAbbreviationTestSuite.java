@@ -23,10 +23,10 @@ import com.intellij.psi.codeStyle.CodeStyleSettings;
 import com.intellij.psi.formatter.xml.HtmlCodeStyleSettings;
 import com.intellij.psi.impl.source.tree.injected.InjectedLanguageUtil;
 import com.intellij.testFramework.EditorTestUtil;
+import com.intellij.testFramework.PlatformTestUtil;
 import com.intellij.testFramework.fixtures.BasePlatformTestCase;
 import com.intellij.testFramework.fixtures.CodeInsightTestFixture;
 import com.intellij.util.ThrowableRunnable;
-import com.intellij.util.ui.UIUtil;
 import junit.framework.TestSuite;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -46,20 +46,23 @@ public abstract class EmmetAbbreviationTestSuite extends TestSuite {
 
   protected void addTestFromJson(String filePath, String... extensions) throws IOException {
     JsonFactory factory = JsonFactory.builder().build();
-    JsonParser parser = factory.createParser(new File(filePath));
-    parser.enable(JsonParser.Feature.ALLOW_COMMENTS);
-    if (parser.nextToken() != JsonToken.START_OBJECT) {
-      throw new IOException("Unexpected JSON format");
-    }
-    while (parser.nextToken() != JsonToken.END_OBJECT) {
-      String key = parser.getText();
-      parser.nextToken();
-      String expected = parser.getText();
-      for (String source : StringUtil.split(key, "|")) {
-        // replace ${1:hello} with hello
-        expected = expected.replaceAll("\\$\\{\\d(:([^}]+))?}", "$2");
-        addTest(source, expected, extensions);
+    try (JsonParser parser = factory.createParser(new File(filePath))) {
+      parser.enable(JsonParser.Feature.ALLOW_COMMENTS);
+      if (parser.nextToken() != JsonToken.START_OBJECT) {
+        throw new IOException("Unexpected JSON format");
       }
+      while (parser.nextToken() != JsonToken.END_OBJECT) {
+        String key = parser.getText();
+        parser.nextToken();
+        String expected = parser.getText();
+        for (String source : StringUtil.split(key, "|")) {
+          // replace ${1:hello} with hello
+          expected = expected.replaceAll("\\$\\{\\d(:([^}]+))?}", "$2");
+          addTest(source, expected, extensions);
+        }
+      }
+    } catch (IOException e) {
+      addTest(e.getMessage(), filePath + " file was found.", extensions);
     }
     /*
       JsonObject jsonObject = new GsonBuilder().setLenient().create()
@@ -173,7 +176,7 @@ public abstract class EmmetAbbreviationTestSuite extends TestSuite {
       action.actionPerformed(myFixture.getEditor(), DataManager.getInstance().getDataContext());
 
       NonBlockingReadActionImpl.waitForAsyncTaskCompletion();
-      UIUtil.dispatchAllInvocationEvents();
+      PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue();
 
       WriteCommandAction.runWriteCommandAction(getProject(), () -> {
         TemplateState state = TemplateManagerImpl.getTemplateState(myFixture.getEditor());

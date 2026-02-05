@@ -1,6 +1,7 @@
 // Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.java.codeInsight.completion.commands
 
+import com.intellij.codeInsight.CodeInsightBundle
 import com.intellij.codeInsight.completion.LightFixtureCompletionTestCase
 import com.intellij.codeInsight.completion.command.CommandCompletionDocumentationProvider
 import com.intellij.codeInsight.completion.command.CommandCompletionLookupElement
@@ -11,6 +12,8 @@ import com.intellij.codeInsight.intention.preview.IntentionPreviewInfo
 import com.intellij.codeInsight.lookup.LookupElementPresentation
 import com.intellij.codeInsight.template.impl.TemplateManagerImpl
 import com.intellij.codeInspection.deadCode.UnusedDeclarationInspection
+import com.intellij.codeInspection.numeric.RemoveLiteralUnderscoresInspection
+import com.intellij.codeInspection.streamMigration.StreamApiMigrationInspection
 import com.intellij.ide.highlighter.JavaFileType
 import com.intellij.openapi.actionSystem.IdeActions
 import com.intellij.openapi.application.ApplicationManager
@@ -26,6 +29,7 @@ import com.intellij.platform.backend.documentation.DocumentationData
 import com.intellij.psi.CommonClassNames.JAVA_LANG_CLASS
 import com.intellij.psi.JavaPsiFacade
 import com.intellij.psi.search.GlobalSearchScope
+import com.intellij.testFramework.LightProjectDescriptor
 import com.intellij.testFramework.NeedsIndex
 import com.intellij.testFramework.replaceService
 import com.siyeh.ig.style.SizeReplaceableByIsEmptyInspection
@@ -35,9 +39,27 @@ import javax.swing.JComponent
 @NeedsIndex.SmartMode(reason = "it requires highlighting")
 class JavaCommandsCompletionTest : LightFixtureCompletionTestCase() {
 
+  override fun getProjectDescriptor(): LightProjectDescriptor {
+    return JAVA_21
+  }
+
   override fun setUp() {
     super.setUp()
     Registry.get("ide.completion.command.enabled").setValue(false, getTestRootDisposable())
+  }
+
+  fun testSkipThreeDots() {
+    Registry.get("ide.completion.command.force.enabled").setValue(true, getTestRootDisposable())
+    myFixture.configureByText(JavaFileType.INSTANCE, """
+      class A { 
+        void foo() {
+          int y = 10;
+          int x =                           y...<caret>;
+        } 
+      }
+      """.trimIndent())
+    val elements = myFixture.completeBasic()
+    assertNull(elements.firstOrNull { element -> element.lookupString.contains("Reformat code", ignoreCase = true) })
   }
 
   fun testFormatNotCall() {
@@ -107,6 +129,31 @@ class JavaCommandsCompletionTest : LightFixtureCompletionTestCase() {
       }
     """.trimIndent()
     assertEquals(preview.modifiedText(), expected)
+  }
+
+  fun testFormatNothing() {
+    Registry.get("ide.completion.command.force.enabled").setValue(true, getTestRootDisposable())
+    myFixture.configureByText(JavaFileType.INSTANCE, """
+      class A { 
+        void foo() {
+            int y = 10.<caret>;
+            int x = y;
+        } 
+      }
+      """.trimIndent())
+    val elements = myFixture.completeBasic()
+    val item = elements.first { element -> element.lookupString.contains("format", ignoreCase = true) }
+      .`as`(CommandCompletionLookupElement::class.java)
+    if (item == null) {
+      fail()
+      return
+    }
+    val preview = item.command.getPreview()
+    if (preview !is IntentionPreviewInfo.Html) {
+      fail()
+      return
+    }
+    assertEquals(preview.content().toString(), CodeInsightBundle.message("command.completion.reformat.nothing"))
   }
 
   fun testFormatWholeMethod() {
@@ -209,7 +256,10 @@ class JavaCommandsCompletionTest : LightFixtureCompletionTestCase() {
       }
       """.trimIndent())
     val elements = myFixture.completeBasic()
-    selectItem(elements.first { element -> element.lookupString.contains("copy ref", ignoreCase = true) })
+    val item = elements.first { element -> element.lookupString.contains("copy ref", ignoreCase = true) }
+    val preview = (item.`as`(CommandCompletionLookupElement::class.java))?.preview
+    assertEquals("Copy reference for 'foo'.", (preview as IntentionPreviewInfo.Html).content().toString())
+    selectItem(item)
     myFixture.performEditorAction(IdeActions.ACTION_EDITOR_PASTE)
     NonBlockingReadActionImpl.waitForAsyncTaskCompletion()
     myFixture.checkResult("""
@@ -685,7 +735,11 @@ class JavaCommandsCompletionTest : LightFixtureCompletionTestCase() {
         }""".trimIndent())
     myFixture.doHighlighting()
     val elements = myFixture.completeBasic()
-    assertTrue(elements.any { element -> element.lookupString.contains("Rename File", ignoreCase = true) })
+    val lookupElement = elements.firstOrNull { element -> element.lookupString.contains("Rename File", ignoreCase = true) }
+    assertNotNull(lookupElement)
+    val element = lookupElement?.`as`(CommandCompletionLookupElement::class.java)
+    assertNotNull(element)
+    assertNotNull(element?.preview)
   }
 
   fun testRedCode() {
@@ -736,6 +790,60 @@ class JavaCommandsCompletionTest : LightFixtureCompletionTestCase() {
       val elements = myFixture.completeBasic()
       assertTrue(elements.any { element -> element.lookupString.contains("Import", ignoreCase = true) })
     }
+  }
+
+  fun testRedCodeImportWithTags() {
+    Registry.get("ide.completion.command.force.enabled").setValue(true, getTestRootDisposable())
+    runBlocking {
+      myFixture.configureByText(JavaFileType.INSTANCE, """
+        private record Person(String name, int age) {
+            private Person(String name) {
+                this.name = name;
+            }
+        
+            public static void main(String[] args) {
+                var person = new Person()<caret>;
+            }
+        }""".trimIndent())
+      myFixture.doHighlighting()
+      myFixture.type(".")
+      val elements = myFixture.completeBasic()
+      assertTrue(elements.any { element -> element.lookupString.contains("Change signature of Person(String)", ignoreCase = true) })
+    }
+  }
+
+  fun testInspectionFromAnotherLine() {
+    Registry.get("ide.completion.command.force.enabled").setValue(true, getTestRootDisposable())
+    myFixture.enableInspections(StreamApiMigrationInspection())
+    myFixture.configureByText(JavaFileType.INSTANCE, """
+        import java.io.BufferedReader;
+        import java.io.FileReader;
+        import java.io.IOException;
+
+        public class Test {
+          void main() throws IOException {
+              var reader = new BufferedReader(new FileReader("input.txt"));
+              String line;
+              while ((line = reader.readLine()) != null) {
+                  System.out.println(line);
+              }<caret>
+          }
+        }""".trimIndent())
+    myFixture.doHighlighting()
+    myFixture.type(".")
+    val elements = myFixture.completeBasic()
+    selectItem(elements.first { element -> element.lookupString.contains("Collapse loop with stream 'forEach()'", ignoreCase = true) })
+    myFixture.checkResult("""
+      import java.io.BufferedReader;
+      import java.io.FileReader;
+      import java.io.IOException;
+      
+      public class Test {
+        void main() throws IOException {
+            var reader = new BufferedReader(new FileReader("input.txt"));
+            reader.lines().forEach(System.out::println);
+        }
+      }""".trimIndent())
   }
 
   fun testChangeSignature() {
@@ -1030,6 +1138,27 @@ class JavaCommandsCompletionTest : LightFixtureCompletionTestCase() {
     """.trimIndent())
   }
 
+  fun testExtractConstantFromLiteral() {
+    Registry.get("ide.completion.command.force.enabled").setValue(true, getTestRootDisposable())
+    myFixture.configureByText(JavaFileType.INSTANCE, """
+      class A {
+          void foo() {
+              "1".<caret>;
+          }
+      }""".trimIndent())
+    val elements = myFixture.completeBasic()
+    selectItem(elements.first { element -> element.lookupString.contains("Introduce constant", ignoreCase = true) })
+    NonBlockingReadActionImpl.waitForAsyncTaskCompletion()
+    myFixture.checkResult("""
+    class A {
+
+        public static final String NUMBER = "1";
+
+        void foo() {
+        }
+    }
+    """.trimIndent())
+  }
 
   fun testExtractVariableInsideNewGenericType() {
     Registry.get("ide.completion.command.force.enabled").setValue(true, getTestRootDisposable())
@@ -1055,7 +1184,7 @@ class JavaCommandsCompletionTest : LightFixtureCompletionTestCase() {
     
     public class A {
         void foo() {
-            ArrayList<String> strings = new ArrayList<String>();
+            ArrayList<String> strings = new ArrayList<>();
         }
     }
     """.trimIndent())
@@ -1085,7 +1214,7 @@ class JavaCommandsCompletionTest : LightFixtureCompletionTestCase() {
     
     public class A {
         void foo() {
-            ArrayList<String> strings = new ArrayList<String>();
+            ArrayList<String> strings = new ArrayList<>();
             new ArrayList<String>(strings);
         }
     }
@@ -1118,7 +1247,7 @@ class JavaCommandsCompletionTest : LightFixtureCompletionTestCase() {
     
     public class A {
         void foo() {
-            ArrayList<String> strings = new ArrayList<String>();
+            ArrayList<String> strings = new ArrayList<>();
         }
     }
     """.trimIndent())
@@ -1149,7 +1278,7 @@ class JavaCommandsCompletionTest : LightFixtureCompletionTestCase() {
     
     public class A {
         void foo() {
-            ArrayList<String> strings = new ArrayList<String>();
+            ArrayList<String> strings = new ArrayList<>();
         }
     }
     """.trimIndent())
@@ -1390,6 +1519,29 @@ class JavaCommandsCompletionTest : LightFixtureCompletionTestCase() {
     assertTrue(elements.any { element -> element.lookupString.contains("Extract method", ignoreCase = true) })
   }
 
+  fun testCorrectTextOfInspection() {
+    Registry.get("ide.completion.command.force.enabled").setValue(true, getTestRootDisposable())
+    myFixture.configureByText(JavaFileType.INSTANCE, """
+      class A {
+          void foo() {
+              int a = 1_000_000.<caret>;
+          }
+      }""")
+
+    myFixture.enableInspections(RemoveLiteralUnderscoresInspection())
+    myFixture.doHighlighting()
+    val elements = myFixture.completeBasic()
+    selectItem(elements.first { element -> element.lookupString.contains("Replace '1_000_000' with '1000000'", ignoreCase = true) })
+    NonBlockingReadActionImpl.waitForAsyncTaskCompletion()
+
+    myFixture.checkResult("""
+      class A {
+          void foo() {
+              int a = 1000000;
+          }
+      }""")
+  }
+
   fun testExtractMethodInTheEndOfStatement() {
     Registry.get("ide.completion.command.force.enabled").setValue(true, getTestRootDisposable())
     myFixture.configureByText(JavaFileType.INSTANCE, """
@@ -1608,6 +1760,21 @@ class JavaCommandsCompletionTest : LightFixtureCompletionTestCase() {
       return
     }
     assertEquals(TextRange(0, 82), completionLookupElement.highlighting?.range)
+  }
+
+  fun testParameterInfo() {
+    Registry.get("ide.completion.command.force.enabled").setValue(true, getTestRootDisposable())
+    myFixture.configureByText(JavaFileType.INSTANCE, """
+      public class B<T> {
+        static void main() {
+            call("A".<caret>);
+        }
+    
+        private static void call(String number) {}
+    }""".trimIndent())
+    val elements = myFixture.completeBasic()
+    assertTrue(elements.any { element ->
+      element.lookupString.contains("Parameter info", ignoreCase = true) })
   }
 
   private class TestHintManager : HintManagerImpl() {

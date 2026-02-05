@@ -718,7 +718,6 @@ c:com.intellij.structuralsearch.impl.matcher.strategies.XmlMatchingStrategy
 - continueMatching(com.intellij.psi.PsiElement):Z
 - shouldSkip(com.intellij.psi.PsiElement,com.intellij.psi.PsiElement):Z
 f:com.intellij.structuralsearch.inspection.InspectionProfileUtil
-- s:fireProfileChanged(com.intellij.codeInspection.ex.InspectionProfileImpl):V
 - s:getGroup():java.lang.String[]
 - s:getInspectionProfile(java.awt.Component):com.intellij.codeInspection.ex.InspectionProfileModifiableModel
 c:com.intellij.structuralsearch.inspection.SSBasedInspection
@@ -1100,7 +1099,6 @@ f:com.intellij.structuralsearch.plugin.ui.UIUtil
 - s:detectFileType(com.intellij.structuralsearch.plugin.ui.SearchContext):com.intellij.openapi.fileTypes.LanguageFileType
 - s:getOrAddReplacementVariable(java.lang.String,com.intellij.structuralsearch.plugin.ui.Configuration):com.intellij.structuralsearch.ReplacementVariableDefinition
 - s:getOrAddVariableConstraint(java.lang.String,com.intellij.structuralsearch.plugin.ui.Configuration):com.intellij.structuralsearch.MatchVariableConstraint
-- s:getTemplateContextType(com.intellij.structuralsearch.StructuralSearchProfile):com.intellij.codeInsight.template.TemplateContextType
 - s:invokeAction(com.intellij.structuralsearch.plugin.ui.Configuration,com.intellij.structuralsearch.plugin.ui.SearchContext):V
 - s:isTarget(java.lang.String,com.intellij.structuralsearch.MatchOptions):Z
 - s:setContent(com.intellij.openapi.editor.Editor,java.lang.String):V

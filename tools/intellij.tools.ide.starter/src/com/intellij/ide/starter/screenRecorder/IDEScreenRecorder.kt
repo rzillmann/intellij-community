@@ -1,6 +1,6 @@
 package com.intellij.ide.starter.screenRecorder
 
-import com.intellij.ide.starter.coroutine.testSuiteSupervisorScope
+import com.intellij.ide.starter.coroutine.CommonScope.testSuiteSupervisorScope
 import com.intellij.ide.starter.ide.DEFAULT_DISPLAY_ID
 import com.intellij.ide.starter.process.exec.ExecOutputRedirect
 import com.intellij.ide.starter.process.exec.ProcessExecutor
@@ -17,7 +17,16 @@ import kotlinx.coroutines.launch
 import org.monte.media.Format
 import org.monte.media.FormatKeys.MediaType
 import org.monte.media.Registry
-import org.monte.media.VideoFormatKeys.*
+import org.monte.media.VideoFormatKeys.CompressorNameKey
+import org.monte.media.VideoFormatKeys.DepthKey
+import org.monte.media.VideoFormatKeys.ENCODING_AVI_TECHSMITH_SCREEN_CAPTURE
+import org.monte.media.VideoFormatKeys.EncodingKey
+import org.monte.media.VideoFormatKeys.FrameRateKey
+import org.monte.media.VideoFormatKeys.KeyFrameIntervalKey
+import org.monte.media.VideoFormatKeys.MIME_AVI
+import org.monte.media.VideoFormatKeys.MediaTypeKey
+import org.monte.media.VideoFormatKeys.MimeTypeKey
+import org.monte.media.VideoFormatKeys.QualityKey
 import org.monte.media.math.Rational
 import org.monte.screenrecorder.ScreenRecorder
 import java.awt.GraphicsEnvironment
@@ -27,7 +36,7 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
-import java.util.*
+import java.util.Date
 import kotlin.io.path.createFile
 import kotlin.io.path.div
 import kotlin.io.path.pathString
@@ -86,21 +95,24 @@ class IDEScreenRecorder(private val runContext: IDERunContext) {
     }
   }
 
-  var javaScreenRecorder: ScreenRecorder? = null
-  var ffmpegProcessJob: Job? = null
-
-  init {
-    //on Linux, we run xvfb and test process is headless, so we need external tool to record screen
+  val javaScreenRecorder: ScreenRecorder? by lazy {
     if (OS.CURRENT != OS.Linux) {
-      javaScreenRecorder = runCatching { getScreenRecorder((runContext.logsDir / "screenRecording").toFile()) }.getOrLogException { logOutput("Can't create screen recorder: ${it.stackTraceToString()}") }
+      runCatching { getScreenRecorder((runContext.logsDir / "screenRecording").toFile()) }.getOrLogException { logOutput("Can't create screen recorder: ${it.stackTraceToString()}") }
     }
+    else null
   }
+  var ffmpegProcessJob: Job? = null
 
   fun start() {
     if (StartupUiUtil.isWayland) {
       logOutput("Screen recording is disabled because on Wayland it triggers system dialog about granting permissions each time, and it can't be disabled.")
       return
     }
+    if (runContext.calculateVmOptions().hasHeadlessMode()) {
+      logOutput("Screen recording is disabled because IDE is started in headless mode.")
+      return
+    }
+
     logOutput("Screen recorder: starting")
     synchronized(this) {
       if (javaScreenRecorder != null) {
@@ -168,6 +180,7 @@ class IDEScreenRecorder(private val runContext: IDERunContext) {
         expectedExitCode = 0,
         stdoutRedirect = ExecOutputRedirect.ToFile(ffmpegLogFile.toFile()),
         stderrRedirect = ExecOutputRedirect.ToFile(ffmpegLogFile.toFile()),
+        timeout = ideRunContext.runTimeout,
       ).startCancellable()
     }
     catch (e: CancellationException) {

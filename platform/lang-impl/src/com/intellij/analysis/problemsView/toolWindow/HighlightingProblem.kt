@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2026 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.analysis.problemsView.toolWindow
 
 import com.intellij.CommonBundle
@@ -17,10 +17,12 @@ import com.intellij.openapi.util.text.StringUtil
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.ui.AnimatedIcon
 import com.intellij.xml.util.XmlStringUtil.escapeString
+import org.jetbrains.annotations.ApiStatus
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.swing.Icon
 
-internal class HighlightingProblem(
+@ApiStatus.Internal
+open class HighlightingProblem(
   override val provider: ProblemsProvider,
   override val file: VirtualFile,
   val highlighter: RangeHighlighter) : FileProblem {
@@ -81,8 +83,8 @@ internal class HighlightingProblem(
 
   override val group: String?
     get() {
-      val id = info?.inspectionToolId ?: return null
-      return HighlightDisplayKey.getDisplayNameByKey(HighlightDisplayKey.findById(id))
+      val id = info?.problemGroup?.problemName ?: info?.inspectionToolId ?: return null
+      return HighlightDisplayKey.getDisplayNameByKey(HighlightDisplayKey.find(id))
     }
 
   override val contextGroup: CodeInsightContext?

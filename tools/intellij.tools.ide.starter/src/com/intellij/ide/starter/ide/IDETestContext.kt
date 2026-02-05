@@ -21,7 +21,6 @@ import com.intellij.ide.starter.runner.startIdeWithoutProject
 import com.intellij.ide.starter.telemetry.TestTelemetryService
 import com.intellij.ide.starter.telemetry.computeWithSpan
 import com.intellij.ide.starter.utils.FileSystem.deleteRecursivelyQuietly
-import com.intellij.ide.starter.utils.JvmUtils
 import com.intellij.ide.starter.utils.XmlBuilder
 import com.intellij.ide.starter.utils.replaceSpecialCharactersWithHyphens
 import com.intellij.openapi.diagnostic.LogLevel
@@ -35,8 +34,6 @@ import com.intellij.tools.ide.util.common.logOutput
 import com.intellij.ui.NewUiValue
 import com.intellij.util.io.createParentDirectories
 import com.intellij.util.io.write
-import com.intellij.util.system.OS
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import org.kodein.di.direct
 import org.kodein.di.factory
@@ -46,11 +43,25 @@ import org.w3c.dom.Element
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
-import java.util.*
+import java.util.Base64
 import javax.xml.xpath.XPath
 import javax.xml.xpath.XPathConstants
 import javax.xml.xpath.XPathFactory
-import kotlin.io.path.*
+import kotlin.io.path.ExperimentalPathApi
+import kotlin.io.path.copyTo
+import kotlin.io.path.copyToRecursively
+import kotlin.io.path.createDirectories
+import kotlin.io.path.createFile
+import kotlin.io.path.deleteIfExists
+import kotlin.io.path.div
+import kotlin.io.path.exists
+import kotlin.io.path.listDirectoryEntries
+import kotlin.io.path.name
+import kotlin.io.path.notExists
+import kotlin.io.path.readBytes
+import kotlin.io.path.readText
+import kotlin.io.path.writeBytes
+import kotlin.io.path.writeText
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
 
@@ -67,6 +78,15 @@ open class IDETestContext(
 ) {
   companion object {
     const val OPENTELEMETRY_FILE: String = "opentelemetry.json"
+
+    private val SEARCH_EVERYWHERE_REGISTRY_KEYS: List<String> get() = listOf(
+      "search.everywhere.new.enabled",
+      "search.everywhere.new.rider.enabled",
+      "search.everywhere.new.idea.enabled",
+      "search.everywhere.new.pycharm.enabled",
+      "search.everywhere.new.cwm.client.enabled",
+      "search.everywhere.new.allow.ab"
+    )
   }
 
   fun copy(ide: InstalledIde? = null, resolvedProjectHome: Path? = null): IDETestContext {
@@ -186,7 +206,7 @@ open class IDETestContext(
       withXmx(4 * 1024)
     }
 
-  fun allowSkippingFullScanning(allow: Boolean = true): IDETestContext =
+  fun allowSkippingFullScanning(allow: Boolean): IDETestContext =
     applyVMOptionsPatch {
       addSystemProperty(ALLOW_SKIPPING_FULL_SCANNING_ON_STARTUP_OPTION, allow)
     }
@@ -278,7 +298,7 @@ open class IDETestContext(
     path.deleteRecursivelyQuietly()
   }
 
-  fun wipeWorkspaceState(): IDETestContext = apply {
+  open fun wipeWorkspaceState(): IDETestContext = apply {
     val path = paths.configDir.resolve("workspace")
     logOutput("Cleaning workspace dir in config dir for $this at $path")
     path.deleteRecursivelyQuietly()
@@ -317,16 +337,14 @@ open class IDETestContext(
     addSystemProperty("llm.show.ai.promotion.window.on.start", false)
   }
 
+  @Suppress("TestOnlyProblems")
   fun disableSplitSearchEverywhere(): IDETestContext = applyVMOptionsPatch {
-    addSystemProperty("search.everywhere.new.enabled", false)
-    addSystemProperty("search.everywhere.new.rider.enabled", false)
-    addSystemProperty("search.everywhere.new.cwm.client.enabled", false)
+    SEARCH_EVERYWHERE_REGISTRY_KEYS.forEach { addSystemProperty(it, false) }
   }
 
+  @Suppress("TestOnlyProblems")
   fun enableSplitSearchEverywhere(): IDETestContext = applyVMOptionsPatch {
-    addSystemProperty("search.everywhere.new.enabled", true)
-    addSystemProperty("search.everywhere.new.rider.enabled", true)
-    addSystemProperty("search.everywhere.new.cwm.client.enabled", true)
+    SEARCH_EVERYWHERE_REGISTRY_KEYS.forEach { addSystemProperty(it, true) }
   }
 
   fun withKotlinPluginK2(): IDETestContext = applyVMOptionsPatch {
@@ -335,7 +353,7 @@ open class IDETestContext(
 
   fun enableCloudRegistry(registryHost: String): IDETestContext = applyVMOptionsPatch {
     addSystemProperty("ide.registry.refresh.debug", true)
-    addSystemProperty("ide.registry.refresh.delay.seconds", 0)
+    addSystemProperty("ide.registry.refresh.initial.delay.seconds", 0)
     addSystemProperty("ide.registry.refresh.host", registryHost)
   }
 
@@ -441,7 +459,7 @@ open class IDETestContext(
         collectNativeThreads = collectNativeThreads,
         stdOut = stdOut
       )
-      runContext.configure()
+      configure(runContext)
 
       try {
         val ideRunResult = runContext.runIdeSuspending()
@@ -564,10 +582,10 @@ open class IDETestContext(
       logOutput("License is not provided")
       return this
     }
-    if (this is IDERemDevTestContext) {
-      frontendIDEContext.setLicense(license)
-      return this
+    this.onRemDevContext {
+      return frontendIDEContext.setLicense(license)
     }
+
     val licenseKeyFileName: String = when (this.ide.productCode) {
       IdeProductProvider.IU.productCode -> "idea.key"
       IdeProductProvider.RM.productCode -> "rubymine.key"
@@ -766,22 +784,24 @@ open class IDETestContext(
   }
 
   fun applyAppCdsIfNecessary(currentRepetition: Int): IDETestContext {
-    if (currentRepetition % 2 == 0) {
-      // classes.jsa in jbr is not suitable for reuse, regenerate it, remove when it will be fixed
-      val jbrDistroPath = if (OS.CURRENT == OS.macOS) ide.installationPath / "jbr" / "Contents" / "Home" else ide.installationPath / "jbr"
-      if (jbrDistroPath.exists()) {
-        JvmUtils.execJavaCmd(jbrDistroPath, listOf("-Xshare:dump"))
-      }
-      else {
-        @Suppress("RAW_RUN_BLOCKING")
-        JvmUtils.execJavaCmd(runBlocking(Dispatchers.Default) { ide.resolveAndDownloadTheSameJDK() }, listOf("-Xshare:dump"))
-      }
-      applyVMOptionsPatch {
-        removeSystemClassLoader()
-        addSharedArchiveFile(paths.systemDir / "ide.jsa")
-      }
-    }
-    return this
+    // FIXME: IJPL-218141 enable app-cds back once it works with async profiler
+    return this;
+    //if (currentRepetition % 2 == 0) {
+    //  // classes.jsa in jbr is not suitable for reuse, regenerate it, remove when it will be fixed
+    //  val jbrDistroPath = if (OS.CURRENT == OS.macOS) ide.installationPath / "jbr" / "Contents" / "Home" else ide.installationPath / "jbr"
+    //  if (jbrDistroPath.exists()) {
+    //    JvmUtils.execJavaCmd(jbrDistroPath, listOf("-Xshare:dump"))
+    //  }
+    //  else {
+    //    @Suppress("RAW_RUN_BLOCKING")
+    //    JvmUtils.execJavaCmd(runBlocking(Dispatchers.Default) { ide.resolveAndDownloadTheSameJDK() }, listOf("-Xshare:dump"))
+    //  }
+    //  applyVMOptionsPatch {
+    //    removeSystemClassLoader()
+    //    addSharedArchiveFile(paths.systemDir / "ide.jsa")
+    //  }
+    //}
+    //return this
   }
 
   fun disableStickyLines(): IDETestContext {

@@ -18,7 +18,7 @@ import org.jetbrains.kotlin.idea.testFramework.TestKotlinArtifactsProvider
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
-import java.util.*
+import java.util.ServiceLoader
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.io.path.exists
 
@@ -101,15 +101,24 @@ object KotlinPluginLayout {
     private val standaloneCompilerVersionProvider: Lazy<IdeKotlinVersion>
 
     init {
-         val standaloneCompilerVersionDefaultProvider = lazy {
-            val rawVersion = kotlinc.resolve("build.txt").readText().trim()
-            IdeKotlinVersion.get(rawVersion)
+        val standaloneCompilerVersionDefaultProvider = lazy {
+            val buildTxtFile = kotlinc.resolve("build.txt")
+            if (!buildTxtFile.exists()) {
+                ideCompilerVersion
+            } else {
+                val rawVersion = buildTxtFile.readText().trim()
+                IdeKotlinVersion.get(rawVersion)
+            }
         }
         when (KotlinPluginLayoutModeProvider.kotlinPluginLayoutMode) {
             KotlinPluginLayoutMode.SOURCES -> {
                 @Suppress("TestOnlyProblems")
                 if (PluginManagerCore.isUnitTestMode) {
-                    val provider = ServiceLoader.load(TestKotlinArtifactsProvider::class.java).singleOrNull()
+                    // When run on TC from the suite (junit 3+4), AppClassLoader contains only the bootstrap classpath.
+                    // To ensure that the service loader becomes full path, let's use current class loader instead
+                    val providerClass = TestKotlinArtifactsProvider::class.java
+                    val provider =
+                        ServiceLoader.load(providerClass, providerClass.classLoader).singleOrNull()
                         ?: error("TestKotlinArtifacts service provider is not found. Expected ...") // TODO
                     kotlincProvider = lazy {
                         // NOTE: FromKotlinDistForIdeByNameFallbackBundledFirCompilerPluginProvider

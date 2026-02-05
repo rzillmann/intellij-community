@@ -1,4 +1,4 @@
-// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2026 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 
 package com.intellij.codeInsight.completion;
 
@@ -11,7 +11,12 @@ import com.intellij.codeInsight.completion.impl.CompletionSorterImpl;
 import com.intellij.codeInsight.editorActions.CompletionAutoPopupHandler;
 import com.intellij.codeInsight.hint.EditorHintListener;
 import com.intellij.codeInsight.hint.HintManager;
-import com.intellij.codeInsight.lookup.*;
+import com.intellij.codeInsight.lookup.Lookup;
+import com.intellij.codeInsight.lookup.LookupElement;
+import com.intellij.codeInsight.lookup.LookupEvent;
+import com.intellij.codeInsight.lookup.LookupFocusDegree;
+import com.intellij.codeInsight.lookup.LookupListener;
+import com.intellij.codeInsight.lookup.LookupManager;
 import com.intellij.codeInsight.lookup.impl.LookupImpl;
 import com.intellij.codeWithMe.ClientId;
 import com.intellij.featureStatistics.FeatureUsageTracker;
@@ -65,13 +70,22 @@ import com.intellij.util.indexing.DumbModeAccessType;
 import com.intellij.util.messages.SimpleMessageBusConnection;
 import com.intellij.util.ui.update.MergingUpdateQueue;
 import com.intellij.util.ui.update.Update;
-import org.jetbrains.annotations.*;
+import org.jetbrains.annotations.ApiStatus;
+import org.jetbrains.annotations.NonNls;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
-import javax.swing.*;
+import javax.swing.Icon;
+import javax.swing.JComponent;
 import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
 import java.beans.PropertyChangeListener;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
+import java.util.Queue;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.TimeUnit;
@@ -79,6 +93,12 @@ import java.util.function.Supplier;
 
 import static com.intellij.codeInsight.completion.CompletionPhase.CUSTOM_CODE_COMPLETION_ACTION_ID;
 
+/**
+ * See cancellation logic in {@link CompletionPhase.BgCalculation#restartOnWriteAction)}
+ *
+ * @see CompletionService#getCurrentCompletion
+ * @see CompletionServiceImpl#getCurrentCompletionProgressIndicator()
+ */
 @ApiStatus.Internal
 public final class CompletionProgressIndicator extends ProgressIndicatorBase implements CompletionProcessEx, Disposable {
   private static final int TEST_COMPLETION_TIMEOUT = 100 * 1000;
@@ -96,7 +116,7 @@ public final class CompletionProgressIndicator extends ProgressIndicatorBase imp
   private final Update myUpdate = new Update("update") {
     @Override
     public void run() {
-      WriteIntentReadAction.run((Runnable)() -> updateLookup());
+      WriteIntentReadAction.run(() -> updateLookup());
       queue.setMergingTimeSpan(ourShowPopupGroupingTime);
     }
   };
@@ -163,13 +183,13 @@ public final class CompletionProgressIndicator extends ProgressIndicatorBase imp
   private volatile int myUnfreezeAfterNItems = -1;
 
   CompletionProgressIndicator(@NotNull Editor editor,
-                              @NotNull Caret caret,
-                              int invocationCount,
-                              @NotNull CodeCompletionHandlerBase handler,
-                              @NotNull OffsetMap offsetMap,
-                              @NotNull OffsetsInFile hostOffsets,
-                              boolean hasModifiers,
-                              @NotNull LookupImpl lookup) {
+                                     @NotNull Caret caret,
+                                     int invocationCount,
+                                     @NotNull CodeCompletionHandlerBase handler,
+                                     @NotNull OffsetMap offsetMap,
+                                     @NotNull OffsetsInFile hostOffsets,
+                                     boolean hasModifiers,
+                                     @NotNull LookupImpl lookup) {
     myEditor = editor;
     myCaret = caret;
     this.handler = handler;
@@ -374,8 +394,12 @@ public final class CompletionProgressIndicator extends ProgressIndicatorBase imp
   private void trackModifiers() {
     assert !isAutopopupCompletion();
 
-    final JComponent contentComponent = myEditor.getContentComponent();
-    contentComponent.addKeyListener(new ModifierTracker(contentComponent));
+    JComponent contentComponent = myEditor.getContentComponent();
+    ModifierTracker modifierTracker = new ModifierTracker(contentComponent);
+    contentComponent.addKeyListener(modifierTracker);
+    Disposer.register(this, () -> {
+      contentComponent.removeKeyListener(modifierTracker);
+    });
   }
 
   void setMergeCommand() {
@@ -494,9 +518,6 @@ public final class CompletionProgressIndicator extends ProgressIndicatorBase imp
     }
     if (isAutopopupCompletion()) {
       if (count == 0) {
-        return false;
-      }
-      if (lookup.isCalculating() && Registry.is("ide.completion.delay.autopopup.until.completed")) {
         return false;
       }
     }
@@ -796,8 +817,7 @@ public final class CompletionProgressIndicator extends ProgressIndicatorBase imp
     return myCaret;
   }
 
-  @ApiStatus.Internal
-  public boolean isRepeatedInvocation(@NotNull CompletionType completionType, @NotNull Editor editor) {
+  boolean isRepeatedInvocation(@NotNull CompletionType completionType, @NotNull Editor editor) {
     if (completionType != myCompletionType || editor != myEditor) {
       return false;
     }
@@ -830,20 +850,32 @@ public final class CompletionProgressIndicator extends ProgressIndicatorBase imp
 
   @Override
   public void prefixUpdated() {
-    final int caretOffset = myEditor.getCaretModel().getOffset();
-    if (caretOffset < myStartCaret) {
+    if (isRestartRequired()) {
+      LOG.debug("prefixUpdated: restarting completion");
       scheduleRestart();
       myRestartingPrefixConditions.clear();
-      return;
+    }
+    else {
+      LOG.debug("prefixUpdated:  no restart needed");
+      hideAutopopupIfMeaningless();
+    }
+  }
+
+  private boolean isRestartRequired() {
+    if (myEditor.getCaretModel().getOffset() < myStartCaret) {
+      // always restart if caret moved before prefix start
+      return true;
     }
 
-    if (shouldRestartCompletion(myEditor, myRestartingPrefixConditions, "")) {
-      scheduleRestart();
-      myRestartingPrefixConditions.clear();
-      return;
+    if (CompletionServiceImpl.isPhase(CompletionPhase.BgCalculation.class)) {
+      // We must restart completion if candidates are still being inferred.
+      // Otherwise, the not-yet-processed contributors have no chance to install their own prefix conditions.
+      // Alternatively, this can be solved by delayed processing of possible future prefix conditions, but that's a more tricky solution.
+      return true;
     }
 
-    hideAutopopupIfMeaningless();
+    // restart if myRestartingPrefixConditions say so
+    return shouldRestartCompletion(myEditor, myRestartingPrefixConditions, "");
   }
 
   @ApiStatus.Internal
@@ -871,7 +903,7 @@ public final class CompletionProgressIndicator extends ProgressIndicatorBase imp
   @Override
   public void scheduleRestart() {
     ThreadingAssertions.assertEventDispatchThread();
-    LOG.trace("Scheduling restart");
+    LOG.debug("Scheduling restart");
     if (handler.isTestingMode() && !TestModeFlags.is(CompletionAutoPopupHandler.ourTestingAutopopup)) {
       closeAndFinish(false);
       PsiDocumentManager.getInstance(getProject()).commitAllDocuments();
@@ -980,9 +1012,9 @@ public final class CompletionProgressIndicator extends ProgressIndicatorBase imp
       CompletionThreadingKt.tryReadOrCancel(this, () -> scheduleAdvertising(parameters));
     });
 
-    WeighingDelegate weigher = threading.delegateWeighing(this);
+    CompletionConsumer consumer = threading.createConsumer(this);
     try {
-      calculateItems(initContext, weigher, parameters);
+      calculateItems(initContext, consumer, parameters);
     }
     catch (ProcessCanceledException ignore) {
       cancel(); // some contributor may just throw PCE; if indicator is not canceled everything will hang
@@ -994,17 +1026,17 @@ public final class CompletionProgressIndicator extends ProgressIndicatorBase imp
   }
 
   private void calculateItems(@NotNull CompletionInitializationContext initContext,
-                              @NotNull WeighingDelegate weigher,
+                              @NotNull CompletionConsumer consumer,
                               @NotNull CompletionParameters parameters) {
     DumbModeAccessType.RELIABLE_DATA_ONLY.ignoreDumbMode(() -> {
       duringCompletion(initContext, parameters);
       ProgressManager.checkCanceled();
 
-      CompletionService.getCompletionService().performCompletion(parameters, weigher);
+      CompletionService.getCompletionService().performCompletion(parameters, consumer);
     });
     ProgressManager.checkCanceled();
 
-    weigher.waitFor();
+    consumer.waitFor();
     ProgressManager.checkCanceled();
   }
 

@@ -1,18 +1,24 @@
 // Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.ide.gdpr.localConsents
 
+import com.intellij.diagnostic.LoadingState
 import com.intellij.ide.gdpr.ConfirmedConsent
 import com.intellij.ide.gdpr.Consent
 import com.intellij.ide.gdpr.ConsentAttributes
 import com.intellij.ide.gdpr.ConsentOptions
+import com.intellij.ide.gdpr.DataSharingLocalSettingsChangeListener
 import com.intellij.ide.gdpr.Version
+import com.intellij.idea.AppMode
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ApplicationNamesInfo
 import com.intellij.openapi.application.PathManager
 import com.intellij.openapi.diagnostic.Logger
 import org.jetbrains.annotations.ApiStatus
+import org.jetbrains.annotations.TestOnly
 import java.io.IOException
 import java.nio.file.Path
-import java.util.*
+import java.util.Locale
+import java.util.StringTokenizer
 import java.util.function.Predicate
 
 private const val LOCAL_CONSENT_JSON = "localConsents.json"
@@ -32,13 +38,24 @@ object LocalConsentOptions {
       override fun readDefaultConsents(): String {
         throw UnsupportedOperationException("There are no default local consents")
       }
+
+      override fun writeConfirmedConsents(data: String) {
+        super.writeConfirmedConsents(data)
+        if (LoadingState.COMPONENTS_REGISTERED.isOccurred) {
+          ApplicationManager.getApplication().messageBus
+            .syncPublisher(DataSharingLocalSettingsChangeListener.TOPIC)
+            .consentWritten()
+        }
+      }
     }
   }
 
+  @JvmStatic
   fun condTraceDataCollectionNonComLocalConsent(): Predicate<Consent> {
     return Predicate { localConsent: Consent -> TRACE_DATA_COLLECTION_NON_COM_OPTION_ID == localConsent.id }
   }
 
+  @JvmStatic
   fun condTraceDataCollectionComLocalConsent(): Predicate<Consent> {
     return Predicate { localConsent: Consent -> TRACE_DATA_COLLECTION_COM_OPTION_ID == localConsent.id }
   }
@@ -59,10 +76,16 @@ object LocalConsentOptions {
     setPermission(TRACE_DATA_COLLECTION_COM_OPTION_ID, permitted)
   }
 
-  fun getLocalConsents(): List<Consent> {
+  fun getLocalConsents(): Pair<List<Consent>, Boolean> = getLocalConsents { _ -> true }
+
+  fun getLocalConsents(filter: Predicate<Consent>): Pair<List<Consent>, Boolean> {
     val confirmed = loadConfirmedLocalConsents()
     val result = mutableListOf<Consent>()
-    for ((_, localeMap) in loadBundledLocalConsents()) {
+    val bundled = loadBundledLocalConsents().filter{ (_, consents) ->
+      val consent = consents[ConsentOptions.getDefaultLocale()]
+      consent != null && filter.test(consent)
+    }
+    for ((_, localeMap) in bundled) {
       val base = localeMap[ConsentOptions.getDefaultLocale()]
       val localized = localeMap[ConsentOptions.getCurrentLocale()]
       if (base != null) {
@@ -73,7 +96,9 @@ object LocalConsentOptions {
     }
 
     result.sortBy { it.id }
-    return result
+    val confirmationEnabled = System.getProperty (ConsentOptions.CONSENTS_CONFIRMATION_PROPERTY, "true").toBoolean() &&
+                              !AppMode.isRemoteDevHost()
+    return Pair(result, confirmationEnabled && needReconfirm(bundled, confirmed))
   }
 
   fun setLocalConsents(confirmedByUser: List<Consent>) {
@@ -180,4 +205,19 @@ object LocalConsentOptions {
     }
     return result
   }
+
+  private fun needReconfirm(defaults: Map<String, Map<Locale, Consent>>, confirmed: Map<String, ConfirmedConsent>): Boolean {
+    for (consents in defaults.values) {
+      val defConsent = consents[ConsentOptions.getDefaultLocale()] ?: continue
+      confirmed[defConsent.id] ?: return true
+
+      if (ConsentOptions.RECONFIRM_CONSENTS_PROPERTY.toBoolean()) {
+        return true
+      }
+    }
+    return false
+  }
+
+  @TestOnly
+  fun getConfirmedLocalConsentsFileForTests(): Path = getConfirmedLocalConsentsFile()
 }

@@ -2,7 +2,11 @@
 package org.jetbrains.idea.devkit.themes;
 
 import com.intellij.codeInsight.daemon.LineMarkerSettings;
-import com.intellij.json.psi.*;
+import com.intellij.json.psi.JsonElementGenerator;
+import com.intellij.json.psi.JsonFile;
+import com.intellij.json.psi.JsonProperty;
+import com.intellij.json.psi.JsonStringLiteral;
+import com.intellij.json.psi.JsonValue;
 import com.intellij.json.psi.impl.JsonPsiImplUtils;
 import com.intellij.lang.annotation.AnnotationHolder;
 import com.intellij.lang.annotation.Annotator;
@@ -29,8 +33,8 @@ import com.intellij.util.ui.EmptyIcon;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import javax.swing.*;
-import java.awt.*;
+import javax.swing.Icon;
+import java.awt.Color;
 import java.util.List;
 import java.util.Objects;
 import java.util.regex.Pattern;
@@ -188,16 +192,35 @@ final class ThemeColorAnnotator implements Annotator, DumbAware {
       }
     }
 
-    private @Nullable Color findNamedColor(String colorText) {
+    private @Nullable Color findNamedColor(@NotNull String colorText) {
       final PsiFile file = myLiteral.getContainingFile();
       if (!(file instanceof JsonFile)) return null;
+
       final List<JsonProperty> colors = ThemeJsonUtil.getNamedColors((JsonFile)file);
+      String colorValue = findNamedColorValue(colors, colorText);
+      if (colorValue == null) {
+        return null;
+      }
+
+      if (!colorValue.startsWith("#")) {
+        String nextColorValue = findNamedColorValue(colors, colorValue);
+        if (nextColorValue != null) {
+          colorValue = nextColorValue;
+        }
+      }
+
+      return parseColor(colorValue);
+    }
+
+    private static @Nullable String findNamedColorValue(List<JsonProperty> colors, @NotNull String colorText) {
       final JsonProperty namedColor = ContainerUtil.find(colors, property -> property.getName().equals(colorText));
       if (namedColor == null) return null;
 
       final JsonValue value = namedColor.getValue();
-      if (!(value instanceof JsonStringLiteral)) return null;
-      return parseColor(((JsonStringLiteral)value).getValue());
+      if ((value instanceof JsonStringLiteral literal)) {
+        return literal.getValue();
+      }
+      return null;
     }
 
     private static boolean isRgbaColorHex(@NotNull String colorHex) {

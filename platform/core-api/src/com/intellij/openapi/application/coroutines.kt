@@ -1,4 +1,4 @@
-// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2026 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.openapi.application
 
 import com.intellij.openapi.application.CoroutineSupport.UiDispatcherKind
@@ -18,6 +18,9 @@ import kotlin.coroutines.CoroutineContext
 /**
  * Suspends until it's possible to obtain the read lock and then
  * runs the [action] holding the lock **without** preventing write actions.
+ *
+ * The [action] is dispatched to [Dispatchers.Default], because a read action is expected to be a CPU-bound task.
+ *
  * See [constrainedReadAction] for semantic details.
  *
  * @see readActionUndispatched
@@ -75,6 +78,8 @@ suspend fun <T> readActionUndispatched(action: () -> T): T {
  * Has same semantics as [constrainedReadAction],
  * except it runs the given [action] in the original [CoroutineDispatcher]
  * without dispatching it to [Dispatchers.Default].
+ *
+ * It's forbidden to call it on `EDT`.
  *
  * Use with care. This method should not be used to compute CPU-heavy stuff.
  */
@@ -166,9 +171,10 @@ suspend fun <T> readAndBackgroundWriteAction(action: ReadAndWriteScope.() -> Rea
 }
 
 /**
- * Same as [readAndEdtWriteAction], but invokes write actions on a background thread instead of EDT.
- * The execution of read and write actions happens in the dispatcher of the caller.
- * This is useful when you expect several concurrent read-and-write actions, and you need to control their concurrency
+ * Same as [readAndBackgroundWriteAction], but invokes read action in the context of the caller.
+ * Write actions are invoked in their own dispatcher.
+ *
+ * This is useful when you expect several concurrent read-and-write actions, and you need to control their concurrency.
  */
 @Experimental
 suspend fun <T> readAndBackgroundWriteActionUndispatched(action: ReadAndWriteScope.() -> ReadResult<T>): T {
@@ -177,6 +183,8 @@ suspend fun <T> readAndBackgroundWriteActionUndispatched(action: ReadAndWriteSco
 
 /**
  * Same as [readAndEdtWriteAction], but invokes read action in the context of the caller.
+ * Write actions are invoked in their own dispatcher.
+ *
  * This is useful when you expect several concurrent read-and-write actions, and you need to control their concurrency.
  */
 @Experimental

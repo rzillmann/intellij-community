@@ -1,13 +1,36 @@
 // Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.find;
 
-import com.intellij.find.editorHeaderActions.*;
+import com.intellij.find.editorHeaderActions.ContextAwareShortcutProvider;
+import com.intellij.find.editorHeaderActions.Embeddable;
+import com.intellij.find.editorHeaderActions.NextOccurrenceAction;
+import com.intellij.find.editorHeaderActions.PrevOccurrenceAction;
+import com.intellij.find.editorHeaderActions.Utils;
+import com.intellij.find.editorHeaderActions.VariantsCompletionAction;
 import com.intellij.icons.AllIcons;
 import com.intellij.ide.DataManager;
 import com.intellij.ide.lightEdit.LightEditCompatible;
 import com.intellij.ide.ui.UISettings;
 import com.intellij.ide.ui.laf.darcula.ui.DarculaTextBorder;
-import com.intellij.openapi.actionSystem.*;
+import com.intellij.openapi.actionSystem.ActionGroup;
+import com.intellij.openapi.actionSystem.ActionManager;
+import com.intellij.openapi.actionSystem.ActionPlaces;
+import com.intellij.openapi.actionSystem.ActionToolbar;
+import com.intellij.openapi.actionSystem.ActionUpdateThread;
+import com.intellij.openapi.actionSystem.AnAction;
+import com.intellij.openapi.actionSystem.AnActionEvent;
+import com.intellij.openapi.actionSystem.CustomShortcutSet;
+import com.intellij.openapi.actionSystem.DataContext;
+import com.intellij.openapi.actionSystem.DataProvider;
+import com.intellij.openapi.actionSystem.DataSink;
+import com.intellij.openapi.actionSystem.DefaultActionGroup;
+import com.intellij.openapi.actionSystem.IdeActions;
+import com.intellij.openapi.actionSystem.PlatformDataKeys;
+import com.intellij.openapi.actionSystem.Presentation;
+import com.intellij.openapi.actionSystem.RightAlignedToolbarAction;
+import com.intellij.openapi.actionSystem.ShortcutProvider;
+import com.intellij.openapi.actionSystem.ShortcutSet;
+import com.intellij.openapi.actionSystem.UiDataProvider;
 import com.intellij.openapi.actionSystem.ex.ActionUtil;
 import com.intellij.openapi.actionSystem.impl.ActionToolbarImpl;
 import com.intellij.openapi.actionSystem.toolbarLayout.ToolbarLayoutStrategy;
@@ -26,25 +49,60 @@ import com.intellij.openapi.util.SystemInfo;
 import com.intellij.openapi.util.registry.Registry;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.wm.IdeFocusManager;
-import com.intellij.ui.*;
+import com.intellij.ui.DocumentAdapter;
+import com.intellij.ui.ExperimentalUI;
+import com.intellij.ui.JBColor;
+import com.intellij.ui.ListFocusTraversalPolicy;
+import com.intellij.ui.OnePixelSplitter;
+import com.intellij.ui.SearchTextField;
+import com.intellij.ui.components.JBScrollPane;
 import com.intellij.ui.components.JBTextArea;
+import com.intellij.ui.components.JBViewport;
 import com.intellij.ui.components.TextComponentEmptyText;
 import com.intellij.ui.components.panels.NonOpaquePanel;
 import com.intellij.ui.components.panels.Wrapper;
 import com.intellij.ui.mac.touchbar.Touchbar;
 import com.intellij.util.EventDispatcher;
-import com.intellij.util.ui.*;
+import com.intellij.util.ui.JBInsets;
+import com.intellij.util.ui.JBUI;
+import com.intellij.util.ui.NamedColorUtil;
+import com.intellij.util.ui.SwingUndoUtil;
+import com.intellij.util.ui.UIUtil;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import javax.swing.*;
+import javax.swing.BorderFactory;
+import javax.swing.JComponent;
+import javax.swing.JLabel;
+import javax.swing.JPanel;
+import javax.swing.KeyStroke;
+import javax.swing.SwingConstants;
+import javax.swing.SwingUtilities;
 import javax.swing.border.AbstractBorder;
 import javax.swing.border.Border;
 import javax.swing.event.DocumentEvent;
 import javax.swing.text.JTextComponent;
-import java.awt.*;
-import java.awt.event.*;
+import java.awt.BorderLayout;
+import java.awt.Color;
+import java.awt.Component;
+import java.awt.Container;
+import java.awt.Dimension;
+import java.awt.FlowLayout;
+import java.awt.Graphics;
+import java.awt.Graphics2D;
+import java.awt.Insets;
+import java.awt.Rectangle;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
+import java.awt.event.ComponentAdapter;
+import java.awt.event.ComponentEvent;
+import java.awt.event.FocusEvent;
+import java.awt.event.FocusListener;
+import java.awt.event.InputEvent;
+import java.awt.event.KeyEvent;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.EventListener;
@@ -206,17 +264,10 @@ public final class SearchReplaceComponent extends EditorHeaderComponent implemen
     };
     myReplaceFieldWrapper.setBorder(JBUI.Borders.emptyTop(1));
 
-    JPanel leftPanel = new JPanel(new GridBagLayout());
+    JPanel leftPanel = new JPanel(new BorderLayout());
     leftPanel.setBackground(JBUI.CurrentTheme.Editor.BORDER_COLOR);
-    GridBagConstraints constraints = new GridBagConstraints();
-    constraints.gridx = 0;
-    constraints.gridy = 0;
-    constraints.fill = GridBagConstraints.BOTH;
-    constraints.weightx = 1;
-    constraints.weighty = 1;
-    leftPanel.add(mySearchFieldWrapper, constraints);
-    constraints.gridy++;
-    leftPanel.add(myReplaceFieldWrapper, constraints);
+    leftPanel.add(mySearchFieldWrapper, BorderLayout.NORTH);
+    leftPanel.add(myReplaceFieldWrapper, BorderLayout.SOUTH);
 
     if (showSeparator) {
       leftPanel.setBorder(new AbstractBorder() {
@@ -373,12 +424,12 @@ public final class SearchReplaceComponent extends EditorHeaderComponent implemen
     }
     updateTextComponentBorders();
     if (myModePanel != null) {
-      Border border = JBUI.Borders.empty(JBUI.CurrentTheme.Editor.SearchReplaceModePanel.borderInsets());
       if (myIslandsEnabled) {
-        myModePanel.setBorder(border);
+        myModePanel.setBorder(JBUI.Borders.empty(5, 3, 3, 3));
       }
       else {
-        myModePanel.setBorder(JBUI.Borders.compound(JBUI.Borders.customLine(JBUI.CurrentTheme.Editor.BORDER_COLOR, 0, 0, 0, 1), border));
+        myModePanel.setBorder(JBUI.Borders.compound(JBUI.Borders.customLine(JBUI.CurrentTheme.Editor.BORDER_COLOR, 0, 0, 0, 1),
+                                                    JBUI.Borders.empty(JBUI.CurrentTheme.Editor.SearchReplaceModePanel.borderInsets())));
       }
     }
   }
@@ -661,6 +712,24 @@ public final class SearchReplaceComponent extends EditorHeaderComponent implemen
           }
           return defaultSize;
         }
+
+        @Override
+        protected int getRowHeight() {
+          if (!myIslandsEnabled) {
+            return super.getRowHeight();
+          }
+          Insets insets = getInsets();
+          int parentBorders = 0;
+          Container parent = getParent();
+          if (parent instanceof JBViewport) {
+            parent = parent.getParent();
+            if (parent instanceof JBScrollPane) {
+              Insets parentInsent = parent.getInsets();
+              parentBorders = parentInsent.top + parentInsent.bottom;
+            }
+          }
+          return JBUI.scale(UISettings.getInstance().getCompactMode() ? 24 : 28) - insets.top - insets.bottom - parentBorders;
+        }
       };
       ((JBTextArea)innerTextComponent).setRows(isMultiline() ? 2 : 1);
       ((JBTextArea)innerTextComponent).setColumns(12);
@@ -741,7 +810,13 @@ public final class SearchReplaceComponent extends EditorHeaderComponent implemen
       component.setBorder(new DarculaTextBorder() {
         @Override
         public Insets getBorderInsets(Component c) {
-          return new JBInsets(UISettings.getInstance().getCompactMode() ? 2 : 4, 6, 0, 6).asUIResource();
+          int top = 4;
+          int bottom = 2;
+          if (UISettings.getInstance().getCompactMode()) {
+            top = 2;
+            bottom = 4;
+          }
+          return new JBInsets(top, 6, bottom, 6).asUIResource();
         }
 
         @Override

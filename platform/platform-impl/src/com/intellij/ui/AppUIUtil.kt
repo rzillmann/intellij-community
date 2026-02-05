@@ -25,6 +25,7 @@ import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.openapi.util.Condition
 import com.intellij.openapi.util.IconLoader.setUseDarkIcons
 import com.intellij.openapi.util.SystemInfo
+import com.intellij.openapi.util.registry.Registry
 import com.intellij.openapi.wm.IdeFrame
 import com.intellij.ui.AppIcon.MacAppIcon
 import com.intellij.ui.Color16.Companion.toColor16
@@ -45,7 +46,16 @@ import com.intellij.util.ui.ImageUtil
 import com.intellij.util.ui.JBImageIcon
 import org.jetbrains.annotations.ApiStatus
 import sun.awt.AWTAccessor
-import java.awt.*
+import java.awt.Color
+import java.awt.Component
+import java.awt.EventQueue
+import java.awt.Graphics
+import java.awt.GraphicsEnvironment
+import java.awt.Image
+import java.awt.Rectangle
+import java.awt.RenderingHints
+import java.awt.TexturePaint
+import java.awt.Window
 import java.awt.event.ActionEvent
 import java.awt.image.BufferedImage
 import java.lang.reflect.InvocationTargetException
@@ -183,6 +193,14 @@ private fun removeTraceLocalConsents(localConsents: MutableList<Consent>) {
   localConsents.removeIf { localConsent ->
     LocalConsentOptions.condTraceDataCollectionNonComLocalConsent().test(localConsent) ||
     LocalConsentOptions.condTraceDataCollectionComLocalConsent().test(localConsent)
+  }
+}
+
+private fun removeTraceConsents(consents: MutableList<Consent>) { // IJPL-208500, IJPL-212133
+  consents.removeIf { consent ->
+    ConsentOptions.condTraceDataCollectionConsent().test(consent) ||
+    ConsentOptions.condTraceDataCollectionComConsent().test(consent) ||
+    ConsentOptions.condTraceDataCollectionNonComConsent().test(consent)
   }
 }
 
@@ -347,15 +365,17 @@ object AppUIUtil {
         result.addAll(consents)
       }
     }
-    result.removeIf(ConsentOptions.condTraceDataCollectionConsent()) // IJPL-208500
-    result.removeIf(ConsentOptions.condAiDataCollectionConsent()) // IJPL-195651; AI data collection (LLMC) consent should not be present on UI while it's staying a default consent as a part of migration from LLMC to TRACE consent
+    removeTraceConsents(result)
+    if (!options.isEAP || !Registry.`is`("llm.llmc.data.collection.enabled", true)) {
+      result.removeIf(ConsentOptions.condAiDataCollectionConsent()) // IJPL-195651 and IJPL-210395; AI data collection (LLMC) consent should not be present on UI while it's staying a default consent as a part of migration from LLMC to TRACE consent
+    }
     return result
   }
 
   @JvmStatic
   @ApiStatus.Internal
   fun loadLocalConsentsAsConsentsForEditing(): List<Consent> {
-    val localConsents = LocalConsentOptions.getLocalConsents().toMutableList()
+    val localConsents = LocalConsentOptions.getLocalConsents().first.toMutableList()
     if (TraceConsentManager.getInstance()?.canDisplayTraceConsent() != true) {
       removeTraceLocalConsents(localConsents)
     } else {

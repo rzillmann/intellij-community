@@ -3,11 +3,25 @@ package com.intellij.testFramework.junit5.fixture
 
 import com.intellij.platform.eel.EelApi
 import com.intellij.platform.util.coroutines.childScope
+import com.intellij.testFramework.TestLoggerFactory
 import com.intellij.testFramework.junit5.fixture.EelForFixturesProvider.Companion.getEelForParametrizedTestProvider
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.job
+import kotlinx.coroutines.runBlocking
 import org.jetbrains.annotations.TestOnly
 import org.junit.jupiter.api.TestInstance
-import org.junit.jupiter.api.extension.*
+import org.junit.jupiter.api.extension.AfterAllCallback
+import org.junit.jupiter.api.extension.AfterEachCallback
+import org.junit.jupiter.api.extension.BeforeAllCallback
+import org.junit.jupiter.api.extension.BeforeEachCallback
+import org.junit.jupiter.api.extension.ExtensionContext
+import org.junit.jupiter.api.extension.InvocationInterceptor
+import org.junit.jupiter.api.extension.ReflectiveInvocationContext
 import org.junit.platform.commons.support.HierarchyTraversalMode
 import org.junit.platform.commons.support.ReflectionSupport
 import java.lang.reflect.Constructor
@@ -67,6 +81,12 @@ internal class TestFixtureExtension : BeforeAllCallback,
 
   private fun before(context: ExtensionContext, static: Boolean, eelApi: EelApi? = null, instance: Any? = null) {
     val testClass: Class<*> = context.testClass.getOrNull() ?: return
+    if (static && !context.enclosingTestClasses.isEmpty()) {
+      // There can't be static fixtures in nested classes
+      return
+    }
+
+    TestLoggerFactory.onFixturesInitializationStarted(static)
 
     @OptIn(DelicateCoroutinesApi::class)
     val testScope = GlobalScope.childScope(context.displayName)
@@ -90,6 +110,7 @@ internal class TestFixtureExtension : BeforeAllCallback,
 
     awaitFixtureInitialization(testScope, pendingFixtures)
     context.getStore(ExtensionContext.Namespace.GLOBAL).put("TestFixtureExtension_$static", testScope)
+    TestLoggerFactory.onFixturesInitializationFinished(static)
   }
 
   override fun afterEach(context: ExtensionContext) {
@@ -107,6 +128,13 @@ internal class TestFixtureExtension : BeforeAllCallback,
   }
 
   private fun after(context: ExtensionContext, static: Boolean) {
+    if (static && !context.enclosingTestClasses.isEmpty()) {
+      // There can't be static fixtures in nested classes
+      return
+    }
+
+    TestLoggerFactory.onFixturesDisposeStart(static)
+
     val testScope = context.getStore(ExtensionContext.Namespace.GLOBAL).get("TestFixtureExtension_$static") ?: return
     @Suppress("SSBasedInspection")
     runBlocking {

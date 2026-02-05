@@ -4,7 +4,6 @@ package com.jetbrains.python.sdk.add.v2
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.module.Module
 import com.intellij.openapi.observable.properties.ObservableMutableProperty
-import com.intellij.openapi.observable.util.transform
 import com.intellij.openapi.ui.validation.DialogValidationRequestor
 import com.intellij.ui.dsl.builder.Panel
 import com.jetbrains.python.PyBundle.message
@@ -14,13 +13,10 @@ import com.jetbrains.python.statistics.InterpreterType
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.jetbrains.annotations.ApiStatus.Internal
 import java.nio.file.Path
-import java.util.*
-
 
 @Internal
 internal abstract class CustomExistingEnvironmentSelector<P : PathHolder>(
@@ -50,9 +46,9 @@ internal abstract class CustomExistingEnvironmentSelector<P : PathHolder>(
         title = message("sdk.create.custom.existing.env.title"),
         selectedSdkProperty = selectedEnv,
         validationRequestor = validationRequestor,
-        onPathSelected = model::addManuallyAddedInterpreter,
+        onPathSelected = model::addManuallyAddedPythonNotNecessarilySystem,
       ) {
-        visibleIf(toolState.backProperty.transform { it?.validationResult?.successOrNull != null })
+        visibleIf(toolState.isValidationSuccessful)
       }
     }
   }
@@ -70,11 +66,7 @@ internal abstract class CustomExistingEnvironmentSelector<P : PathHolder>(
     executablePath.initialize(scope)
     comboBox.initialize(
       scope = scope,
-      flow = existingEnvironments.map { existing ->
-        existing ?: return@map null
-        val withUniquePath = existing.distinctBy { interpreter -> interpreter.homePath }
-        sortForExistingEnvironment(withUniquePath, module)
-      }
+      flow = existingEnvironments.mapDistinctSortedForExistingEnvironment(module)
     )
   }
 
@@ -89,12 +81,6 @@ internal abstract class CustomExistingEnvironmentSelector<P : PathHolder>(
       creationMode = InterpreterCreationMode.CUSTOM
     )
   }
-
-  //private fun addEnvByPath(python: VanillaPythonWithLanguageLevel): PythonSelectableInterpreter {
-  //  val interpreter = ManuallyAddedSelectableInterpreter(python)
-  //  existingEnvironments.value = (existingEnvironments.value ?: emptyList()) + interpreter
-  //  return interpreter
-  //}
 
   internal abstract val toolState: PathValidator<Version, P, ValidatedPath.Executable<P>>
   internal abstract val interpreterType: InterpreterType

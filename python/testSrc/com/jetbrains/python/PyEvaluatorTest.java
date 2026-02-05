@@ -3,7 +3,12 @@ package com.jetbrains.python;
 
 import com.google.common.collect.ImmutableMap;
 import com.jetbrains.python.fixtures.PyTestCase;
-import com.jetbrains.python.psi.*;
+import com.jetbrains.python.psi.LanguageLevel;
+import com.jetbrains.python.psi.PyElementGenerator;
+import com.jetbrains.python.psi.PyExpression;
+import com.jetbrains.python.psi.PyReferenceExpression;
+import com.jetbrains.python.psi.PyTargetExpression;
+import com.jetbrains.python.psi.PyUtil;
 import com.jetbrains.python.psi.impl.PyEvaluator;
 import org.jetbrains.annotations.NotNull;
 
@@ -312,6 +317,25 @@ public class PyEvaluatorTest extends PyTestCase {
 
     assertNull(PyEvaluator.evaluateAsBooleanNoResolve(parseText("a = [1]\nexpr = a")));
     assertNull(PyEvaluator.evaluateAsBooleanNoResolve(parseText("a = []\nexpr = a")));
+  }
+
+  public void testTypingTypeChecking() {
+    assertTrue(PyEvaluator.evaluateAsBooleanNoResolve(parseText("expr = typing.TYPE_CHECKING")));
+    assertTrue(PyEvaluator.evaluateAsBooleanNoResolve(parseText("expr = TYPE_CHECKING")));
+  }
+
+  public void testSysVersionCheck() {
+    assertTrue(PyEvaluator.evaluateAsBooleanNoResolve(parseText("expr = sys.version_info >= (3, 4)"), LanguageLevel.PYTHON34));
+    assertFalse(PyEvaluator.evaluateAsBooleanNoResolve(parseText("expr = sys.version_info >= (3, 5)"), LanguageLevel.PYTHON34));
+
+    assertFalse(PyEvaluator.evaluateAsBooleanNoResolve(parseText("expr = sys.version_info > (3, 4)"), LanguageLevel.PYTHON34));
+    assertTrue(PyEvaluator.evaluateAsBooleanNoResolve(parseText("expr = sys.version_info > (3, 3)"), LanguageLevel.PYTHON34));
+
+    assertTrue(PyEvaluator.evaluateAsBooleanNoResolve(parseText("expr = sys.version_info <= (3, 4)"), LanguageLevel.PYTHON34));
+    assertFalse(PyEvaluator.evaluateAsBooleanNoResolve(parseText("expr = sys.version_info <= (3, 3)"), LanguageLevel.PYTHON34));
+
+    assertFalse(PyEvaluator.evaluateAsBooleanNoResolve(parseText("expr = sys.version_info < (3, 4)"), LanguageLevel.PYTHON34));
+    assertTrue(PyEvaluator.evaluateAsBooleanNoResolve(parseText("expr = sys.version_info < (3, 5)"), LanguageLevel.PYTHON34));
   }
 
   @NotNull

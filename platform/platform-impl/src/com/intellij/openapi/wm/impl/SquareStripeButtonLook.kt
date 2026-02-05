@@ -9,8 +9,11 @@ import com.intellij.toolWindow.ResizeStripeManager
 import com.intellij.ui.icons.toStrokeIcon
 import com.intellij.util.ui.JBInsets
 import com.intellij.util.ui.JBUI
-import com.intellij.util.ui.JBValue
-import java.awt.*
+import java.awt.Color
+import java.awt.Graphics
+import java.awt.Insets
+import java.awt.Point
+import java.awt.Rectangle
 import javax.swing.Icon
 import javax.swing.JComponent
 import javax.swing.UIManager
@@ -96,5 +99,5 @@ internal open class SquareStripeButtonLook(private val button: ActionButton) : I
     super.paintIcon(g, actionButton, toStrokeIcon(icon, UIManager.getColor("ToolWindow.Button.selectedForeground")))
   }
 
-  override fun getButtonArc() = JBValue.UIInteger("Button.ToolWindow.arc", if (UISettings.Companion.getInstance().compactMode) 8 else 12)
+  override fun getButtonArc() = JBUI.CurrentTheme.Toolbar.stripeButtonArc(UISettings.getInstance().compactMode)
 }

@@ -1,4 +1,4 @@
-// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 
 package com.intellij.codeInsight.completion;
 
@@ -15,10 +15,15 @@ import com.intellij.openapi.util.UserDataHolderBase;
 import com.intellij.patterns.CharPattern;
 import com.intellij.patterns.ElementPattern;
 import com.intellij.patterns.ObjectPattern;
-import com.intellij.psi.*;
+import com.intellij.psi.PsiComment;
+import com.intellij.psi.PsiDirectory;
+import com.intellij.psi.PsiDocumentManager;
+import com.intellij.psi.PsiElement;
+import com.intellij.psi.PsiFile;
+import com.intellij.psi.PsiReference;
+import com.intellij.psi.PsiReferencesWrapper;
 import com.intellij.psi.filters.ElementFilter;
 import com.intellij.psi.filters.TrueFilter;
-import com.intellij.psi.impl.PsiDocumentManagerBase;
 import com.intellij.psi.impl.source.resolve.reference.impl.PsiMultiReference;
 import com.intellij.psi.meta.PsiMetaData;
 import com.intellij.psi.util.PsiUtilCore;
@@ -27,7 +32,11 @@ import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import static com.intellij.patterns.StandardPatterns.not;
 
@@ -134,17 +143,7 @@ public class CompletionData {
 
     final Document document = insertedElement.getContainingFile().getViewProvider().getDocument();
     assert document != null;
-
-    PsiDocumentManager documentManager = PsiDocumentManager.getInstance(insertedElement.getProject());
-    if (documentManager.isUncommited(document)) {
-      Throwable throwable = null;
-      if (documentManager instanceof PsiDocumentManagerBase base) {
-        Map<Document, Throwable> traces = base.getUncommitedDocumentsWithTraces();
-        throwable = traces.get(document);
-      }
-
-      LOG.error("Uncommitted document", throwable);
-    }
+    LOG.assertTrue(!PsiDocumentManager.getInstance(insertedElement.getProject()).isUncommited(document), "Uncommitted");
 
     final String prefix = CompletionUtil.findReferencePrefix(insertedElement, offsetInFile);
     if (prefix != null) return prefix;

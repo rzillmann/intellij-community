@@ -9,7 +9,6 @@ plugins {
   id("fleet.toolchain-conventions")
   alias(libs.plugins.dokka)
   id("fleet.module-publishing-conventions")
-  id("fleet.sdk-repositories-publishing-conventions")
   // GRADLE_PLUGINS__MARKER_START
   id("fleet-module")
   // GRADLE_PLUGINS__MARKER_END
@@ -19,6 +18,7 @@ fleetModule {
   module {
     name = "fleet.build.s3"
     importedFromJps {}
+    test {}
   }
 }
 
@@ -30,7 +30,9 @@ kotlin {
     "-opt-in=kotlin.ExperimentalStdlibApi",
     "-Xlambdas=class",
     "-Xconsistent-data-class-copy-visibility",
+    "-Xcontext-parameters",
     "-XXLanguage:+AllowEagerSupertypeAccessibilityChecks",
+    "-progressive",
   )
   jvm {}
   sourceSets.commonMain.configure { kotlin.srcDir(layout.projectDirectory.dir("../srcCommonMain")) }
@@ -58,8 +60,18 @@ kotlin {
       exclude(group = "org.jetbrains.kotlin", module = "kotlin-stdlib-common")
       exclude(group = "org.slf4j", module = "slf4j-api")
     }
+    implementation(jps.org.slf4j.slf4j.api2013636515.get().let { "${it.group}:${it.name}:${it.version}" }) {
+      isTransitive = false
+      exclude(group = "org.slf4j", module = "slf4j-jdk14")
+    }
     implementation(project(":fleet.build.platform"))
     implementation(project(":fleet.build.fs"))
+  }
+  sourceSets.commonTest.dependencies {
+    implementation(jps.org.jetbrains.intellij.deps.kotlinx.kotlinx.coroutines.test.jvm1610416103.get().let { "${it.group}:kotlinx-coroutines-test:${it.version}" }) {
+      isTransitive = false
+    }
+    implementation(project(":fleet.test.runtime"))
   }
   // KOTLIN__MARKER_END
 }

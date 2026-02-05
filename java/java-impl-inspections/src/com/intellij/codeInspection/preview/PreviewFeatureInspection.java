@@ -8,7 +8,13 @@ import com.intellij.java.codeserver.core.JavaPreviewFeatureUtil;
 import com.intellij.openapi.module.JdkApiCompatibilityService;
 import com.intellij.openapi.module.JdkApiCompatibilityService.LevelInfo;
 import com.intellij.pom.java.LanguageLevel;
-import com.intellij.psi.*;
+import com.intellij.psi.PsiClass;
+import com.intellij.psi.PsiElement;
+import com.intellij.psi.PsiElementVisitor;
+import com.intellij.psi.PsiImportStatementBase;
+import com.intellij.psi.PsiJavaCodeReferenceElement;
+import com.intellij.psi.PsiMember;
+import com.intellij.psi.PsiReferenceExpression;
 import com.intellij.psi.util.PsiUtil;
 import org.jetbrains.annotations.NotNull;
 
@@ -59,7 +65,7 @@ public final class PreviewFeatureInspection extends LocalInspectionTool {
               String name = owner instanceof PsiClass cls ?
                             cls.getQualifiedName() : 
                             Objects.requireNonNull(owner.getContainingClass()).getQualifiedName() + "#" + owner.getName();
-              holder.registerProblem(element, JavaBundle.message("preview.api.usage", name));
+              holder.registerProblem(element, JavaBundle.message("preview.api.usage.old.jdk", name, level.feature()));
             }
           }
         }

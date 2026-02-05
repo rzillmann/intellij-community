@@ -18,9 +18,6 @@ package org.intellij.lang.xpath.xslt.run;
 import com.intellij.execution.impl.CheckableRunConfigurationEditor;
 import com.intellij.icons.AllIcons;
 import com.intellij.ide.IdeCoreBundle;
-import com.intellij.ide.highlighter.ModuleFileType;
-import com.intellij.ide.highlighter.ProjectFileType;
-import com.intellij.ide.highlighter.WorkspaceFileType;
 import com.intellij.ide.highlighter.XmlFileType;
 import com.intellij.openapi.actionSystem.LangDataKeys;
 import com.intellij.openapi.application.ReadAction;
@@ -28,7 +25,14 @@ import com.intellij.openapi.application.WriteAction;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.fileChooser.FileChooserDescriptor;
 import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory;
-import com.intellij.openapi.fileTypes.*;
+import com.intellij.openapi.fileTypes.FileType;
+import com.intellij.openapi.fileTypes.FileTypeManager;
+import com.intellij.openapi.fileTypes.InternalFileType;
+import com.intellij.openapi.fileTypes.LanguageFileType;
+import com.intellij.openapi.fileTypes.PlainTextFileType;
+import com.intellij.openapi.fileTypes.StdFileTypes;
+import com.intellij.openapi.fileTypes.SyntaxHighlighter;
+import com.intellij.openapi.fileTypes.SyntaxHighlighterFactory;
 import com.intellij.openapi.fileTypes.impl.FileTypeRenderer;
 import com.intellij.openapi.module.Module;
 import com.intellij.openapi.module.ModuleManager;
@@ -50,7 +54,14 @@ import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.openapi.vfs.VirtualFileManager;
 import com.intellij.psi.PsiFile;
 import com.intellij.psi.PsiManager;
-import com.intellij.ui.*;
+import com.intellij.ui.AnActionButton;
+import com.intellij.ui.AnActionButtonRunnable;
+import com.intellij.ui.ComboboxWithBrowseButton;
+import com.intellij.ui.DocumentAdapter;
+import com.intellij.ui.PanelWithAnchor;
+import com.intellij.ui.RawCommandLineEditor;
+import com.intellij.ui.SimpleListCellRenderer;
+import com.intellij.ui.ToolbarDecorator;
 import com.intellij.ui.components.JBLabel;
 import com.intellij.ui.components.JBRadioButton;
 import com.intellij.ui.table.JBTable;
@@ -65,17 +76,34 @@ import org.intellij.plugins.xpathView.XPathBundle;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import javax.swing.*;
+import javax.swing.AbstractButton;
+import javax.swing.ButtonGroup;
+import javax.swing.ButtonModel;
+import javax.swing.ComboBoxModel;
+import javax.swing.DefaultComboBoxModel;
+import javax.swing.JCheckBox;
+import javax.swing.JComboBox;
+import javax.swing.JComponent;
+import javax.swing.JList;
+import javax.swing.JPanel;
+import javax.swing.JRadioButton;
+import javax.swing.JTabbedPane;
+import javax.swing.JTable;
+import javax.swing.JTextField;
 import javax.swing.border.EmptyBorder;
 import javax.swing.event.DocumentEvent;
 import javax.swing.table.AbstractTableModel;
 import javax.swing.table.DefaultTableCellRenderer;
-import java.awt.*;
+import java.awt.BorderLayout;
+import java.awt.Component;
 import java.awt.event.ItemEvent;
 import java.awt.event.ItemListener;
 import java.io.File;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.Enumeration;
 import java.util.List;
+import java.util.Vector;
 
 class XsltRunSettingsEditor extends SettingsEditor<XsltRunConfiguration>
   implements CheckableRunConfigurationEditor<XsltRunConfiguration> {
@@ -198,7 +226,8 @@ class XsltRunSettingsEditor extends SettingsEditor<XsltRunConfiguration>
         public String getText(JComboBox comboBox) {
           Object item = comboBox.getEditor().getItem();
           if (item.toString().isEmpty()) {
-            final String text = projectDefaultAccessor.getText(myXsltFile.getChildComponent());
+            var text = projectDefaultAccessor.getText(myXsltFile.getChildComponent());
+            if (text == null) text = "";
             final VirtualFile file =
               VirtualFileManager.getInstance()
                 .findFileByUrl(VfsUtil.pathToUrl(text.replace(File.separatorChar, '/')));
@@ -352,11 +381,7 @@ class XsltRunSettingsEditor extends SettingsEditor<XsltRunConfiguration>
       final FileType[] fileTypes = FileTypeManager.getInstance().getRegisteredFileTypes();
       for (FileType fileType : fileTypes) {
         // get rid of file types useless for highlighting
-        if (fileType == StdFileTypes.CLASS ||
-            fileType == ProjectFileType.INSTANCE ||
-            fileType == WorkspaceFileType.INSTANCE ||
-            fileType == ModuleFileType.INSTANCE ||
-            fileType == StdFileTypes.GUI_DESIGNER_FORM) {
+        if (fileType.isBinary() || fileType instanceof InternalFileType) {
           continue;
         }
 

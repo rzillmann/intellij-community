@@ -1,6 +1,14 @@
 package com.intellij.database.run.ui
 
-import com.intellij.database.datagrid.*
+import com.intellij.database.datagrid.DataGrid
+import com.intellij.database.datagrid.DataGridCellTypeListener
+import com.intellij.database.datagrid.DataGridListener
+import com.intellij.database.datagrid.GridColumn
+import com.intellij.database.datagrid.GridHelper
+import com.intellij.database.datagrid.GridRequestSource
+import com.intellij.database.datagrid.GridRow
+import com.intellij.database.datagrid.GridUtilCore
+import com.intellij.database.datagrid.ModelIndex
 import com.intellij.database.extractors.DisplayType
 import com.intellij.database.run.ReservedCellValue
 import com.intellij.database.run.ui.CellViewer.Companion.CELL_VIEWER_KEY
@@ -12,6 +20,7 @@ import com.intellij.ide.highlighter.HighlighterFactory
 import com.intellij.ide.util.PropertiesComponent
 import com.intellij.lang.Language
 import com.intellij.openapi.actionSystem.CommonDataKeys
+import com.intellij.openapi.actionSystem.PlatformCoreDataKeys
 import com.intellij.openapi.actionSystem.UiDataProvider
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.WriteAction
@@ -23,6 +32,7 @@ import com.intellij.openapi.editor.event.DocumentEvent
 import com.intellij.openapi.editor.event.DocumentListener
 import com.intellij.openapi.editor.ex.EditorEx
 import com.intellij.openapi.fileEditor.FileDocumentManager
+import com.intellij.openapi.fileEditor.impl.text.TextEditorProvider
 import com.intellij.openapi.fileTypes.PlainTextLanguage
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Key
@@ -79,6 +89,7 @@ class EditorCellViewer(private val project: Project,
 
   private val wrappedComponent = UiDataProvider.wrapComponent(editor.component) { sink ->
     sink[CommonDataKeys.EDITOR] = editor
+    sink[PlatformCoreDataKeys.FILE_EDITOR] = TextEditorProvider.getInstance().getTextEditor(editor)
   }
 
   override val component: JComponent

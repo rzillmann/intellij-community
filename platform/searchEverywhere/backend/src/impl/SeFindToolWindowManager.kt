@@ -19,6 +19,7 @@ import com.intellij.platform.searchEverywhere.SeParams
 import com.intellij.platform.searchEverywhere.SeProviderId
 import com.intellij.platform.searchEverywhere.backend.providers.target.SeTargetItem
 import com.intellij.platform.searchEverywhere.backend.providers.text.SeTextSearchItem
+import com.intellij.platform.searchEverywhere.providers.SeAdaptedItem
 import com.intellij.platform.searchEverywhere.providers.SeLog
 import com.intellij.platform.searchEverywhere.providers.SeProvidersHolder
 import com.intellij.psi.PsiElement
@@ -71,6 +72,7 @@ class SeFindToolWindowManager(private val project: Project) {
             indicator.checkCanceled()
 
             val element = when (item) {
+              is SeAdaptedItem -> item.rawObject
               is SeTargetItem -> item.legacyItem.item
               is SeTextSearchItem -> item.item
               else -> null

@@ -1,7 +1,14 @@
 package com.intellij.database.run.ui.grid.editors;
 
 import com.intellij.codeInsight.lookup.LookupManager;
-import com.intellij.database.datagrid.*;
+import com.intellij.database.datagrid.DataGrid;
+import com.intellij.database.datagrid.DataGridListener;
+import com.intellij.database.datagrid.GridColumn;
+import com.intellij.database.datagrid.GridHelper;
+import com.intellij.database.datagrid.GridRow;
+import com.intellij.database.datagrid.GridUtil;
+import com.intellij.database.datagrid.GridUtilCore;
+import com.intellij.database.datagrid.ModelIndex;
 import com.intellij.database.run.ui.GridEditGuard;
 import com.intellij.database.run.ui.grid.editors.GridCellEditorFactory.ValueFormatterResult;
 import com.intellij.database.run.ui.grid.renderers.DefaultTextRendererFactory;
@@ -11,7 +18,16 @@ import com.intellij.ide.ui.UISettings;
 import com.intellij.ide.ui.UISettingsUtils;
 import com.intellij.lang.Language;
 import com.intellij.openapi.Disposable;
-import com.intellij.openapi.actionSystem.*;
+import com.intellij.openapi.actionSystem.ActionManager;
+import com.intellij.openapi.actionSystem.ActionUpdateThread;
+import com.intellij.openapi.actionSystem.AnAction;
+import com.intellij.openapi.actionSystem.AnActionEvent;
+import com.intellij.openapi.actionSystem.CommonDataKeys;
+import com.intellij.openapi.actionSystem.CustomShortcutSet;
+import com.intellij.openapi.actionSystem.DataSink;
+import com.intellij.openapi.actionSystem.IdeActions;
+import com.intellij.openapi.actionSystem.KeyboardShortcut;
+import com.intellij.openapi.actionSystem.PlatformCoreDataKeys;
 import com.intellij.openapi.actionSystem.ex.ActionUtil;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.editor.Document;
@@ -22,6 +38,7 @@ import com.intellij.openapi.editor.colors.EditorColorsScheme;
 import com.intellij.openapi.editor.ex.EditorEx;
 import com.intellij.openapi.editor.impl.ContextMenuPopupHandler;
 import com.intellij.openapi.fileEditor.FileDocumentManager;
+import com.intellij.openapi.fileEditor.impl.text.TextEditorProvider;
 import com.intellij.openapi.fileTypes.FileTypes;
 import com.intellij.openapi.fileTypes.PlainTextLanguage;
 import com.intellij.openapi.project.DumbAwareAction;
@@ -39,8 +56,12 @@ import com.intellij.util.textCompletion.TextCompletionUtil;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import javax.swing.*;
-import java.awt.*;
+import javax.swing.Action;
+import javax.swing.JComponent;
+import javax.swing.JScrollBar;
+import javax.swing.JScrollPane;
+import javax.swing.KeyStroke;
+import java.awt.Dimension;
 import java.awt.event.ActionEvent;
 import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
@@ -134,6 +155,9 @@ public class GridCellEditorTextField extends EditorTextField implements Disposab
     sink.set(CommonDataKeys.VIRTUAL_FILE, file);
     Editor editor = getEditor();
     sink.set(CommonDataKeys.EDITOR, editor);
+    if (editor != null) {
+      sink.set(PlatformCoreDataKeys.FILE_EDITOR, TextEditorProvider.getInstance().getTextEditor(editor));
+    }
   }
 
   @Override
@@ -177,7 +201,7 @@ public class GridCellEditorTextField extends EditorTextField implements Disposab
         ActionUtil.performAction(action, e);
       }
     };
-    registerAction(editor, action, enterAndControlEnter);
+    GridUtil.registerAction(editor, action, enterAndControlEnter);
   }
 
   private void registerTabAction(final @NotNull EditorEx editor) {
@@ -206,45 +230,7 @@ public class GridCellEditorTextField extends EditorTextField implements Disposab
         }
       }
     };
-    registerAction(editor, action, tabAndShiftTab);
-  }
-
-  private void registerArrowAction(final @NotNull EditorEx editor) {
-    KeyboardShortcut up = KeyboardShortcut.fromString("UP");
-    KeyboardShortcut down = KeyboardShortcut.fromString("DOWN");
-    AnAction action = new DumbAwareAction("goToPreviousOrNextLineOrStopEditing") {
-      @Override
-      public @NotNull ActionUpdateThread getActionUpdateThread() {
-        return ActionUpdateThread.EDT;
-      }
-
-      @Override
-      public void update(@NotNull AnActionEvent e) {
-        if (editor.getDocument().getLineCount() > 1) {
-          e.getPresentation().setEnabledAndVisible(false);
-          return;
-        }
-        KeyEvent keyEvent = ObjectUtils.tryCast(e.getInputEvent(), KeyEvent.class);
-        e.getPresentation().setEnabledAndVisible(keyEvent != null && LookupManager.getActiveLookup(getEditor()) == null);
-      }
-
-      @Override
-      public void actionPerformed(@NotNull AnActionEvent e) {
-        KeyEvent keyEvent = (KeyEvent)e.getInputEvent();
-        JComponent gridComponent = myGrid.getPreferredFocusedComponent();
-        ActionMap actionMap = gridComponent.getActionMap();
-        Action action = up.getFirstKeyStroke().getKeyCode() == keyEvent.getKeyCode()
-                        ? actionMap.get("selectPreviousRow")
-                        : actionMap.get("selectNextRow");
-        if (action == null) return;
-        action.actionPerformed(new ActionEvent(gridComponent, keyEvent.getID(), keyEvent.toString(), keyEvent.getWhen(), keyEvent.getModifiers()));
-      }
-    };
-    registerAction(editor, action, new CustomShortcutSet(up, down));
-  }
-
-  private static void registerAction(@NotNull Editor editor, @NotNull AnAction action, @NotNull ShortcutSet shortcutSet) {
-    action.registerCustomShortcutSet(shortcutSet, editor.getComponent());
+    GridUtil.registerAction(editor, action, tabAndShiftTab);
   }
 
   private void installEditorSettingsProvider(final boolean multiline) {
@@ -268,7 +254,7 @@ public class GridCellEditorTextField extends EditorTextField implements Disposab
 
       registerEnterAction(editor, multiline);
       registerTabAction(editor);
-      if (multiline) registerArrowAction(editor);
+      if (multiline) GridUtil.registerArrowAction(editor, myGrid, this::getEditor);
     });
   }
 

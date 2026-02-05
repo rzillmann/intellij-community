@@ -16,7 +16,7 @@
 package com.intellij.xdebugger.impl.ui.tree.actions;
 
 import com.intellij.openapi.actionSystem.ActionUpdateThread;
-import com.intellij.openapi.actionSystem.remoting.ActionRemoteBehaviorSpecification;
+import com.intellij.openapi.actionSystem.AnActionEvent;
 import com.intellij.openapi.ide.CopyPasteManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.util.containers.ContainerUtil;
@@ -30,18 +30,29 @@ import java.awt.datatransfer.StringSelection;
 import java.util.List;
 
 @ApiStatus.Internal
-public abstract class XCopyValueAction extends XFetchValueActionBase {
+public abstract class XCopyValueAction extends XFetchValueSplitActionBase {
   @Override
-  protected void handle(final Project project, final String value, XDebuggerTree tree) {
-    if (tree == null) return;
-    List<? extends WatchNode> watchNodes = XWatchesTreeActionBase.getSelectedNodes(tree, WatchNode.class);
-    if (watchNodes.isEmpty()) {
-      CopyPasteManager.getInstance().setContents(new StringSelection(value));
-    }
-    else {
-      CopyPasteManager.getInstance().setContents(
-        new XWatchTransferable(value, ContainerUtil.map(watchNodes, WatchNode::getExpression)));
-    }
+  protected @NotNull ValueCollector createCollector(@NotNull AnActionEvent e) {
+    XDebuggerTree tree = XDebuggerTree.getTree(e);
+    return new ValueCollector(e.getProject()) {
+      @Override
+      public void handleInCollector(Project project, String value) {
+        if (tree == null) return;
+        List<? extends WatchNode> watchNodes = XWatchesTreeActionBase.getSelectedNodes(tree, WatchNode.class);
+        if (watchNodes.isEmpty()) {
+          handle(project, value);
+        }
+        else {
+          CopyPasteManager.getInstance().setContents(
+            new XWatchTransferable(value, ContainerUtil.map(watchNodes, WatchNode::getExpression)));
+        }
+      }
+    };
+  }
+
+  @Override
+  protected void handle(Project project, String value) {
+    CopyPasteManager.getInstance().setContents(new StringSelection(value));
   }
 
   @Override
@@ -49,6 +60,6 @@ public abstract class XCopyValueAction extends XFetchValueActionBase {
     return ActionUpdateThread.BGT;
   }
 
-  static class Simple extends XCopyValueAction implements ActionRemoteBehaviorSpecification.FrontendOtherwiseBackend {
+  static class Simple extends XCopyValueAction {
   }
 }

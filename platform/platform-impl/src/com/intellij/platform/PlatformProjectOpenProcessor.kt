@@ -2,7 +2,12 @@
 package com.intellij.platform
 
 import com.intellij.configurationStore.ProjectStorePathManager
-import com.intellij.ide.impl.*
+import com.intellij.ide.impl.OpenProjectTask
+import com.intellij.ide.impl.OpenProjectTaskBuilder
+import com.intellij.ide.impl.ProjectUtil
+import com.intellij.ide.impl.ProjectUtilCore
+import com.intellij.ide.impl.TrustedPaths
+import com.intellij.ide.impl.runUnderModalProgressIfIsEdt
 import com.intellij.ide.lightEdit.LightEditService
 import com.intellij.ide.util.PsiNavigationSupport
 import com.intellij.openapi.application.ApplicationManager
@@ -40,7 +45,7 @@ import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.annotations.ApiStatus.Internal
 import java.nio.file.Files
 import java.nio.file.Path
-import java.util.*
+import java.util.EnumSet
 import java.util.concurrent.CancellationException
 
 private val LOG = logger<PlatformProjectOpenProcessor>()
@@ -169,6 +174,7 @@ class PlatformProjectOpenProcessor : ProjectOpenProcessor(), CommandLineProjectO
       if (originalOptions.createModule && Files.isDirectory(file)) {
         val options = runUnderModalProgressIfIsEdt {
           createOptionsToOpenDotIdeaOrCreateNewIfNotExists(file, projectToClose = null).copy(
+            projectName = originalOptions.projectName,
             beforeOpen = {
               it.putUserData(PROJECT_OPENED_BY_PLATFORM_PROCESSOR, true)
               true
@@ -233,9 +239,11 @@ class PlatformProjectOpenProcessor : ProjectOpenProcessor(), CommandLineProjectO
 
       val isDirectory = Files.isDirectory(file)
       if (originalOptions.createModule && isDirectory) {
+        // todo: originalOptions should not be dropped
         return ProjectManagerEx.getInstanceEx().openProjectAsync(
           projectIdentityFile = file,
           options = createOptionsToOpenDotIdeaOrCreateNewIfNotExists(file, projectToClose = null).copy(
+            projectName = originalOptions.projectName,
             beforeOpen = {
               it.putUserData(PROJECT_OPENED_BY_PLATFORM_PROCESSOR, true)
               true

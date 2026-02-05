@@ -35,7 +35,7 @@ data class PyRunToolData(
   @param:NonNls val id: PyRunToolId,
   @param:Nls val name: String,
   @param:Nls val group: String,
-  @param:NonNls val idForStatistics: String = id.value
+  @param:NonNls val idForStatistics: String = id.value,
 )
 
 /**
@@ -69,7 +69,7 @@ interface PyRunToolProvider {
    * Represents the parameters required to configure and run a Python tool.
    * This includes the path to the executable and a list of associated arguments.
    */
-  val runToolParameters: PyRunToolParameters
+  suspend fun getRunToolParameters(): PyRunToolParameters
 
   /**
    * Represents the initial state of the tool, determining whether it is enabled or not by default.

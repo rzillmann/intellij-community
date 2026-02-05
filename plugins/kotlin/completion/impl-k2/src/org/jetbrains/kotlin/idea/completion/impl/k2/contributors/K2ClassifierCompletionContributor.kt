@@ -5,7 +5,6 @@ import com.intellij.codeInsight.lookup.LookupElement
 import com.intellij.codeInsight.lookup.LookupElementBuilder
 import com.intellij.codeInsight.lookup.LookupElementPresentation
 import com.intellij.codeInsight.lookup.SuspendingLookupElementRenderer
-import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.readAction
 import com.intellij.psi.PsiDocumentManager
 import com.intellij.psi.PsiElement
@@ -21,23 +20,46 @@ import org.jetbrains.kotlin.analysis.api.components.isSubtypeOf
 import org.jetbrains.kotlin.analysis.api.components.memberScope
 import org.jetbrains.kotlin.analysis.api.components.resolveToSymbols
 import org.jetbrains.kotlin.analysis.api.components.staticDeclaredMemberScope
-import org.jetbrains.kotlin.analysis.api.symbols.*
+import org.jetbrains.kotlin.analysis.api.symbols.KaAnonymousObjectSymbol
+import org.jetbrains.kotlin.analysis.api.symbols.KaClassKind
+import org.jetbrains.kotlin.analysis.api.symbols.KaClassLikeSymbol
+import org.jetbrains.kotlin.analysis.api.symbols.KaClassifierSymbol
+import org.jetbrains.kotlin.analysis.api.symbols.KaNamedClassSymbol
+import org.jetbrains.kotlin.analysis.api.symbols.KaSymbolModality
+import org.jetbrains.kotlin.analysis.api.symbols.KaTypeAliasSymbol
+import org.jetbrains.kotlin.analysis.api.symbols.KaTypeParameterSymbol
 import org.jetbrains.kotlin.analysis.api.types.KaClassType
 import org.jetbrains.kotlin.analysis.api.types.KaType
 import org.jetbrains.kotlin.analysis.api.types.symbol
+import org.jetbrains.kotlin.idea.base.analysis.api.utils.collectPossibleReferenceShorteningsForIde
 import org.jetbrains.kotlin.idea.completion.checkers.CompletionVisibilityChecker
 import org.jetbrains.kotlin.idea.completion.contributors.helpers.FirClassifierProvider.getAvailableClassifiers
 import org.jetbrains.kotlin.idea.completion.contributors.helpers.FirClassifierProvider.getAvailableClassifiersFromIndex
 import org.jetbrains.kotlin.idea.completion.contributors.helpers.KtSymbolWithOrigin
 import org.jetbrains.kotlin.idea.completion.contributors.helpers.getAliasNameIfExists
 import org.jetbrains.kotlin.idea.completion.contributors.helpers.staticScope
-import org.jetbrains.kotlin.idea.completion.impl.k2.*
+import org.jetbrains.kotlin.idea.completion.impl.k2.ImportStrategyDetector
+import org.jetbrains.kotlin.idea.completion.impl.k2.K2CompletionContext
+import org.jetbrains.kotlin.idea.completion.impl.k2.K2CompletionContributor
+import org.jetbrains.kotlin.idea.completion.impl.k2.K2CompletionSectionContext
+import org.jetbrains.kotlin.idea.completion.impl.k2.K2CompletionSetupScope
+import org.jetbrains.kotlin.idea.completion.impl.k2.K2ContributorSectionPriority
+import org.jetbrains.kotlin.idea.completion.impl.k2.allowsOnlyNamedArguments
+import org.jetbrains.kotlin.idea.completion.impl.k2.isAfterRangeOperator
 import org.jetbrains.kotlin.idea.completion.lookups.ImportStrategy
 import org.jetbrains.kotlin.idea.completion.lookups.factories.KotlinFirLookupElementFactory
 import org.jetbrains.kotlin.idea.completion.lookups.factories.shortenCommand
 import org.jetbrains.kotlin.idea.completion.reference
 import org.jetbrains.kotlin.idea.completion.weighers.Weighers.applyWeighs
-import org.jetbrains.kotlin.idea.util.positionContext.*
+import org.jetbrains.kotlin.idea.util.positionContext.KotlinAnnotationTypeNameReferencePositionContext
+import org.jetbrains.kotlin.idea.util.positionContext.KotlinCallableReferencePositionContext
+import org.jetbrains.kotlin.idea.util.positionContext.KotlinExpressionNameReferencePositionContext
+import org.jetbrains.kotlin.idea.util.positionContext.KotlinImportDirectivePositionContext
+import org.jetbrains.kotlin.idea.util.positionContext.KotlinNameReferencePositionContext
+import org.jetbrains.kotlin.idea.util.positionContext.KotlinPackageDirectivePositionContext
+import org.jetbrains.kotlin.idea.util.positionContext.KotlinSuperTypeCallNameReferencePositionContext
+import org.jetbrains.kotlin.idea.util.positionContext.KotlinTypeNameReferencePositionContext
+import org.jetbrains.kotlin.idea.util.positionContext.KotlinWithSubjectEntryPositionContext
 import org.jetbrains.kotlin.name.FqName
 import org.jetbrains.kotlin.name.Name
 import org.jetbrains.kotlin.psi.KtDotQualifiedExpression
@@ -181,7 +203,7 @@ internal open class K2ClassifierCompletionContributor : K2CompletionContributor<
                 }
             }
 
-        scopeClassifiers.forEach { sectionContext.addElement(it) }
+        scopeClassifiers.forEach { addElement(it) }
     }
 
     context(_: KaSession, sectionContext: K2CompletionSectionContext<KotlinNameReferencePositionContext>)
@@ -221,7 +243,7 @@ internal open class K2ClassifierCompletionContributor : K2CompletionContributor<
             emptySequence()
         }
 
-        indexClassifiers.forEach { sectionContext.addElement(it) }
+        indexClassifiers.forEach { addElement(it) }
     }
 
     context(_: KaSession, sectionContext: K2CompletionSectionContext<KotlinNameReferencePositionContext>)
@@ -243,7 +265,7 @@ internal open class K2ClassifierCompletionContributor : K2CompletionContributor<
                         positionContext = sectionContext.positionContext,
                         visibilityChecker = sectionContext.visibilityChecker,
                     ).map { it.applyWeighs(symbolWithOrigin) }
-                }.forEach { sectionContext.addElement(it) }
+                }.forEach { addElement(it) }
         } else {
             sectionContext.sink.registerChainContributor(this)
         }
@@ -283,6 +305,8 @@ internal open class K2ClassifierCompletionContributor : K2CompletionContributor<
         importingStrategy: ImportStrategy = ImportStrategy.DoNothing,
     ): Sequence<LookupElementBuilder> = sequence {
         if (classifierSymbol is KaNamedClassSymbol &&
+            classifierSymbol.classKind != KaClassKind.OBJECT &&
+            classifierSymbol.classKind != KaClassKind.ENUM_CLASS &&
             classifierSymbol.modality != KaSymbolModality.SEALED &&
             classifierSymbol.modality != KaSymbolModality.ABSTRACT &&
             expectedType != null &&
@@ -384,7 +408,7 @@ private class K2ClassifierLookupElementRenderer(
             .commitDocument(document)
 
         return analyze(file) {
-            collectPossibleReferenceShortenings(file, selection = rangeMarker.textRange)
+            collectPossibleReferenceShorteningsForIde(file, selection = rangeMarker.textRange)
         }
     }
 }

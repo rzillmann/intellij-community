@@ -24,13 +24,23 @@ import git4idea.changes.createVcsChange
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import org.jetbrains.plugins.gitlab.api.dto.GitLabUserDTO
+import org.jetbrains.plugins.gitlab.data.GitLabImageLoader
 import org.jetbrains.plugins.gitlab.mergerequest.data.GitLabMergeRequest
 import org.jetbrains.plugins.gitlab.mergerequest.data.GitLabMergeRequestNewDiscussionPosition
 import org.jetbrains.plugins.gitlab.mergerequest.data.mapToLocation
 import org.jetbrains.plugins.gitlab.mergerequest.ui.filterInFile
 import org.jetbrains.plugins.gitlab.mergerequest.ui.review.GitLabMergeRequestDiscussionsViewModels
+import org.jetbrains.plugins.gitlab.mergerequest.ui.review.mapToLocation
 import org.jetbrains.plugins.gitlab.mergerequest.util.GitLabMergeRequestDiscussionUtil
 import org.jetbrains.plugins.gitlab.mergerequest.util.toLines
 
@@ -47,10 +57,13 @@ interface GitLabMergeRequestEditorReviewFileViewModel {
   val linesWithDiscussions: StateFlow<Set<Int>>
   val linesWithNewDiscussions: StateFlow<Set<Int>>
 
+  val canNavigate: Boolean
+
   val canComment: StateFlow<Boolean>
   val newDiscussions: StateFlow<Collection<GitLabMergeRequestEditorNewDiscussionViewModel>>
 
   val avatarIconsProvider: IconsProvider<GitLabUserDTO>
+  val imageLoader: GitLabImageLoader
 
   fun lookupNextComment(line: Int, additionalIsVisible: (String) -> Boolean): String?
   fun lookupNextComment(noteTrackingId: String, additionalIsVisible: (String) -> Boolean): String?
@@ -76,6 +89,7 @@ internal class GitLabMergeRequestEditorReviewFileViewModelImpl(
   private val reviewVm: GitLabMergeRequestEditorReviewViewModel,
   discussionsViewOption: StateFlow<DiscussionsViewOption>,
   override val avatarIconsProvider: IconsProvider<GitLabUserDTO>,
+  override val imageLoader: GitLabImageLoader,
 ) : GitLabMergeRequestEditorReviewFileViewModel {
   private val cs = parentCs.childScope(javaClass.name, Dispatchers.Default)
 
@@ -108,15 +122,20 @@ internal class GitLabMergeRequestEditorReviewFileViewModelImpl(
       .transformConsecutiveSuccesses { filterInFile(change) }
       .stateInNow(cs, ComputedResult.loading())
   override val newDiscussions: StateFlow<Collection<GitLabMergeRequestEditorNewDiscussionViewModel>> =
-    reviewVm.newDiscussions
-      .filterInFile(change)
-      .stateInNow(cs, emptyList())
+    discussionsContainer.newDiscussions.map {
+      it.mapNotNull { (position, vm) ->
+        val line = position.mapToLocation(diffData)?.takeIf { it.first == Side.RIGHT }?.second ?: return@mapNotNull null
+        GitLabMergeRequestEditorNewDiscussionViewModel(vm, line, discussionsViewOption)
+      }
+    }.stateInNow(cs, emptyList())
 
   override val linesWithDiscussions: StateFlow<Set<Int>> =
     GitLabMergeRequestDiscussionUtil
       .createDiscussionsPositionsFlow(mergeRequest, discussionsViewOption).toLines {
         it.mapToLocation(diffData, Side.RIGHT)?.takeIf { it.first == Side.RIGHT }?.second
       }.stateInNow(cs, emptySet())
+
+  override val canNavigate: Boolean = diffData.isCumulative
 
   override val canComment: StateFlow<Boolean> = discussionsViewOption.mapState { it != DiscussionsViewOption.DONT_SHOW }
 
@@ -125,7 +144,7 @@ internal class GitLabMergeRequestEditorReviewFileViewModelImpl(
     discussionsContainer.newDiscussions
       .map {
         it.keys.mapNotNullTo(mutableSetOf()) {
-          it.position.mapToLocation(diffData)?.takeIf { it.first == Side.RIGHT }?.second ?: return@mapNotNullTo null
+          it.mapToLocation(diffData)?.takeIf { it.first == Side.RIGHT }?.second ?: return@mapNotNullTo null
         }
       }
       .stateInNow(cs, emptySet())

@@ -4,7 +4,11 @@ package com.intellij.ide
 import com.intellij.diagnostic.LoadingState
 import com.intellij.ide.impl.ProjectUtilCore
 import com.intellij.ide.vcs.RecentProjectsBranchesProvider
-import com.intellij.openapi.actionSystem.*
+import com.intellij.openapi.actionSystem.ActionGroup
+import com.intellij.openapi.actionSystem.ActionPlaces
+import com.intellij.openapi.actionSystem.ActionUpdateThread
+import com.intellij.openapi.actionSystem.AnAction
+import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.extensions.ExtensionPointName
@@ -23,7 +27,6 @@ import com.intellij.openapi.wm.impl.welcomeScreen.recentProjects.ProviderRecentP
 import com.intellij.openapi.wm.impl.welcomeScreen.recentProjects.RecentProjectItem
 import com.intellij.openapi.wm.impl.welcomeScreen.recentProjects.RecentProjectTreeItem
 import com.intellij.ui.UIBundle
-import com.intellij.util.concurrency.annotations.RequiresBlockingContext
 import com.intellij.util.containers.forEachLoggingErrors
 import org.jetbrains.annotations.ApiStatus.Internal
 import javax.swing.Icon
@@ -34,7 +37,6 @@ private val EP = ExtensionPointName<RecentProjectProvider>("com.intellij.recentP
 open class RecentProjectListActionProvider {
   companion object {
     @JvmStatic
-    @RequiresBlockingContext
     fun getInstance(): RecentProjectListActionProvider = service<RecentProjectListActionProvider>()
   }
 
@@ -42,6 +44,8 @@ open class RecentProjectListActionProvider {
 
   @Internal
   fun collectProjects(): List<RecentProjectTreeItem> = collectProjects(projectToFilterOut = null)
+
+  open fun recentProjectsInDocSupported() = true
 
   private fun collectProjects(projectToFilterOut: Project?): List<RecentProjectTreeItem> {
     val recentProjectManager = RecentProjectsManager.getInstance() as RecentProjectsManagerBase
@@ -241,12 +245,14 @@ open class RecentProjectListActionProvider {
     var displayName = recentProjectManager.getDisplayName(path)
     val projectName = recentProjectManager.getProjectName(path)
     val activationTimestamp = recentProjectManager.getActivationTimestamp(path)
-    var branch: String? = null
+
+    val nameIsDistinct = !duplicates.contains(ProjectNameOrPathIfNotYetComputed(projectName))
+    val branch: String? = if (isBranchNameAllowed(displayName)) {
+      getCurrentBranch(path, nameIsDistinct)
+    }
+    else null
 
     if (displayName.isNullOrBlank()) {
-      val nameIsDistinct = !duplicates.contains(ProjectNameOrPathIfNotYetComputed(projectName))
-      branch = getCurrentBranch(path, nameIsDistinct)
-
       displayName = if (nameIsDistinct) {
         projectName
       }
@@ -265,6 +271,13 @@ open class RecentProjectListActionProvider {
       branchName = branch,
       activationTimestamp = activationTimestamp,
     )
+  }
+
+  @Internal
+  protected open fun isBranchNameAllowed(displayName: String?): Boolean {
+    // by default, displayName will not be null for multi-module projects
+    // (see com.intellij.platform.ModuleAttachProcessorKt.getMultiProjectDisplayName)
+    return displayName.isNullOrBlank()
   }
 
   private fun createRecentProject(
@@ -391,7 +404,7 @@ private class ProjectGroupComparator(private val projectPaths: Set<String>) : Co
   }
 }
 
-private class RemoteRecentProjectActionGroup(val projectId: String, val project: RecentProject)
+internal class RemoteRecentProjectActionGroup(val projectId: String, val project: RecentProject)
   : ActionGroup(), DumbAware,
     ProjectToolbarWidgetPresentable by RemoteRecentProjectWidgetActionHelper(projectId, project) {
   init {
@@ -430,7 +443,7 @@ private class RemoteRecentProjectActionGroup(val projectId: String, val project:
   }
 }
 
-private class RemoteRecentProjectAction(val projectId: String, val project: RecentProject)
+internal class RemoteRecentProjectAction(val projectId: String, val project: RecentProject)
   : AnAction(), DumbAware, ProjectToolbarWidgetPresentable by RemoteRecentProjectWidgetActionHelper(projectId, project) {
   init {
     templatePresentation.setText(nameToDisplayAsText, false)

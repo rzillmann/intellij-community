@@ -6,10 +6,10 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.util.io.awaitExit
-import com.intellij.util.io.readLineAsync
 import com.jetbrains.python.TraceContext
 import com.jetbrains.python.errorProcessing.Exe
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -18,22 +18,20 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
 import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.annotations.Nls
-import java.io.BufferedReader
-import java.io.ByteArrayInputStream
-import java.io.IOException
 import java.io.InputStream
-import java.io.InputStreamReader
 import java.io.OutputStream
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.time.Clock
 import kotlin.time.Instant
 
-internal object LoggingLimits {
+@ApiStatus.Internal
+object LoggingLimits {
   /**
    * The maximum buffer size of a LoggingProcess
    */
-  const val MAX_OUTPUT_SIZE = 10_000_000
+  const val MAX_OUTPUT_SIZE = 100_000
   const val MAX_LINES = 1024
 }
 
@@ -46,6 +44,7 @@ data class LoggedProcess(
   val exe: LoggedProcessExe,
   val args: List<String>,
   val env: Map<String, String>,
+  val target: String,
   val lines: SharedFlow<LoggedProcessLine>,
   val exitInfo: MutableStateFlow<LoggedProcessExitInfo?>,
 ) {
@@ -108,15 +107,20 @@ class LoggingProcess(
   exe: Exe,
   args: List<String>,
   env: Map<String, String>,
+  target: String,
 ) : Process() {
   val loggedProcess: LoggedProcess
 
-  private val stdoutStream = LoggingInputStream(backingProcess.inputStream)
-  private val stderrStream = LoggingInputStream(backingProcess.errorStream)
+  private val linesFlow = MutableSharedFlow<LoggedProcessLine>(
+    replay = LoggingLimits.MAX_LINES,
+    onBufferOverflow = BufferOverflow.DROP_OLDEST,
+  )
+
+  private val stdoutStream = LoggingInputStream(backingProcess.inputStream, linesFlow, LoggedProcessLine.Kind.OUT)
+  private val stderrStream = LoggingInputStream(backingProcess.errorStream, linesFlow, LoggedProcessLine.Kind.ERR)
 
   init {
     val service = ApplicationManager.getApplication().service<ExecLoggerService>()
-    val linesFlow = MutableSharedFlow<LoggedProcessLine>(replay = LoggingLimits.MAX_LINES)
     val exitInfoFlow = MutableStateFlow<LoggedProcessExitInfo?>(null)
 
     loggedProcess =
@@ -136,6 +140,7 @@ class LoggingProcess(
         ),
         args,
         env,
+        target,
         linesFlow,
         exitInfoFlow,
       )
@@ -144,12 +149,6 @@ class LoggingProcess(
       service.processesInternal.emit(loggedProcess)
 
       awaitExit()
-
-      val stdoutReader = BufferedReader(InputStreamReader(ByteArrayInputStream(stdoutStream.byteArray)))
-      val stderrReader = BufferedReader(InputStreamReader(ByteArrayInputStream(stderrStream.byteArray)))
-
-      collectOutputLines(stdoutReader, linesFlow, LoggedProcessLine.Kind.OUT)
-      collectOutputLines(stderrReader, linesFlow, LoggedProcessLine.Kind.ERR)
 
       exitInfoFlow.value = LoggedProcessExitInfo(
         exitedAt = Clock.System.now(),
@@ -193,48 +192,110 @@ class LoggingProcess(
 
 private class LoggingInputStream(
   private val backingInputStream: InputStream,
+  private val linesFlow: MutableSharedFlow<LoggedProcessLine>,
+  private val kind: LoggedProcessLine.Kind,
 ) : InputStream() {
-  private val bytes = ByteStreams.newDataOutput()
-  private var tail = 0
-
-  val byteArray
-    get() = bytes.toByteArray()
+  private var closed = AtomicBoolean(false)
+  private var outputSize = 0
+  private var reachedEnd = false
+  private var currentLineBytes = ByteStreams.newDataOutput()
 
   override fun read(): Int {
-    val byte = try {
-      backingInputStream.read()
-    }
-    catch (e: IOException) {
-      // ugly hack; but the Process' `.destroy` methods abruptly close
-      // the stream, making all pending readers throw an exception.
-      // we can handle this case as legal here
-      if (e.message == "Stream closed") {
-        return -1
-      }
-
-      throw e
+    if (closed.get()) {
+      return -1
     }
 
-    if (tail < LoggingLimits.MAX_OUTPUT_SIZE && byte != -1) {
-      bytes.write(byte)
-      tail += 1
+    val byte = backingInputStream.read()
+
+    checkForStreamEnd(byte)
+
+    if (!reachedEnd) {
+      processChar(byte)
+      outputSize += 1
     }
 
     return byte
   }
-}
 
-private suspend fun collectOutputLines(
-  reader: BufferedReader,
-  linesFlow: MutableSharedFlow<LoggedProcessLine>,
-  kind: LoggedProcessLine.Kind,
-) {
-  var line: String? = null
+  /**
+   * Chunked read. The read bytes are also logged into the corresponding byte stream. If limit of [LoggingLimits.MAX_OUTPUT_SIZE] is
+   * reached, then the logged bytes are truncated.
+   */
+  override fun read(b: ByteArray, off: Int, len: Int): Int {
+    if (closed.get()) {
+      return -1
+    }
 
-  while (reader.readLineAsync()?.also { line = it } != null) {
-    linesFlow.emit(LoggedProcessLine(
-      text = line!!,
-      kind = kind,
-    ))
+    val finalLen = backingInputStream.read(b, off, len)
+
+    checkForStreamEnd(finalLen)
+
+    if (!reachedEnd) {
+      val truncatedLen = if (outputSize + finalLen > LoggingLimits.MAX_OUTPUT_SIZE) {
+        LoggingLimits.MAX_OUTPUT_SIZE - outputSize
+      }
+      else {
+        finalLen
+      }
+
+      for (index in off..<off + truncatedLen) {
+        processChar(b[index].toInt())
+      }
+      outputSize += truncatedLen
+    }
+
+    return finalLen
+  }
+
+  override fun close() {
+    closed.set(true)
+    finalizeLastLine()
+    super.close()
+  }
+
+  private fun checkForStreamEnd(char: Int) {
+    if (!reachedEnd && (outputSize >= LoggingLimits.MAX_OUTPUT_SIZE || char == -1)) {
+      reachedEnd = true
+      finalizeLastLine()
+    }
+  }
+
+  private fun processChar(char: Int) {
+    if (char == -1) {
+      return
+    }
+
+    when (char.toChar()) {
+      '\r' -> {
+        // ignore
+      }
+      '\n' -> {
+        finalizeLine(currentLineBytes.toByteArray())
+      }
+      else -> {
+        currentLineBytes.write(char)
+      }
+    }
+  }
+
+  private fun finalizeLine(bytes: ByteArray) {
+    val line = String(bytes)
+
+    linesFlow.tryEmit(
+      LoggedProcessLine(
+        line,
+        kind,
+      )
+    )
+
+    currentLineBytes = ByteStreams.newDataOutput()
+  }
+
+  private fun finalizeLastLine() {
+    val bytes = currentLineBytes.toByteArray()
+
+    if (bytes.size > 0) {
+      finalizeLine(bytes)
+    }
   }
 }

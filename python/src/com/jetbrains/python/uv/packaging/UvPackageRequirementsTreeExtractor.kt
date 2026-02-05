@@ -10,7 +10,6 @@ import com.jetbrains.python.packaging.packageRequirements.PythonPackageRequireme
 import com.jetbrains.python.packaging.packageRequirements.PythonPackageRequirementsTreeExtractor.Companion.parseTree
 import com.jetbrains.python.packaging.packageRequirements.PythonPackageRequirementsTreeExtractorProvider
 import com.jetbrains.python.sdk.uv.UvSdkAdditionalData
-import com.jetbrains.python.sdk.uv.impl.createUvCli
 import com.jetbrains.python.sdk.uv.impl.createUvLowLevel
 import com.jetbrains.python.sdk.uv.isUv
 import java.nio.file.Path
@@ -19,7 +18,10 @@ internal class UvPackageRequirementsTreeExtractor(private val uvWorkingDirectory
 
   override suspend fun extract(pkg: PythonPackage): PackageNode {
     val workingDir = uvWorkingDirectory ?: return createLeafPackageNode(pkg.name)
-    val uvInstance = createUvLowLevel(workingDir, createUvCli())
+    val uvInstance = createUvLowLevel(workingDir).getOr {
+      thisLogger().warn("cannot run uv: ${it.error}")
+      return createLeafPackageNode(pkg.name)
+    }
     val requirementsOutput = uvInstance.listPackageRequirementsTree(pkg).getOr {
       thisLogger().info("extracting requires for package $pkg.name: error. Output: \n${it.error}")
       return createLeafPackageNode(pkg.name)
@@ -33,7 +35,7 @@ internal class UvPackageRequirementsTreeExtractor(private val uvWorkingDirectory
 }
 
 
-private class UvPackageRequirementsTreeExtractorProvider : PythonPackageRequirementsTreeExtractorProvider {
+internal class UvPackageRequirementsTreeExtractorProvider : PythonPackageRequirementsTreeExtractorProvider {
   override fun createExtractor(sdk: Sdk): PythonPackageRequirementsTreeExtractor? {
     if (!sdk.isUv) return null
     val data = sdk.sdkAdditionalData as? UvSdkAdditionalData ?: return null

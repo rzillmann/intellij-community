@@ -1,7 +1,6 @@
 // Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.jetbrains.python.packaging.pip
 
-import com.intellij.execution.ExecutionException
 import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.execution.process.CapturingProcessHandler
 import com.intellij.execution.process.ProcessOutput
@@ -117,15 +116,12 @@ class PipManagementInstaller(private val sdk: Sdk, private val manager: PythonPa
     return executeCommand(commandArguments)
   }
 
-  private fun executeCommand(commandArguments: List<String>): Boolean =
-    try {
-      val processHandler = CapturingProcessHandler(GeneralCommandLine(commandArguments))
-      val output: ProcessOutput = processHandler.runProcess()
-      output.exitCode == 0
-    }
-    catch (ex: Exception) {
-      throw ExecutionException(ex.message, ex)
-    }
+  private fun executeCommand(commandArguments: List<String>): Boolean {
+    val processHandler = CapturingProcessHandler(GeneralCommandLine(commandArguments))
+    val output: ProcessOutput = processHandler.runProcess()
+    return output.exitCode == 0
+  }
+
 
   private suspend fun hasPip(): Boolean = manager.hasInstalledPackage(PIP_PACKAGE)
 

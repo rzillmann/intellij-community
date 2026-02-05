@@ -7,13 +7,15 @@ import com.intellij.util.containers.MultiMap;
 import com.intellij.xdebugger.XNamedTreeNode;
 import com.intellij.xdebugger.impl.ui.tree.nodes.RestorableStateNode;
 import com.intellij.xdebugger.impl.ui.tree.nodes.XDebuggerTreeNode;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import javax.swing.*;
+import javax.swing.JViewport;
 import javax.swing.tree.TreeNode;
 import javax.swing.tree.TreePath;
-import java.awt.*;
+import java.awt.Rectangle;
+import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
 
@@ -39,6 +41,11 @@ public final class XDebuggerTreeState {
       restorer.restore(tree.getRoot(), myRootInfo);
     }
     return restorer;
+  }
+
+  @ApiStatus.Internal
+  public @Nullable NodeInfo getRootInfo() {
+    return myRootInfo;
   }
 
   public static XDebuggerTreeState saveState(@NotNull XDebuggerTree tree) {
@@ -109,6 +116,11 @@ public final class XDebuggerTreeState {
       return myValue;
     }
 
+    @ApiStatus.Internal
+    public String getName() {
+      return myName;
+    }
+
     public @Nullable NodeInfo getChild(XNamedTreeNode node) {
       String name = node.getName();
       if (myChildren == null) {
@@ -133,6 +145,13 @@ public final class XDebuggerTreeState {
         }
       }
       return ContainerUtil.getFirstItem(infos);
+    }
+
+    @ApiStatus.Internal
+    public @Nullable Collection<NodeInfo> getChildren() {
+      var children = myChildren;
+      if (children == null) return null;
+      return children.values();
     }
   }
 }

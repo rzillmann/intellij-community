@@ -25,6 +25,7 @@ jvm_library(
     "//platform/code-style-api:codeStyle",
     "//platform/util/concurrency",
     "//platform/core-api:core",
+    "//platform/lang-api:lang",
     "//platform/editor-ui-api:editor-ui",
     "//platform/indexing-api:indexing",
     "//jps/model-api:model",
@@ -41,13 +42,20 @@ jvm_library(
     "//libraries/gson",
     "//libraries/commons/text",
     "//platform/warmup",
-    "@lib//:kotlinx-coroutines-core",
+    "//libraries/kotlinx/coroutines/core",
     "@lib//:jetbrains-annotations",
+    "//platform/backend/observation",
   ]
 )
 ### auto-generated section `build intellij.evaluationPlugin` end
 
 ### auto-generated section `build intellij.evaluationPlugin.tests` start
+jvm_library(
+  name = "evaluationPlugin-tests",
+  visibility = ["//visibility:public"],
+  srcs = glob([], allow_empty = True)
+)
+
 jvm_library(
   name = "evaluationPlugin-tests_test_lib",
   module_name = "intellij.evaluationPlugin.tests",
@@ -68,7 +76,8 @@ jvm_library(
     "//platform/testFramework:testFramework_test_lib",
     "//plugins/evaluation-plugin/languages/python",
     "@lib//:mockito-kotlin",
-  ]
+  ],
+  runtime_deps = [":evaluationPlugin-tests"]
 )
 ### auto-generated section `build intellij.evaluationPlugin.tests` end
 

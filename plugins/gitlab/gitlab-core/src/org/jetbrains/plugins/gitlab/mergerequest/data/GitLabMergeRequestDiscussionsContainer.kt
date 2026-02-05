@@ -1,23 +1,47 @@
 // Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.plugins.gitlab.mergerequest.data
 
-import com.intellij.collaboration.api.data.GraphQLRequestPagination
-import com.intellij.collaboration.async.*
+import com.intellij.collaboration.async.AddedLast
+import com.intellij.collaboration.async.AllDeleted
+import com.intellij.collaboration.async.Change
+import com.intellij.collaboration.async.childScope
+import com.intellij.collaboration.async.mapCatching
+import com.intellij.collaboration.async.mapDataToModel
+import com.intellij.collaboration.async.mapFiltered
+import com.intellij.collaboration.async.modelFlow
+import com.intellij.collaboration.async.resultOrErrorFlow
+import com.intellij.collaboration.async.throwFailure
+import com.intellij.collaboration.async.transformConsecutiveSuccesses
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.BufferOverflow
-import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
-import org.jetbrains.plugins.gitlab.api.*
-import org.jetbrains.plugins.gitlab.api.dto.GitLabDiscussionDTO
+import org.jetbrains.plugins.gitlab.api.GitLabApi
+import org.jetbrains.plugins.gitlab.api.GitLabId
+import org.jetbrains.plugins.gitlab.api.GitLabProjectCoordinates
+import org.jetbrains.plugins.gitlab.api.GitLabServerMetadata
+import org.jetbrains.plugins.gitlab.api.GitLabVersion
+import org.jetbrains.plugins.gitlab.api.dto.GitLabDiscussionRestDTO
 import org.jetbrains.plugins.gitlab.api.dto.GitLabMergeRequestDraftNoteRestDTO
-import org.jetbrains.plugins.gitlab.api.dto.GitLabNoteDTO
+import org.jetbrains.plugins.gitlab.api.dto.GitLabNoteRestDTO
 import org.jetbrains.plugins.gitlab.api.dto.GitLabUserDTO
+import org.jetbrains.plugins.gitlab.api.loadUpdatableJsonList
 import org.jetbrains.plugins.gitlab.mergerequest.api.dto.GitLabDiffPositionInput
-import org.jetbrains.plugins.gitlab.mergerequest.api.request.*
+import org.jetbrains.plugins.gitlab.mergerequest.api.request.addDiffNote
+import org.jetbrains.plugins.gitlab.mergerequest.api.request.addDraftNote
+import org.jetbrains.plugins.gitlab.mergerequest.api.request.addNote
+import org.jetbrains.plugins.gitlab.mergerequest.api.request.getMergeRequestDiscussionsUri
+import org.jetbrains.plugins.gitlab.mergerequest.api.request.getMergeRequestDraftNotesUri
+import org.jetbrains.plugins.gitlab.mergerequest.api.request.submitDraftNotes
 import org.jetbrains.plugins.gitlab.mergerequest.data.loaders.startGitLabRestETagListLoaderIn
 import org.jetbrains.plugins.gitlab.util.GitLabApiRequestName
 import org.jetbrains.plugins.gitlab.util.GitLabStatistics
@@ -67,23 +91,24 @@ class GitLabMergeRequestDiscussionsContainerImpl(
   }
   private val updateRequests = MutableSharedFlow<Unit>(replay = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
 
-  private val discussionEvents = MutableSharedFlow<Change<GitLabDiscussionDTO>>()
+  private val discussionEvents = MutableSharedFlow<Change<GitLabDiscussionRestDTO>>()
 
   private val discussionsDataHolder =
-    GraphQLListLoader.startIn(
+    startGitLabRestETagListLoaderIn(
       cs,
+      getMergeRequestDiscussionsUri(glProject, mr.iid),
       { it.id },
 
       requestReloadFlow = reloadRequests,
       requestRefreshFlow = updateRequests,
-      requestChangeFlow = discussionEvents,
-
-      shouldTryToLoadAll = true
-    ) { cursor ->
-      api.graphQL.loadMergeRequestDiscussions(glProject, mr.iid, GraphQLRequestPagination(cursor))
+      requestChangeFlow = discussionEvents
+    ) { uri, eTag ->
+      api.rest.loadUpdatableJsonList<GitLabDiscussionRestDTO>(
+        GitLabApiRequestName.REST_GET_MERGE_REQUEST_DISCUSSIONS, uri, eTag
+      )
     }
 
-  private val nonEmptyDiscussionsData: SharedFlow<Result<List<GitLabDiscussionDTO>>> =
+  private val nonEmptyDiscussionsData: SharedFlow<Result<List<GitLabDiscussionRestDTO>>> =
     discussionsDataHolder.resultOrErrorFlow
       .mapCatching { discussions -> discussions.filter { it.notes.isNotEmpty() } }
       .modelFlow(cs, LOG)
@@ -93,7 +118,7 @@ class GitLabMergeRequestDiscussionsContainerImpl(
       .transformConsecutiveSuccesses {
         mapFiltered { !it.notes.first().system }
           .mapDataToModel(
-            GitLabDiscussionDTO::id,
+            GitLabDiscussionRestDTO::id,
             { disc ->
               LoadedGitLabDiscussion(this,
                                      api, glMetadata, glProject, currentUser,
@@ -112,7 +137,7 @@ class GitLabMergeRequestDiscussionsContainerImpl(
         mapFiltered { it.notes.first().system }
           .map { discussions -> discussions.map { it.notes.first() } }
           .mapDataToModel(
-            GitLabNoteDTO::id,
+            GitLabNoteRestDTO::id,
             { note -> GitLabSystemNote(note) },
             { } //constant
           )
@@ -177,7 +202,7 @@ class GitLabMergeRequestDiscussionsContainerImpl(
   override suspend fun addNote(body: String) {
     withContext(cs.coroutineContext) {
       val newDiscussion = withContext(Dispatchers.IO) {
-        api.graphQL.addNote(mr.gid, body).getResultOrThrow()
+        api.rest.addNote(glProject, mr.iid, body).body()
       }
 
       withContext(NonCancellable) {
@@ -189,7 +214,7 @@ class GitLabMergeRequestDiscussionsContainerImpl(
   override suspend fun addNote(position: GitLabMergeRequestNewDiscussionPosition, body: String) {
     withContext(cs.coroutineContext) {
       val newDiscussion = withContext(Dispatchers.IO) {
-        api.graphQL.addDiffNote(mr.gid, GitLabDiffPositionInput.from(position), body).getResultOrThrow()
+        api.rest.addDiffNote(glProject, mr.iid, GitLabDiffPositionInput.from(position), body).body()
       }
 
       withContext(NonCancellable) {

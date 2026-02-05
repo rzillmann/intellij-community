@@ -1,7 +1,11 @@
 // Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.tools.build.bazel.jvmIncBuilder;
 
-import com.intellij.tools.build.bazel.jvmIncBuilder.impl.*;
+import com.intellij.tools.build.bazel.jvmIncBuilder.impl.CompositeZipOutputBuilder;
+import com.intellij.tools.build.bazel.jvmIncBuilder.impl.KotlinCriUtilKt;
+import com.intellij.tools.build.bazel.jvmIncBuilder.impl.Utils;
+import com.intellij.tools.build.bazel.jvmIncBuilder.impl.ZipEntryIterator;
+import com.intellij.tools.build.bazel.jvmIncBuilder.impl.ZipOutputBuilderImpl;
 import com.intellij.tools.build.bazel.jvmIncBuilder.impl.forms.FormBinding;
 import com.intellij.tools.build.bazel.jvmIncBuilder.impl.graph.PersistentMVStoreMapletFactory;
 import com.intellij.tools.build.bazel.jvmIncBuilder.instrumentation.InstrumentationClassFinder;
@@ -13,17 +17,36 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.jps.dependency.DependencyGraph;
 import org.jetbrains.jps.dependency.GraphConfiguration;
 import org.jetbrains.jps.dependency.impl.DependencyGraphImpl;
+import org.jetbrains.jps.dependency.kotlin.KotlinSubclassesIndex;
 import org.jetbrains.jps.dependency.kotlin.LookupsIndex;
 
-import java.io.*;
+import java.io.BufferedInputStream;
+import java.io.ByteArrayInputStream;
+import java.io.Closeable;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.MalformedURLException;
 import java.net.URL;
-import java.nio.file.*;
+import java.nio.file.AccessDeniedException;
+import java.nio.file.DirectoryNotEmptyException;
+import java.nio.file.FileAlreadyExistsException;
+import java.nio.file.FileVisitResult;
+import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.Path;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.BasicFileAttributes;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 import java.util.function.Function;
 
-import static org.jetbrains.jps.util.Iterators.*;
+import static org.jetbrains.jps.util.Iterators.collect;
+import static org.jetbrains.jps.util.Iterators.filter;
+import static org.jetbrains.jps.util.Iterators.flat;
+import static org.jetbrains.jps.util.Iterators.map;
 
 public class StorageManager implements CloseableExt {
   private final BuildContext myContext;
@@ -49,22 +72,33 @@ public class StorageManager implements CloseableExt {
   }
 
   public void cleanBuildState() throws IOException {
-    closeDataStorages(false);
     Path output = myContext.getOutputZip();
     Path abiOutput = myContext.getAbiOutputZip();
 
     BuildProcessLogger logger = myContext.getBuildLogger();
     if (logger.isEnabled() && !myContext.isRebuild()) {
       // need this for tests
-      Set<String> deleted = new HashSet<>();
-      Path outBackup = DataPaths.getJarBackupStoreFile(myContext, output);
-      try (var out = new ZipOutputBuilderImpl(Files.exists(outBackup)? outBackup : output)) {
-        collect(out.getEntryNames(), deleted);
+      Iterable<String> paths = null;
+      if (myOutputBuilder != null) {
+        // if output builder is open now, collect most recent data from it
+        paths = myOutputBuilder.getEntryNames();
       }
-      if (!isEmpty(deleted)) {
-        logger.logDeletedPaths(deleted);
+      else {
+        // collect paths from disk
+        Path outBackup = DataPaths.getJarBackupStoreFile(myContext, output);
+        try (var is = new BufferedInputStream(Files.newInputStream(Files.exists(outBackup)? outBackup : output))) {
+          paths = collect(map(new ZipEntryIterator(is), ze -> ze.getEntry().getName()), new ArrayList<>());
+        }
+        catch (IOException ignored) {
+          // ignore corrupted or non-existing zips
+        }
+      }
+      if (paths != null) {
+        logger.logDeletedPaths(filter(paths, n -> !n.endsWith("/") && !"__index__".equals(n)));
       }
     }
+
+    closeDataStorages(false);
 
     Utils.deleteIfExists(output);
     if (abiOutput != null) {
@@ -75,18 +109,7 @@ public class StorageManager implements CloseableExt {
   }
 
   public void cleanTrashDir() throws IOException {
-    deleteRecursively(DataPaths.getTrashDir(myContext));
-  }
-
-  public static Path cleanDir(Path dir) throws IOException {
-    if (Files.exists(dir)) {
-      try (var files = Files.list(dir)) {
-        for (Path file : files.toList()) {
-          Utils.deleteIfExists(file);
-        }
-      }
-    }
-    return dir;
+    Utils.deleteRecursively(DataPaths.getTrashDir(myContext));
   }
 
   public <K, V> Map<K, V> createOffHeapMap(String name) {
@@ -122,13 +145,21 @@ public class StorageManager implements CloseableExt {
     int maxBuilderThreads = Math.min(8, Runtime.getRuntime().availableProcessors());
     var containerFactory = new PersistentMVStoreMapletFactory(filePath, maxBuilderThreads);
 
-    if (isKotlinCriDataGenerationEnabled) {
-      return new DependencyGraphImpl(
-        containerFactory,
-        DependencyGraphImpl.IndexFactory.create(LookupsIndex::new)
-      );
-    } else {
-      return new DependencyGraphImpl(containerFactory);
+    try {
+      if (isKotlinCriDataGenerationEnabled) {
+        return new DependencyGraphImpl(
+          containerFactory,
+          DependencyGraphImpl.IndexFactory.create(LookupsIndex::new, KotlinSubclassesIndex::new)
+        );
+      }
+      else {
+        return new DependencyGraphImpl(containerFactory);
+      }
+    }
+    catch (Throwable e) {
+      // treat any unexpected exception on graph initialization as graph storage corruption
+      // the calling logic will decide on the way the error is handled
+      throw new IOException(e);
     }
   }
 
@@ -206,7 +237,7 @@ public class StorageManager implements CloseableExt {
     GraphConfiguration config = myGraphConfig;
     if (config != null) {
       myGraphConfig = null;
-      writeKotlinCriData(config.getGraph(), saveChanges);
+        writeKotlinCriData(config.getGraph(), saveChanges);
       safeClose(config.getGraph(), saveChanges);
     }
 
@@ -228,26 +259,27 @@ public class StorageManager implements CloseableExt {
   private void writeKotlinCriData(DependencyGraph graph, Boolean saveChanges) {
     if (!saveChanges || !isKotlinCriDataGenerationEnabled) return;
     Path kotlinCriPath = myContext.getKotlinCriStoragePath();
-    if (kotlinCriPath == null) return;
-    if (!Files.exists(kotlinCriPath)) {
-      try { Files.createDirectories(kotlinCriPath); }
-      catch (IOException e) { myContext.report(Message.create(null, e)); }
-    }
 
-    KotlinCriUtilKt.prepareSerializedData(graph)
-      .forEach(
-        (name, content) -> {
-          try {
-            Files.write(kotlinCriPath.resolve(name), content,
-                        StandardOpenOption.CREATE,
-                        StandardOpenOption.WRITE,
-                        StandardOpenOption.TRUNCATE_EXISTING);
-          }
-          catch (IOException e) {
-            myContext.report(Message.create(null, e));
-          }
+    boolean moved = false;
+    Path tempFile = null;
+    try {
+      tempFile = Files.createTempFile(kotlinCriPath.getParent(), kotlinCriPath.getFileName().toString(), ".tmp");
+      Files.write(tempFile, KotlinCriUtilKt.prepareSerializedData(graph));
+      Files.move(tempFile, kotlinCriPath, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+      moved = true;
+    }
+    catch (IOException e) {
+      myContext.report(Message.create(null, e));
+    }
+    finally {
+      if (!moved) {
+        try {
+          Utils.deleteIfExists(tempFile);
+        } catch (IOException e) {
+          myContext.report(Message.create(null, e));
         }
-      );
+      }
+    }
   }
 
   private void safeClose(Closeable cl, boolean saveChanges) {
@@ -388,28 +420,4 @@ public class StorageManager implements CloseableExt {
     });
   }
 
-  private static void deleteRecursively(Path dataDir) throws IOException {
-    if (Files.exists(dataDir)) {
-      Files.walkFileTree(dataDir, new SimpleFileVisitor<>() {
-        @Override
-        public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
-          Utils.deleteIfExists(file);
-          return FileVisitResult.CONTINUE;
-        }
-
-        @Override
-        public FileVisitResult postVisitDirectory(Path dir, IOException exc) throws IOException {
-          if (exc != null) {
-            throw exc;
-          }
-          try {
-            Utils.deleteIfExists(dir);
-          }
-          catch (DirectoryNotEmptyException ignore) {
-          }
-          return FileVisitResult.CONTINUE;
-        }
-      });
-    }
-  }
 }

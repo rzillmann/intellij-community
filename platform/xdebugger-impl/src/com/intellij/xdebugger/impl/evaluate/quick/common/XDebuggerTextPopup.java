@@ -1,9 +1,14 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.xdebugger.impl.evaluate.quick.common;
 
-import com.intellij.idea.ActionsBundle;
 import com.intellij.openapi.Disposable;
-import com.intellij.openapi.actionSystem.*;
+import com.intellij.openapi.actionSystem.ActionUpdateThread;
+import com.intellij.openapi.actionSystem.AnAction;
+import com.intellij.openapi.actionSystem.AnActionEvent;
+import com.intellij.openapi.actionSystem.CommonShortcuts;
+import com.intellij.openapi.actionSystem.CustomShortcutSet;
+import com.intellij.openapi.actionSystem.DefaultActionGroup;
+import com.intellij.openapi.actionSystem.Presentation;
 import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.Messages;
@@ -20,10 +25,15 @@ import com.intellij.ui.treeStructure.Tree;
 import com.intellij.util.ui.JBUI;
 import com.intellij.xdebugger.XDebuggerBundle;
 import com.intellij.xdebugger.XExpression;
-import com.intellij.xdebugger.frame.*;
+import com.intellij.xdebugger.frame.ImmediateFullValueEvaluator;
+import com.intellij.xdebugger.frame.XFullValueEvaluator;
+import com.intellij.xdebugger.frame.XValue;
+import com.intellij.xdebugger.frame.XValuePlace;
+import com.intellij.xdebugger.frame.XValueTextModificationPreparator;
 import com.intellij.xdebugger.frame.presentation.XValuePresentation;
 import com.intellij.xdebugger.impl.breakpoints.XExpressionImpl;
 import com.intellij.xdebugger.impl.frame.XValueTextModificationPreparatorProviders;
+import com.intellij.xdebugger.impl.messages.XDebuggerImplBundle;
 import com.intellij.xdebugger.impl.ui.DebuggerUIUtil;
 import com.intellij.xdebugger.impl.ui.XValueTextProvider;
 import com.intellij.xdebugger.impl.ui.tree.XDebuggerTree;
@@ -35,8 +45,13 @@ import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import javax.swing.*;
-import java.awt.*;
+import javax.swing.Icon;
+import javax.swing.KeyStroke;
+import javax.swing.SwingUtilities;
+import java.awt.Font;
+import java.awt.Point;
+import java.awt.Rectangle;
+import java.awt.Window;
 import java.awt.event.KeyEvent;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -322,7 +337,7 @@ public class XDebuggerTextPopup<D> extends XDebuggerPopupPanel {
 
   private class ShowAsObject extends AnAction {
     private ShowAsObject() {
-      super(ActionsBundle.message("action.Debugger.XDebuggerTextPopup.ShowAsObject.text"));
+      super(XDebuggerImplBundle.message("action.Debugger.XDebuggerTextPopup.ShowAsObject.text"));
     }
 
     @Override

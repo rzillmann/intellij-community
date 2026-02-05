@@ -47,7 +47,7 @@ import kotlin.reflect.jvm.kotlinFunction
  * val tools = myToolset.asTools()
  * ```
  */
-fun McpToolset.asTools(json: Json = Json): List<ReflectionCallableMcpTool> {
+fun McpToolset.asTools(json: Json = McpServerJson): List<ReflectionCallableMcpTool> {
     return this::class.asTools(json = json, thisRef = this)
 }
 
@@ -84,7 +84,7 @@ fun McpToolset.asTools(json: Json = Json): List<ReflectionCallableMcpTool> {
  * val tools = myToolset.asToolsByInterface<MyToolsetInterface>() // only interface methods will be added
  * ```
  */
-inline fun <reified T : McpToolset> T.asToolsByInterface(json: Json = Json): List<ReflectionCallableMcpTool> {
+inline fun <reified T : McpToolset> T.asToolsByInterface(json: Json = McpServerJson): List<ReflectionCallableMcpTool> {
     return T::class.asTools(json = json, thisRef = this)
 }
 
@@ -96,11 +96,11 @@ inline fun <reified T : McpToolset> T.asToolsByInterface(json: Json = Json): Lis
 
  * @see [asTool]
  */
-fun <T : McpToolset> KClass<out T>.asTools(json: Json = Json, thisRef: T? = null): List<ReflectionCallableMcpTool> {
+fun <T : McpToolset> KClass<out T>.asTools(json: Json = McpServerJson, thisRef: T? = null): List<ReflectionCallableMcpTool> {
     return this.functions.filter { m ->
         m.getPreferredToolAnnotation() != null
     }.map {
-        it.asTool(json = json, thisRef = thisRef)
+        it.asTool(json = json, thisRef = thisRef, additionalImplicitParameters = arrayOf(projectPathParameter))
     }.apply {
         require(isNotEmpty()) { "No tools found in ${this@asTools}" }
     }
@@ -157,19 +157,19 @@ fun <T : McpToolset> KClass<out T>.asTools(json: Json = Json, thisRef: T? = null
  * val tool = MyTools::my_best_tool.asTool(json = Json, thisRef = myTools)
  * ```
  */
-fun KFunction<*>.asTool(json: Json = Json, thisRef: Any? = null, name: String? = null, description: String? = null): ReflectionCallableMcpTool {
-    val toolDescriptor = this.asToolDescriptor(name = name, description = description)
-    if (instanceParameter != null && thisRef == null) error("Instance parameter is not null, but no 'this' object is provided")
+fun KFunction<*>.asTool(json: Json = McpServerJson, thisRef: Any? = null, name: String? = null, description: String? = null, vararg additionalImplicitParameters: KParameter): ReflectionCallableMcpTool {
+  val toolDescriptor = this.asToolDescriptor(name = name, description = description, *additionalImplicitParameters)
+  if (instanceParameter != null && thisRef == null) error("Instance parameter is not null, but no 'this' object is provided")
   val callableBridge = CallableBridge(callable = this, thisRef = thisRef, json = json)
   return ReflectionCallableMcpTool(descriptor = toolDescriptor, callableBridge = callableBridge)
 }
 
 
-fun KFunction<*>.asToolDescriptor(name: String? = null, description: String? = null): McpToolDescriptor {
+fun KFunction<*>.asToolDescriptor(name: String? = null, description: String? = null, vararg additionalImplicitParameters: KParameter): McpToolDescriptor {
     val toolName = name ?: this.getPreferredToolAnnotation()?.name?.ifBlank { this.name } ?: this.name
     val toolDescription = description ?: this.getPreferredToolDescriptionAnnotation()?.description?.trimMargin() ?: this.name
 
-  val parametersSchema = this.parametersSchema()
+  val parametersSchema = this.parametersSchema(*additionalImplicitParameters)
   val returnTypeSchema = this.returnTypeSchema()
   return McpToolDescriptor(
         name = toolName,

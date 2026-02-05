@@ -6,7 +6,6 @@ import com.intellij.lang.PsiBuilderFactory;
 import com.intellij.openapi.Disposable;
 import com.intellij.openapi.application.Application;
 import com.intellij.openapi.application.ApplicationManager;
-import com.intellij.openapi.application.impl.TransferredWriteActionService;
 import com.intellij.openapi.diagnostic.ControlFlowException;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.progress.ProgressIndicator;
@@ -22,20 +21,29 @@ import com.intellij.openapi.vfs.NonPhysicalFileSystem;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.openapi.vfs.VirtualFileFilter;
 import com.intellij.openapi.wm.ex.ProgressIndicatorEx;
-import com.intellij.psi.*;
+import com.intellij.psi.FileViewProvider;
+import com.intellij.psi.PsiDirectory;
+import com.intellij.psi.PsiDirectoryContainer;
+import com.intellij.psi.PsiElement;
+import com.intellij.psi.PsiFile;
+import com.intellij.psi.PsiFileSystemItem;
+import com.intellij.psi.PsiTreeChangeListener;
 import com.intellij.psi.impl.file.impl.FileManager;
 import com.intellij.psi.impl.file.impl.FileManagerEx;
 import com.intellij.psi.impl.file.impl.FileManagerImpl;
 import com.intellij.psi.util.PsiModificationTracker;
 import com.intellij.serviceContainer.NonInjectable;
-import com.intellij.util.concurrency.ThreadingAssertions;
-import com.intellij.util.concurrency.annotations.RequiresEdt;
+import com.intellij.util.concurrency.TransferredWriteActionService;
 import com.intellij.util.concurrency.annotations.RequiresReadLock;
 import com.intellij.util.concurrency.annotations.RequiresWriteLock;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.messages.Topic;
 import com.intellij.util.ui.EDT;
-import org.jetbrains.annotations.*;
+import org.jetbrains.annotations.ApiStatus;
+import org.jetbrains.annotations.NonNls;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.Arrays;
 import java.util.List;
@@ -115,7 +123,7 @@ public final class PsiManagerImpl extends PsiManagerEx implements Disposable {
       LOG.error("PsiManager#dropPsiCaches must be called in EDT or in write action");
     }
     dropResolveCaches();
-    ApplicationManager.getApplication().runWriteAction(myFileManager::firePropertyChangedForUnloadedPsi);
+    ApplicationManager.getApplication().runWriteAction(() -> myFileManager.firePropertyChangedForUnloadedPsi());
   }
 
   @Override
@@ -464,7 +472,7 @@ public final class PsiManagerImpl extends PsiManagerEx implements Disposable {
 
   @RequiresWriteLock
   @ApiStatus.Internal
-  static void runWriteActionOnEdtRegardlessOfCurrentThread(Runnable action) {
+  public static void runWriteActionOnEdtRegardlessOfCurrentThread(Runnable action) {
     if (EDT.isCurrentThreadEdt()) {
       action.run();
     }

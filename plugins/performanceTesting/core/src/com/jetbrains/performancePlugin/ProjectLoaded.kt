@@ -161,7 +161,7 @@ private fun runOnProjectInit(project: Project) {
   }
 }
 
-private class PerformancePluginInitProjectActivity : InitProjectActivity {
+internal class PerformancePluginInitProjectActivity : InitProjectActivity {
   override val isParallelExecution: Boolean
     get() = true
 
@@ -199,7 +199,7 @@ private fun runScriptDuringIndexing(project: Project, alarm: Alarm) {
         for (indicator in indicators) {
           val indicatorText = indicator.text
           @Suppress("HardCodedStringLiteral")
-          if (indicatorText != null && indicatorText.contains("Indexing")) {
+          if (indicatorText != null && indicatorText.contains("Analyzing")) {
             indexingInProgress = true
             break
           }

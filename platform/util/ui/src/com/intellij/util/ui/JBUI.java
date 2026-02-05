@@ -5,7 +5,12 @@ import com.intellij.icons.AllIcons;
 import com.intellij.openapi.util.SystemInfo;
 import com.intellij.openapi.util.SystemInfoRt;
 import com.intellij.openapi.util.registry.Registry;
-import com.intellij.ui.*;
+import com.intellij.ui.ColorUtil;
+import com.intellij.ui.Gray;
+import com.intellij.ui.JBColor;
+import com.intellij.ui.JreHiDpiUtil;
+import com.intellij.ui.LightColors;
+import com.intellij.ui.NewUiValue;
 import com.intellij.ui.border.CustomLineBorder;
 import com.intellij.ui.border.NamedBorderKt;
 import com.intellij.ui.scale.DerivedScaleType;
@@ -16,13 +21,19 @@ import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import javax.swing.*;
+import javax.swing.Icon;
+import javax.swing.UIManager;
 import javax.swing.border.Border;
 import javax.swing.border.CompoundBorder;
 import javax.swing.border.EmptyBorder;
 import javax.swing.plaf.BorderUIResource;
 import javax.swing.plaf.UIResource;
-import java.awt.*;
+import java.awt.Color;
+import java.awt.Component;
+import java.awt.Dimension;
+import java.awt.Font;
+import java.awt.GraphicsConfiguration;
+import java.awt.Insets;
 import java.awt.font.TextAttribute;
 import java.util.HashMap;
 import java.util.Map;
@@ -521,7 +532,7 @@ public final class JBUI {
 
     public static final class CustomFrameDecorations {
       public static @NotNull Color separatorForeground() {
-        return JBColor.namedColor("Separator.separatorColor", new JBColor(0xcdcdcd, 0x515151));
+        return Separator.color();
       }
 
       public static @NotNull Color titlePaneButtonHoverBackground() {
@@ -972,6 +983,10 @@ public final class JBUI {
         return Widget.HOVER_BACKGROUND;
       }
 
+      public static @NotNull Insets hoverInsets() {
+        return insets("StatusBar.Widget.hoverInsets", insets(3, 4, 1, 4));
+      }
+
       public static @NotNull Font font() {
         return getFontWithSizeOffset(fontSizeOffsetKey(), defaultFont());
       }
@@ -1119,8 +1134,6 @@ public final class JBUI {
       }
 
       public interface DragAndDrop {
-        Color STRIPE_BACKGROUND = JBColor.namedColor("ToolWindow.Button.DragAndDrop.stripeBackground",
-                                                     CurrentTheme.DragAndDrop.Area.BACKGROUND);
         Color BUTTON_DROP_BACKGROUND = JBColor.namedColor("ToolWindow.Button.DragAndDrop.buttonDropBackground",
                                                           CurrentTheme.DragAndDrop.Area.BACKGROUND);
         Color BUTTON_FLOATING_BACKGROUND = JBColor.namedColor("ToolWindow.Button.DragAndDrop.buttonFloatingBackground",
@@ -1331,6 +1344,18 @@ public final class JBUI {
 
       private static @NotNull JBInsets defaultStripeToolbarButtonIconPadding() {
         return insets(5);
+      }
+
+      public static int stripeToolbarTextOffset(boolean left) {
+        return getInt(stripeToolbarTextOffsetKey(left), 0);
+      }
+
+      private static @NotNull String stripeToolbarTextOffsetKey(boolean left) {
+        return "StripeToolbar.Button." + (left ? "left" : "right") + "StripeTextOffset";
+      }
+
+      public static @NotNull JBValue stripeButtonArc(boolean compact) {
+        return new JBValue.UIInteger("Button.ToolWindow.arc", compact ? 8 : 12);
       }
     }
 
@@ -1611,7 +1636,7 @@ public final class JBUI {
         public static final JBValue ARC = new JBValue.UIInteger("Popup.Selection.arc", 8);
         public static final JBValue LEFT_RIGHT_INSET = new JBValue.UIInteger("Popup.Selection.leftRightInset", 8);
 
-        public static @NotNull Insets innerInsets() {
+        public static @NotNull JBInsets innerInsets() {
           JBInsets result = insets("Popup.Selection.innerInsets", insets(0, 8));
           // Top and bottom values are ignored now
           result.top = 0;
@@ -1648,6 +1673,13 @@ public final class JBUI {
         }
 
         public static final JBValue ARC = new JBValue.UIInteger("PopupMenu.Selection.arc", 8);
+      }
+    }
+
+    public static final class Separator {
+      private Separator() { }
+      public static @NotNull Color color() {
+        return JBColor.namedColor("Separator.separatorColor", new JBColor(0xcdcdcd, 0x515151));
       }
     }
 
@@ -1747,6 +1779,15 @@ public final class JBUI {
 
       public static final @NotNull Color LIST_SETTINGS_BACKGROUND =
         JBColor.namedColor("SearchEverywhere.List.settingsBackground", LightColors.SLIGHTLY_GRAY);
+
+      @ApiStatus.Internal
+      public static @NotNull Color getListSettingsBackground() {
+        // For custom UI themes we need to keep the old behavior
+        if (StartupUiUtil.isUnderDarcula() && UIManager.get("SearchEverywhere.List.settingsBackground") == null) {
+          return ColorUtil.brighter(UIUtil.getListBackground(), 1);
+        }
+        return LIST_SETTINGS_BACKGROUND;
+      }
 
       public static @NotNull Color listTitleLabelForeground() {
         return JBColor.namedColor("SearchEverywhere.List.separatorForeground", UIUtil.getLabelDisabledForeground());
@@ -2562,6 +2603,14 @@ public final class JBUI {
 
       public static @NotNull String buttonPreferredSizeKey() {
         return "TitlePane.Button.preferredSize";
+      }
+
+      public static int dialogButtonPreferredWidth() {
+        return getInt("TitlePane.Dialog.Button.preferredWidth", 40);
+      }
+
+      public static @NotNull Insets dialogButtonInsets() {
+        return insets("TitlePane.Dialog.Button.insets", JBInsets.emptyInsets());
       }
     }
 

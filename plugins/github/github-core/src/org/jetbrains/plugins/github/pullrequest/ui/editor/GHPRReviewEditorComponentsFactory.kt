@@ -20,7 +20,11 @@ import com.intellij.collaboration.ui.codereview.timeline.comment.CommentTextFiel
 import com.intellij.collaboration.ui.codereview.timeline.thread.CodeReviewResolvableItemViewModel
 import com.intellij.collaboration.ui.codereview.timeline.thread.CodeReviewTrackableItemViewModel
 import com.intellij.collaboration.ui.codereview.timeline.thread.TimelineThreadCommentsPanel
-import com.intellij.collaboration.ui.util.*
+import com.intellij.collaboration.ui.util.bindChildIn
+import com.intellij.collaboration.ui.util.bindEnabledIn
+import com.intellij.collaboration.ui.util.bindTextIn
+import com.intellij.collaboration.ui.util.bindVisibilityIn
+import com.intellij.collaboration.ui.util.swingAction
 import com.intellij.openapi.actionSystem.UiDataProvider
 import com.intellij.openapi.options.advanced.AdvancedSettings
 import com.intellij.openapi.ui.MessageDialogBuilder
@@ -30,7 +34,6 @@ import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.launchOnShow
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.map
 import org.jetbrains.plugins.github.i18n.GithubBundle
 import org.jetbrains.plugins.github.pullrequest.ui.comment.GHPRCompactReviewThreadViewModel
@@ -78,14 +81,13 @@ internal object GHPRReviewEditorComponentsFactory {
           }
         }
       }
-
-      isFocusable = true
-
-      launchOnShow("focusRequests") {
-        vm.focusRequests.collectLatest { requestFocus(false) }
-      }
     }.let {
-      CodeReviewCommentUIUtil.createEditorInlayPanel(it)
+      CodeReviewCommentUIUtil.createEditorInlayPanel(it).apply {
+        isFocusable = true
+        launchOnShow("focusRequests") {
+          vm.focusRequests.collect { requestFocus(false) }
+        }
+      }
     }, UiDataProvider { sink ->
       sink[CodeReviewTrackableItemViewModel.TRACKABLE_ITEM_KEY] = vm
     }).apply {

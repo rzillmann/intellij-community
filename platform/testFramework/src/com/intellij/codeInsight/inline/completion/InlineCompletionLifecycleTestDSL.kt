@@ -10,7 +10,12 @@ import com.intellij.codeInsight.inline.completion.session.InlineCompletionSessio
 import com.intellij.codeInsight.lookup.impl.LookupImpl
 import com.intellij.ide.IdeEventQueue
 import com.intellij.openapi.actionSystem.IdeActions
-import com.intellij.openapi.application.*
+import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.EDT
+import com.intellij.openapi.application.WriteIntentReadAction
+import com.intellij.openapi.application.edtWriteAction
+import com.intellij.openapi.application.readAction
+import com.intellij.openapi.application.writeIntentReadAction
 import com.intellij.openapi.editor.impl.EditorImpl
 import com.intellij.openapi.fileTypes.FileType
 import com.intellij.openapi.progress.coroutineToIndicator
@@ -321,24 +326,34 @@ class InlineCompletionLifecycleTestDSL(val fixture: CodeInsightTestFixture) {
   inner class Caret {
 
     @ICUtil
-    suspend fun moveUp() {
-      callAction("EditorUp")
+    suspend fun moveUp(times: Int = 1) {
+      repeat(times) {
+        callAction("EditorUp")
+      }
+    }
+
+
+    @ICUtil
+    suspend fun moveDown(times: Int = 1) {
+      repeat(times) {
+        callAction("EditorDown")
+      }
     }
 
     @ICUtil
-    suspend fun moveDown() {
-      callAction("EditorDown")
+    suspend fun moveRight(times: Int = 1) {
+      repeat(times) {
+        callAction("EditorRight")
+      }
     }
 
     @ICUtil
-    suspend fun moveRight() {
-      callAction("EditorRight")
+    suspend fun moveLeft(times: Int = 1) {
+      repeat(times) {
+        callAction("EditorLeft")
+      }
     }
 
-    @ICUtil
-    suspend fun moveLeft() {
-      callAction("EditorLeft")
-    }
   }
 
   @ICUtil

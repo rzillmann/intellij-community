@@ -18,7 +18,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.plugins.gitlab.GitLabProjectsManager
-import org.jetbrains.plugins.gitlab.api.*
+import org.jetbrains.plugins.gitlab.api.GitLabApi
+import org.jetbrains.plugins.gitlab.api.GitLabApiManager
+import org.jetbrains.plugins.gitlab.api.GitLabEdition
+import org.jetbrains.plugins.gitlab.api.GitLabGQLQuery
+import org.jetbrains.plugins.gitlab.api.GitLabServerMetadata
+import org.jetbrains.plugins.gitlab.api.GitLabServerPath
+import org.jetbrains.plugins.gitlab.api.GitLabVersion
 import org.jetbrains.plugins.gitlab.api.request.isProjectForked
 import org.jetbrains.plugins.gitlab.authentication.accounts.GitLabAccount
 import org.jetbrains.plugins.gitlab.authentication.accounts.GitLabAccountManager
@@ -102,7 +108,7 @@ object GitLabStatistics {
   //endregion
 
   //region Counters
-  private val COUNTERS_GROUP = EventLogGroup("vcs.gitlab.counters", version = 25)
+  private val COUNTERS_GROUP = EventLogGroup("vcs.gitlab.counters", version = 29)
 
   /**
    * Server metadata was fetched
@@ -289,6 +295,22 @@ object GitLabStatistics {
   fun logMrCreationBranchesChanged(project: Project): Unit = MR_CREATION_BRANCHES_CHANGED_EVENT.log(project)
 
   /**
+   * A file was uploaded via Markdown uploads API
+   */
+  private val PROJECT_FILE_UPLOAD = COUNTERS_GROUP.registerEvent("project.markdown.file.uploaded",
+                                                                 "Triggered when a file was uploaded to the project to be used in Markdown text"
+  )
+
+  fun logFileUploadActionExecuted(project: Project): Unit = PROJECT_FILE_UPLOAD.log(project)
+
+  private val DISCUSSIONS_TOGGLED = COUNTERS_GROUP.registerEvent("comments.toggled",
+                                                                 "The user toggled visibility of discussions on given line in code review")
+
+  fun logToggledComments(project: Project) {
+    DISCUSSIONS_TOGGLED.log(project)
+  }
+
+  /**
    * GitLab tool window tab <type> was opened from <place>
    */
   private val TW_TAB_OPENED_EVENT = COUNTERS_GROUP.registerEvent(
@@ -349,6 +371,16 @@ enum class GitLabApiRequestName {
   REST_GET_MERGE_REQUEST_STATE_EVENTS,
   REST_GET_MERGE_REQUEST_LABEL_EVENTS,
   REST_GET_MERGE_REQUEST_MILESTONE_EVENTS,
+  REST_GET_MERGE_REQUEST_DISCUSSIONS,
+  REST_CREATE_MERGE_REQUEST_DISCUSSION_NOTE,
+  REST_UPDATE_MERGE_REQUEST_DISCUSSION_NOTE,
+  REST_DELETE_MERGE_REQUEST_DISCUSSION_NOTE,
+  REST_UPDATE_MERGE_REQUEST_DISCUSSION,
+  REST_CREATE_MERGE_REQUEST_DIFF_NOTE,
+  REST_CREATE_MERGE_REQUEST_NOTE,
+  REST_GET_NOTE_AWARD_EMOJI,
+  REST_CREATE_NOTE_AWARD_EMOJI,
+  REST_DELETE_NOTE_AWARD_EMOJI,
 
   GQL_GET_METADATA,
   GQL_GET_CURRENT_USER,
@@ -356,7 +388,6 @@ enum class GitLabApiRequestName {
   GQL_FIND_MERGE_REQUEST,
   GQL_GET_MERGE_REQUEST_METRICS,
   GQL_GET_MERGE_REQUEST_COMMITS,
-  GQL_GET_MERGE_REQUEST_DISCUSSIONS,
   GQL_GET_PROJECT,
   GQL_GET_PROJECT_LABELS,
   GQL_GET_PROJECT_WORK_ITEMS,
@@ -365,15 +396,8 @@ enum class GitLabApiRequestName {
   GQL_GET_MEMBER_PROJECTS_FOR_SNIPPETS,
   GQL_GET_MEMBER_NAMESPACES,
   GQL_GET_MEMBER_NAMESPACES_OLD,
-  GQL_TOGGLE_MERGE_REQUEST_DISCUSSION_RESOLVE,
-  GQL_AWARD_EMOJI_TOGGLE,
-  GQL_CREATE_NOTE,
-  GQL_CREATE_DIFF_NOTE,
-  GQL_CREATE_REPLY_NOTE,
   GQL_CREATE_SNIPPET,
-  GQL_UPDATE_NOTE,
   GQL_UPDATE_SNIPPET_BLOB,
-  GQL_DESTROY_NOTE,
   GQL_MERGE_REQUEST_ACCEPT,
   GQL_MERGE_REQUEST_CREATE,
   GQL_MERGE_REQUEST_SET_DRAFT,
@@ -389,7 +413,6 @@ enum class GitLabApiRequestName {
       GitLabGQLQuery.FIND_MERGE_REQUESTS -> GQL_FIND_MERGE_REQUEST
       GitLabGQLQuery.GET_MERGE_REQUEST_METRICS -> GQL_GET_MERGE_REQUEST_METRICS
       GitLabGQLQuery.GET_MERGE_REQUEST_COMMITS -> GQL_GET_MERGE_REQUEST_COMMITS
-      GitLabGQLQuery.GET_MERGE_REQUEST_DISCUSSIONS -> GQL_GET_MERGE_REQUEST_DISCUSSIONS
       GitLabGQLQuery.GET_PROJECT -> GQL_GET_PROJECT
       GitLabGQLQuery.GET_PROJECT_LABELS -> GQL_GET_PROJECT_LABELS
       GitLabGQLQuery.GET_PROJECT_WORK_ITEMS -> GQL_GET_PROJECT_WORK_ITEMS
@@ -398,15 +421,8 @@ enum class GitLabApiRequestName {
       GitLabGQLQuery.GET_MEMBER_PROJECTS_FOR_SNIPPETS -> GQL_GET_MEMBER_PROJECTS_FOR_SNIPPETS
       GitLabGQLQuery.GET_MEMBER_NAMESPACES -> GQL_GET_MEMBER_NAMESPACES
       GitLabGQLQuery.GET_MEMBER_NAMESPACES_OLD -> GQL_GET_MEMBER_NAMESPACES_OLD
-      GitLabGQLQuery.TOGGLE_MERGE_REQUEST_DISCUSSION_RESOLVE -> GQL_TOGGLE_MERGE_REQUEST_DISCUSSION_RESOLVE
-      GitLabGQLQuery.AWARD_EMOJI_TOGGLE -> GQL_AWARD_EMOJI_TOGGLE
-      GitLabGQLQuery.CREATE_NOTE -> GQL_CREATE_NOTE
-      GitLabGQLQuery.CREATE_DIFF_NOTE -> GQL_CREATE_DIFF_NOTE
-      GitLabGQLQuery.CREATE_REPLY_NOTE -> GQL_CREATE_REPLY_NOTE
       GitLabGQLQuery.CREATE_SNIPPET -> GQL_CREATE_SNIPPET
-      GitLabGQLQuery.UPDATE_NOTE -> GQL_UPDATE_NOTE
       GitLabGQLQuery.UPDATE_SNIPPET_BLOB -> GQL_UPDATE_SNIPPET_BLOB
-      GitLabGQLQuery.DESTROY_NOTE -> GQL_DESTROY_NOTE
       GitLabGQLQuery.MERGE_REQUEST_ACCEPT -> GQL_MERGE_REQUEST_ACCEPT
       GitLabGQLQuery.MERGE_REQUEST_CREATE -> GQL_MERGE_REQUEST_CREATE
       GitLabGQLQuery.MERGE_REQUEST_SET_DRAFT -> GQL_MERGE_REQUEST_SET_DRAFT

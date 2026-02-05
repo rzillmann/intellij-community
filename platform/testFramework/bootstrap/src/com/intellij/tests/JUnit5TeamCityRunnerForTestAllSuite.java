@@ -8,14 +8,24 @@ import junit.framework.JUnit4TestAdapter;
 import junit.framework.JUnit4TestAdapterCache;
 import junit.framework.TestResult;
 import junit.framework.TestSuite;
-import org.junit.platform.engine.*;
+import org.junit.platform.engine.DiscoverySelector;
+import org.junit.platform.engine.Filter;
+import org.junit.platform.engine.FilterResult;
+import org.junit.platform.engine.TestDescriptor;
+import org.junit.platform.engine.TestExecutionResult;
+import org.junit.platform.engine.TestSource;
 import org.junit.platform.engine.discovery.ClassNameFilter;
 import org.junit.platform.engine.discovery.DiscoverySelectors;
 import org.junit.platform.engine.reporting.ReportEntry;
 import org.junit.platform.engine.support.descriptor.ClassSource;
 import org.junit.platform.engine.support.descriptor.EngineDescriptor;
 import org.junit.platform.engine.support.descriptor.MethodSource;
-import org.junit.platform.launcher.*;
+import org.junit.platform.launcher.Launcher;
+import org.junit.platform.launcher.LauncherDiscoveryRequest;
+import org.junit.platform.launcher.PostDiscoveryFilter;
+import org.junit.platform.launcher.TestExecutionListener;
+import org.junit.platform.launcher.TestIdentifier;
+import org.junit.platform.launcher.TestPlan;
 import org.junit.platform.launcher.core.LauncherConfig;
 import org.junit.platform.launcher.core.LauncherDiscoveryRequestBuilder;
 import org.junit.platform.launcher.core.LauncherFactory;
@@ -32,7 +42,14 @@ import java.io.StringWriter;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 
 import static com.intellij.tests.JUnit5TeamCityRunnerForTestsOnClasspath.assertNoUnhandledExceptions;
 
@@ -44,9 +61,12 @@ public final class JUnit5TeamCityRunnerForTestAllSuite {
       System.err.printf("Expected one or two arguments, got %d: %s%n", args.length, Arrays.toString(args));
       System.exit(1);
     }
+
+    TCExecutionListener listener = null;
+    Throwable caughtException = null;
+
     try {
       Launcher launcher = LauncherFactory.create(LauncherConfig.builder().enableLauncherSessionListenerAutoRegistration(true).build());
-      ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
       List<? extends DiscoverySelector> selectors;
       List<Filter<?>> filters = new ArrayList<>(0);
       if (args.length == 1) {
@@ -66,68 +86,41 @@ public final class JUnit5TeamCityRunnerForTestAllSuite {
       }
       if (Boolean.getBoolean("idea.performance.tests.discovery.filter")) {
         // Add filter
-        filters.add(createPerformancePostDiscoveryFilter(classLoader));
+        filters.add(new PerformancePostDiscoveryFilter());
       }
       LauncherDiscoveryRequest discoveryRequest = LauncherDiscoveryRequestBuilder.request()
         .selectors(selectors)
         .filters(filters.toArray(new Filter[0]))
         .build();
-      TCExecutionListener listener = new TCExecutionListener();
+      listener = new TCExecutionListener();
       TestPlan testPlan = launcher.discover(discoveryRequest);
       launcher.execute(testPlan, listener);
-      if (!listener.smthExecuted()) {
-        //see org.jetbrains.intellij.build.impl.TestingTasksImpl.NO_TESTS_ERROR
-        System.exit(42);
-      }
     }
     catch (Throwable e) {
-      assertNoUnhandledExceptions("JUnit5TeamCityRunnerForTestAllSuite", e);
-      System.exit(1);
+      caughtException = e;
     }
     finally {
-      assertNoUnhandledExceptions("JUnit5TeamCityRunnerForTestAllSuite",null);
-      System.exit(0);
+      assertNoUnhandledExceptions("JUnit5TeamCityRunnerForTestAllSuite", caughtException);
     }
+
+    // Determine exit code OUTSIDE of try/catch/finally to avoid finally overriding the exit code
+    int exitCode;
+    if (caughtException != null) {
+      exitCode = 1;
+    }
+    else if (!listener.smthExecuted()) {
+      // see org.jetbrains.intellij.build.impl.TestingTasksImpl.NO_TESTS_ERROR
+      exitCode = 42;
+    }
+    else if (listener.hasFailures()) {
+      exitCode = 1;
+    }
+    else {
+      exitCode = 0;
+    }
+
+    System.exit(exitCode);
   }
-
-  private static PostDiscoveryFilter createPerformancePostDiscoveryFilter(ClassLoader classLoader)
-    throws NoSuchMethodException, ClassNotFoundException, IllegalAccessException {
-    final MethodHandle method = MethodHandles.publicLookup()
-      .findStatic(Class.forName("com.intellij.testFramework.TestFrameworkUtil", true, classLoader),
-                  "isPerformanceTest", MethodType.methodType(boolean.class, String.class, String.class));
-    return new PostDiscoveryFilter() {
-      private FilterResult isIncluded(String className, String methodName) {
-        try {
-          if ((boolean)method.invokeExact(methodName, className)) {
-            return FilterResult.included(null);
-          }
-          return FilterResult.excluded(null);
-        }
-        catch (Throwable e) {
-          return FilterResult.excluded(e.getMessage());
-        }
-      }
-
-      @Override
-      public FilterResult apply(TestDescriptor descriptor) {
-        if (descriptor instanceof EngineDescriptor) {
-          return FilterResult.included(null);
-        }
-        TestSource source = descriptor.getSource().orElse(null);
-        if (source == null) {
-          return FilterResult.included("No source for descriptor");
-        }
-        if (source instanceof MethodSource methodSource) {
-          return isIncluded(methodSource.getClassName(), methodSource.getMethodName());
-        }
-        if (source instanceof ClassSource classSource) {
-          return isIncluded(classSource.getClassName(), null);
-        }
-        return FilterResult.included("Unknown source type " + source.getClass());
-      }
-    };
-  }
-
 
   public static JUnit4TestAdapterCache createJUnit4TestAdapterCache() {
     return new JUnit4TestAdapterCache() {
@@ -174,6 +167,7 @@ public final class JUnit5TeamCityRunnerForTestAllSuite {
     private TestPlan myTestPlan;
     private long myCurrentTestStart = 0;
     private int myFinishCount = 0;
+    private boolean myHasFailures = false;
     private static final int MAX_STACKTRACE_MESSAGE_LENGTH =
       Integer.getInteger("intellij.build.test.stacktrace.max.length", 100 * 1024);
 
@@ -200,6 +194,10 @@ public final class JUnit5TeamCityRunnerForTestAllSuite {
 
     public boolean smthExecuted() {
       return myCurrentTestStart != 0;
+    }
+
+    public boolean hasFailures() {
+      return myHasFailures;
     }
 
     @Override
@@ -253,6 +251,11 @@ public final class JUnit5TeamCityRunnerForTestAllSuite {
                                    TestExecutionResult.Status status,
                                    Throwable throwableOptional,
                                    String reason) {
+      // Track failures for exit code determination
+      if (status == TestExecutionResult.Status.FAILED) {
+        myHasFailures = true;
+      }
+
       if (testIdentifier.isTest()) {
         final long duration = getDuration();
         if (status == TestExecutionResult.Status.FAILED) {
@@ -261,6 +264,9 @@ public final class JUnit5TeamCityRunnerForTestAllSuite {
         else if (status == TestExecutionResult.Status.ABORTED) {
           testFailure(testIdentifier, ServiceMessageTypes.TEST_IGNORED, throwableOptional, duration, reason);
         }
+
+        TestLocationStorage.recordTestLocation(testIdentifier, status, getFullTestPath(testIdentifier));
+
         testFinished(testIdentifier, duration);
         myFinishCount++;
       }
@@ -439,6 +445,41 @@ public final class JUnit5TeamCityRunnerForTestAllSuite {
              "' parentNodeId='" + escapeName(parentId) + "'";
     }
 
+    /**
+     * Required for TC to match parametrized and factory tests when we attach metadata after the run
+     */
+    private String getFullTestPath(TestIdentifier testIdentifier) {
+      List<String> names = new ArrayList<>();
+      Optional<TestIdentifier> parent = myTestPlan.getParent(testIdentifier);
+      boolean isImmediateParent = true;
+
+      while (parent.isPresent()) {
+        TestIdentifier p = parent.get();
+        if (hasNonTrivialParent(p)) {
+          // Skip class-level parent only if it's the immediate parent of a method test
+          // (getName already includes the class name)
+          boolean skipClassParent = isImmediateParent
+                                    && p.getSource().orElse(null) instanceof ClassSource cs
+                                    && testIdentifier.getSource().orElse(null) instanceof MethodSource ms
+                                    && cs.getClassName().equals(ms.getClassName());
+
+          if (!skipClassParent) {
+            names.add(p.getSource().map(s -> switch (s) {
+              case ClassSource source -> source.getClassName();
+              case MethodSource ms -> ms.getClassName() + "." + p.getDisplayName();
+              default -> p.getDisplayName();
+            }).orElse(p.getDisplayName()));
+          }
+        }
+        parent = myTestPlan.getParent(p);
+        isImmediateParent = false;
+      }
+
+      Collections.reverse(names);
+      names.add(getName(testIdentifier));
+      return String.join(": ", names);
+    }
+
     private String getParentId(TestIdentifier testIdentifier) {
       Optional<TestIdentifier> parent = myTestPlan.getParent(testIdentifier);
 
@@ -529,6 +570,61 @@ public final class JUnit5TeamCityRunnerForTestAllSuite {
       public void close() {
         finish();
         super.close();
+      }
+    }
+  }
+
+  public static class PerformancePostDiscoveryFilter implements PostDiscoveryFilter {
+    private static final boolean isIncludingPerformanceTestsRun;
+    private static final boolean isPerformanceTestsRun;
+    private static final MethodHandle isPerformanceTest;
+    static {
+      try {
+        ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
+        isIncludingPerformanceTestsRun = (boolean)MethodHandles.publicLookup()
+          .findStatic(Class.forName("com.intellij.TestCaseLoader", true, classLoader),
+                      "isIncludingPerformanceTestsRun", MethodType.methodType(boolean.class))
+          .invokeExact();
+        isPerformanceTestsRun = (boolean)MethodHandles.publicLookup()
+          .findStatic(Class.forName("com.intellij.TestCaseLoader", true, classLoader),
+                      "isPerformanceTestsRun", MethodType.methodType(boolean.class))
+          .invokeExact();
+        isPerformanceTest = MethodHandles.publicLookup()
+          .findStatic(Class.forName("com.intellij.testFramework.TestFrameworkUtil", true, classLoader),
+                      "isPerformanceTest", MethodType.methodType(boolean.class, String.class, Class.class));
+      }
+      catch (Throwable e) {
+        throw new RuntimeException(e);
+      }
+    }
+
+    @Override
+    public FilterResult apply(TestDescriptor descriptor) {
+      if (descriptor instanceof EngineDescriptor) {
+        return FilterResult.included(null);
+      }
+      TestSource source = descriptor.getSource().orElse(null);
+      if (source == null) {
+        return FilterResult.included("No source for descriptor");
+      }
+      if (source instanceof MethodSource methodSource) {
+        return isIncluded(methodSource.getJavaClass(), methodSource.getMethodName());
+      }
+      if (source instanceof ClassSource classSource) {
+        return isIncluded(classSource.getJavaClass(), null);
+      }
+      return FilterResult.included("Unknown source type " + source.getClass());
+    }
+
+    private static FilterResult isIncluded(Class<?> aClass, String methodName) {
+      try {
+        if (isIncludingPerformanceTestsRun || isPerformanceTestsRun == (boolean)isPerformanceTest.invokeExact(methodName, aClass)) {
+          return FilterResult.included(null);
+        }
+        return FilterResult.excluded(null);
+      }
+      catch (Throwable e) {
+        return FilterResult.excluded(e.getMessage());
       }
     }
   }

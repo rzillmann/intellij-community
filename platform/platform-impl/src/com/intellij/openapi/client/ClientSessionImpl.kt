@@ -28,7 +28,12 @@ import com.intellij.serviceContainer.findConstructorOrNull
 import com.intellij.util.SystemProperties
 import com.intellij.util.messages.MessageBus
 import kotlinx.collections.immutable.persistentListOf
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineExceptionHandler
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.Runnable
+import kotlinx.coroutines.plus
 import org.jetbrains.annotations.ApiStatus
 import java.lang.invoke.MethodHandles
 import java.lang.invoke.MethodType
@@ -82,12 +87,6 @@ abstract class ClientSessionImpl(
                          onlyIfAwait = false,
                          asyncScope = getCoroutineScope())
     assert(containerState.compareAndSet(ContainerState.PRE_INIT, ContainerState.COMPONENT_CREATED))
-  }
-
-  final override suspend fun preloadService(service: ServiceDescriptor, serviceInterface: String) {
-    return withContext(clientId.asContextElement()) {
-      super.preloadService(service, serviceInterface)
-    }
   }
 
   final override fun isServiceSuitable(descriptor: ServiceDescriptor): Boolean {

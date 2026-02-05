@@ -8,6 +8,7 @@ import com.intellij.mcpserver.clients.configs.STDIOServerConfig
 import com.intellij.mcpserver.clients.configs.ServerConfig
 import com.intellij.mcpserver.createStdioMcpServerCommandLine
 import com.intellij.mcpserver.impl.McpServerService
+import com.intellij.mcpserver.impl.util.network.McpServerConnectionAddressProvider
 import com.intellij.mcpserver.stdio.IJ_MCP_SERVER_PORT
 import com.intellij.mcpserver.stdio.main
 import com.intellij.openapi.application.ApplicationNamesInfo
@@ -15,14 +16,24 @@ import com.intellij.openapi.util.NlsContexts
 import com.intellij.openapi.util.registry.Registry
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.*
+import kotlinx.serialization.json.ClassDiscriminatorMode
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonIgnoreUnknownKeys
+import kotlinx.serialization.json.JsonNames
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.decodeFromStream
+import kotlinx.serialization.json.encodeToJsonElement
+import kotlinx.serialization.json.encodeToStream
+import kotlinx.serialization.json.jsonObject
 import org.jetbrains.annotations.TestOnly
 import org.jetbrains.annotations.VisibleForTesting
+import java.net.URI
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
-import java.util.*
+import java.util.Locale
 import kotlin.io.path.createParentDirectories
 import kotlin.io.path.exists
 import kotlin.io.path.inputStream
@@ -37,7 +48,10 @@ abstract class McpClient(
   override fun toString(): String = mcpClientInfo.displayName
 
   protected val sseUrl: String
-    get() = "http://localhost:${McpServerService.getInstance().port}/sse"
+    get() = connectionAddressProvider?.serverSseUrl ?: defaultSseUrl
+
+  protected open val streamableHttpUrl: String
+    get() = connectionAddressProvider?.serverStreamUrl ?: defaultStreamUrl
 
   open fun isConfigured(): Boolean? = true
 
@@ -75,7 +89,7 @@ abstract class McpClient(
     val mcpServers = readMcpServers()
     if (mcpServers?.isEmpty() ?: true) return null
     return mcpServers.any { (_, serverConfig) ->
-      serverConfig.url?.matches(SSE_URL_REGEX) == true
+      serverConfig.url?.let { matchesCurrentServerUrl(it) } == true
     }
   }
 
@@ -88,9 +102,9 @@ abstract class McpClient(
 
   private fun isPortMatching(serverConfig: ExistingConfig, targetPort: Int): Boolean {
     serverConfig.url?.let { url ->
-      val matchResult = SSE_URL_REGEX.find(url)
-      matchResult?.groupValues?.get(1)?.toIntOrNull()?.let { configuredPort ->
-        return configuredPort == targetPort
+      val parsed = parseServerUrl(url) ?: return false
+      if (parsed.path in STREAM_PATHS && hostMatchesCurrent(parsed.host)) {
+        return parsed.port == targetPort
       }
       return false
     }
@@ -162,8 +176,43 @@ abstract class McpClient(
     }
   }
 
+  private val connectionAddressProvider: McpServerConnectionAddressProvider?
+    get() = McpServerConnectionAddressProvider.getInstanceOrNull()
+
+  private val defaultSseUrl: String
+    get() = "http://localhost:${McpServerService.getInstance().port}/sse"
+
+  private val defaultStreamUrl: String
+    get() = "http://localhost:${McpServerService.getInstance().port}/stream"
+
+  private fun matchesCurrentServerUrl(url: String): Boolean {
+    val parsed = parseServerUrl(url) ?: return false
+    return parsed.path in STREAM_PATHS && hostMatchesCurrent(parsed.host)
+  }
+
+  private fun hostMatchesCurrent(host: String): Boolean {
+    val normalized = host.normalizeHostForComparison()
+    val currentHost = connectionAddressProvider?.currentHost?.normalizeHostForComparison() ?: "localhost"
+    return normalized == currentHost ||
+           normalized == "localhost" ||
+           normalized == "127.0.0.1"
+  }
+
+  private fun parseServerUrl(url: String): ParsedServerUrl? {
+    val uri = runCatching { URI(url) }.getOrNull() ?: return null
+    val host = uri.host ?: return null
+    val path = uri.path ?: return null
+    val port = if (uri.port == -1) 80 else uri.port
+    return ParsedServerUrl(host, port, path)
+  }
+
+  private fun String.normalizeHostForComparison(): String =
+    trim().removePrefix("[").removeSuffix("]").lowercase()
+
+  private data class ParsedServerUrl(val host: String, val port: Int, val path: String)
+
   companion object {
-    private val SSE_URL_REGEX = Regex("""^http://localhost:(\d+)/sse$""")
+    private val STREAM_PATHS: Set<String> = setOf("/sse", "/stream")
 
     @Volatile
     private var writeLegacyOverride: Boolean? = null

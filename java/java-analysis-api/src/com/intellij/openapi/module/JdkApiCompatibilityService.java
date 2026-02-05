@@ -6,7 +6,13 @@ import com.intellij.openapi.components.Service;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.pom.java.LanguageLevel;
-import com.intellij.psi.*;
+import com.intellij.psi.PsiAnonymousClass;
+import com.intellij.psi.PsiClass;
+import com.intellij.psi.PsiField;
+import com.intellij.psi.PsiMember;
+import com.intellij.psi.PsiMethod;
+import com.intellij.psi.PsiSubstitutor;
+import com.intellij.psi.PsiType;
 import com.intellij.psi.util.PsiUtil;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.Contract;
@@ -18,7 +24,12 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -133,9 +144,9 @@ public final class JdkApiCompatibilityService {
   /**
    * @param signature     The signature, example: "java.util.Iterator#remove()" as specified by {@link #getSignature(PsiMember)}.
    * @param languageLevel to start the search.
-   * @return The newly introduced API if it appears after or including {@code languageLevel}, or null if it was introduced before
-   * {@code languageLevel}. If the API is in preview for languageLevel, null is returned. If the API was in preview and later standartized,
-   * but languageLevel is preview preview, then the first standard languageLevel is returned.
+   * @return The information about newly introduced API if it appears after or including {@code languageLevel}. 
+   * If the API was fully introduced before {@code languageLevel}, null is returned.
+   * If the API is in preview for {@code languageLevel}, but later standardized, the {@link LevelInfo#outOfPreviewLevel()} will be set.
    */
   @Contract("_, null -> null")
   private @Nullable LevelInfo getIntroducedApiLevel(@NotNull String signature, @Nullable LanguageLevel languageLevel) {

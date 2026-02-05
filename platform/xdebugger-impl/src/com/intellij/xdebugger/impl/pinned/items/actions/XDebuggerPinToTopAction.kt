@@ -2,21 +2,30 @@
 package com.intellij.xdebugger.impl.pinned.items.actions
 
 import com.intellij.internal.statistic.collectors.fus.actions.persistence.ActionsCollectorImpl
-import com.intellij.openapi.actionSystem.*
+import com.intellij.openapi.actionSystem.ActionManager
+import com.intellij.openapi.actionSystem.ActionUpdateThread
+import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.actionSystem.AnActionResult
+import com.intellij.openapi.actionSystem.CommonDataKeys
+import com.intellij.openapi.actionSystem.Presentation
 import com.intellij.openapi.actionSystem.impl.SimpleDataContext
-import com.intellij.openapi.actionSystem.remoting.ActionRemoteBehaviorSpecification
 import com.intellij.openapi.project.Project
 import com.intellij.xdebugger.XDebuggerBundle
 import com.intellij.xdebugger.impl.XDebuggerUtilImpl
-import com.intellij.xdebugger.impl.pinned.items.*
+import com.intellij.xdebugger.impl.pinned.items.PinToTopMemberValue
+import com.intellij.xdebugger.impl.pinned.items.XDebuggerPinToTopManager
+import com.intellij.xdebugger.impl.pinned.items.canBePinned
+import com.intellij.xdebugger.impl.pinned.items.getPinInfo
+import com.intellij.xdebugger.impl.pinned.items.isPinned
+import com.intellij.xdebugger.impl.pinned.items.parentPinToTopValue
 import com.intellij.xdebugger.impl.ui.tree.XDebuggerTree
-import com.intellij.xdebugger.impl.ui.tree.actions.XDebuggerTreeActionBase
+import com.intellij.xdebugger.impl.ui.tree.actions.XDebuggerTreeSplitActionBase
 import com.intellij.xdebugger.impl.ui.tree.nodes.XValueNodeImpl
 import icons.PlatformDebuggerImplIcons
 import java.awt.event.MouseEvent
-import java.util.*
+import java.util.Collections
 
-class XDebuggerPinToTopAction : XDebuggerTreeActionBase(), ActionRemoteBehaviorSpecification.FrontendOtherwiseBackend {
+class XDebuggerPinToTopAction : XDebuggerTreeSplitActionBase() {
 
     companion object {
         fun pinToTopField(mouseEvent: MouseEvent?, node: XValueNodeImpl) {
@@ -63,8 +72,7 @@ class XDebuggerPinToTopAction : XDebuggerTreeActionBase(), ActionRemoteBehaviorS
     return ActionUpdateThread.EDT
   }
 
-  override fun perform(node: XValueNodeImpl?, nodeName: String, e: AnActionEvent) {
-    node ?: return
+  override fun perform(node: XValueNodeImpl, nodeName: String, e: AnActionEvent) {
     val project = e.project ?: return
     performImpl(project, node)
   }

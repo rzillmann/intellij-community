@@ -11,6 +11,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import java.io.File
+import java.net.URI
 import java.nio.file.InvalidPathException
 import java.nio.file.Path
 import java.nio.file.Paths
@@ -44,6 +45,10 @@ fun Project.resolveInProject(pathInProject: String, throwWhenOutside: Boolean = 
   return filePath
 }
 
+fun findMostRelevantProjectForRoots(roots: Collection<String>): Project? {
+  return roots.map { Paths.get(URI(it)).normalize() }.firstNotNullOfOrNull { findMostRelevantProject(it) }
+}
+
 fun findMostRelevantProject(path: Path): Project? {
   if (!path.isAbsolute) {
     logger.trace { "Path is not absolute: $path" }
@@ -66,6 +71,9 @@ fun findMostRelevantProject(path: Path): Project? {
   return pairs.firstOrNull()?.first
 }
 
+/**
+ * Tries to relativize [virtualFile]'s path relatively to [Path].
+ */
 fun Path.relativizeIfPossible(virtualFile: VirtualFile): String {
   val nioPath = virtualFile.toNioPathOrNull()
                 ?: try {

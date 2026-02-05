@@ -2,8 +2,12 @@
 package com.jetbrains.python.statistics
 
 import com.intellij.internal.statistic.eventLog.EventLogGroup
-import com.intellij.internal.statistic.eventLog.events.*
-import com.intellij.internal.statistic.utils.getPluginInfo
+import com.intellij.internal.statistic.eventLog.events.BooleanEventField
+import com.intellij.internal.statistic.eventLog.events.EventField
+import com.intellij.internal.statistic.eventLog.events.EventFields
+import com.intellij.internal.statistic.eventLog.events.EventPair
+import com.intellij.internal.statistic.eventLog.events.StringEventField
+import com.intellij.internal.statistic.eventLog.events.VarargEventId
 import com.intellij.openapi.module.Module
 import com.intellij.openapi.module.ModuleManager
 import com.intellij.openapi.project.Project
@@ -15,18 +19,41 @@ import com.jetbrains.python.hatch.sdk.isHatch
 import com.jetbrains.python.isCondaVirtualEnv
 import com.jetbrains.python.isVirtualEnv
 import com.jetbrains.python.psi.LanguageLevel
-import com.jetbrains.python.remote.PyRemoteSdkAdditionalDataBase
 import com.jetbrains.python.sdk.PySdkUtil
 import com.jetbrains.python.sdk.PythonSdkAdditionalData
-import com.jetbrains.python.sdk.legacy.PythonSdkUtil
 import com.jetbrains.python.sdk.flavors.PythonSdkFlavor
 import com.jetbrains.python.sdk.flavors.conda.CondaEnvSdkFlavor
+import com.jetbrains.python.sdk.legacy.PythonSdkUtil
 import com.jetbrains.python.sdk.pipenv.isPipEnv
 import com.jetbrains.python.sdk.poetry.isPoetry
 import com.jetbrains.python.sdk.uv.isUv
-import com.jetbrains.python.statistics.InterpreterCreationMode.*
-import com.jetbrains.python.statistics.InterpreterTarget.*
-import com.jetbrains.python.statistics.InterpreterType.*
+import com.jetbrains.python.statistics.InterpreterCreationMode.CUSTOM
+import com.jetbrains.python.statistics.InterpreterCreationMode.NA
+import com.jetbrains.python.statistics.InterpreterCreationMode.SIMPLE
+import com.jetbrains.python.statistics.InterpreterTarget.LOCAL
+import com.jetbrains.python.statistics.InterpreterTarget.REMOTE_DOCKER
+import com.jetbrains.python.statistics.InterpreterTarget.REMOTE_DOCKER_COMPOSE
+import com.jetbrains.python.statistics.InterpreterTarget.REMOTE_NULL
+import com.jetbrains.python.statistics.InterpreterTarget.REMOTE_SSH_CREDENTIALS
+import com.jetbrains.python.statistics.InterpreterTarget.REMOTE_UNKNOWN
+import com.jetbrains.python.statistics.InterpreterTarget.REMOTE_VAGRANT
+import com.jetbrains.python.statistics.InterpreterTarget.REMOTE_WEB_DEPLOYMENT
+import com.jetbrains.python.statistics.InterpreterTarget.REMOTE_WSL
+import com.jetbrains.python.statistics.InterpreterTarget.TARGET_DOCKER
+import com.jetbrains.python.statistics.InterpreterTarget.TARGET_DOCKER_COMPOSE
+import com.jetbrains.python.statistics.InterpreterTarget.TARGET_SSH_SFTP
+import com.jetbrains.python.statistics.InterpreterTarget.TARGET_SSH_WEB_DEVELOPMENT
+import com.jetbrains.python.statistics.InterpreterTarget.TARGET_VAGRANT
+import com.jetbrains.python.statistics.InterpreterTarget.TARGET_WSL
+import com.jetbrains.python.statistics.InterpreterTarget.THIRD_PARTY
+import com.jetbrains.python.statistics.InterpreterType.CONDAVENV
+import com.jetbrains.python.statistics.InterpreterType.HATCH
+import com.jetbrains.python.statistics.InterpreterType.PIPENV
+import com.jetbrains.python.statistics.InterpreterType.POETRY
+import com.jetbrains.python.statistics.InterpreterType.PYENV
+import com.jetbrains.python.statistics.InterpreterType.REGULAR
+import com.jetbrains.python.statistics.InterpreterType.UV
+import com.jetbrains.python.statistics.InterpreterType.VIRTUALENV
 import com.jetbrains.python.target.PyTargetAwareAdditionalData
 import com.jetbrains.python.venvReader.VirtualEnvReader
 import org.jetbrains.annotations.ApiStatus
@@ -152,7 +179,6 @@ val Sdk.executionType: InterpreterTarget
   get() =
     when (val additionalData = sdkAdditionalData) {
       is PyTargetAwareAdditionalData -> additionalData.executionType
-      is PyRemoteSdkAdditionalDataBase -> additionalData.executionType
       else -> LOCAL
     }
 
@@ -164,7 +190,7 @@ val Sdk.interpreterType: InterpreterType
     isPoetry -> POETRY
     isHatch -> HATCH
     this.isCondaVirtualEnv || this.sdkAdditionalData.asSafely<PythonSdkAdditionalData>()?.flavor is CondaEnvSdkFlavor -> CONDAVENV
-    VirtualEnvReader.Instance.isPyenvSdk(getHomePath()) -> PYENV
+    VirtualEnvReader().isPyenvSdk(getHomePath()) -> PYENV
     this.isVirtualEnv -> VIRTUALENV
     else -> REGULAR
   }
@@ -187,11 +213,3 @@ private val PyTargetAwareAdditionalData.executionType: InterpreterTarget
       }
     } ?: REMOTE_UNKNOWN
 
-private val PyRemoteSdkAdditionalDataBase.executionType: InterpreterTarget
-  get() = remoteConnectionType.let { type ->
-    when {
-      type == null -> "Remote_null"
-      getPluginInfo(type.javaClass).isDevelopedByJetBrains() -> "Remote_${type.name?.replace(' ', '_')}"
-      else -> "third_party"
-    }.let { name -> InterpreterTarget.values().firstOrNull { it.value == name } ?: REMOTE_UNKNOWN }
-  }

@@ -10,7 +10,12 @@ import com.intellij.tools.ide.util.common.logOutput
 import com.intellij.util.system.OS
 import java.nio.file.Files
 import java.nio.file.Path
-import kotlin.io.path.*
+import kotlin.io.path.Path
+import kotlin.io.path.deleteIfExists
+import kotlin.io.path.div
+import kotlin.io.path.exists
+import kotlin.io.path.isDirectory
+import kotlin.io.path.isExecutable
 import kotlin.time.Duration.Companion.seconds
 
 const val DEFAULT_DISPLAY_ID = "88"
@@ -28,9 +33,9 @@ class LinuxIdeDistribution : IdeDistribution() {
       XVFB_TOOL_NAME
     }
 
-    fun linuxCommandLine(xvfbRunLog: Path, commandEnv: Map<String, String> = emptyMap()): List<String> {
+    fun linuxCommandLine(xvfbRunLog: Path, vmOptions: VMOptions): List<String> {
       return when {
-        System.getenv("DISPLAY") != null || commandEnv["DISPLAY"] != null -> listOf()
+        System.getenv("DISPLAY") != null || vmOptions.environmentVariables["DISPLAY"] != null || vmOptions.hasHeadlessMode() -> listOf()
         else ->
           //hint https://gist.github.com/tullmann/2d8d38444c5e81a41b6d
           listOf(
@@ -80,7 +85,7 @@ class LinuxIdeDistribution : IdeDistribution() {
         return object : InstalledBackedIDEStartConfig(patchedVMOptionsFile, vmOptions) {
           override val errorDiagnosticFiles = listOf(xvfbRunLog)
           override val workDir = appHome
-          override val commandLine: List<String> = linuxCommandLine(xvfbRunLog, vmOptions.environmentVariables) + executablePath.toAbsolutePath().toString()
+          override val commandLine: List<String> = linuxCommandLine(xvfbRunLog, vmOptions) + executablePath.toAbsolutePath().toString()
         }
       }
 

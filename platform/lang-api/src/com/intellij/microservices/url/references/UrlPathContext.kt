@@ -1,6 +1,12 @@
 package com.intellij.microservices.url.references
 
-import com.intellij.microservices.url.*
+import com.intellij.microservices.url.Authority
+import com.intellij.microservices.url.FrameworkUrlPathSpecification
+import com.intellij.microservices.url.UrlPath
+import com.intellij.microservices.url.UrlResolveRequest
+import com.intellij.microservices.url.UrlResolverManager
+import com.intellij.microservices.url.UrlTargetInfo
+import com.intellij.microservices.url.filterBestUrlPathMatches
 import com.intellij.microservices.utils.LazyChain
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.logger
@@ -306,5 +312,5 @@ private fun hasEmptyTrailingBlock(segments: List<UrlPath.PathSegment>) =
   segments.size > 1 && segments.last().isEmpty()
 
 interface UrlPathContextHolder {
-  val urlPathContext: UrlPathContext
+  val urlPathContext: UrlPathContext?
 }

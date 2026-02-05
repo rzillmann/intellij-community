@@ -5,7 +5,12 @@ import com.intellij.application.options.ModuleDescriptionsComboBox;
 import com.intellij.execution.ExecutionBundle;
 import com.intellij.execution.application.ClassEditorField;
 import com.intellij.execution.configurations.ConfigurationUtil;
-import com.intellij.execution.ui.*;
+import com.intellij.execution.ui.ClassBrowser;
+import com.intellij.execution.ui.CommonJavaParametersPanel;
+import com.intellij.execution.ui.ConfigurationModuleSelector;
+import com.intellij.execution.ui.DefaultJreSelector;
+import com.intellij.execution.ui.JrePathEditor;
+import com.intellij.execution.ui.ShortenCommandLineModeCombo;
 import com.intellij.ide.util.ClassFilter;
 import com.intellij.ide.util.TreeClassChooser;
 import com.intellij.ide.util.TreeJavaClassChooserDialog;
@@ -27,7 +32,8 @@ import com.intellij.util.ui.UIUtil;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.kotlin.asJava.classes.KtLightClass;
 
-import javax.swing.*;
+import javax.swing.JComponent;
+import javax.swing.JPanel;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 
@@ -45,10 +51,9 @@ public final class KotlinRunConfigurationEditor extends SettingsEditor<KotlinRun
     private final ConfigurationModuleSelector moduleSelector;
     private final Project project;
 
-    private static ClassBrowser createApplicationClassBrowser(
+    private ClassBrowser createApplicationClassBrowser(
             Project project,
-            Computable<? extends Module> moduleSelector,
-            LabeledComponent<ModuleDescriptionsComboBox> moduleChooser
+            Computable<? extends Module> moduleSelector
     ) {
         ClassFilter applicationClass =
                 aClass -> aClass instanceof KtLightClass &&
@@ -121,7 +126,7 @@ public final class KotlinRunConfigurationEditor extends SettingsEditor<KotlinRun
     private void createUIComponents() {
         mainClassEditorField = new LabeledComponent<>();
         mainClassEditorField.setComponent(ClassEditorField.createClassField(project, () -> moduleSelector.getModule(), VISIBILITY_CHECKER,
-                                                                            createApplicationClassBrowser(project, () -> moduleSelector.getModule(), moduleChooser)));
+                                                                            createApplicationClassBrowser(project, () -> moduleSelector.getModule())));
     }
 
     @Override

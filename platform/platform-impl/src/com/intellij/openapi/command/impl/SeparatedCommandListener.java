@@ -1,15 +1,18 @@
-// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2026 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.openapi.command.impl;
 
-import com.intellij.openapi.command.UndoConfirmationPolicy;
-import com.intellij.openapi.project.Project;
-import com.intellij.openapi.util.NlsContexts.Command;
+import com.intellij.openapi.command.impl.cmd.CmdEvent;
 import com.intellij.util.messages.Topic;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 
+/**
+ * Notifies about commands and transparent actions in a separated manner,
+ * as opposed to {@link com.intellij.openapi.command.CommandListener} allowing overlapping of them.
+ * <p>
+ * See {@link CommandSeparator}
+ */
 @ApiStatus.Internal
 public interface SeparatedCommandListener {
 
@@ -20,20 +23,9 @@ public interface SeparatedCommandListener {
     true
   );
 
-  void onCommandStarted(
-    @Nullable CommandId commandId,
-    @Nullable Project commandProject,
-    @Nullable @Command String commandName,
-    @Nullable Object commandGroupId,
-    @NotNull UndoConfirmationPolicy confirmationPolicy,
-    boolean recordOriginalReference,
-    boolean isTransparent
-  );
+  void onCommandStarted(@NotNull CmdEvent cmdStartEvent);
 
-  void onCommandFinished(
-    @Nullable Project commandProject,
-    @Nullable @Command String commandName,
-    @Nullable Object commandGroupId,
-    boolean isTransparent
-  );
+  void onCommandFinished(@NotNull CmdEvent cmdFinishEvent);
+
+  void onCommandFakeFinished(@NotNull CmdEvent cmdFakeFinishEvent);
 }

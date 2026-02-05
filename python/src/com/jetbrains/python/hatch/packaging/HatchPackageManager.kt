@@ -38,4 +38,3 @@ internal class HatchPackageManagerProvider : PythonPackageManagerProvider {
     else -> null
   }
 }
-

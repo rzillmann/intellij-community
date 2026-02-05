@@ -13,6 +13,8 @@ import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.TextRange;
 import com.intellij.openapi.util.registry.Registry;
 import com.intellij.openapi.vfs.VirtualFile;
+import com.intellij.platform.debugger.impl.shared.proxy.XDebugSessionProxy;
+import com.intellij.platform.debugger.impl.ui.DebuggerUIUtilShared;
 import com.intellij.util.Alarm;
 import com.intellij.util.DocumentUtil;
 import com.intellij.util.containers.ContainerUtil;
@@ -28,8 +30,11 @@ import com.intellij.xdebugger.impl.actions.XDebuggerActions;
 import com.intellij.xdebugger.impl.evaluate.quick.XValueHint;
 import com.intellij.xdebugger.impl.evaluate.quick.common.ValueHintType;
 import com.intellij.xdebugger.impl.inline.XDebuggerInlayUtil;
-import com.intellij.xdebugger.impl.ui.DebuggerUIUtil;
-import com.intellij.xdebugger.impl.ui.tree.*;
+import com.intellij.xdebugger.impl.ui.tree.XDebuggerTree;
+import com.intellij.xdebugger.impl.ui.tree.XDebuggerTreeListener;
+import com.intellij.xdebugger.impl.ui.tree.XDebuggerTreePanel;
+import com.intellij.xdebugger.impl.ui.tree.XDebuggerTreeRestorer;
+import com.intellij.xdebugger.impl.ui.tree.XDebuggerTreeState;
 import com.intellij.xdebugger.impl.ui.tree.nodes.XDebuggerTreeNode;
 import com.intellij.xdebugger.impl.ui.tree.nodes.XStackFrameNode;
 import com.intellij.xdebugger.impl.ui.tree.nodes.XValueContainerNode;
@@ -37,13 +42,14 @@ import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import javax.swing.*;
-import java.awt.*;
-import java.util.*;
+import javax.swing.JComponent;
+import java.awt.Point;
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
-
-import static com.intellij.xdebugger.impl.actions.FrontendDebuggerActionsKt.areFrontendDebuggerActionsEnabled;
 
 public abstract class XVariablesViewBase extends XDebugView {
   private final XDebuggerTreePanel myTreePanel;
@@ -86,7 +92,7 @@ public abstract class XVariablesViewBase extends XDebugView {
   protected void buildTreeAndRestoreState(final @NotNull XStackFrame stackFrame) {
     XSourcePosition position = stackFrame.getSourcePosition();
     XDebuggerTree tree = getTree();
-    DebuggerUIUtil.freezePaintingToReduceFlickering(myTreePanel.getContentComponent());
+    DebuggerUIUtilShared.freezePaintingToReduceFlickering(myTreePanel.getContentComponent());
     tree.setSourcePosition(position);
     createNewRootNode(stackFrame);
     XVariablesView.InlineVariablesInfo.set(getSessionProxy(tree), new XVariablesView.InlineVariablesInfo());
@@ -119,16 +125,21 @@ public abstract class XVariablesViewBase extends XDebugView {
     return node;
   }
 
-  protected XValueContainerNode doCreateNewRootNode(@Nullable XStackFrame stackFrame) {
-    XValueContainerNode root;
+  @ApiStatus.Internal
+  protected XValueContainerNode.Root doCreateNewRootNode(@Nullable XStackFrame stackFrame, @Nullable XDebuggerTreeState stateToRecover) {
     if (stackFrame == null) {
       // do not set leaf=false here, otherwise info messages do not appear, see IDEA-200865
-      root = new XValueContainerNode<XValueContainer>(getTree(), null, false, new XValueContainer() {}) {};
+      return new XValueContainerNode.Root<XValueContainer>(getTree(), null, false, new XValueContainer() {}, stateToRecover) {};
     }
     else {
-      root = new XStackFrameNode(getTree(), stackFrame);
+      return new XStackFrameNode(getTree(), stackFrame, stateToRecover);
     }
-    return root;
+  }
+
+  @ApiStatus.NonExtendable
+  protected XValueContainerNode doCreateNewRootNode(@Nullable XStackFrame stackFrame) {
+    XDebuggerTreeState state = stackFrame != null ? myTreeStates.get(stackFrame.getEqualityObject()) : null;
+    return doCreateNewRootNode(stackFrame, state);
   }
 
   private void registerInlineEvaluator(final XStackFrame stackFrame,

@@ -9,6 +9,9 @@ import org.jetbrains.annotations.Nullable;
 import java.util.Collection;
 import java.util.Set;
 
+import static com.intellij.openapi.util.text.StringUtil.isCapitalized;
+import static com.intellij.openapi.util.text.StringUtil.isUpperCase;
+import static com.intellij.openapi.util.text.StringUtil.toLowerCase;
 import static com.intellij.util.containers.CollectionFactory.createSmallMemoryFootprintSet;
 
 public final class UserDictionary implements EditableDictionary {
@@ -37,7 +40,9 @@ public final class UserDictionary implements EditableDictionary {
 
   @Override
   public @Nullable Boolean contains(@NotNull String word) {
-    return words.contains(word) ? true : null;
+    if (words.contains(word)) return true;
+    if (isUpperCase(word) || isCapitalized(word)) return words.contains(toLowerCase(word)) ? true : null;
+    return null;
   }
 
   @Override

@@ -35,6 +35,7 @@ class PluginModuleId private constructor(val name: String, val namespace: String
     /** this property is temporarily added to allow using modules without specifying namespace */
     private val useNamespaceInId = SystemProperties.getBooleanProperty("intellij.platform.plugin.modules.use.namespace.in.id", false)
 
+    @JvmStatic
     fun getId(name: String, namespace: String): PluginModuleId {
       val interned = interner[name]
       /* Strictly speaking, a key composed of 'name' and 'namespace' should be used. However, in almost all cases names will be unique, so using composite keys won't bring value
@@ -58,15 +59,5 @@ class PluginModuleId private constructor(val name: String, val namespace: String
      * It's used by default when declaring a dependency if the namespace isn't specified explicitly.
      */
     const val JETBRAINS_NAMESPACE: String = "jetbrains"
-
-    @ApiStatus.ScheduledForRemoval
-    @Deprecated("Use getId(name, namespace) instead")
-    fun getId(name: String): PluginModuleId {
-      return getId(name, JETBRAINS_NAMESPACE)
-    }
-
-    @ApiStatus.ScheduledForRemoval
-    @Deprecated("Use PluginModuleId(name, namespace) instead")
-    operator fun invoke(name: String): PluginModuleId = getId(name)
   }
 }

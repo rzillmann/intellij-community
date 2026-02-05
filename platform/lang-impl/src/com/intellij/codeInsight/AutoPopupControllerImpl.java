@@ -1,4 +1,4 @@
-// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2026 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.codeInsight;
 
 import com.intellij.codeInsight.completion.CompletionProgressIndicator;
@@ -41,14 +41,16 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
-import static com.intellij.codeInsight.completion.CompletionPhase.*;
+import static com.intellij.codeInsight.completion.CompletionPhase.CommittingDocuments;
+import static com.intellij.codeInsight.completion.CompletionPhase.EmptyAutoPopup;
+import static com.intellij.codeInsight.completion.CompletionPhase.NoCompletion;
 
 @ApiStatus.Internal
-public class AutoPopupControllerImpl extends AutoPopupController {
+class AutoPopupControllerImpl extends AutoPopupController {
   private final Project myProject;
   private final Alarm myAlarm;
 
-  public AutoPopupControllerImpl(@NotNull Project project) {
+  AutoPopupControllerImpl(@NotNull Project project) {
     myProject = project;
 
     myAlarm = new Alarm(myProject);

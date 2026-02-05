@@ -62,6 +62,7 @@ public final class GitCommand {
   public static final GitCommand SHOW = read("show");
   public static final GitCommand STASH = write("stash");
   public static final GitCommand STATUS = readOptional("status");
+  public static final GitCommand STATUS_NO_LOCK = read("status");
   public static final GitCommand SUBMODULE = write("submodule"); // NB: it is write command in the submodule, not in the current root which is the submodule's parent
   public static final GitCommand TAG = read("tag");
   public static final GitCommand UPDATE_INDEX = write("update-index");
@@ -87,6 +88,11 @@ public final class GitCommand {
    * Marker-ENV, that lets git hooks to detect us if needed.
    */
   public static final @NonNls String IJ_HANDLER_MARKER_ENV = "INTELLIJ_GIT_EXECUTABLE";
+
+  /**
+   * Environment variable that allows to specify the descriptive text written to the reflog
+   */
+  public static final @NonNls String GIT_REFLOG_ACTION_ENV = "GIT_REFLOG_ACTION";
 
   @ApiStatus.Internal
   public enum LockingPolicy {

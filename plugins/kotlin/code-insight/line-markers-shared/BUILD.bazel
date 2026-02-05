@@ -29,12 +29,14 @@ jvm_library(
     "//plugins/kotlin/base/code-insight",
     "//platform/platform-impl:ide-impl",
     "//plugins/kotlin/base/indices",
+    "//platform/lang-api:lang",
     "//platform/lang-impl",
     "//platform/execution-impl",
     "//java/java-psi-api:psi",
     "//plugins/kotlin/base/project-structure",
     "//plugins/kotlin/kotlin.searching",
     "@lib//:kotlinc-analysis-api-platform-interface",
+    "//plugins/kotlin/frontend-independent",
   ]
 )
 ### auto-generated section `build kotlin.code-insight.line-markers.shared` end

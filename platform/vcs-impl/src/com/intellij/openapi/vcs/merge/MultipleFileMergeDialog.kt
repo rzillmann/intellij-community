@@ -12,7 +12,6 @@ import com.intellij.diff.merge.MergeUtil
 import com.intellij.diff.statistics.MergeAction
 import com.intellij.diff.statistics.MergeStatisticsCollector
 import com.intellij.diff.util.DiffUtil
-import com.intellij.diff.util.Side
 import com.intellij.ide.DataManager
 import com.intellij.ide.util.treeView.TreeState
 import com.intellij.openapi.actionSystem.PlatformDataKeys
@@ -38,14 +37,24 @@ import com.intellij.openapi.vcs.VcsBundle
 import com.intellij.openapi.vcs.VcsConfiguration
 import com.intellij.openapi.vcs.VcsException
 import com.intellij.openapi.vcs.changes.VcsDirtyScopeManager
-import com.intellij.openapi.vcs.changes.ui.*
+import com.intellij.openapi.vcs.changes.ui.ChangesBrowserNodeRenderer
+import com.intellij.openapi.vcs.changes.ui.ChangesGroupingSupport
+import com.intellij.openapi.vcs.changes.ui.ChangesTree
+import com.intellij.openapi.vcs.changes.ui.NoneChangesGroupingFactory
+import com.intellij.openapi.vcs.changes.ui.TreeModelBuilder
+import com.intellij.openapi.vcs.changes.ui.VcsTreeModelData
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.wm.IdeFocusManager
 import com.intellij.ui.DoubleClickListener
 import com.intellij.ui.TableSpeedSearch
 import com.intellij.ui.TableUtil
 import com.intellij.ui.UIBundle
-import com.intellij.ui.dsl.builder.*
+import com.intellij.ui.dsl.builder.Align
+import com.intellij.ui.dsl.builder.AlignX
+import com.intellij.ui.dsl.builder.AlignY
+import com.intellij.ui.dsl.builder.impl.trimHtml
+import com.intellij.ui.dsl.builder.panel
+import com.intellij.ui.dsl.builder.selected
 import com.intellij.ui.treeStructure.treetable.DefaultTreeTableExpander
 import com.intellij.ui.treeStructure.treetable.ListTreeTableModelOnColumns
 import com.intellij.ui.treeStructure.treetable.TreeTable
@@ -63,7 +72,11 @@ import org.jetbrains.annotations.NonNls
 import java.awt.event.ActionEvent
 import java.awt.event.MouseEvent
 import java.io.IOException
-import javax.swing.*
+import javax.swing.AbstractAction
+import javax.swing.Action
+import javax.swing.JButton
+import javax.swing.JComponent
+import javax.swing.JEditorPane
 import javax.swing.table.AbstractTableModel
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.TreeNode
@@ -83,7 +96,7 @@ open class MultipleFileMergeDialog(
   private lateinit var mergeButton: JButton
   private val tableModel = ListTreeTableModelOnColumns(DefaultMutableTreeNode(), createColumns())
 
-  private lateinit var descriptionLabel: JLabel
+  private lateinit var descriptionLabel: JEditorPane
 
   private var groupByDirectory: Boolean = false
     get() = when {
@@ -139,7 +152,7 @@ open class MultipleFileMergeDialog(
     BackgroundTaskUtil.executeOnPooledThread(disposable, Runnable {
       val description = mergeDialogCustomizer.getMultipleFileMergeDescription(unresolvedFiles)
       runInEdt(modalityState) {
-        descriptionLabel.text = description
+        descriptionLabel.text = description.trimHtml
       }
     })
   }
@@ -147,7 +160,7 @@ open class MultipleFileMergeDialog(
   override fun createCenterPanel(): JComponent {
     return panel {
       row {
-        descriptionLabel = label(VcsBundle.message("merge.loading.merge.details")).component
+        descriptionLabel = text(VcsBundle.message("merge.loading.merge.details")).component
       }
 
       row {
@@ -191,9 +204,6 @@ open class MultipleFileMergeDialog(
             }
         }
       }
-    }.also {
-      // Temporary workaround for IDEA-302779
-      it.minimumSize = JBUI.size(200, 150)
     }
   }
 
@@ -319,6 +329,7 @@ open class MultipleFileMergeDialog(
               markFileProcessed(file, resolution)
             }
           }
+
         }
         catch (e: Exception) {
           LOG.warn(e)

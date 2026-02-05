@@ -6,18 +6,16 @@ package com.intellij.platform.eel
 
 import com.intellij.platform.eel.*
 import com.intellij.platform.eel.EelExecApi.ExecuteProcessOptions
-import com.intellij.platform.eel.EelExecApi.InteractionOptions
-import com.intellij.platform.eel.EelExecApi.PtyOrStdErrSettings
 import com.intellij.platform.eel.path.EelPath
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Deferred
 import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.annotations.CheckReturnValue
-import java.util.*
 
 
 /**
  * Gets the same environment variables on the remote machine as the user would get.
+ * 
+ * *Notice:* use [EelExecApi.expandPathEnvVar] or [EelOsFamily.expandPathEnvVar] for `PATH`.
  * 
  * See also [EelExecPosixApi.PosixEnvironmentVariablesOptions].
  */
@@ -71,6 +69,16 @@ fun EelExecApi.spawnProcess(
     exe = exe,
   )
 
+/**
+ * It's obligatory to call [ExternalCliEntrypoint.consumeInvocations] on the resulting value.
+ */
+@GeneratedBuilder.Result
+@ApiStatus.Internal
+fun EelExecApi.createExternalCli(): EelExecApiHelpers.CreateExternalCli =
+  EelExecApiHelpers.CreateExternalCli(
+    owner = this,
+  )
+
 @ApiStatus.Experimental
 object EelExecApiHelpers {
   /**
@@ -80,7 +88,7 @@ object EelExecApiHelpers {
   @ApiStatus.Experimental
   class EnvironmentVariables(
     private val owner: EelExecApi,
-  ) : OwnedBuilder<Deferred<Map<String, String>>> {
+  ) : OwnedBuilder<EelExecApi.EnvironmentVariablesDeferred> {
     private var onlyActual: Boolean = false
 
     /**
@@ -99,7 +107,7 @@ object EelExecApiHelpers {
      * Complete the builder and call [com.intellij.platform.eel.EelExecApi.environmentVariables]
      * with an instance of [com.intellij.platform.eel.EelExecApi.EnvironmentVariablesOptions].
      */
-    override suspend fun eelIt(): Deferred<Map<String, String>> =
+    override suspend fun eelIt(): EelExecApi.EnvironmentVariablesDeferred =
       owner.environmentVariables(
         EnvironmentVariablesOptionsImpl(
           onlyActual = onlyActual,
@@ -121,9 +129,9 @@ object EelExecApiHelpers {
 
     private var env: Map<String, String> = mapOf()
 
-    private var interactionOptions: InteractionOptions? = null
+    private var interactionOptions: EelExecApi.InteractionOptions? = null
 
-    private var ptyOrStdErrSettings: PtyOrStdErrSettings? = interactionOptions
+    private var ptyOrStdErrSettings: EelExecApi.PtyOrStdErrSettings? = interactionOptions
 
     private var scope: CoroutineScope? = null
 
@@ -168,13 +176,13 @@ object EelExecApiHelpers {
      * See `termcap(2)`, `terminfo(2)`, `ncurses(3X)` and ISBN `0937175226`.
      */
     @ApiStatus.Experimental
-    fun interactionOptions(arg: InteractionOptions?): Execute = apply {
+    fun interactionOptions(arg: EelExecApi.InteractionOptions?): Execute = apply {
       this.interactionOptions = arg
     }
 
     @Deprecated("Switch to interactionOptions", replaceWith = ReplaceWith("interactionOptions"))
     @ApiStatus.Internal
-    fun ptyOrStdErrSettings(arg: PtyOrStdErrSettings?): Execute = apply {
+    fun ptyOrStdErrSettings(arg: EelExecApi.PtyOrStdErrSettings?): Execute = apply {
       this.ptyOrStdErrSettings = arg
     }
 
@@ -226,9 +234,9 @@ object EelExecApiHelpers {
 
     private var env: Map<String, String> = mapOf()
 
-    private var interactionOptions: InteractionOptions? = null
+    private var interactionOptions: EelExecApi.InteractionOptions? = null
 
-    private var ptyOrStdErrSettings: PtyOrStdErrSettings? = interactionOptions
+    private var ptyOrStdErrSettings: EelExecApi.PtyOrStdErrSettings? = interactionOptions
 
     private var scope: CoroutineScope? = null
 
@@ -273,13 +281,13 @@ object EelExecApiHelpers {
      * See `termcap(2)`, `terminfo(2)`, `ncurses(3X)` and ISBN `0937175226`.
      */
     @ApiStatus.Experimental
-    fun interactionOptions(arg: InteractionOptions?): SpawnProcess = apply {
+    fun interactionOptions(arg: EelExecApi.InteractionOptions?): SpawnProcess = apply {
       this.interactionOptions = arg
     }
 
     @Deprecated("Switch to interactionOptions", replaceWith = ReplaceWith("interactionOptions"))
     @ApiStatus.Internal
-    fun ptyOrStdErrSettings(arg: PtyOrStdErrSettings?): SpawnProcess = apply {
+    fun ptyOrStdErrSettings(arg: EelExecApi.PtyOrStdErrSettings?): SpawnProcess = apply {
       this.ptyOrStdErrSettings = arg
     }
 
@@ -315,6 +323,65 @@ object EelExecApiHelpers {
           ptyOrStdErrSettings = ptyOrStdErrSettings,
           scope = scope,
           workingDirectory = workingDirectory,
+        )
+      )
+  }
+
+  /**
+   * Create it via [com.intellij.platform.eel.EelExecApi.createExternalCli].
+   */
+  @GeneratedBuilder.Result
+  @ApiStatus.Internal
+  class CreateExternalCli(
+    private val owner: EelExecApi,
+  ) : OwnedBuilder<EelExecApi.ExternalCliEntrypoint> {
+    private var envVariablesToCapture: List<String> = emptyList()
+
+    private var filePrefix: String = ""
+
+    private var lifecycle: EelExecApi.ExternalCliLifecycle = EelExecApi.ExternalCliLifecycle.Default
+
+    /**
+     * Allowlist of environment variables mentioned here will be captured by the entrypoint and returned in [ExternalCliProcess.environment].
+     * Capturing of other environment variables is not guaranteed.
+     * If no environment variables are specified, no environment variables will be captured.
+     */
+    fun envVariablesToCapture(arg: List<String>): CreateExternalCli = apply {
+      this.envVariablesToCapture = arg
+    }
+
+    /**
+     * Allowlist of environment variables mentioned here will be captured by the entrypoint and returned in [ExternalCliProcess.environment].
+     * Capturing of other environment variables is not guaranteed.
+     * If no environment variables are specified, no environment variables will be captured.
+     */
+    fun envVariablesToCapture(vararg arg: String): CreateExternalCli = apply {
+      this.envVariablesToCapture = listOf(*arg)
+    }
+
+    /**
+     * Prefix for an entrypoint executable file that will be created. Since the path to the entrypoint is passed to some command-line tool,
+     * using a self-explaining prefix makes the command line more readable and easier to debug.
+     */
+    fun filePrefix(arg: String): CreateExternalCli = apply {
+      this.filePrefix = arg
+    }
+
+    fun lifecycle(arg: EelExecApi.ExternalCliLifecycle): CreateExternalCli = apply {
+      this.lifecycle = arg
+    }
+
+    /**
+     * Complete the builder and call [com.intellij.platform.eel.EelExecApi.createExternalCli]
+     * with an instance of [com.intellij.platform.eel.EelExecApi.ExternalCliOptions].
+     */
+    @CheckReturnValue
+    override suspend fun eelIt(): EelExecApi.ExternalCliEntrypoint =
+      owner.createExternalCli(
+        ExternalCliOptionsImpl(
+          envVariablesToCapture = envVariablesToCapture,
+          filePrefix = filePrefix,
+          lifecycle = lifecycle,
         )
       )
   }

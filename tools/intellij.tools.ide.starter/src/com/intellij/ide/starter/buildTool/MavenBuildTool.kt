@@ -1,19 +1,26 @@
 package com.intellij.ide.starter.buildTool
 
 import com.intellij.ide.starter.ide.IDETestContext
-import com.intellij.ide.starter.process.findAndKillProcesses
+import com.intellij.ide.starter.process.findAndKillProcessesBySubstring
 import com.intellij.ide.starter.runner.events.IdeAfterLaunchEvent
 import com.intellij.openapi.diagnostic.LogLevel
 import com.intellij.openapi.util.io.findOrCreateDirectory
 import com.intellij.tools.ide.performanceTesting.commands.dto.MavenArchetypeInfo
 import com.intellij.tools.ide.starter.bus.EventsBus
 import com.intellij.tools.ide.util.common.logOutput
+import com.intellij.util.io.delete
 import org.jetbrains.jps.model.serialization.JpsMavenSettings.getMavenRepositoryPath
 import java.io.BufferedInputStream
 import java.io.FileOutputStream
 import java.net.URL
 import java.nio.file.Path
-import kotlin.io.path.*
+import kotlin.io.path.bufferedReader
+import kotlin.io.path.bufferedWriter
+import kotlin.io.path.createDirectories
+import kotlin.io.path.createFile
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.name
+import kotlin.io.path.walk
 import kotlin.time.Duration.Companion.minutes
 
 open class MavenBuildTool(testContext: IDETestContext) : BuildTool(BuildToolType.MAVEN, testContext) {
@@ -26,7 +33,7 @@ open class MavenBuildTool(testContext: IDETestContext) : BuildTool(BuildToolType
 
     private const val MAVEN_DAEMON_NAME = "MavenServerIndexerMain"
     private fun destroyMavenIndexerProcessIfExists() {
-      findAndKillProcesses(MAVEN_DAEMON_NAME)
+      findAndKillProcessesBySubstring(MAVEN_DAEMON_NAME)
     }
   }
 
@@ -56,14 +63,12 @@ open class MavenBuildTool(testContext: IDETestContext) : BuildTool(BuildToolType
 
   fun removeMavenConfigFiles(): MavenBuildTool {
     logOutput("Removing Maven config files in ${testContext.resolvedProjectHome} ...")
-
-    testContext.resolvedProjectHome.toFile().walkTopDown()
-      .forEach {
-        if (it.isFile && it.name == "pom.xml") {
-          it.delete()
-          logOutput("File ${it.path} is deleted")
-        }
+    for (file in testContext.resolvedProjectHome.walk()) {
+      if (file.isRegularFile() && file.name == "pom.xml") {
+        file.delete()
+        logOutput("File ${file} is deleted")
       }
+    }
 
     return this
   }

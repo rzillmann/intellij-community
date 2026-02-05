@@ -8,7 +8,6 @@ import org.jetbrains.intellij.build.SoftwareBillOfMaterials.Companion.Suppliers
  * Defines information about licenses of libraries located in 'community', 'contrib' and 'android' repositories.
  */
 object CommunityLibraryLicenses {
-  @JvmStatic
   @Suppress("SpellCheckingInspection", "NonAsciiCharacters")
   val LICENSES_LIST: List<LibraryLicense> = listOf(
     LibraryLicense("A fast Java JSON schema validator", libraryName = "json-schema-validator", url = "https://github.com/networknt/json-schema-validator")
@@ -50,6 +49,11 @@ object CommunityLibraryLicenses {
       .newBsd("https://github.com/webmproject/libwebp/blob/main/COPYING"),
 
     androidDependency("Android Studio Platform", libraryName = "studio-platform"),
+
+    LibraryLicense(name = "androidx-collection", libraryName = "androidx-collection", url = "https://source.android.com/")
+      .apache("https://github.com/androidx/androidx/blob/androidx-main/LICENSE.txt")
+      .copyrightText("Copyright (C) The Android Open Source Project")
+      .suppliedByOrganizations(Suppliers.GOOGLE),
 
     LibraryLicense("antlr4-runtime", libraryName = "antlr4-runtime", url = "https://github.com/antlr/antlr4")
       .newBsd("https://github.com/antlr/antlr4/blob/dev/LICENSE.txt"),
@@ -267,7 +271,15 @@ object CommunityLibraryLicenses {
       .apache("https://github.com/JetBrains/compose-multiplatform/blob/master/LICENSE.txt")
       .suppliedByOrganizations(Suppliers.JETBRAINS),
 
-    LibraryLicense("Compose Runtime", libraryName = "compose.runtime.desktop", url = "https://source.android.com/")
+    LibraryLicense("Compose Runtime", libraryName = "androidx.compose.runtime.desktop", url = "https://source.android.com/")
+      .apache("https://cs.android.com/androidx/platform/frameworks/support/+/androidx-main:LICENSE.txt")
+      .suppliedByOrganizations(Suppliers.GOOGLE),
+
+    LibraryLicense("Compose Runtime Retained", libraryName = "androidx.compose.runtime.retain.desktop", url = "https://source.android.com/")
+      .apache("https://cs.android.com/androidx/platform/frameworks/support/+/androidx-main:LICENSE.txt")
+      .suppliedByOrganizations(Suppliers.GOOGLE),
+
+    LibraryLicense("Compose Runtime Saveable Desktop", libraryName = "androidx.compose.runtime.saveable.desktop", url = "https://source.android.com/")
       .apache("https://cs.android.com/androidx/platform/frameworks/support/+/androidx-main:LICENSE.txt")
       .suppliedByOrganizations(Suppliers.GOOGLE),
 
@@ -307,6 +319,9 @@ object CommunityLibraryLicenses {
     LibraryLicense("dbus-java", libraryName = "dbus-java", url = "https://github.com/hypfvieh/dbus-java")
       .lgpl2("https://github.com/hypfvieh/dbus-java/blob/dbus-java-3.0/LICENSE")
       .suppliedByPersons("David M. <hypfvieh@googlemail.com>"),
+
+    LibraryLicense("debugpy", version = LibraryLicense.CUSTOM_REVISION, attachedTo="intellij.python", url = "https://github.com/microsoft/debugpy")
+      .mit("https://github.com/microsoft/debugpy/blob/main/LICENSE"),
 
     LibraryLicense("Detekt", libraryName = "io.gitlab.arturbosch.detekt.api", url = "https://github.com/detekt/detekt")
       .apache("https://github.com/detekt/detekt/blob/master/LICENSE"),
@@ -363,10 +378,6 @@ object CommunityLibraryLicenses {
 
     LibraryLicense("gauge-java", libraryName = "com.thoughtworks.gauge:gauge-java", url = "https://github.com/getgauge/gauge-java/")
       .apache("https://github.com/getgauge/gauge-java/raw/master/LICENSE.txt"),
-
-    LibraryLicense("Gherkin", libraryName = "gherkin", url = "https://github.com/cucumber/gherkin/tree/main")
-      .mit("https://github.com/cucumber/gherkin/blob/main/LICENSE")
-      .suppliedByOrganizations("Cucumber Ltd"),
 
     LibraryLicense("Gherkin keywords", version = "2.12.2", attachedTo = "intellij.gherkin", url = "https://github.com/cucumber/gherkin/tree/main")
       .mit("https://github.com/cucumber/gherkin/blob/main/LICENSE")
@@ -646,14 +657,6 @@ object CommunityLibraryLicenses {
     LibraryLicense("JetBrains Annotations", libraryName = "jetbrains-annotations", url = "https://github.com/JetBrains/java-annotations")
       .apache("https://github.com/JetBrains/java-annotations/blob/master/LICENSE.txt"),
 
-    LibraryLicense("JetBrains Jewel IDE LaF Bridge", url = "https://github.com/JetBrains/jewel", libraryName = "jewel-ide-laf-bridge-243")
-      .apache("https://github.com/JetBrains/jewel/blob/master/LICENSE")
-      .suppliedByOrganizations(Suppliers.JETBRAINS),
-
-    LibraryLicense("JetBrains Jewel Markdown IDE LaF Bridge Styling", url = "https://github.com/JetBrains/jewel", libraryName = "jewel-markdown-ide-laf-bridge-styling-243")
-      .apache("https://github.com/JetBrains/jewel/blob/master/LICENSE")
-      .suppliedByOrganizations(Suppliers.JETBRAINS),
-
     LibraryLicense("JetBrains Runtime", version = "21", attachedTo = "intellij.platform.ide.impl", url = "https://github.com/JetBrains/JetBrainsRuntime")
       .gpl2ce("https://github.com/JetBrains/JetBrainsRuntime/blob/master/LICENSE"),
 
@@ -740,6 +743,9 @@ object CommunityLibraryLicenses {
     LibraryLicense(libraryName = "jsoup", url = "https://jsoup.org")
       .mit("https://jsoup.org/license"),
 
+    LibraryLicense("jspecify", libraryName = "jspecify", url = "https://github.com/jspecify/jspecify")
+      .apache("https://github.com/jspecify/jspecify/blob/main/LICENSE"),
+
     LibraryLicense(libraryName = "jsr305", url = "https://github.com/amaembo/jsr-305")
       .newBsd("https://github.com/amaembo/jsr-305/blob/master/ri/LICENSE")
       .suppliedByOrganizations("JSR305 expert group"),
@@ -789,10 +795,15 @@ object CommunityLibraryLicenses {
     LibraryLicense("Kodein-DI", libraryName = "kodein-di-jvm", url = "https://github.com/kosi-libs/Kodein")
       .mit("https://github.com/kosi-libs/Kodein/blob/master/LICENSE.txt"),
 
-    LibraryLicense("kotlin-codepoints", libraryName = "de.cketti.unicode.kotlin.codepoints.jvm", url = "https://github.com/cketti/kotlin-codepoints")
-      .mit("https://github.com/cketti/kotlin-codepoints/blob/main/LICENSE"),
+    LibraryLicense("kotlin-annotations-jvm", libraryName = "jetbrains.kotlin.annotations.jvm", url = "https://github.com/JetBrains/kotlin")
+      .apache("https://github.com/JetBrains/kotlin/blob/master/license/LICENSE.txt")
+      .suppliedByOrganizations(Suppliers.JETBRAINS),
 
     LibraryLicense("kotlin-metadata", libraryName = "kotlin-metadata", url = "https://github.com/JetBrains/kotlin")
+      .apache("https://github.com/JetBrains/kotlin/blob/master/license/LICENSE.txt")
+      .suppliedByOrganizations(Suppliers.JETBRAINS),
+
+    LibraryLicense("kotlin-metadata-jvm", libraryName = "kotlin-metadata-jvm", url = "https://github.com/JetBrains/kotlin")
       .apache("https://github.com/JetBrains/kotlin/blob/master/license/LICENSE.txt")
       .suppliedByOrganizations(Suppliers.JETBRAINS),
 
@@ -856,7 +867,7 @@ object CommunityLibraryLicenses {
       .apache("https://github.com/Kotlin/kotlinx.html/blob/master/LICENSE")
       .suppliedByOrganizations(Suppliers.JETBRAINS),
 
-    LibraryLicense("Kryo5", libraryName = "Kryo5", url = "https://github.com/EsotericSoftware/kryo")
+    LibraryLicense("kryo", libraryName = "kryo", url = "https://github.com/EsotericSoftware/kryo")
       .newBsd("https://github.com/EsotericSoftware/kryo/blob/master/LICENSE.md")
       .suppliedByPersons("Nathan Sweet"),
 
@@ -901,10 +912,6 @@ object CommunityLibraryLicenses {
       .suppliedByOrganizations(Suppliers.JETBRAINS),
 
     LibraryLicense("Ktor Client Core", libraryName = "ktor-client-core", url = "https://github.com/ktorio/ktor/tree/main/ktor-client/ktor-client-core")
-      .apache("https://github.com/ktorio/ktor/blob/main/LICENSE")
-      .suppliedByOrganizations(Suppliers.JETBRAINS),
-
-    LibraryLicense("Ktor Client OkHttp", libraryName = "ktor-client-okhttp", url = "https://github.com/ktorio/ktor/tree/main/ktor-client/ktor-client-okhttp")
       .apache("https://github.com/ktorio/ktor/blob/main/LICENSE")
       .suppliedByOrganizations(Suppliers.JETBRAINS),
 
@@ -1185,7 +1192,6 @@ object CommunityLibraryLicenses {
     LibraryLicense(
       name = "Skiko Runtime",
       libraryName = "jetbrains.skiko.awt.runtime.all",
-      additionalLibraryNames = listOf("jetbrains.skiko.awt.runtime.all.0.8.18"),
       url = "https://github.com/JetBrains/skiko/"
     ).apache("https://github.com/JetBrains/skiko/blob/master/LICENSE"),
 
@@ -1267,6 +1273,10 @@ object CommunityLibraryLicenses {
 
     LibraryLicense("thriftpy2", version = "0.4.13", attachedTo = "intellij.python", url = "https://github.com/Thriftpy/thriftpy2/")
       .mit("https://github.com/Thriftpy/thriftpy2/blob/master/LICENSE"),
+
+    LibraryLicense("toml4j", libraryName = "toml4j", url = "https://github.com/mwanji/toml4j")
+      .mit("https://github.com/mwanji/toml4j/blob/master/LICENSE")
+      .suppliedByPersons("Moandji Ezana"),
 
     // for traceprocessor-proto module library in intellij.android.profilersAndroid
     LibraryLicense("Trang", libraryName = "trang-core.jar", version = LibraryLicense.CUSTOM_REVISION, url = "https://relaxng.org/jclark/trang.html")
@@ -1431,6 +1441,7 @@ object CommunityLibraryLicenses {
     jetbrainsLibrary("jetbrains.compose.hot.reload.devtools.api"),
     jetbrainsLibrary("jetbrains.compose.hot.reload.gradle.idea"),
     jetbrainsLibrary("jetbrains.intellij.deps.rwmutex.idea"),
+    jetbrainsLibrary("jetbrains.kotlin.compiler.embeddable"),
     jetbrainsLibrary("jetbrains.kotlin.compose.compiler.plugin"),
     jetbrainsLibrary("jetbrains.kotlin.jps.plugin.classpath"),
     jetbrainsLibrary("jetbrains.ml.models.jetenry.inline.prompt.detection.model"),
@@ -1444,6 +1455,7 @@ object CommunityLibraryLicenses {
     jetbrainsLibrary("kotlin-gradle-plugin-idea-proto"),
     jetbrainsLibrary("kotlin-script-runtime"),
     jetbrainsLibrary("kotlin-test"),
+    jetbrainsLibrary("kotlin-test-junit5"),
     jetbrainsLibrary("kotlin-tooling-core"),
     jetbrainsLibrary("kotlinc.allopen-compiler-plugin"),
     jetbrainsLibrary("kotlinc.analysis-api"),
@@ -1498,20 +1510,27 @@ object CommunityLibraryLicenses {
     jetbrainsLibrary("workspace-model-codegen"),
     jetbrainsLibrary("RMI Stubs").copy(name = "XSLT Debugger RMI Stubs"),
   )
+}
 
-  private fun ffmpegLibraryLicense(name: String): LibraryLicense =
-    LibraryLicense(name, libraryName = name, url = "https://android.googlesource.com/platform/prebuilts/tools/+/refs/tags/studio-2022.3.1-beta2/common/m2/repository/org/bytedeco")
-      .lgpl21plus("https://android.googlesource.com/platform/prebuilts/tools/+/refs/tags/studio-2022.3.1-beta2/common/m2/repository/org/bytedeco/ffmpeg-LICENSE.md")
-      .suppliedByOrganizations(Suppliers.GOOGLE)
+private fun ffmpegLibraryLicense(name: String): LibraryLicense {
+  return LibraryLicense(
+    name = name,
+    libraryName = name,
+    url = "https://android.googlesource.com/platform/prebuilts/tools/+/refs/tags/studio-2022.3.1-beta2/common/m2/repository/org/bytedeco"
+  )
+    .lgpl21plus("https://android.googlesource.com/platform/prebuilts/tools/+/refs/tags/studio-2022.3.1-beta2/common/m2/repository/org/bytedeco/ffmpeg-LICENSE.md")
+    .suppliedByOrganizations(Suppliers.GOOGLE)
+}
 
-  private fun androidDependency(name: String, libraryName: String? = name, version: String? = null): LibraryLicense =
-    LibraryLicense(name, libraryName = libraryName, version = version, url = "https://source.android.com/")
-      .apache("https://source.android.com/setup/start/licenses")
-      .copyrightText("Copyright (C) The Android Open Source Project")
-      .suppliedByOrganizations(Suppliers.GOOGLE)
+private fun androidDependency(name: String, libraryName: String? = name, version: String? = null): LibraryLicense {
+  return LibraryLicense(name = name, libraryName = libraryName, version = version, url = "https://source.android.com/")
+    .apache("https://source.android.com/setup/start/licenses")
+    .copyrightText("Copyright (C) The Android Open Source Project")
+    .suppliedByOrganizations(Suppliers.GOOGLE)
+}
 
-  private fun netty(libraryName: String): LibraryLicense =
-    LibraryLicense(libraryName, libraryName = libraryName, url = "https://netty.io")
-      .apache("https://github.com/netty/netty/blob/4.1/LICENSE.txt")
-      .suppliedByOrganizations("The Netty project")
+private fun netty(libraryName: String): LibraryLicense {
+  return LibraryLicense(name = libraryName, libraryName = libraryName, url = "https://netty.io")
+    .apache("https://github.com/netty/netty/blob/4.1/LICENSE.txt")
+    .suppliedByOrganizations("The Netty project")
 }

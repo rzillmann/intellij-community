@@ -15,6 +15,7 @@ import com.intellij.ui.DocumentAdapter
 import com.intellij.ui.components.fields.ExtendableTextComponent
 import com.intellij.ui.components.fields.ExtendableTextField
 import com.intellij.ui.dsl.builder.AlignX
+import com.intellij.ui.dsl.builder.MAX_LINE_LENGTH_WORD_WRAP
 import com.intellij.ui.dsl.builder.Panel
 import com.intellij.ui.dsl.builder.bindText
 import com.intellij.ui.dsl.builder.panel
@@ -78,7 +79,7 @@ class TokenLoginInputPanelFactory(
           .bindText(model::token)
           .align(AlignX.FILL)
           .resizableColumn()
-          .comment(tokenNote)
+          .comment(tokenNote, maxLineLength = MAX_LINE_LENGTH_WORD_WRAP)
           .enabledIf(progressModel.toComponentPredicate())
           .validationOnApply {
             when {

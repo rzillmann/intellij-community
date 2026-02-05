@@ -1,4 +1,5 @@
 // Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+@file:ApiStatus.Experimental
 package com.intellij.platform.eel.provider
 
 import com.intellij.openapi.diagnostic.logger
@@ -11,7 +12,6 @@ import com.intellij.platform.eel.isPosix
 import com.intellij.platform.eel.path.EelPath
 import com.intellij.platform.eel.path.EelPathException
 import org.jetbrains.annotations.ApiStatus
-import java.nio.file.FileSystems
 import java.nio.file.Path
 
 /**
@@ -29,7 +29,7 @@ import java.nio.file.Path
  * @throws IllegalArgumentException if the Eel API for [this] does not have a corresponding [java.nio.file.FileSystem]
  */
 @Throws(IllegalArgumentException::class)
-@ApiStatus.Internal
+@ApiStatus.Experimental
 fun EelPath.asNioPath(): @MultiRoutingFileSystemPath Path {
   return asNioPathOrNull()
          ?: throw IllegalArgumentException("Could not convert $this to NIO path, descriptor is $descriptor")
@@ -44,7 +44,7 @@ fun EelPath.asNioPath(project: Project?): @MultiRoutingFileSystemPath Path {
 
 /** See docs for [asNioPath] */
 @Deprecated("It never returns null anymore")
-@ApiStatus.Internal
+@ApiStatus.Experimental
 fun EelPath.asNioPathOrNull(): @MultiRoutingFileSystemPath Path? {
   if (descriptor === LocalEelDescriptor) {
     return Path.of(toString())
@@ -81,13 +81,10 @@ fun EelPath.asNioPathOrNull(): @MultiRoutingFileSystemPath Path? {
  *     EelPath.parse("/usr", someWslDescriptor)
  * ```
  *
- * @throws IllegalArgumentException if the passed path cannot be mapped to a path corresponding to Eel.
- * It can happen if [this] belongs to a [java.nio.file.FileSystem] that was not registered as a backend of `MultiRoutingFileSystemProvider`
- *
  * @throws EelPathException if the passed path is not an absolute path.
  */
-@Throws(IllegalArgumentException::class, EelPathException::class)
-@ApiStatus.Internal
+@Throws(EelPathException::class)
+@ApiStatus.Experimental
 fun Path.asEelPath(): EelPath {
   return asEelPath(getEelDescriptor())
 }
@@ -95,12 +92,9 @@ fun Path.asEelPath(): EelPath {
 /**
  * [descriptor] should be exactly `this.getEelDescriptor()`. This method exists only to avoid calling `getEelDescriptor()` twice.
  */
-@Throws(IllegalArgumentException::class, EelPathException::class)
-@ApiStatus.Internal
+@Throws(EelPathException::class)
+@ApiStatus.Experimental
 fun Path.asEelPath(descriptor: EelDescriptor): EelPath {
-  if (fileSystem != FileSystems.getDefault()) {
-    throw IllegalArgumentException("Could not convert $this to EelPath: the path does not belong to the default NIO FileSystem")
-  }
   when (descriptor) {
     is LocalEelDescriptor -> return EelPath.parse(toString(), descriptor)
     is EelPathBoundDescriptor if (descriptor.osFamily.isPosix) -> {

@@ -17,7 +17,7 @@ jvm_library(
   name = "gradle",
   module_name = "intellij.gradle",
   visibility = ["//visibility:public"],
-  srcs = glob(["generated/**/*.kt", "generated/**/*.java", "src/**/*.kt", "src/**/*.java", "src/**/*.form", "gen/**/*.kt", "gen/**/*.java"], allow_empty = True),
+  srcs = glob(["generated/**/*.kt", "generated/**/*.java", "src/**/*.kt", "src/**/*.java", "src/**/*.form"], allow_empty = True),
   resources = [
     ":gradle_resources",
     ":gradle_resources_1",
@@ -54,14 +54,13 @@ jvm_library(
     "//libraries/fastutil",
     "//libraries/commons/cli",
     "//platform/workspace/storage",
-    "//plugins/properties/properties-psi-impl:backend-psi",
     "//platform/core-ui",
     "//platform/util-class-loader:util-classLoader",
     "//platform/platform-util-io:ide-util-io",
     "//plugins/gradle/tooling-proxy",
     "//platform/external-system-api/dependency-updater",
     "//platform/util/jdom",
-    "@lib//:kotlinx-coroutines-core",
+    "//libraries/kotlinx/coroutines/core",
     "//platform/diagnostic/telemetry",
     "@lib//:opentelemetry",
     "//libraries/commons/lang3",
@@ -75,6 +74,11 @@ jvm_library(
     "//platform/core-api:core",
     "//libraries/guava",
     "//platform/util/trove",
+    "//platform/util/coroutines",
+    "//platform/execution",
+    "//platform/forms_rt:java-guiForms-rt",
+    "//libraries/jspecify",
+    "//platform/util/text-matching",
   ],
   exports = [
     "//platform/external-system-api:externalSystem",
@@ -106,7 +110,19 @@ resourcegroup(
 jvm_library(
   name = "gradle-tests",
   visibility = ["//visibility:public"],
-  srcs = glob([], allow_empty = True)
+  srcs = glob([], allow_empty = True),
+  exports = ["//platform/external-system-api/testFramework"],
+  runtime_deps = [
+    "//platform/backend/workspace",
+    "//platform/external-system-api/dependency-updater",
+    "//platform/observable",
+    "//platform/core-ui",
+    "//platform/execution.dashboard",
+    "//libraries/gson",
+    "//libraries/guava",
+    "//platform/forms_rt:java-guiForms-rt",
+    "//plugins/repository-search/common",
+  ]
 )
 
 jvm_library(
@@ -158,24 +174,32 @@ jvm_library(
     "//platform/util/jdom",
     "//plugins/groovy",
     "//plugins/groovy:groovy_test_lib",
-    "@lib//:kotlinx-coroutines-core",
+    "//libraries/kotlinx/coroutines/core",
     "//platform/workspace/jps",
     "//platform/workspace/storage",
     "//tools/intellij.tools.ide.metrics.benchmark:ide-metrics-benchmark",
     "//tools/intellij.tools.ide.metrics.benchmark:ide-metrics-benchmark_test_lib",
     "//platform/backend/observation",
     "//platform/backend/observation:observation_test_lib",
-    "//android/gradle-dsl-groovy",
     "//platform/xdebugger-api:debugger",
     "//platform/smRunner",
     "//platform/smRunner:smRunner_test_lib",
     "//libraries/gson",
     "//libraries/guava",
+    "//platform/execution",
     "//platform/eel",
     "//platform/eel-provider",
+    "//platform/testFramework/eelJava",
+    "//platform/forms_rt:java-guiForms-rt",
+    "//java/testFramework/backend",
+    "@lib//:junit5Pioneer",
+    "//plugins/repository-search/common",
+    "//plugins/repository-search/common:common_test_lib",
+    "//plugins/gradle/completion",
+    "//plugins/gradle/completion:completion_test_lib",
   ],
   exports = ["//platform/external-system-api/testFramework"],
-  runtime_deps = ["//platform/execution.dashboard"]
+  runtime_deps = [":gradle-tests"]
 )
 ### auto-generated section `build intellij.gradle.tests` end
 

@@ -22,15 +22,27 @@ import com.intellij.platform.util.coroutines.childScope
 import com.intellij.ui.JBColor
 import com.intellij.ui.OnePixelSplitter
 import com.intellij.ui.components.JBLayeredPane
-import com.intellij.ui.dsl.builder.*
+import com.intellij.ui.dsl.builder.AlignX
+import com.intellij.ui.dsl.builder.AlignY
+import com.intellij.ui.dsl.builder.Cell
+import com.intellij.ui.dsl.builder.actionButton
+import com.intellij.ui.dsl.builder.panel
 import com.intellij.ui.dsl.gridLayout.UnscaledGaps
 import com.intellij.util.ui.JBUI
-import com.jetbrains.rd.util.concurrentMapOf
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.awt.Dimension
 import java.awt.event.ComponentAdapter
 import java.awt.event.ComponentEvent
-import javax.swing.*
+import java.util.concurrent.ConcurrentHashMap
+import javax.swing.Action
+import javax.swing.JButton
+import javax.swing.JComponent
+import javax.swing.JLayeredPane
+import javax.swing.JPanel
 import kotlin.coroutines.EmptyCoroutineContext
 
 private const val PANEL_MAX_WIDTH = 1000
@@ -39,7 +51,7 @@ private const val PANEL_NARROW_WIDTH = 850
 
 
 internal fun SettingsDialog.createEditorToolbar(actions: List<Action>): DialogPanel? {
-  val actionGroup = getActionGroup("Back", "Forward");
+  val actionGroup = getActionGroup("Back", "Forward")
   val toolbar = ActionManager.getInstance().createActionToolbar(ActionPlaces.SETTINGS_HISTORY, actionGroup!!, true)
   val settingsEditor = editor as? SettingsEditor ?: return null
   settingsEditor.search.preferredSize = JBUI.size(SEARCH_MAX_WIDTH, settingsEditor.search.preferredSize.height)
@@ -170,7 +182,7 @@ internal class ResetConfigurableHandler(
   coroutineScope: CoroutineScope,
   disposable: Disposable,
 ) {
-  private val jobs = concurrentMapOf<String, Job>()
+  private val jobs = ConcurrentHashMap<String, Job>()
   private val properties = PropertiesComponent.getInstance(project)
   private val myCoroutineScope: CoroutineScope = coroutineScope.childScope("ResetConfigurableHandler", EmptyCoroutineContext, true)
 

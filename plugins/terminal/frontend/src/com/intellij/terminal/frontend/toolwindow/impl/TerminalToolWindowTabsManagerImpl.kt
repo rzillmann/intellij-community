@@ -3,7 +3,10 @@ package com.intellij.terminal.frontend.toolwindow.impl
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.actionSystem.ActionGroup
 import com.intellij.openapi.actionSystem.ActionManager
-import com.intellij.openapi.application.*
+import com.intellij.openapi.application.EDT
+import com.intellij.openapi.application.ModalityState
+import com.intellij.openapi.application.UI
+import com.intellij.openapi.application.asContextElement
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
@@ -17,7 +20,11 @@ import com.intellij.platform.project.projectId
 import com.intellij.platform.util.coroutines.childScope
 import com.intellij.terminal.frontend.action.TerminalRenameTabAction
 import com.intellij.terminal.frontend.fus.TerminalFocusFusService
-import com.intellij.terminal.frontend.toolwindow.*
+import com.intellij.terminal.frontend.toolwindow.TerminalTabsManagerListener
+import com.intellij.terminal.frontend.toolwindow.TerminalToolWindowTab
+import com.intellij.terminal.frontend.toolwindow.TerminalToolWindowTabBuilder
+import com.intellij.terminal.frontend.toolwindow.TerminalToolWindowTabsManager
+import com.intellij.terminal.frontend.toolwindow.findTabByContent
 import com.intellij.terminal.frontend.view.TerminalView
 import com.intellij.terminal.frontend.view.TerminalViewSessionState
 import com.intellij.terminal.frontend.view.impl.TerminalViewImpl
@@ -31,9 +38,25 @@ import com.intellij.util.containers.DisposableWrapperList
 import com.intellij.util.ui.initOnShow
 import com.jediterm.core.util.TermSize
 import fleet.rpc.client.durable
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.future.await
-import org.jetbrains.plugins.terminal.*
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import org.jetbrains.plugins.terminal.JBTerminalSystemSettingsProvider
+import org.jetbrains.plugins.terminal.ShellStartupOptions
+import org.jetbrains.plugins.terminal.TerminalEngine
+import org.jetbrains.plugins.terminal.TerminalOptionsProvider
+import org.jetbrains.plugins.terminal.TerminalTabCloseListener
+import org.jetbrains.plugins.terminal.TerminalToolWindowFactory
+import org.jetbrains.plugins.terminal.TerminalToolWindowInitializer
+import org.jetbrains.plugins.terminal.TerminalToolWindowPanel
 import org.jetbrains.plugins.terminal.block.reworked.TerminalPortForwardingUiProvider
 import org.jetbrains.plugins.terminal.block.reworked.session.FrontendTerminalSession
 import org.jetbrains.plugins.terminal.block.reworked.session.TerminalSessionTab
@@ -46,6 +69,7 @@ import org.jetbrains.plugins.terminal.fus.ReworkedTerminalUsageCollector
 import org.jetbrains.plugins.terminal.fus.TerminalOpeningWay
 import org.jetbrains.plugins.terminal.fus.TerminalStartupFusInfo
 import org.jetbrains.plugins.terminal.util.fireListenersAndLogAllExceptions
+import java.lang.ref.WeakReference
 import kotlin.time.Duration.Companion.seconds
 
 internal class TerminalToolWindowTabsManagerImpl(
@@ -65,7 +89,7 @@ internal class TerminalToolWindowTabsManagerImpl(
     project.messageBus.connect(coroutineScope).subscribe(ToolWindowManagerListener.TOPIC, object : ToolWindowManagerListener {
       override fun toolWindowShown(toolWindow: ToolWindow) {
         if (toolWindow.id == TerminalToolWindowFactory.TOOL_WINDOW_ID) {
-          coroutineScope.launch(Dispatchers.UiWithModelAccess) {
+          coroutineScope.launch(Dispatchers.EDT) {
             createNewTabIfEmpty(toolWindow)
           }
         }
@@ -87,6 +111,10 @@ internal class TerminalToolWindowTabsManagerImpl(
       tab.content.putUserData(TAB_DETACHED_KEY, Unit)
       val manager = tab.content.manager ?: error("No content manager for $tab")
       manager.removeContent(tab.content, true)
+    }
+    val toolWindow = getToolWindow()
+    if (toolWindow.contentManager.isEmpty) {
+      toolWindow.hide()
     }
     return tab.view
   }
@@ -129,6 +157,7 @@ internal class TerminalToolWindowTabsManagerImpl(
     return tab
   }
 
+  @OptIn(AwaitCancellationAndInvoke::class)
   private fun doCreateTab(terminal: TerminalView): TerminalToolWindowTab {
     val panel = TerminalToolWindowPanel()
     panel.setContent(terminal.component)
@@ -153,7 +182,7 @@ internal class TerminalToolWindowTabsManagerImpl(
       terminal.sessionState.collect { state ->
         if (state == TerminalViewSessionState.Terminated) {
           // Execute in the manager scope, because closing of the tab may dispose the content and cancel the current coroutine.
-          coroutineScope.launch(Dispatchers.UiWithModelAccess + ModalityState.any().asContextElement()) {
+          coroutineScope.launch(Dispatchers.EDT + ModalityState.any().asContextElement()) {
             if (TerminalOptionsProvider.instance.closeSessionOnLogout) {
               val tab = findTabByContent(content) ?: return@launch
               closeTab(tab)
@@ -161,6 +190,21 @@ internal class TerminalToolWindowTabsManagerImpl(
           }
         }
       }
+    }
+
+    // In case of project closing there can be a race between terminal coroutine scope cancellation
+    // and removing the content from the tool window.
+    // If the terminal coroutine scope is canceled before the content is removed, the editor may be shown green for a moment.
+    // The ideal solution is to cancel the terminal scope only after the content is removed.
+    // However, the terminal component has a broader lifecycle than the tool window tab (to be able to detach it),
+    // so it can't be tied to the content removal directly.
+    // Let's try to hide the tool window tab right on terminal scope cancellation,
+    // but do not store strong reference to the content to avoid leaks.
+    val tabReference = WeakReference(content)
+    terminal.coroutineScope.awaitCancellationAndInvoke(Dispatchers.EDT) {
+      val content = tabReference.get() ?: return@awaitCancellationAndInvoke
+      val manager = content.manager ?: return@awaitCancellationAndInvoke
+      manager.removeContent(content, true)
     }
 
     return TerminalToolWindowTabImpl(terminal, content)
@@ -187,7 +231,7 @@ internal class TerminalToolWindowTabsManagerImpl(
     }
 
     fireListenersAndLogAllExceptions(listeners, LOG, "Exception during handling tab created event: $tab") {
-      it.tabCreated(tab)
+      it.tabAdded(tab)
     }
   }
 
@@ -346,15 +390,15 @@ internal class TerminalToolWindowTabsManagerImpl(
       toolWindow.setTabsSplittingAllowed(true)
       ToolWindowContentUi.setToolWindowInEditorSupport(toolWindow, TerminalInEditorSupport())
 
-      if (toolWindow is ToolWindowEx) {
-        installDirectoryDnD(toolWindow, manager.coroutineScope.asDisposable())
-        TerminalDockContainer.install(toolWindow.project, toolWindow.decorator)
+      TerminalFocusFusService.ensureInitialized()
 
+      if (toolWindow is ToolWindowEx) {
         toolWindow.setTabActions(ActionManager.getInstance().getAction("TerminalToolwindowActionGroup"))
         toolWindow.setTabDoubleClickActions(listOf(TerminalRenameTabAction()))
-      }
 
-      TerminalFocusFusService.ensureInitialized()
+        installDirectoryDnD(toolWindow, manager.coroutineScope.asDisposable())
+        TerminalDockContainer.install(toolWindow.project, toolWindow.decorator)
+      }
     }
 
     private fun scheduleTabsRestoring(manager: TerminalToolWindowTabsManagerImpl) {
@@ -362,7 +406,7 @@ internal class TerminalToolWindowTabsManagerImpl(
         val tabs: List<TerminalSessionTab> = durable {
           TerminalTabsManagerApi.getInstance().getTerminalTabs(manager.project.projectId())
         }
-        withContext(Dispatchers.UiWithModelAccess + ModalityState.any().asContextElement()) {
+        withContext(Dispatchers.EDT + ModalityState.any().asContextElement()) {
           restoreTabs(tabs, manager)
         }
       }
@@ -379,6 +423,7 @@ internal class TerminalToolWindowTabsManagerImpl(
           backendTabId(tab.id)
           sessionId(tab.sessionId)
           portForwardingId(tab.portForwardingId)
+          requestFocus(false)  // Otherwise it may trigger the tool window showing
         }
         builder.createTab()
       }

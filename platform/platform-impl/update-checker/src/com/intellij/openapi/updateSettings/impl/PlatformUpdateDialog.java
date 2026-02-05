@@ -10,7 +10,12 @@ import com.intellij.ide.plugins.newui.PluginUiModel;
 import com.intellij.ide.util.PropertiesComponent;
 import com.intellij.notification.NotificationAction;
 import com.intellij.notification.NotificationType;
-import com.intellij.openapi.application.*;
+import com.intellij.openapi.application.ApplicationInfo;
+import com.intellij.openapi.application.ApplicationManager;
+import com.intellij.openapi.application.ApplicationNamesInfo;
+import com.intellij.openapi.application.ConfigImportHelper;
+import com.intellij.openapi.application.IdeUrlTrackingParametersProvider;
+import com.intellij.openapi.application.PathManager;
 import com.intellij.openapi.application.ex.ApplicationEx;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.extensions.PluginId;
@@ -34,11 +39,19 @@ import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import javax.swing.*;
+import javax.swing.AbstractAction;
+import javax.swing.Action;
+import javax.swing.JComponent;
 import java.awt.event.ActionEvent;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 
 import static com.intellij.openapi.updateSettings.impl.UpdateCheckerService.SELF_UPDATE_STARTED_FOR_BUILD_PROPERTY;
 import static java.util.Objects.requireNonNull;
@@ -215,11 +228,13 @@ public final class PlatformUpdateDialog extends AbstractUpdateDialog {
   }
 
   private void downloadPatchAndRestart(Map<PluginId, PluginUiModel> installedPlugins) {
+    Collection<PluginDownloader> selectedPluginsToUpdate = new ArrayList<>();
     if (myUpdatesForPlugins != null && !installedPlugins.isEmpty()) {
-      var dialog = new PluginUpdateDialog(myProject, installedPlugins.values(), null, installedPlugins);
-      if (!PluginUpdateDialog.showDialogAndUpdate(myUpdatesForPlugins, dialog)) {
+      var dialog = new PluginUpdateDialog(myProject, ContainerUtil.map(myUpdatesForPlugins, it -> it.getUiModel()), null, installedPlugins);
+      if (!dialog.showAndGet()) {
         return;  // update cancelled
       }
+      selectedPluginsToUpdate.addAll(PluginUpdateDialog.getSelectedDownloaders(myUpdatesForPlugins, dialog));
     }
 
     //noinspection UsagesOfObsoleteApi
@@ -254,8 +269,8 @@ public final class PlatformUpdateDialog extends AbstractUpdateDialog {
           return;
         }
 
-        if (!ContainerUtil.isEmpty(myUpdatesForPlugins)) {
-          UpdateInstaller.installPluginUpdates(myUpdatesForPlugins, indicator);
+        if (!ContainerUtil.isEmpty(selectedPluginsToUpdate)) {
+          UpdateInstaller.installPluginUpdates(selectedPluginsToUpdate, indicator);
         }
 
         if (ApplicationManager.getApplication().isRestartCapable()) {

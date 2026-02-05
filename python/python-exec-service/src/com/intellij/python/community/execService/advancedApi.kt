@@ -5,7 +5,11 @@ import com.intellij.platform.eel.channels.EelSendChannel
 import com.intellij.platform.eel.provider.utils.EelProcessExecutionResult
 import com.intellij.python.community.execService.impl.ProcessSemiInteractiveHandlerImpl
 import com.jetbrains.python.Result
-import com.jetbrains.python.errorProcessing.*
+import com.jetbrains.python.errorProcessing.ExecErrorImpl
+import com.jetbrains.python.errorProcessing.ExecErrorReason
+import com.jetbrains.python.errorProcessing.MessageError
+import com.jetbrains.python.errorProcessing.PyError
+import com.jetbrains.python.errorProcessing.PyResult
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import org.jetbrains.annotations.ApiStatus
@@ -91,7 +95,7 @@ sealed class ExecuteGetProcessError<T : PyError>(val pyError: T) {
   /**
    * Failed to create environment for process (i.e. failed to start docker)
    */
-  class EnvironmentError internal constructor(pyError: MessageError) : ExecuteGetProcessError<MessageError>(pyError)
+  class EnvironmentError(pyError: MessageError) : ExecuteGetProcessError<MessageError>(pyError)
 
   /**
    * Process couldn't be started

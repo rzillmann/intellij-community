@@ -373,6 +373,13 @@ public class PyTypeHintsInspectionTest extends PyInspectionTestCase {
                    """);
   }
 
+  public void testSelfAnnotationUsesClassScopedTypeParameters() {
+    doTestByText("""
+                   class MyClass[T1, T2]:
+                       def __init__(self: <warning descr="Class-scoped type variables should not be used in the annotation for 'self' parameter of '__init__' method">MyClass[T2, T1]</warning>) -> None: ...
+                   """);
+  }
+
   // PY-28249
   public void testInstanceAndClassChecksOnAny() {
     doTestByText("""
@@ -3156,6 +3163,43 @@ public class PyTypeHintsInspectionTest extends PyInspectionTestCase {
     doMultiFileTest();
   }
 
+  // PY-76832
+  public void testTypeSelfAsTypeArg() {
+    doTestByText("""
+                   from typing import TypeAlias, Self
+                   TupleSelf: TypeAlias = tuple[<warning descr="Cannot use 'Self' outside class">Self</warning>]  # E
+                   class A[T]: ...
+                   a = A[<warning descr="Cannot use 'Self' outside class">Self</warning>]()  # E
+                   class B:
+                      def __init__(self):
+                          self.l: List[Self] = []  # OK
+                   """);
+  }
+
+  // PY-76832
+  public void testTypeSelfInBaseClassTypeArgs() {
+    doTestByText("""
+                   from typing import Self
+                   
+                   class Bar[T]: ...
+                   class Baz(Bar[<warning descr="Cannot use 'Self' in this context">Self</warning>]): ... # E
+                   """);
+  }
+
+  // PY-76832
+  public void testTypeSelfInMetaclass() {
+    doTestByText("""
+                   from typing import Self, Any
+                   
+                   class MyMetaclass(type):
+                       def __new__(cls, *args: Any) -> <warning descr="Type 'Self' cannot be used in a metaclass">Self</warning>:  # E
+                           ...
+                   
+                       def __mul__(cls, count: int) -> list[<warning descr="Type 'Self' cannot be used in a metaclass">Self</warning>]:  # E
+                           ...
+                   """);
+  }
+
 
   // PY-84289
   public void testExponentialAnalysisTimeWhenMapLookupKeyEqualsVariableName() {
@@ -3186,6 +3230,37 @@ public class PyTypeHintsInspectionTest extends PyInspectionTestCase {
                    
                    type Alias = <warning descr="Type hint is invalid or refers to the expression which is not a correct type">[int, str]</warning>
                    myAlias: TypeAlias = <warning descr="Assigned value of type alias must be a correct type">[int, str]</warning>
+                   """);
+  }
+
+  // PY-85120
+  public void testTargetExpressionWithAnnotationNotConsideredTypeAlias() {
+    doTestByText("""
+                   a: list[int] | None = None  # Not a type alias
+                   
+                   if a:
+                       _ = a[1]  # No error expected
+                   """);
+  }
+
+  // PY-86310
+  public void testTargetExpressionWithReassignmentNotProcessedAsImplicitTypeAlias() {
+    doTestByText("""
+                   b = []
+                   a = b
+                   _ = a[0] # No error expected
+                   """);
+  }
+
+  // PY-86223
+  public void testGenericTypeWithQuotedTypeParameterInTypeHint() {
+    doTestByText("""
+                   from typing import assert_type
+                   
+                   
+                   def foo[T](x: list["T"]):
+                       assert_type(x, list[T])
+                       assert_type(x, list["T"])
                    """);
   }
 

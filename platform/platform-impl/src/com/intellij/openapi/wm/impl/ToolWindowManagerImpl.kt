@@ -5,6 +5,7 @@
 
 package com.intellij.openapi.wm.impl
 
+import com.intellij.codeWithMe.ClientId
 import com.intellij.concurrency.ContextAwareRunnable
 import com.intellij.diagnostic.LoadingState
 import com.intellij.diagnostic.PluginException
@@ -13,18 +14,33 @@ import com.intellij.ide.IdeEventQueue
 import com.intellij.ide.UiActivity
 import com.intellij.ide.UiActivityMonitor
 import com.intellij.ide.actions.ActivateToolWindowAction
-import com.intellij.ide.actions.MaximizeActiveDialogAction
 import com.intellij.ide.impl.ProjectUtil
 import com.intellij.ide.plugins.PluginManager
 import com.intellij.ide.ui.UISettings
+import com.intellij.ide.ui.toggleMaximized
 import com.intellij.internal.statistic.collectors.fus.actions.persistence.ToolWindowCollector
 import com.intellij.notification.impl.NotificationsManagerImpl
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.MnemonicHelper
-import com.intellij.openapi.actionSystem.*
+import com.intellij.openapi.actionSystem.ActionManager
+import com.intellij.openapi.actionSystem.ActionPlaces
+import com.intellij.openapi.actionSystem.AnAction
+import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.actionSystem.KeyboardShortcut
+import com.intellij.openapi.actionSystem.PlatformCoreDataKeys
+import com.intellij.openapi.actionSystem.PlatformDataKeys
 import com.intellij.openapi.actionSystem.ex.AnActionListener
-import com.intellij.openapi.application.*
-import com.intellij.openapi.components.*
+import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.EDT
+import com.intellij.openapi.application.ModalityState
+import com.intellij.openapi.application.UiWithModelAccess
+import com.intellij.openapi.application.asContextElement
+import com.intellij.openapi.application.writeIntentReadAction
+import com.intellij.openapi.components.ComponentManagerEx
+import com.intellij.openapi.components.Service
+import com.intellij.openapi.components.service
+import com.intellij.openapi.components.serviceAsync
+import com.intellij.openapi.components.serviceIfCreated
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.diagnostic.debug
 import com.intellij.openapi.diagnostic.logger
@@ -47,40 +63,116 @@ import com.intellij.openapi.ui.Splitter
 import com.intellij.openapi.ui.ThreeComponentsSplitter
 import com.intellij.openapi.ui.popup.Balloon
 import com.intellij.openapi.ui.popup.JBPopupFactory
-import com.intellij.openapi.util.*
+import com.intellij.openapi.util.Disposer
+import com.intellij.openapi.util.ExpirableRunnable
+import com.intellij.openapi.util.Key
+import com.intellij.openapi.util.Pair
+import com.intellij.openapi.util.Ref
+import com.intellij.openapi.util.SystemInfoRt
+import com.intellij.openapi.util.component1
+import com.intellij.openapi.util.component2
 import com.intellij.openapi.util.registry.Registry
 import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.openapi.wm.*
+import com.intellij.openapi.wm.IdeFocusManager
+import com.intellij.openapi.wm.RegisterToolWindowTask
+import com.intellij.openapi.wm.RegisterToolWindowTaskData
+import com.intellij.openapi.wm.ToolWindow
+import com.intellij.openapi.wm.ToolWindowAnchor
+import com.intellij.openapi.wm.ToolWindowBalloonShowOptions
+import com.intellij.openapi.wm.ToolWindowContentUiType
+import com.intellij.openapi.wm.ToolWindowEP
+import com.intellij.openapi.wm.ToolWindowId
+import com.intellij.openapi.wm.ToolWindowManager
+import com.intellij.openapi.wm.ToolWindowType
+import com.intellij.openapi.wm.WINDOW_INFO_DEFAULT_TOOL_WINDOW_PANE_ID
+import com.intellij.openapi.wm.WindowInfo
+import com.intellij.openapi.wm.WindowManager
 import com.intellij.openapi.wm.ex.ToolWindowEx
 import com.intellij.openapi.wm.ex.ToolWindowManagerEx
 import com.intellij.openapi.wm.ex.ToolWindowManagerListener
 import com.intellij.openapi.wm.ex.ToolWindowManagerListener.ToolWindowManagerEventType
+import com.intellij.openapi.wm.safeToolWindowPaneId
 import com.intellij.platform.ide.progress.runWithModalProgressBlocking
 import com.intellij.serviceContainer.NonInjectable
-import com.intellij.toolWindow.*
-import com.intellij.ui.*
+import com.intellij.toolWindow.InternalDecoratorImpl
+import com.intellij.toolWindow.PreparedRegisterToolWindowTask
+import com.intellij.toolWindow.RegisterToolWindowResult
+import com.intellij.toolWindow.ToolWindowButtonManager
+import com.intellij.toolWindow.ToolWindowDefaultLayoutManager
+import com.intellij.toolWindow.ToolWindowEntry
+import com.intellij.toolWindow.ToolWindowEventSource
+import com.intellij.toolWindow.ToolWindowPane
+import com.intellij.toolWindow.ToolWindowPaneNewButtonManager
+import com.intellij.toolWindow.ToolWindowProperty
+import com.intellij.toolWindow.ToolWindowSetInitializer
+import com.intellij.toolWindow.ToolWindowStripeManager
+import com.intellij.toolWindow.ToolWindowToolbar
+import com.intellij.toolWindow.bringOwnerToFront
+import com.intellij.toolWindow.findIconFromBean
+import com.intellij.toolWindow.getShowingComponentToRequestFocus
+import com.intellij.toolWindow.getStripeTitleSupplier
+import com.intellij.toolWindow.getToolWindowAnchor
+import com.intellij.toolWindow.isUltrawideLayout
+import com.intellij.ui.BalloonImpl
+import com.intellij.ui.ClientProperty
+import com.intellij.ui.ComponentUtil
+import com.intellij.ui.ExperimentalUI
+import com.intellij.ui.HintHint
+import com.intellij.ui.ScreenUtil
 import com.intellij.ui.awt.RelativePoint
-import com.intellij.util.*
+import com.intellij.util.BitUtil
+import com.intellij.util.EventDispatcher
+import com.intellij.util.SingleAlarm
+import com.intellij.util.SystemProperties
+import com.intellij.util.cancelOnDispose
 import com.intellij.util.concurrency.ThreadingAssertions
 import com.intellij.util.concurrency.annotations.RequiresEdt
 import com.intellij.util.messages.SimpleMessageBusConnection
-import com.intellij.util.ui.*
-import kotlinx.coroutines.*
+import com.intellij.util.ui.EDT
+import com.intellij.util.ui.FocusUtil
+import com.intellij.util.ui.JBUI
+import com.intellij.util.ui.PositionTracker
+import com.intellij.util.ui.StartupUiUtil
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.Runnable
 import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.intellij.lang.annotations.MagicConstant
 import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.annotations.TestOnly
 import org.jetbrains.annotations.VisibleForTesting
-import java.awt.*
-import java.awt.event.*
+import java.awt.AWTEvent
+import java.awt.Component
+import java.awt.Dialog
+import java.awt.Dimension
+import java.awt.Frame
+import java.awt.Point
+import java.awt.Rectangle
+import java.awt.Toolkit
+import java.awt.event.AWTEventListener
+import java.awt.event.FocusEvent
+import java.awt.event.InputEvent
+import java.awt.event.KeyEvent
+import java.awt.event.WindowEvent
 import java.beans.PropertyChangeListener
-import java.util.*
+import java.util.LinkedList
 import java.util.concurrent.ConcurrentHashMap
 import java.util.function.Supplier
-import javax.swing.*
+import javax.swing.Icon
+import javax.swing.JComponent
+import javax.swing.JFrame
+import javax.swing.JRootPane
+import javax.swing.RootPaneContainer
+import javax.swing.SwingUtilities
 import javax.swing.event.HyperlinkEvent
 import javax.swing.event.HyperlinkListener
 import kotlin.time.Duration.Companion.milliseconds
@@ -477,8 +569,12 @@ open class ToolWindowManagerImpl @NonInjectable @TestOnly internal constructor(
       for (entry in idToEntry.values) {
         if (entry.readOnlyWindowInfo.isVisible) {
           val decorator = entry.toolWindow.decorator ?: continue
-          decorator.repaint()
-          decorator.updateActiveAndHoverState()
+          // The tool window can be split, so we need to update the hover state in all cells.
+          val cells = decorator.getOrderedCells()
+          for (cell in cells) {
+            cell.repaint()
+            cell.updateActiveAndHoverState()
+          }
         }
       }
       revalidateStripeButtons()
@@ -592,6 +688,7 @@ open class ToolWindowManagerImpl @NonInjectable @TestOnly internal constructor(
 
     connection.subscribe(FileEditorManagerListener.FILE_EDITOR_MANAGER, object : FileEditorManagerListener {
       override fun fileClosed(source: FileEditorManager, file: VirtualFile) {
+        if (!ClientId.isCurrentlyUnderLocalId) return
         coroutineScope.launch(Dispatchers.EDT) {
           focusManager.doWhenFocusSettlesDown(ExpirableRunnable.forProject(project) {
             if (!FileEditorManager.getInstance(project).hasOpenFiles()) {
@@ -1703,34 +1800,21 @@ open class ToolWindowManagerImpl @NonInjectable @TestOnly internal constructor(
       SwingUtilities.invokeLater(show)
     }
   }
+  
+  fun getToolWindowButton(toolWindowId: String): JComponent? {
+    val entry = idToEntry.get(toolWindowId) ?: return null
+    return findBallonAlignment(entry, toolWindowId).first
+  }
 
   private fun notifySquareButtonByBalloon(options: ToolWindowBalloonShowOptions) {
     val entry = idToEntry.get(options.toolWindowId)!!
     entry.balloon?.let(Disposer::dispose)
 
+    val (button, position) = findBallonAlignment(entry, options.toolWindowId)
+    
     val anchor = entry.readOnlyWindowInfo.anchor
-    var position = when (anchor) {
-      ToolWindowAnchor.TOP -> Balloon.Position.atRight
-      ToolWindowAnchor.RIGHT -> Balloon.Position.atRight
-      ToolWindowAnchor.BOTTOM -> Balloon.Position.atLeft
-      ToolWindowAnchor.LEFT -> Balloon.Position.atLeft
-      else -> Balloon.Position.atLeft
-    }
-
     val balloon = createBalloon(options, entry)
     val toolWindowPane = getToolWindowPane(entry.readOnlyWindowInfo.safeToolWindowPaneId)
-    val buttonManager = toolWindowPane.buttonManager as ToolWindowPaneNewButtonManager
-    var button = buttonManager.getSquareStripeFor(entry.readOnlyWindowInfo.anchor).getButtonFor(options.toolWindowId)?.getComponent()
-    if (button == null && entry.readOnlyWindowInfo.anchor == ToolWindowAnchor.BOTTOM) {
-      button = buttonManager.getSquareStripeFor(ToolWindowAnchor.RIGHT).getButtonFor(options.toolWindowId)?.getComponent()
-      if (button != null && button.isShowing) {
-        position = Balloon.Position.atRight
-      }
-    }
-    if (button == null || !button.isShowing) {
-      button = buttonManager.getMoreButton(getMoreButtonSide())
-      position = Balloon.Position.atLeft
-    }
     val show = Runnable {
       val tracker: PositionTracker<Balloon>
       if (entry.toolWindow.isVisible &&
@@ -1769,6 +1853,36 @@ open class ToolWindowManagerImpl @NonInjectable @TestOnly internal constructor(
     else {
       SwingUtilities.invokeLater(show)
     }
+  }
+
+  private fun findBallonAlignment(
+    entry: ToolWindowEntry,
+    toolWindowId: String,
+  ): Pair<JComponent, Balloon.Position> {
+    val anchor = entry.readOnlyWindowInfo.anchor
+    var position = when (anchor) {
+      ToolWindowAnchor.TOP -> Balloon.Position.atRight
+      ToolWindowAnchor.RIGHT -> Balloon.Position.atRight
+      ToolWindowAnchor.BOTTOM -> Balloon.Position.atLeft
+      ToolWindowAnchor.LEFT -> Balloon.Position.atLeft
+      else -> Balloon.Position.atLeft
+    }
+
+    val toolWindowPane = getToolWindowPane(entry.readOnlyWindowInfo.safeToolWindowPaneId)
+    val buttonManager = toolWindowPane.buttonManager as ToolWindowPaneNewButtonManager
+    var button = buttonManager.getSquareStripeFor(anchor).getButtonFor(toolWindowId)?.getComponent()
+    if (button == null && anchor == ToolWindowAnchor.BOTTOM) {
+      button = buttonManager.getSquareStripeFor(ToolWindowAnchor.RIGHT).getButtonFor(toolWindowId)?.getComponent()
+      if (button != null && button.isShowing) {
+        position = Balloon.Position.atRight
+      }
+    }
+    if (button == null || !button.isShowing) {
+      button = buttonManager.getMoreButton(getMoreButtonSide())
+      position = Balloon.Position.atLeft
+    }
+
+    return Pair<JComponent, Balloon.Position>(button, position)
   }
 
   private fun createPositionTracker(component: Component, anchor: ToolWindowAnchor): PositionTracker<Balloon> {
@@ -2148,7 +2262,7 @@ open class ToolWindowManagerImpl @NonInjectable @TestOnly internal constructor(
 
   override fun setMaximized(window: ToolWindow, maximized: Boolean) {
     if (window.type == ToolWindowType.FLOATING && window is ToolWindowImpl) {
-      MaximizeActiveDialogAction.doMaximize(idToEntry.get(window.id)?.floatingDecorator)
+      idToEntry.get(window.id)?.floatingDecorator?.toggleMaximized()
       return
     }
 

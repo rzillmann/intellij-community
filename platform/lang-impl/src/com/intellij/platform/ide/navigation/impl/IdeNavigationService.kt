@@ -16,12 +16,19 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.serviceAsync
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.extensions.ExtensionPointName
-import com.intellij.openapi.fileEditor.*
+import com.intellij.openapi.fileEditor.FileEditor
+import com.intellij.openapi.fileEditor.FileEditorManager
+import com.intellij.openapi.fileEditor.FileNavigator
+import com.intellij.openapi.fileEditor.FileNavigatorImpl
+import com.intellij.openapi.fileEditor.NavigatableFileEditor
+import com.intellij.openapi.fileEditor.OpenFileDescriptor
+import com.intellij.openapi.fileEditor.TextEditor
 import com.intellij.openapi.fileEditor.ex.FileEditorManagerEx
 import com.intellij.openapi.fileEditor.impl.EditorComposite
 import com.intellij.openapi.fileEditor.impl.FileEditorManagerImpl
 import com.intellij.openapi.fileEditor.impl.FileEditorOpenOptions
 import com.intellij.openapi.fileEditor.impl.navigateAndSelectEditor
+import com.intellij.openapi.fileEditor.navigateInProjectView
 import com.intellij.openapi.fileTypes.FileTypeManager
 import com.intellij.openapi.fileTypes.INativeFileType
 import com.intellij.openapi.project.Project
@@ -38,12 +45,13 @@ import com.intellij.platform.util.coroutines.sync.OverflowSemaphore
 import com.intellij.platform.util.progress.mapWithProgress
 import com.intellij.pom.Navigatable
 import com.intellij.util.containers.sequenceOfNotNull
-import kotlinx.coroutines.*
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.withContext
 import kotlin.coroutines.cancellation.CancellationException
 
 @Service(Service.Level.PROJECT)
-private class IdeNavigationService(private val project: Project) : NavigationService {
+internal class IdeNavigationService(private val project: Project) : NavigationService {
   /**
    * - `permits = 1` means at any given time only one request is being handled.
    * - [BufferOverflow.DROP_OLDEST] makes each new navigation request cancel the previous one.

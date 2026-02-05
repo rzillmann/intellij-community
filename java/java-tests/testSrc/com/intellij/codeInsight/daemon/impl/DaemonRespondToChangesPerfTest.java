@@ -28,6 +28,7 @@ import com.intellij.psi.PsiDocumentManager;
 import com.intellij.psi.PsiElement;
 import com.intellij.psi.PsiFile;
 import com.intellij.testFramework.ExtensionTestUtil;
+import com.intellij.testFramework.PerformanceUnitTest;
 import com.intellij.testFramework.PlatformTestUtil;
 import com.intellij.testFramework.Timings;
 import com.intellij.testFramework.fixtures.impl.CodeInsightTestFixtureImpl;
@@ -57,6 +58,7 @@ import java.util.concurrent.atomic.AtomicReference;
 public class DaemonRespondToChangesPerfTest extends DaemonAnalyzerTestCase {
   private static final boolean DEBUG = false;
 
+  @PerformanceUnitTest
   public void testHugeAppendChainDoesNotCauseSOE_Stress() {
     StringBuilder text = new StringBuilder("class S { String ffffff =  new StringBuilder()\n");
     for (int i=0; i<2000; i++) {
@@ -74,6 +76,7 @@ public class DaemonRespondToChangesPerfTest extends DaemonAnalyzerTestCase {
     }).start();
   }
 
+  @PerformanceUnitTest
   public void testExpressionListsWithManyStringLiteralsHighlightingPerformance() {
     String listBody = StringUtil.join(Collections.nCopies(2000, "\"foo\""), ",\n");
     @Language("JAVA")
@@ -96,6 +99,7 @@ public class DaemonRespondToChangesPerfTest extends DaemonAnalyzerTestCase {
     }).start();
   }
 
+  @PerformanceUnitTest
   public void testPerformanceOfHighlightingLongCallChainWithHierarchyAndGenerics() {
     @Language("JAVA")
     String text = "class Foo { native Foo foo(); }\n" +
@@ -118,6 +122,7 @@ public class DaemonRespondToChangesPerfTest extends DaemonAnalyzerTestCase {
     }).start();
   }
 
+  @PerformanceUnitTest
   public void testReactivityPerformance() throws Throwable {
     @NonNls String filePath = "/psi/resolve/Thinlet.java";
     configureByFile(filePath);
@@ -217,6 +222,7 @@ public class DaemonRespondToChangesPerfTest extends DaemonAnalyzerTestCase {
     System.err.println("----///////---");
   }
 
+  @PerformanceUnitTest
   public void testTypingLatencyPerformance() throws Throwable {
     @NonNls String filePath = "/psi/resolve/ThinletBig.java";
 
@@ -319,7 +325,7 @@ public class DaemonRespondToChangesPerfTest extends DaemonAnalyzerTestCase {
         codeAnalyzer.runPasses(psiFile, editor.getDocument(), textEditor, ArrayUtilRt.EMPTY_INT_ARRAY, true, callbackWhileWaiting);
       }
       catch (ProcessCanceledException ignored) {
-        codeAnalyzer.waitForTermination();
+        new TestDaemonCodeAnalyzerImpl(myProject).waitForTermination();
         continue;
       }
       fail("PCE must have been thrown");

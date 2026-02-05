@@ -3,7 +3,12 @@ package com.jetbrains.python.black.configuration
 
 import com.intellij.codeInsight.AutoPopupController
 import com.intellij.icons.AllIcons
-import com.intellij.ide.actionsOnSave.*
+import com.intellij.ide.actionsOnSave.ActionOnSaveBackedByOwnConfigurable
+import com.intellij.ide.actionsOnSave.ActionOnSaveComment
+import com.intellij.ide.actionsOnSave.ActionOnSaveContext
+import com.intellij.ide.actionsOnSave.ActionOnSaveInfo
+import com.intellij.ide.actionsOnSave.ActionOnSaveInfoProvider
+import com.intellij.ide.actionsOnSave.ActionsOnSaveConfigurable
 import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.IdeActions
 import com.intellij.openapi.application.EDT
@@ -15,14 +20,26 @@ import com.intellij.openapi.options.BoundConfigurable
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.modules
 import com.intellij.openapi.projectRoots.Sdk
-import com.intellij.openapi.ui.*
+import com.intellij.openapi.ui.ComboBox
+import com.intellij.openapi.ui.DialogPanel
+import com.intellij.openapi.ui.TextFieldWithBrowseButton
+import com.intellij.openapi.ui.ValidationInfo
+import com.intellij.openapi.ui.emptyText
 import com.intellij.openapi.util.SystemInfo
 import com.intellij.platform.ide.progress.ModalTaskOwner
 import com.intellij.platform.ide.progress.runWithModalProgressBlocking
 import com.intellij.ui.EnumComboBoxModel
 import com.intellij.ui.SimpleListCellRenderer
 import com.intellij.ui.TextFieldWithAutoCompletionListProvider
-import com.intellij.ui.dsl.builder.*
+import com.intellij.ui.dsl.builder.AlignX
+import com.intellij.ui.dsl.builder.BottomGap
+import com.intellij.ui.dsl.builder.COLUMNS_SHORT
+import com.intellij.ui.dsl.builder.MAX_LINE_LENGTH_WORD_WRAP
+import com.intellij.ui.dsl.builder.Panel
+import com.intellij.ui.dsl.builder.Row
+import com.intellij.ui.dsl.builder.RowLayout
+import com.intellij.ui.dsl.builder.columns
+import com.intellij.ui.dsl.builder.panel
 import com.intellij.util.text.nullize
 import com.intellij.util.textCompletion.TextCompletionUtil
 import com.intellij.util.textCompletion.TextFieldWithCompletion
@@ -32,7 +49,6 @@ import com.jetbrains.python.black.BlackFormatterUtil
 import com.jetbrains.python.black.BlackFormatterVersionService
 import com.jetbrains.python.black.BlackFormatterVersionService.Companion.UNKNOWN_VERSION
 import com.jetbrains.python.black.configuration.BlackFormatterConfiguration.BlackFormatterOption.Companion.toCliOptionFlags
-import com.jetbrains.python.externaltools.configuration.createPythonSdkComboBox
 import com.jetbrains.python.packaging.management.ui.PythonPackageManagerUI
 import com.jetbrains.python.packaging.management.ui.installPackageBackground
 import com.jetbrains.python.sdk.pythonSdk
@@ -73,8 +89,7 @@ class BlackFormatterConfigurable(val project: Project) : BoundConfigurable(PyBun
       .withTitle(@Suppress("DialogTitleCapitalization") PyBundle.message("black.select.path.to.executable")))
   }
 
-  // TODO: initial should be project default
-  private val sdkSelectionComboBox = createPythonSdkComboBox(project, null)
+  private val sdkSelectionComboBox = createPythonSdkComboBox(project.modules.mapNotNull { it.pythonSdk }, null)
 
   private val cliArgumentsTextField = BlackTextFieldWithAutoCompletion(project, object :
     TextFieldWithAutoCompletionListProvider<BlackFormatterConfiguration.CliOptionFlag>(
@@ -92,9 +107,8 @@ class BlackFormatterConfigurable(val project: Project) : BoundConfigurable(PyBun
       executionModeComboBox = comboBox(EnumComboBoxModel(
         BlackFormatterConfiguration.ExecutionMode::class.java))
         .applyToComponent { renderer = executionModeComboBoxRenderer }
-        .gap(RightGap.SMALL)
+        .contextHelp(PyBundle.message("black.execution.mode.tooltip.text"))
         .component
-      contextHelp(PyBundle.message("black.execution.mode.tooltip.text"))
       layout(RowLayout.LABEL_ALIGNED)
     }
     row {
@@ -181,6 +195,7 @@ class BlackFormatterConfigurable(val project: Project) : BoundConfigurable(PyBun
     executionModeComboBox.addActionListener { updateUiState() }
 
     sdkSelectionComboBox.addActionListener {
+      selectedSdk = sdkSelectionComboBox.item
       updateSdkInfo()
       updateUiState()
     }
@@ -191,6 +206,7 @@ class BlackFormatterConfigurable(val project: Project) : BoundConfigurable(PyBun
     enableOnSaveCheckBox.isSelected = storedState.enabledOnSave
     executionModeComboBox.item = storedState.executionMode
     cliArgumentsTextField.text = storedState.cmdArguments
+    sdkSelectionComboBox.item = selectedSdk
 
     blackExecutablePathField.emptyText.text = getBlackExecPathPlaceholderMessage()
     storedState.pathToExecutable?.let {

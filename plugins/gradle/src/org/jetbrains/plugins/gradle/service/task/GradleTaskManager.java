@@ -34,7 +34,10 @@ import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.task.RunConfigurationTaskState;
 import com.intellij.util.containers.ContainerUtil;
 import org.gradle.api.Task;
-import org.gradle.tooling.*;
+import org.gradle.tooling.CancellationToken;
+import org.gradle.tooling.CancellationTokenSource;
+import org.gradle.tooling.GradleConnector;
+import org.gradle.tooling.ProjectConnection;
 import org.gradle.util.GradleVersion;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.Nls;
@@ -42,7 +45,12 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.plugins.gradle.model.data.CompositeBuildData;
 import org.jetbrains.plugins.gradle.service.GradleFileModificationTracker;
-import org.jetbrains.plugins.gradle.service.execution.*;
+import org.jetbrains.plugins.gradle.service.execution.GradleCommandLineUtil;
+import org.jetbrains.plugins.gradle.service.execution.GradleExecutionContext;
+import org.jetbrains.plugins.gradle.service.execution.GradleExecutionContextImpl;
+import org.jetbrains.plugins.gradle.service.execution.GradleExecutionHelper;
+import org.jetbrains.plugins.gradle.service.execution.GradleInitScriptUtil;
+import org.jetbrains.plugins.gradle.service.execution.GradleWrapperHelper;
 import org.jetbrains.plugins.gradle.service.project.GradleTasksIndices;
 import org.jetbrains.plugins.gradle.settings.DistributionType;
 import org.jetbrains.plugins.gradle.settings.GradleBuildParticipant;
@@ -51,12 +59,20 @@ import org.jetbrains.plugins.gradle.settings.GradleSettings;
 import org.jetbrains.plugins.gradle.util.GradleConstants;
 import org.jetbrains.plugins.gradle.util.cmd.node.GradleCommandLine;
 
-import java.util.*;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 import static com.intellij.openapi.externalSystem.rt.execution.ForkedDebuggerHelper.DISPATCH_ADDR_SYS_PROP;
 import static com.intellij.openapi.externalSystem.rt.execution.ForkedDebuggerHelper.DISPATCH_PORT_SYS_PROP;
-import static com.intellij.openapi.externalSystem.service.execution.ExternalSystemRunnableState.*;
+import static com.intellij.openapi.externalSystem.service.execution.ExternalSystemRunnableState.BUILD_PROCESS_DEBUGGER_PORT_KEY;
+import static com.intellij.openapi.externalSystem.service.execution.ExternalSystemRunnableState.DEBUGGER_DISPATCH_ADDR_KEY;
+import static com.intellij.openapi.externalSystem.service.execution.ExternalSystemRunnableState.DEBUGGER_DISPATCH_PORT_KEY;
+import static org.jetbrains.plugins.gradle.service.task.debugger.GradleDebuggerSupport.setupDebuggerProxy;
 
 public class GradleTaskManager implements ExternalSystemTaskManager<GradleExecutionSettings> {
 
@@ -127,6 +143,7 @@ public class GradleTaskManager implements ExternalSystemTaskManager<GradleExecut
     @NotNull GradleExecutionSettings settings,
     @NotNull GradleExecutionContext context
   ) {
+    setupDebuggerProxy(context, settings);
     setupGradleScriptDebugging(settings);
     setupDebuggerDispatchPort(settings);
     setupBuiltInTestEvents(settings, context);
@@ -141,7 +158,7 @@ public class GradleTaskManager implements ExternalSystemTaskManager<GradleExecut
 
   private static void executeTasks(
     @NotNull ProjectConnection connection,
-    @NotNull GradleExecutionContext context
+    @NotNull GradleExecutionContextImpl context
   ) {
     if (Registry.is("gradle.report.recently.saved.paths")) {
       ApplicationManager.getApplication()

@@ -7,8 +7,10 @@ import com.intellij.util.ui.JBValue;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 
-import javax.swing.*;
-import java.awt.*;
+import javax.swing.JComponent;
+import java.awt.Component;
+import java.awt.Container;
+import java.awt.Dimension;
 import java.util.List;
 
 /**
@@ -62,6 +64,7 @@ public final class PluginListLayout extends AbstractLayoutManager implements Pag
 
     for (UIPluginGroup group : groups) {
       Component component = group.panel;
+      if(component == null) continue;
       int height = component.getPreferredSize().height;
       component.setBounds(0, y, width, height);
       y += height;

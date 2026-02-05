@@ -1,3 +1,8 @@
+# IJI-2767 Bazel: move bazel output root to a standard location
+startup:macos --output_user_root=~/Library/Caches/JetBrains/MonorepoBazel
+startup:linux --output_user_root=~/.cache/JetBrains/MonorepoBazel
+startup:windows --output_user_root=~/AppData/Local/JetBrains/MonorepoBazel
+
 build --nobuild_runfile_links
 
 # rules_kotlin Compiling Kotlin on Windows appears to require --legacy_external_runfiles https://github.com/bazelbuild/rules_kotlin/issues/1309
@@ -70,3 +75,20 @@ common:ci --announce_rc
 
 # TeamCity-specific options
 common:teamcity --show_progress_rate_limit=30
+
+# A workaround for https://github.com/bazelbuild/rules_kotlin/issues/1352
+common --repo_env=ANDROID_HOME=
+
+# See https://github.com/aspect-build/toolchains_protoc (this has been already upstreamed to @protobuf, but it's not yet released)
+common --incompatible_enable_proto_toolchain_resolution
+
+# Ensure that we don't accidentally build protobuf or gRPC
+common --per_file_copt=external/.*protobuf.*@--PROTOBUF_WAS_NOT_SUPPOSED_TO_BE_BUILT
+common --host_per_file_copt=external/.*protobuf.*@--PROTOBUF_WAS_NOT_SUPPOSED_TO_BE_BUILT
+common --per_file_copt=external/.*grpc.*@--GRPC_WAS_NOT_SUPPOSED_TO_BE_BUILT
+common --host_per_file_copt=external/.*grpc.*@--GRPC_WAS_NOT_SUPPOSED_TO_BE_BUILT
+
+try-import %workspace%/../../../../build/remote_cache.bazelrc
+
+# Enable remote downloader config w/ allowed hosts and caching proxies
+common --downloader_config=../../../build/bazel_downloader.cfg

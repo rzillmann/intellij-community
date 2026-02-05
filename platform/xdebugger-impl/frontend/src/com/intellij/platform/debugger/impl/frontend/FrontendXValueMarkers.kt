@@ -9,9 +9,9 @@ import com.intellij.openapi.project.Project
 import com.intellij.platform.debugger.impl.frontend.evaluate.quick.FrontendXValue
 import com.intellij.platform.debugger.impl.rpc.XDebuggerValueMarkupApi
 import com.intellij.platform.debugger.impl.rpc.XValueMarkerDto
+import com.intellij.platform.debugger.impl.shared.proxy.XDebugManagerProxy
+import com.intellij.platform.debugger.impl.shared.proxy.XDebugSessionProxy
 import com.intellij.xdebugger.frame.XValue
-import com.intellij.xdebugger.impl.frame.XDebugManagerProxy
-import com.intellij.xdebugger.impl.frame.XDebugSessionProxy
 import com.intellij.xdebugger.impl.frame.XValueMarkers
 import com.intellij.xdebugger.impl.ui.tree.ValueMarkup
 import kotlinx.coroutines.CoroutineScope
@@ -51,11 +51,12 @@ internal class FrontendXValueMarkers<V : XValue, M>(private val project: Project
 }
 
 @Service(Service.Level.PROJECT)
-private class FrontendXValueMarkersService(project: Project, private val cs: CoroutineScope) {
+private class FrontendXValueMarkersService(private val cs: CoroutineScope) {
   fun markValue(value: XValue, markup: ValueMarkup): Promise<Any> {
     val valueMarked = cs.async {
       val marker = XValueMarkerDto(markup.text, markup.color.rpcId(), markup.toolTipText)
-      XDebuggerValueMarkupApi.getInstance().markValue(FrontendXValue.asFrontendXValue(value).xValueDto.id, marker)
+      val xValueId = XDebugManagerProxy.getInstance().getXValueId(value) ?: return@async Any()
+      XDebuggerValueMarkupApi.getInstance().markValue(xValueId, marker)
       marker as Any
     }
     return valueMarked.asCompletableFuture().asPromise()
@@ -63,7 +64,8 @@ private class FrontendXValueMarkersService(project: Project, private val cs: Cor
 
   fun unmarkValue(value: XValue): Promise<in Any> {
     val valueUnmarked = cs.async {
-      XDebuggerValueMarkupApi.getInstance().unmarkValue(FrontendXValue.asFrontendXValue(value).xValueDto.id)
+      val xValueId = XDebugManagerProxy.getInstance().getXValueId(value) ?: return@async Any()
+      XDebuggerValueMarkupApi.getInstance().unmarkValue(xValueId)
       Any()
     }
     return valueUnmarked.asCompletableFuture().asPromise()

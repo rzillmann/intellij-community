@@ -4,10 +4,23 @@ package org.jetbrains.idea.devkit.module
 import com.intellij.icons.AllIcons
 import com.intellij.ide.fileTemplates.FileTemplateManager
 import com.intellij.ide.projectView.actions.MarkRootsManager
-import com.intellij.ide.starters.local.*
+import com.intellij.ide.starters.local.DependencyConfig
+import com.intellij.ide.starters.local.GeneratorAsset
+import com.intellij.ide.starters.local.GeneratorEmptyDirectory
+import com.intellij.ide.starters.local.GeneratorResourceFile
+import com.intellij.ide.starters.local.GeneratorTemplateFile
+import com.intellij.ide.starters.local.StandardAssetsProvider
+import com.intellij.ide.starters.local.Starter
+import com.intellij.ide.starters.local.StarterContextProvider
+import com.intellij.ide.starters.local.StarterModuleBuilder
+import com.intellij.ide.starters.local.StarterPack
 import com.intellij.ide.starters.local.wizard.StarterInitialStep
 import com.intellij.ide.starters.local.wizard.StarterLibrariesStep
-import com.intellij.ide.starters.shared.*
+import com.intellij.ide.starters.shared.KOTLIN_STARTER_LANGUAGE
+import com.intellij.ide.starters.shared.StarterLanguage
+import com.intellij.ide.starters.shared.StarterProjectType
+import com.intellij.ide.starters.shared.StarterTestRunner
+import com.intellij.ide.starters.shared.hyperLink
 import com.intellij.openapi.module.Module
 import com.intellij.openapi.module.ModuleType
 import com.intellij.openapi.observable.properties.GraphProperty
@@ -46,6 +59,8 @@ internal class IdePluginModuleBuilder : StarterModuleBuilder() {
   override fun getProjectTypes(): List<StarterProjectType> = emptyList()
   override fun getTestFrameworks(): List<StarterTestRunner> = emptyList()
   override fun getMinJavaVersion(): JavaVersion = LanguageLevel.JDK_21.toJavaVersion()
+
+  override fun isExampleCodeProvided(): Boolean = true
 
   override fun getLanguages(): List<StarterLanguage> {
     return listOf(KOTLIN_STARTER_LANGUAGE) // Java and Kotlin both are available out of the box
@@ -136,6 +151,20 @@ internal class IdePluginModuleBuilder : StarterModuleBuilder() {
 
       assets.add(GeneratorResourceFile(".run/Run IDE with Plugin.run.xml",
                                        javaClass.getResource("/assets/devkit-Run_IDE_with_Plugin_run.xml")!!))
+
+      if (starterContext.includeExamples) {
+        val template = if (starterContext.libraryIds.contains("compose"))
+          DevKitFileTemplatesFactory.TOOLWINDOW_COMPOSE_EXAMPLE_KT
+        else
+          DevKitFileTemplatesFactory.TOOLWINDOW_EXAMPLE_KT
+
+        assets.add(GeneratorTemplateFile("src/main/kotlin/${packagePath}/MyToolWindow.kt", ftManager.getJ2eeTemplate(template)))
+
+        assets.add(GeneratorTemplateFile("src/main/resources/messages/MyMessageBundle.properties",
+                                         ftManager.getJ2eeTemplate(DevKitFileTemplatesFactory.MESSAGE_BUNDLE_EXAMPLE_PROPERTIES)))
+        assets.add(GeneratorTemplateFile("src/main/kotlin/${packagePath}/MyMessageBundle.kt",
+                                         ftManager.getJ2eeTemplate(DevKitFileTemplatesFactory.MESSAGE_BUNDLE_EXAMPLE_KT)))
+      }
     }
     else {
       assets.add(GeneratorResourceFile(".gitignore", javaClass.getResource("/assets/devkit-theme.gitignore.txt")!!))

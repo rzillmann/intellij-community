@@ -1,14 +1,23 @@
 // Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.platform.plugins.testFramework
 
-import com.intellij.ide.plugins.*
+import com.intellij.ide.plugins.DiscoveredPluginsList
+import com.intellij.ide.plugins.PluginDescriptorLoadingContext
+import com.intellij.ide.plugins.PluginDescriptorLoadingResult
+import com.intellij.ide.plugins.PluginInitializationContext
+import com.intellij.ide.plugins.PluginMainDescriptor
+import com.intellij.ide.plugins.PluginManagerCore
+import com.intellij.ide.plugins.PluginManagerState
+import com.intellij.ide.plugins.PluginSet
+import com.intellij.ide.plugins.PluginsSourceContext
+import com.intellij.ide.plugins.loadDescriptorFromFileOrDir
+import com.intellij.ide.plugins.withInitContextForLoadingRuleDetermination
 import com.intellij.openapi.extensions.PluginId
 import com.intellij.openapi.util.BuildNumber
 import com.intellij.platform.ide.bootstrap.ZipFilePoolImpl
 import com.intellij.platform.runtime.product.ProductMode
 import com.intellij.util.io.directoryStreamIfExists
 import com.intellij.util.lang.UrlClassLoader
-import kotlinx.coroutines.runBlocking
 import java.nio.file.Path
 import java.util.Collections.emptySet
 
@@ -88,36 +97,30 @@ class PluginSetTestBuilder private constructor(
     )
   }
 
-  fun buildLoadingResult(initContext: PluginInitializationContext? = null): Pair<PluginDescriptorLoadingContext, PluginLoadingResult> {
-    val initContext = initContext ?: buildInitContext()
+  fun discoverPlugins(): Pair<PluginDescriptorLoadingContext, PluginDescriptorLoadingResult> {
     val loadingContext = PluginDescriptorLoadingContext(getBuildNumberForDefaultDescriptorVersion = { productBuildNumber })
-    val result = PluginLoadingResult()
     val pluginList = DiscoveredPluginsList(pluginDescriptorLoader(loadingContext), PluginsSourceContext.Custom)
-    loadingContext.use {
-      @Suppress("RAW_RUN_BLOCKING") //it's used in tests where the Application isn't available
-      runBlocking {
-        result.initAndAddAll(
-          descriptorLoadingResult = PluginDescriptorLoadingResult.build(listOf(pluginList)),
-          initContext = initContext,
-        )
-      }
-    }
-    return loadingContext to result
+    return loadingContext to PluginDescriptorLoadingResult.build(listOf(pluginList))
   }
 
-  fun build(): PluginSet {
+  fun buildState(): PluginManagerState {
     //clear errors, which may be registered by other tests
     PluginManagerCore.getAndClearPluginLoadingErrors()
-    
+
     val initContext = buildInitContext()
-    PluginMainDescriptor.setInitContextForLoadingRuleDetermination(initContext) // FIXME this should not exist
-    val (loadingContext, loadingResult) = buildLoadingResult(initContext)
+    val loadingContext = PluginDescriptorLoadingContext(getBuildNumberForDefaultDescriptorVersion = { productBuildNumber })
+    val pluginList = withInitContextForLoadingRuleDetermination(initContext) { // FIXME this should not exist
+      DiscoveredPluginsList(pluginDescriptorLoader(loadingContext), PluginsSourceContext.Custom)
+    }
+    val discoveredPlugins = PluginDescriptorLoadingResult.build(listOf(pluginList))
     return PluginManagerCore.initializePlugins(
       descriptorLoadingErrors = loadingContext.copyDescriptorLoadingErrors(),
       initContext = initContext,
-      loadingResult = loadingResult,
+      discoveredPlugins = discoveredPlugins,
       coreLoader = customCoreLoader ?: UrlClassLoader.build().get(),
       parentActivity = null,
-    ).pluginSet
+    )
   }
+
+  fun build(): PluginSet = buildState().pluginSet
 }

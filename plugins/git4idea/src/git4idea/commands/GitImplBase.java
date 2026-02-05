@@ -9,7 +9,11 @@ import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.progress.ProcessCanceledException;
 import com.intellij.openapi.progress.util.ProgressIndicatorUtils;
 import com.intellij.openapi.project.Project;
-import com.intellij.openapi.util.*;
+import com.intellij.openapi.util.Computable;
+import com.intellij.openapi.util.Key;
+import com.intellij.openapi.util.NlsContexts;
+import com.intellij.openapi.util.NlsSafe;
+import com.intellij.openapi.util.Ref;
 import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.util.registry.Registry;
 import com.intellij.openapi.util.text.StringUtil;
@@ -22,7 +26,14 @@ import git4idea.DialogManager;
 import git4idea.GitUtil;
 import git4idea.GitVcs;
 import git4idea.commands.GitCommand.LockingPolicy;
-import git4idea.config.*;
+import git4idea.config.GitConfigUtil;
+import git4idea.config.GitExecutable;
+import git4idea.config.GitExecutableManager;
+import git4idea.config.GitExecutableProblemsNotifier;
+import git4idea.config.GitVcsApplicationSettings;
+import git4idea.config.GitVersion;
+import git4idea.config.GitVersionSpecialty;
+import git4idea.config.UnsupportedWSLVersionException;
 import git4idea.i18n.GitBundle;
 import git4idea.rebase.GitHandlerRebaseEditorManager;
 import git4idea.rebase.GitSimpleEditorHandler;
@@ -367,7 +378,7 @@ public abstract class GitImplBase implements Git {
 
     GitCommandOutputLogger(@NotNull Project project, @NotNull GitLineHandler handler) {
       myHandler = handler;
-      myWorkingDir = myHandler.getWorkingDirectory().toPath();
+      myWorkingDir = myHandler.getWorkingDirectory();
       myOutputPrinter = GitCommandOutputPrinter.getInstance(project);
     }
 
@@ -481,16 +492,19 @@ public abstract class GitImplBase implements Git {
     "runnerw:"
   };
 
-  static @NotNull String stringifyWorkingDir(@Nullable String basePath, @NotNull File workingDir) {
+  static @NotNull String stringifyWorkingDir(@Nullable String basePath, @Nullable Path workingDir) {
     if (basePath != null) {
-      String relPath = FileUtil.getRelativePath(basePath, FileUtil.toSystemIndependentName(workingDir.getPath()), '/');
-      if (".".equals(relPath)) {
-        return workingDir.getName();
+      Path path = Path.of(basePath);
+      if (workingDir != null) {
+        path = path.resolve(workingDir);
       }
-      else if (relPath != null) {
-        return FileUtil.toSystemDependentName(relPath);
-      }
+      return path.toString();
     }
-    return workingDir.getPath();
+    else if (workingDir != null) {
+      return workingDir.toString();
+    }
+    else {
+      return "";
+    }
   }
 }

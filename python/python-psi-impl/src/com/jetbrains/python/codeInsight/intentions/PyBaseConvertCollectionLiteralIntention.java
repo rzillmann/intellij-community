@@ -25,7 +25,15 @@ import com.intellij.psi.util.PsiTreeUtil;
 import com.jetbrains.python.PyPsiBundle;
 import com.jetbrains.python.PyTokenTypes;
 import com.jetbrains.python.codeInsight.typing.PyTypingTypeProvider;
-import com.jetbrains.python.psi.*;
+import com.jetbrains.python.psi.LanguageLevel;
+import com.jetbrains.python.psi.PyElementGenerator;
+import com.jetbrains.python.psi.PyExpression;
+import com.jetbrains.python.psi.PyFile;
+import com.jetbrains.python.psi.PyListLiteralExpression;
+import com.jetbrains.python.psi.PyParenthesizedExpression;
+import com.jetbrains.python.psi.PySequenceExpression;
+import com.jetbrains.python.psi.PySetLiteralExpression;
+import com.jetbrains.python.psi.PyTupleExpression;
 import com.jetbrains.python.psi.impl.PyPsiUtils;
 import com.jetbrains.python.psi.types.TypeEvalContext;
 import org.jetbrains.annotations.Nls;
@@ -140,7 +148,7 @@ public abstract class PyBaseConvertCollectionLiteralIntention extends PsiUpdateM
     }
 
     final String replacedText = literal.getText();
-    
+
     final PsiElement firstChild = literal.getFirstChild();
     final int contentStartOffset;
     if (PyTokenTypes.OPEN_BRACES.contains(firstChild.getNode().getElementType())) {

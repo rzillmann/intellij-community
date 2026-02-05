@@ -2,7 +2,12 @@
 package com.intellij.platform.plugins.parser.impl
 
 import com.intellij.openapi.util.NlsSafe
-import com.intellij.platform.plugins.parser.impl.elements.*
+import com.intellij.platform.plugins.parser.impl.elements.ActionElement
+import com.intellij.platform.plugins.parser.impl.elements.ContentModuleElement
+import com.intellij.platform.plugins.parser.impl.elements.DependenciesElement
+import com.intellij.platform.plugins.parser.impl.elements.DependsElement
+import com.intellij.platform.plugins.parser.impl.elements.ExtensionElement
+import com.intellij.platform.plugins.parser.impl.elements.ModuleVisibilityValue
 import org.jetbrains.annotations.ApiStatus
 import java.time.LocalDate
 
@@ -67,7 +72,7 @@ class RawPluginDescriptor(
   val contentModules: List<ContentModuleElement>,
 
   /** Specifies the visibility of this content module. Irrelevant for a main plugin descriptor or config-file in a `<depends>` tag */
-  val moduleVisibility: ModuleVisibility,
+  val moduleVisibility: ModuleVisibilityValue,
 
   val dependencies: List<DependenciesElement>,
 )

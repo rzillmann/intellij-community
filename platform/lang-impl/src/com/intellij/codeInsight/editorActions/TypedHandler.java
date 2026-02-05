@@ -1,4 +1,4 @@
-// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2026 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.codeInsight.editorActions;
 
 import com.intellij.codeInsight.AutoPopupController;
@@ -13,7 +13,11 @@ import com.intellij.codeInsight.template.impl.editorActions.TypedActionHandlerBa
 import com.intellij.injected.editor.DocumentWindow;
 import com.intellij.injected.editor.EditorWindow;
 import com.intellij.internal.statistic.collectors.fus.TypingEventsLogger;
-import com.intellij.lang.*;
+import com.intellij.lang.ASTNode;
+import com.intellij.lang.Language;
+import com.intellij.lang.LanguageParserDefinitions;
+import com.intellij.lang.LanguageQuoteHandling;
+import com.intellij.lang.ParserDefinition;
 import com.intellij.lang.injection.InjectedLanguageManager;
 import com.intellij.openapi.actionSystem.CommonDataKeys;
 import com.intellij.openapi.actionSystem.DataContext;
@@ -22,7 +26,13 @@ import com.intellij.openapi.command.CommandProcessor;
 import com.intellij.openapi.command.impl.UndoManagerImpl;
 import com.intellij.openapi.command.undo.UndoManager;
 import com.intellij.openapi.diagnostic.Logger;
-import com.intellij.openapi.editor.*;
+import com.intellij.openapi.editor.Document;
+import com.intellij.openapi.editor.Editor;
+import com.intellij.openapi.editor.EditorBundle;
+import com.intellij.openapi.editor.EditorModificationUtil;
+import com.intellij.openapi.editor.EditorModificationUtilEx;
+import com.intellij.openapi.editor.RangeMarker;
+import com.intellij.openapi.editor.ScrollType;
 import com.intellij.openapi.editor.actionSystem.ActionPlan;
 import com.intellij.openapi.editor.actionSystem.TypedAction;
 import com.intellij.openapi.editor.actionSystem.TypedActionHandler;
@@ -297,6 +307,10 @@ public final class TypedHandler extends TypedActionHandlerBase {
     }
   }
 
+  /**
+   * Note: If you want to implement autopopup for an arbitrary character, consider adding your own {@link TypedHandlerDelegate}
+   *       and implement {@link TypedHandlerDelegate#checkAutoPopup}
+   */
   public static void autoPopupCompletion(@NotNull Editor editor, char charTyped, @NotNull Project project, @NotNull PsiFile file) {
     boolean allowSlashes = Boolean.TRUE.equals(editor.getUserData(AutoPopupController.ALLOW_AUTO_POPUP_FOR_SLASHES_IN_PATHS));
     if (charTyped == '.' || (allowSlashes && charTyped == '/') || isAutoPopup(editor, file, charTyped)) {
@@ -310,37 +324,56 @@ public final class TypedHandler extends TypedActionHandlerBase {
     }
   }
 
+  /**
+   * @return true if auto-popup should be invoked according to deprecated {@link CompletionContributor#invokeAutoPopup)}.
+   */
   private static boolean isAutoPopup(@NotNull Editor editor, @NotNull PsiFile file, char charTyped) {
     final int offset = editor.getCaretModel().getOffset() - 1;
-    if (offset >= 0) {
-      PsiElement element;
-      Language language;
-      if (file instanceof PsiFileWithOneLanguage) {
-        element = null;
-        language = file.getLanguage();
-      }
-      else {
-        element = file.findElementAt(offset);
-        if (element == null) {
-          return false;
-        }
-        language = element.getLanguage();
-      }
+    if (offset < 0) {
+      return false;
+    }
 
-      for (CompletionContributor contributor : CompletionContributor.forLanguageHonorDumbness(language, file.getProject())) {
-        if (element == null) {
-          element = file.findElementAt(offset);
-          if (element == null) {
-            return false;
-          }
-        }
-        if (contributor.invokeAutoPopup(element, charTyped)) {
-          LOG.debug(contributor + " requested completion autopopup when typing '" + charTyped + "'");
-          return true;
-        }
+    PsiElement element;
+    Language language;
+    if (file instanceof PsiFileWithOneLanguage) {
+      language = file.getLanguage();
+
+      // we know the language, so let's try to avoid inferring the element at caret
+      // because there might be no contributors, so inferring element would be a waste of time.
+      element = null;
+    }
+    else {
+      element = file.findElementAt(offset);
+      if (element == null) {
+        return false;
+      }
+      language = element.getLanguage();
+    }
+
+    List<CompletionContributor> contributors = CompletionContributor.forLanguageHonorDumbness(language, file.getProject());
+    if (contributors.isEmpty()) {
+      return false;
+    }
+
+    if (element == null) {
+      // file is PsiFileWithOneLanguage, and there are contributors => we have to infer element.
+      element = file.findElementAt(offset);
+      if (element == null) {
+        return false;
       }
     }
-    return false;
+
+    PsiElement finalElement = element;
+    CompletionContributor contributor = ContainerUtil.find(contributors, c -> c.invokeAutoPopup(finalElement, charTyped));
+    if (contributor == null) {
+      return false;
+    }
+
+    if (LOG.isDebugEnabled()) {
+      LOG.debug(contributor + " requested completion autopopup when typing '" + charTyped + "'");
+    }
+
+    return true;
   }
 
   private static boolean isInsideStringLiteral(@NotNull Editor editor, @NotNull PsiFile file) {

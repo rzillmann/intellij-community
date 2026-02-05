@@ -15,7 +15,11 @@ import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.getOrHandleException
 import com.intellij.openapi.externalSystem.util.environment.Environment
 import com.intellij.openapi.options.ShowSettingsUtil
-import com.intellij.openapi.progress.*
+import com.intellij.openapi.progress.ProgressIndicator
+import com.intellij.openapi.progress.ProgressManager
+import com.intellij.openapi.progress.Task
+import com.intellij.openapi.progress.coroutineToIndicator
+import com.intellij.openapi.progress.runBlockingMaybeCancellable
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.projectRoots.JavaSdk
 import com.intellij.openapi.projectRoots.JdkFinder
@@ -36,6 +40,7 @@ import com.intellij.platform.eel.fs.getPath
 import com.intellij.platform.eel.path.EelPath
 import com.intellij.platform.eel.provider.asNioPath
 import com.intellij.platform.eel.provider.getEelDescriptor
+import com.intellij.platform.eel.provider.toEelApi
 import com.intellij.platform.eel.provider.utils.EelPathUtils.getActualPath
 import com.intellij.platform.eel.provider.utils.fetchLoginShellEnvVariablesBlocking
 import com.intellij.platform.eel.where
@@ -52,7 +57,13 @@ import kotlinx.coroutines.runBlocking
 import org.jetbrains.idea.maven.config.MavenConfig
 import org.jetbrains.idea.maven.config.MavenConfigSettings
 import org.jetbrains.idea.maven.execution.SyncBundle
-import org.jetbrains.idea.maven.project.*
+import org.jetbrains.idea.maven.project.MavenConfigurableBundle
+import org.jetbrains.idea.maven.project.MavenHomeType
+import org.jetbrains.idea.maven.project.MavenInSpecificPath
+import org.jetbrains.idea.maven.project.MavenProjectBundle
+import org.jetbrains.idea.maven.project.MavenProjectsManager
+import org.jetbrains.idea.maven.project.StaticResolvedMavenHomeType
+import org.jetbrains.idea.maven.project.staticOrBundled
 import org.jetbrains.idea.maven.server.MavenServerManager
 import org.jetbrains.idea.maven.utils.MavenUtil.CONF_DIR
 import org.jetbrains.idea.maven.utils.MavenUtil.DOT_M2_DIR
@@ -383,10 +394,14 @@ object MavenEelUtil {
         }.firstOrNull()
         if (sdkPath != null) {
           WriteAction.runAndWait<RuntimeException> {
-            val jdkName = SdkConfigurationUtil.createUniqueSdkName(JavaSdk.getInstance(), sdkPath,
-                                                                   ProjectJdkTable.getInstance().allJdks.toList())
+            val jdkTable = ProjectJdkTable.getInstance(project)
+            val jdkName = SdkConfigurationUtil.createUniqueSdkName(
+              JavaSdk.getInstance(),
+              sdkPath,
+              jdkTable.allJdks.toList()
+            )
             val newJdk = JavaSdk.getInstance().createJdk(jdkName, sdkPath)
-            ProjectJdkTable.getInstance().addJdk(newJdk)
+            jdkTable.addJdk(newJdk)
             ProjectRootManagerEx.getInstance(project).projectSdk = newJdk
             notification.hideBalloon()
           }
@@ -431,10 +446,14 @@ object MavenEelUtil {
         val sdkPath = service<JdkFinder>().suggestHomePaths(project).firstOrNull()
         if (sdkPath != null) {
           edtWriteAction {
-            val jdkName = SdkConfigurationUtil.createUniqueSdkName(JavaSdk.getInstance(), sdkPath,
-                                                                   ProjectJdkTable.getInstance().allJdks.toList())
+            val jdkTable = ProjectJdkTable.getInstance(project)
+            val jdkName = SdkConfigurationUtil.createUniqueSdkName(
+              JavaSdk.getInstance(),
+              sdkPath,
+              jdkTable.allJdks.toList()
+            )
             val newJdk = JavaSdk.getInstance().createJdk(jdkName, sdkPath)
-            ProjectJdkTable.getInstance().addJdk(newJdk)
+            jdkTable.addJdk(newJdk)
             ProjectRootManagerEx.getInstance(project).projectSdk = newJdk
             notification.hideBalloon()
           }

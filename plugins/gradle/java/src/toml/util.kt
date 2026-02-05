@@ -20,8 +20,22 @@ import org.jetbrains.plugins.gradle.service.resolve.GradleCommonClassNames.GRADL
 import org.jetbrains.plugins.gradle.service.resolve.GradleCommonClassNames.GRADLE_API_PROVIDER_PROVIDER_CONVERTIBLE
 import org.jetbrains.plugins.gradle.service.resolve.VersionCatalogsLocator
 import org.jetbrains.plugins.gradle.service.resolve.getVersionCatalogFiles
-import org.jetbrains.plugins.gradle.util.*
-import org.toml.lang.psi.*
+import org.jetbrains.plugins.gradle.util.BUNDLE_ACCESSORS_SUFFIX
+import org.jetbrains.plugins.gradle.util.LIBRARIES_FOR_PREFIX
+import org.jetbrains.plugins.gradle.util.LIBRARY_ACCESSORS_SUFFIX
+import org.jetbrains.plugins.gradle.util.PLUGIN_ACCESSORS_SUFFIX
+import org.jetbrains.plugins.gradle.util.VERSION_ACCESSORS_SUFFIX
+import org.jetbrains.plugins.gradle.util.getCapitalizedAccessorName
+import org.jetbrains.plugins.gradle.util.isInVersionCatalogAccessor
+import org.toml.lang.psi.TomlFile
+import org.toml.lang.psi.TomlHeaderOwner
+import org.toml.lang.psi.TomlInlineTable
+import org.toml.lang.psi.TomlKeySegment
+import org.toml.lang.psi.TomlKeyValue
+import org.toml.lang.psi.TomlKeyValueOwner
+import org.toml.lang.psi.TomlLiteral
+import org.toml.lang.psi.TomlRecursiveVisitor
+import org.toml.lang.psi.TomlTable
 import org.toml.lang.psi.ext.name
 
 private fun getTableEntries(context: PsiElement, tableName: @NlsSafe String) : List<TomlKeySegment> {
@@ -36,7 +50,7 @@ internal fun getLibraries(context: PsiElement): List<TomlKeySegment> = getTableE
 
 internal fun String.getVersionCatalogParts() : List<String> = split("_", "-")
 
-internal fun findTomlFile(context: PsiElement, name: String): TomlFile? {
+fun findTomlFile(context: PsiElement, name: String): TomlFile? {
   val module = ModuleUtilCore.findModuleForPsiElement(context) ?: return null
   val file = getVersionCatalogFiles(module)[name] ?: return null
   return context.manager.findFile(file)?.asSafely<TomlFile>()
@@ -50,6 +64,98 @@ private fun findTomlFileDynamically(context: PsiElement, name: String): VirtualF
   return VfsUtil.findFile(tomlPath, false)
 }
 
+/**
+ * Given a [TomlFile] and a path, returns the corresponding key element.
+ * For example, given "versions.foo", it will locate the `foo =` key/value
+ * pair under the `\[versions]` table and return it. As a special case,
+ * `libraries` don't have to be explicitly named in the path.
+ */
+fun findTomlCatalogKey(tomlFile: TomlFile, declarationPath: String): PsiElement? {
+  val prefix = listOf("versions.", "bundles.", "plugins.")
+  val section: String
+  val target: String
+  if (prefix.none { declarationPath.startsWith(it) }) {
+    section = "libraries"
+    target = declarationPath
+  }
+  else {
+    section = declarationPath.substringBefore('.')
+    target = declarationPath.substringAfter('.')
+  }
+
+  // At the root level, look for the right section (versions, libraries, etc)
+  tomlFile.children.forEach { element ->
+    // [table]
+    // alias =
+    if (element is TomlHeaderOwner) {
+      val keyText = element.header.key?.text
+      if (keysMatch(keyText, section)) {
+        if (element is TomlKeyValueOwner) {
+          return findAlias(element, target)
+        }
+      }
+    }
+    // for corner cases
+    if (element is TomlKeyValue) {
+      val keyText = element.key.text
+      // libraries.alias = ""
+      if (keysMatch(keyText, "$section.$target")) {
+        return element
+      } else
+      // libraries = { alias = ""
+        if(element.value is TomlInlineTable && keysMatch(keyText, section)) {
+          return findAlias(element.value as TomlInlineTable,target)
+        }
+    }
+  }
+  return null
+}
+
+private fun findAlias(valueOwner: TomlKeyValueOwner, target:String): PsiElement?{
+  for (entry in valueOwner.entries) {
+    val entryKeyText = entry.key.text
+    if (keysMatch(entryKeyText, target)) {
+      return entry
+    }
+  }
+  return null
+}
+
+fun keysMatch(keyText: String?, reference: String): Boolean {
+  keyText ?: return false
+  if (keyText.length != reference.length) {
+    return false
+  }
+  for (i in keyText.indices) {
+    if(isAfterDelimiter(i, keyText)){
+      // first character may be capital after `-_.` symbols in TOML
+      // it still makes it equal to low case reference - Gradle implementation detail
+      if(keyText[i].normalizeIgnoreCase() != reference[i].normalize())
+        return false
+    } else if (keyText[i].normalize() != reference[i].normalize()) {
+      return false
+    }
+  }
+  return true
+}
+
+private fun isAfterDelimiter(index: Int, s:String):Boolean =
+  index > 0 && s[index-1].normalize() == '.'
+
+private fun Char.normalizeIgnoreCase(): Char {
+  if (this == '-' || this == '_') {
+    return '.'
+  }
+  return this.lowercaseChar()
+}
+
+// Gradle converts dashed-keys or dashed_keys into dashed.keys
+private fun Char.normalize(): Char {
+  if (this == '-' || this == '_') {
+    return '.'
+  }
+  return this
+}
 
 
 /**
@@ -86,6 +192,123 @@ private fun getVersionCatalogName(psiClass: PsiClass): String? {
   else
     return name
 }
+
+data class DependencyCoordinates(val group: String, val name: String, val version: String?) {
+  override fun toString(): String {
+    return if (version != null) "$group:$name:$version" else "$group:$name"
+  }
+
+  companion object {
+    fun from(coordinates: String): DependencyCoordinates? {
+      val parts = coordinates.split(':')
+      if (parts.size < 2) return null
+      return DependencyCoordinates(parts[0], parts[1], parts.getOrNull(2))
+    }
+  }
+}
+
+data class PluginCoordinates(val id: String, val version: String?) {
+  override fun toString(): String {
+    return if (version != null) "$id:$version" else id
+  }
+
+  companion object {
+    fun from(coordinates: String): PluginCoordinates? {
+      val parts = coordinates.split(':')
+      if (parts.isEmpty()) return null
+      return PluginCoordinates(parts[0], parts.getOrNull(1))
+    }
+  }
+}
+
+/**
+ * Tries to resolve a dependency from a synthetic accessor method.
+ */
+fun getResolvedDependency(method: PsiMethod, context: PsiElement): DependencyCoordinates? {
+  if (!isInVersionCatalogAccessor(method)) return null
+  val origin = findOriginInTomlFile(method, context) as? TomlKeyValue ?: return null
+  return when (val originValue = origin.value) {
+    is TomlLiteral -> DependencyCoordinates.from(originValue.text.cleanRawString())
+
+    is TomlInlineTable -> {
+      val module = originValue.entries.find { it.key.segments.size == 1 && it.key.segments.firstOrNull()?.name == "module" }?.value
+
+      val (groupText, nameText) = if (module != null) {
+        if (module !is TomlLiteral) return null
+        module.text.cleanRawString().split(':').takeIf { it.size == 2 } ?: return null
+      }
+      else {
+        val group = originValue.entries.find { it.key.segments.size == 1 && it.key.segments.firstOrNull()?.name == "group" }?.value
+        val name = originValue.entries.find { it.key.segments.size == 1 && it.key.segments.firstOrNull()?.name == "name" }?.value
+        if (group == null || name == null) return null
+        if (group !is TomlLiteral || name !is TomlLiteral) return null
+        listOf(group.text.cleanRawString(), name.text.cleanRawString())
+      }
+
+      val versionEntry = originValue.entries.find { it.key.segments.firstOrNull()?.name == "version" }
+                         ?: return DependencyCoordinates(groupText, nameText, null)
+      val versionText = getResolvedVersion(versionEntry) ?: return DependencyCoordinates(groupText, nameText, null)
+      DependencyCoordinates(groupText, nameText, versionText)
+    }
+
+    else -> return null
+  }
+}
+
+/**
+ * Tries to resolve a plugin from a synthetic accessor method.
+ */
+fun getResolvedPlugin(method: PsiMethod, context: PsiElement): PluginCoordinates? {
+  if (!isInVersionCatalogAccessor(method)) return null
+  val origin = findOriginInTomlFile(method, context) as? TomlKeyValue ?: return null
+  return when (val originValue = origin.value) {
+    is TomlLiteral -> PluginCoordinates.from(originValue.text.cleanRawString())
+
+    is TomlInlineTable -> {
+      val id = originValue.entries.find { it.key.segments.size == 1 && it.key.segments.firstOrNull()?.name == "id" }?.value
+      if (id == null) return null
+      if (id !is TomlLiteral) return null
+      val idText = id.text.cleanRawString()
+
+      val versionEntry = originValue.entries.find { it.key.segments.firstOrNull()?.name == "version" }
+                         ?: return PluginCoordinates(idText, null)
+      val versionText = getResolvedVersion(versionEntry) ?: return PluginCoordinates(idText, null)
+      PluginCoordinates(idText, versionText)
+    }
+
+    else -> null
+  }
+}
+
+private fun getResolvedVersion(entry: TomlKeyValue): String? {
+  if (entry.key.segments.firstOrNull()?.name != "version") return null
+
+  val finalVersionKeyValue = when (entry.key.segments.size) {
+    1 -> entry
+
+    2 if entry.key.segments[1].name == "ref" -> {
+      val file = entry.containingFile.asSafely<TomlFile>() ?: return null
+      val versionTable = file.childrenOfType<TomlTable>().find { it.header.key?.name == TOML_TABLE_VERSIONS } ?: return null
+      val entries = versionTable.childrenOfType<TomlKeyValue>()
+      val key = entry.value?.asSafely<TomlLiteral>()?.text?.cleanRawString() ?: return null
+
+      entries.find { it.key.text == key }
+    }
+
+    else -> null
+  }
+
+  return finalVersionKeyValue?.value?.asSafely<TomlLiteral>()?.text?.cleanRawString()
+}
+
+/**
+ * Cleans a single or multiline TOML string literal
+ */
+private fun String.cleanRawString(): String =
+  this.trim('"', '\'')
+    .replace("\r", "")
+    .replace("\n", "")
+
 
 private class TomlVersionCatalogVisitor(containingClasses: List<PsiClass>, val targetMethod: PsiMethod) : TomlRecursiveVisitor() {
   private val containingClasses: MutableList<PsiClass> = ArrayList(containingClasses)

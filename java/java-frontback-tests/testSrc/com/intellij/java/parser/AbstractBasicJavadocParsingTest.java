@@ -114,6 +114,9 @@ public abstract class AbstractBasicJavadocParsingTest extends AbstractBasicJavaP
   public void testSnippetTag11() { doTest(true); }
   public void testSnippetTag12() { doTest(true); }
 
+  public void testNestedTag0() { doTest(true); }
+  public void testNestedTag1() { doTest(true); }
+
   // Markdown version, to ensure parity
   public void testAdjacent01Markdown() { doTest(true); }
 
@@ -232,6 +235,12 @@ public abstract class AbstractBasicJavadocParsingTest extends AbstractBasicJavaP
   public void testReferenceLinkMarkdown11() { doTest(true); }
   public void testReferenceLinkMarkdown12() { doTest(true); }
   public void testReferenceLinkMarkdown13() { doTest(true); }
+  public void testReferenceLinkMarkdown14() { doTest(true); }
+
+  public void testNestedTag0Markdown() { doTest(true); }
+  public void testNestedTag1Markdown() { doTest(true); }
+  
+  public void testEscapedCharsMarkdown() { doTest(true); }
 
   public void testMarkdownWithDocCommentBeforeMarkdown() {
     setLanguageLevel(LanguageLevel.JDK_21);
@@ -254,4 +263,6 @@ public abstract class AbstractBasicJavadocParsingTest extends AbstractBasicJavaP
   }
 
   public void testNoValueElementTagsMarkdown() { doTest(true); }
+
+  public void testNoAsterisks() { doTest(true); }
 }

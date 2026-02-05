@@ -2,6 +2,7 @@
 package com.intellij.execution.dashboard;
 
 import com.intellij.execution.Executor;
+import com.intellij.execution.RunContentDescriptorId;
 import com.intellij.execution.ui.RunContentDescriptor;
 import com.intellij.openapi.project.Project;
 import com.intellij.ui.content.Content;
@@ -10,7 +11,7 @@ import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import javax.swing.*;
+import javax.swing.Icon;
 import java.util.function.Predicate;
 
 @ApiStatus.Internal
@@ -43,4 +44,6 @@ public interface RunDashboardUiManager {
 
   //todo: split temporary method to disable run executor in Services tool window
   boolean isSupported(@NotNull Executor executor);
+
+  void navigateToServiceOnRun(@NotNull RunContentDescriptorId descriptorId, Boolean focus);
 }

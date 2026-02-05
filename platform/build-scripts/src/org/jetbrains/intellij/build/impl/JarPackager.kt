@@ -1,8 +1,9 @@
 // Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
-@file:Suppress("ReplaceGetOrSet")
+@file:Suppress("ReplaceGetOrSet", "ReplacePutWithAssignment")
 
 package org.jetbrains.intellij.build.impl
 
+import com.dynatrace.hash4j.hashing.HashFunnel
 import com.dynatrace.hash4j.hashing.HashStream64
 import com.dynatrace.hash4j.hashing.Hashing
 import com.intellij.util.PathUtilRt
@@ -20,16 +21,20 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.jetbrains.intellij.build.BuildContext
+import org.jetbrains.intellij.build.BuildPaths
 import org.jetbrains.intellij.build.CompilationContext
 import org.jetbrains.intellij.build.DirSource
 import org.jetbrains.intellij.build.FrontendModuleFilter
 import org.jetbrains.intellij.build.InMemoryContentSource
 import org.jetbrains.intellij.build.JarPackagerDependencyHelper
 import org.jetbrains.intellij.build.LazySource
+import org.jetbrains.intellij.build.MAVEN_REPO
+import org.jetbrains.intellij.build.ModuleOutputProvider
 import org.jetbrains.intellij.build.NativeFileHandler
 import org.jetbrains.intellij.build.SearchableOptionSetDescriptor
 import org.jetbrains.intellij.build.SignNativeFileMode
 import org.jetbrains.intellij.build.Source
+import org.jetbrains.intellij.build.USER_HOME
 import org.jetbrains.intellij.build.UTIL_8_JAR
 import org.jetbrains.intellij.build.UTIL_JAR
 import org.jetbrains.intellij.build.ZipSource
@@ -38,6 +43,8 @@ import org.jetbrains.intellij.build.checkForNoDiskSpace
 import org.jetbrains.intellij.build.computeHashForModuleOutput
 import org.jetbrains.intellij.build.computeModuleSourcesByContent
 import org.jetbrains.intellij.build.defaultLibrarySourcesNamesFilter
+import org.jetbrains.intellij.build.findFileInModuleSources
+import org.jetbrains.intellij.build.getLibraryRoots
 import org.jetbrains.intellij.build.impl.PlatformJarNames.PRODUCT_BACKEND_JAR
 import org.jetbrains.intellij.build.impl.PlatformJarNames.PRODUCT_JAR
 import org.jetbrains.intellij.build.impl.projectStructureMapping.CustomAssetEntry
@@ -71,20 +78,13 @@ import kotlin.io.path.invariantSeparatorsPathString
 private val JAR_NAME_WITH_VERSION_PATTERN = "(.*)-\\d+(?:\\.\\d+)*\\.jar*".toPattern()
 
 private val libsUsedInJps = setOf(
-  "netty-buffer",
-  "netty-codec-http",
   "netty-codec-protobuf",
-  "netty-handler-proxy",
   "Log4J",
   "slf4j-api",
   "slf4j-jdk14",
   // see getBuildProcessApplicationClasspath - used in JPS
   "jna",
-  "maven-resolver-provider",
-  "jgoodies-forms",
-  "jgoodies-common",
   // see ArtifactRepositoryManager.getClassesFromDependencies
-  "plexus-utils",
   "kotlin-stdlib",
 )
 
@@ -94,27 +94,14 @@ private val presignedLibNames = setOf(
 
 private fun isLibPreSigned(library: JpsLibrary) = presignedLibNames.contains(library.name)
 
-private val notImportantKotlinLibs = setOf(
-  "kotlinx-collections-immutable",
-  "kotlinx-coroutines-guava",
-  "kotlinx-datetime-jvm",
-  "kotlinx-html-jvm",
-)
-
-const val rdJarName: String = "rd.jar"
-
-// must be sorted
-
 private val predefinedMergeRules = listOf<Pair<String, (String, FrontendModuleFilter) -> Boolean>>(
   "groovy.jar" to { it, _ -> it.startsWith("org.codehaus.groovy:") },
   "jsch-agent.jar" to { it, _ -> it.startsWith("jsch-agent") },
-  rdJarName to { it, _ -> it.startsWith("rd-") },
   "opentelemetry.jar" to { it, _ -> it == "opentelemetry" || it == "opentelemetry-semconv" || it.startsWith("opentelemetry-exporter-otlp") },
-  "bouncy-castle.jar" to { it, _ -> it.startsWith("bouncy-castle-") },
   PRODUCT_BACKEND_JAR to { name, filter -> (name.startsWith("License") || name.startsWith("jetbrains.codeWithMe.lobby.server.")) && filter.isBackendProjectLibrary(name) },
   PRODUCT_JAR to { name, filter -> (name.startsWith("License") || name.startsWith("jetbrains.codeWithMe.lobby.server.")) && !filter.isBackendProjectLibrary(name) },
   // see ClassPathUtil.getUtilClassPath
-  UTIL_8_JAR to { it, _ -> libsUsedInJps.contains(it) || (it.startsWith("kotlinx-") && !notImportantKotlinLibs.contains(it)) },
+  UTIL_8_JAR to { it, _ -> libsUsedInJps.contains(it) || (it.startsWith("kotlinx-")) },
 
   // used in an external process - see `ConsoleProcessListFetcher.getConsoleProcessCount`
   UTIL_JAR to { it, _ -> it == "pty4j" || it == "jvm-native-trusted-roots" },
@@ -150,16 +137,16 @@ class JarPackager private constructor(
   companion object {
     suspend fun pack(includedModules: Collection<ModuleItem>, outputDir: Path, context: BuildContext) {
       val packager = JarPackager(outDir = outputDir, context = context, platformLayout = null, isRootDir = false, moduleOutputPatcher = ModuleOutputPatcher())
-      packager.computeModuleSources(includedModules = includedModules, layout = null, searchableOptionSet = null)
+      packager.computeModuleSources(includedModules = includedModules, layout = null, searchableOptionSet = null, cachedDescriptorWriterProvider = null)
       buildJars(
         assets = packager.assets.values,
-        layout = null,
         cache = if (context is BuildContextImpl) context.jarCacheManager else NonCachingJarCacheManager,
-        context = context,
         isCodesignEnabled = false,
         useCacheAsTargetFile = context.options.isUnpackedDist,
         dryRun = false,
-        helper = packager.helper
+        layout = null,
+        helper = packager.helper,
+        context = context
       )
     }
 
@@ -173,10 +160,16 @@ class JarPackager private constructor(
       moduleOutputPatcher: ModuleOutputPatcher,
       dryRun: Boolean,
       searchableOptionSet: SearchableOptionSetDescriptor? = null,
+      descriptorCache: ScopedCachedDescriptorContainer? = null,
       context: BuildContext,
     ): Collection<DistributionFileEntry> {
       val packager = JarPackager(outDir = outputDir, context = context, platformLayout = platformLayout, isRootDir = isRootDir, moduleOutputPatcher = moduleOutputPatcher)
-      packager.computeModuleSources(includedModules = includedModules, layout = layout, searchableOptionSet = searchableOptionSet)
+      packager.computeModuleSources(
+        includedModules = includedModules,
+        layout = layout,
+        searchableOptionSet = searchableOptionSet,
+        cachedDescriptorWriterProvider = descriptorCache
+      )
       packager.computeModuleCustomLibrarySources(layout)
 
       val frontendModuleFilter = context.getFrontendModuleFilter()
@@ -218,13 +211,13 @@ class JarPackager private constructor(
       val cacheManager = if (dryRun || context !is BuildContextImpl) NonCachingJarCacheManager else context.jarCacheManager
       val buildAssetResult = buildJars(
         assets = packager.assets.values,
-        layout = layout,
         cache = cacheManager,
-        context = context,
         isCodesignEnabled = isCodesignEnabled,
         useCacheAsTargetFile = !dryRun && context.options.isUnpackedDist,
         dryRun = dryRun,
+        layout = layout,
         helper = packager.helper,
+        context = context,
       )
 
       return coroutineScope {
@@ -249,7 +242,12 @@ class JarPackager private constructor(
     }
   }
 
-  private suspend fun computeModuleSources(includedModules: Collection<ModuleItem>, layout: BaseLayout?, searchableOptionSet: SearchableOptionSetDescriptor?) {
+  private suspend fun computeModuleSources(
+    includedModules: Collection<ModuleItem>,
+    layout: BaseLayout?,
+    searchableOptionSet: SearchableOptionSetDescriptor?,
+    cachedDescriptorWriterProvider: ScopedCachedDescriptorContainer?,
+  ) {
     val addedModules = HashSet<String>()
 
     val modulesWithCustomPath = HashSet<String>()
@@ -266,11 +264,12 @@ class JarPackager private constructor(
       computeModuleSourcesByContent(
         helper = helper,
         context = context,
-        layout = layout,
+        pluginLayout = layout,
         addedModules = addedModules,
         jarPackager = this,
         searchableOptionSet = searchableOptionSet,
         modulesWithCustomPath = modulesWithCustomPath,
+        pluginCachedDescriptorContainer = cachedDescriptorWriterProvider!!,
       )
     }
 
@@ -307,7 +306,7 @@ class JarPackager private constructor(
 
     val module = context.findRequiredModule(moduleName)
     val useTestModuleOutput = helper.isTestPluginModule(moduleName, module)
-    val moduleOutputRoots = context.getModuleOutputRoots(module, forTests = useTestModuleOutput)
+    val moduleOutputRoots = context.outputProvider.getModuleOutputRoots(module, forTests = useTestModuleOutput)
     val extraExcludes = layout?.moduleExcludes?.get(moduleName) ?: emptyList()
 
     val packToDir = context.options.isUnpackedDist &&
@@ -359,7 +358,7 @@ class JarPackager private constructor(
       result
     }
 
-    moduleOutputRoots.forEach { moduleOutDir ->
+    for (moduleOutDir in moduleOutputRoots) {
       val source = createModuleSource(module, moduleOutDir, excludes)
       if (source != null) {
         moduleSources.add(source)
@@ -371,14 +370,7 @@ class JarPackager private constructor(
     }
 
     if (layout != null && (layout !is PluginLayout || !layout.modulesWithExcludedModuleLibraries.contains(moduleName))) {
-      computeSourcesForModuleLibs(
-        item = item,
-        layout = layout,
-        module = module,
-        copiedFiles = copiedFiles,
-        asset = jarAsset,
-        withTests = useTestModuleOutput,
-      )
+      computeSourcesForModuleLibs(item = item, layout = layout, module = module, copiedFiles = copiedFiles, asset = jarAsset, withTests = useTestModuleOutput)
     }
   }
 
@@ -462,7 +454,7 @@ class JarPackager private constructor(
             projectLibraryData = ProjectLibraryData(libraryName = libName, owner = item, reason = null)
           }
           else {
-            projectLibraryData = ProjectLibraryData(libraryName = libName, reason = "<- $moduleName")
+            projectLibraryData = ProjectLibraryData(libraryName = libName, reason = "<- $moduleName", owner = item)
           }
         }
         else if (platformLayout != null && platformLayout.isLibraryAlwaysPackedIntoPlugin(libName)) {
@@ -474,24 +466,24 @@ class JarPackager private constructor(
             continue
           }
 
-          projectLibraryData = ProjectLibraryData(libraryName = libName, reason = "<- $moduleName (always packed into plugin)")
+          projectLibraryData = ProjectLibraryData(libraryName = libName, reason = "<- $moduleName (always packed into plugin)", owner = item)
         }
         else {
           continue
         }
       }
 
-      val library = element.library ?: throw IllegalStateException("cannot find $libRef")
+      val library = requireNotNull(element.library) { "cannot find $libRef" }
       val libraryName = getLibraryFileName(library)
-      if (excluded.contains(libraryName) || alreadyHasLibrary(layout, libraryName)) {
+      if (excluded.contains(libraryName) || layout.includedModuleLibraries.any { it.libraryName == libraryName && !it.extraCopy }) {
         continue
       }
 
-      if (item.isProductModule()) {
+      if (item.reason == ModuleIncludeReasons.PRODUCT_MODULES) {
         packLibFilesIntoModuleJar(
           asset = asset.value,
           item = item,
-          files = library.getPaths(JpsOrderRootType.COMPILED),
+          files = getLibraryRoots(library, context.outputProvider),
           projectLibraryData = projectLibraryData,
           library = library,
         )
@@ -503,7 +495,7 @@ class JarPackager private constructor(
         }
 
         val targetFile = outDir.resolve(item.relativeOutputFile)
-        val files = getLibraryFiles(library, copiedFiles, targetFile)
+        val files = getLibraryFiles(library = library, copiedFiles = copiedFiles, targetFile = targetFile, outputProvider = context.outputProvider)
         if (layout is PluginLayout && item.relativeOutputFile == layout.getMainJarName()) {
           if (files.size > 1) {
             for (i in (files.size - 1) downTo 0) {
@@ -542,7 +534,9 @@ class JarPackager private constructor(
     library: JpsLibrary,
   ) {
     val libraryName = getLibraryFilename(library)
+    val mavenPaths = library.getPaths(JpsOrderRootType.COMPILED).map { toCanonicalReportPath(it, context.paths) }
     for (file in files) {
+      val canonicalPath = getCanonicalPath(mavenPaths, file)
       @Suppress("NAME_SHADOWING")
       asset.sources.add(
         ZipSource(
@@ -554,6 +548,7 @@ class JarPackager private constructor(
                 moduleName = item.moduleName,
                 libraryName = libraryName,
                 libraryFile = file,
+                canonicalLibraryPath = canonicalPath,
                 size = size,
                 hash = hash,
                 relativeOutputFile = item.relativeOutputFile,
@@ -565,6 +560,7 @@ class JarPackager private constructor(
                 path = targetFile,
                 data = projectLibraryData,
                 libraryFile = file,
+                canonicalLibraryPath = canonicalPath,
                 hash = hash,
                 size = size,
                 relativeOutputFile = item.relativeOutputFile,
@@ -604,13 +600,9 @@ class JarPackager private constructor(
       }
 
       val asset = getJarAsset(targetFile, relativePath)
-      val files = getLibraryFiles(library = library, copiedFiles = copiedFiles, targetFile = targetFile)
+      val files = getLibraryFiles(library = library, copiedFiles = copiedFiles, targetFile = targetFile, outputProvider = context.outputProvider)
       filesToSourceWithMapping(asset = asset, files = files, library = library, relativeOutputFile = relativePath, projectLibraryData = null)
     }
-  }
-
-  private fun alreadyHasLibrary(layout: BaseLayout, libraryName: String): Boolean {
-    return layout.includedModuleLibraries.any { it.libraryName == libraryName && !it.extraCopy }
   }
 
   private fun mergeLibsByPredicate(
@@ -626,7 +618,7 @@ class JarPackager private constructor(
       val (key, value) = iterator.next()
       if (predicate(key.name, frontendModuleFilter)) {
         iterator.remove()
-        result[key] = value
+        result.put(key, value)
       }
     }
     if (result.isEmpty()) {
@@ -653,12 +645,13 @@ class JarPackager private constructor(
       return LinkedHashMap()
     }
 
+    val outputProvider = context.outputProvider
     val projectLibs = layout.includedProjectLibraries.sortedBy { it.libraryName }
     val toMerge = LinkedHashMap<JpsLibrary, List<Path>>()
     for (libraryData in projectLibs) {
       val library = context.project.libraryCollection.findLibrary(libraryData.libraryName)
                     ?: throw IllegalArgumentException("Cannot find library ${libraryData.libraryName} in the project")
-      libToMetadata[library] = libraryData
+      libToMetadata.put(library, libraryData)
       val libName = library.name
       var packMode = libraryData.packMode
       if (packMode == LibraryPackMode.MERGED) {
@@ -672,7 +665,7 @@ class JarPackager private constructor(
 
       val outPath = libraryData.outPath
       if (packMode == LibraryPackMode.MERGED && outPath == null) {
-        toMerge[library] = getLibraryFiles(library = library, copiedFiles = copiedFiles, targetFile = null)
+        toMerge.put(library, getLibraryFiles(library = library, copiedFiles = copiedFiles, targetFile = null, outputProvider = outputProvider))
         continue
       }
 
@@ -681,7 +674,7 @@ class JarPackager private constructor(
         if (outPath.endsWith(".jar")) {
           val targetFile = outDir.resolve(outPath)
           val asset = getJarAsset(targetFile, outPath)
-          val files = getLibraryFiles(library, copiedFiles, targetFile)
+          val files = getLibraryFiles(library, copiedFiles, targetFile, outputProvider = outputProvider)
           filesToSourceWithMapping(asset, files, library, outPath, libraryData)
           continue
         }
@@ -697,10 +690,14 @@ class JarPackager private constructor(
       if (packMode == LibraryPackMode.STANDALONE_MERGED) {
         val targetFile = libOutputDir.resolve(nameToJarFileName(libName))
         val relativeOutputFile = if (outDir == libOutputDir) "" else outDir.relativize(targetFile).invariantSeparatorsPathString
-        addLibrary(targetFile = targetFile, relativeOutputFile = relativeOutputFile, files = getLibraryFiles(library, copiedFiles, targetFile))
+        addLibrary(
+          targetFile = targetFile,
+          relativeOutputFile = relativeOutputFile,
+          files = getLibraryFiles(library = library, copiedFiles = copiedFiles, targetFile = targetFile, outputProvider = outputProvider)
+        )
       }
       else {
-        for (file in library.getPaths(JpsOrderRootType.COMPILED)) {
+        for (file in getLibraryRoots(library, outputProvider)) {
           var fileName = file.fileName.toString()
           if (packMode == LibraryPackMode.STANDALONE_SEPARATE_WITHOUT_VERSION_NAME) {
             fileName = removeVersionFromJar(fileName)
@@ -730,7 +727,9 @@ class JarPackager private constructor(
 
     val sources = asset.sources
     val isPreSignedCandidate = isRootDir && isLibPreSigned(library)
+    val mavenPaths = library.getPaths(JpsOrderRootType.COMPILED).map { toCanonicalReportPath(it, context.paths) }
     for (file in files) {
+      val canonicalPath = getCanonicalPath(mavenPaths, file)
       sources.add(
         ZipSource(
           file = file,
@@ -739,7 +738,15 @@ class JarPackager private constructor(
           distributionFileEntryProducer = { size, hash, targetFile ->
             if (moduleName == null) {
               val data = projectLibraryData ?: throw IllegalStateException("Metadata not specified for $libraryName")
-              ProjectLibraryEntry(path = targetFile, data = data, libraryFile = file, hash = hash, size = size, relativeOutputFile = relativeOutputFile)
+              ProjectLibraryEntry(
+                path = targetFile,
+                data = data,
+                libraryFile = file,
+                canonicalLibraryPath = canonicalPath,
+                hash = hash,
+                size = size,
+                relativeOutputFile = relativeOutputFile,
+              )
             }
             else {
               ModuleLibraryFileEntry(
@@ -747,10 +754,11 @@ class JarPackager private constructor(
                 moduleName = moduleName,
                 libraryName = getLibraryFilename(library),
                 libraryFile = file,
+                canonicalLibraryPath = canonicalPath,
                 size = size,
                 hash = hash,
                 relativeOutputFile = relativeOutputFile,
-                owner = null,
+                owner = ModuleItem(moduleName, relativeOutputFile = targetFile.fileName.toString(), reason = null),
               )
             }
           },
@@ -761,11 +769,34 @@ class JarPackager private constructor(
     }
   }
 
-  private fun getJarAsset(targetFile: Path, relativeOutputFile: String): AssetDescriptor = assets.computeIfAbsent(targetFile) {
-    AssetDescriptor(isDir = false, file = targetFile, relativePath = relativeOutputFile)
+  private fun getJarAsset(targetFile: Path, relativeOutputFile: String): AssetDescriptor {
+    return assets.computeIfAbsent(targetFile) {
+      AssetDescriptor(isDir = false, file = targetFile, relativePath = relativeOutputFile)
+    }
   }
 }
 
+private fun getCanonicalPath(mavenPaths: List<String>, file: Path): String {
+  return mavenPaths.singleOrNull()
+         ?: mavenPaths.firstOrNull { it.endsWith("/${file.fileName}") }
+         ?: throw IllegalStateException("Cannot find canonical path for $file in $mavenPaths")
+}
+
+private fun toCanonicalReportPath(file: Path, buildPaths: BuildPaths): String {
+  val projectHome = buildPaths.projectHome
+  val mavenHome = MAVEN_REPO
+  for (root in listOf(bazelMavenHome, mavenHome, projectHome)) {
+    if (file.startsWith(root)) {
+      val macro = if (root === projectHome) $$"$PROJECT_DIR$/" else $$"$MAVEN_REPOSITORY$/"
+      return macro + root.relativize(file).invariantSeparatorsPathString
+    }
+  }
+  return file.invariantSeparatorsPathString
+}
+
+private val bazelMavenHome = USER_HOME.resolve(".m2/repository-do-not-use-maven-repository-with-bazel")
+
+@Suppress("SpellCheckingInspection")
 private val agentLibrariesNotForcedInSeparateJars = listOf(
   "ideformer",
   "code-agents",
@@ -799,8 +830,8 @@ private fun removeVersionFromJar(fileName: String): String {
   return if (matcher.matches()) "${matcher.group(1)}.jar" else fileName
 }
 
-private fun getLibraryFiles(library: JpsLibrary, copiedFiles: MutableMap<CopiedForKey, CopiedFor>, targetFile: Path?): MutableList<Path> {
-  val files = library.getPaths(JpsOrderRootType.COMPILED)
+private fun getLibraryFiles(library: JpsLibrary, copiedFiles: MutableMap<CopiedForKey, CopiedFor>, targetFile: Path?, outputProvider: ModuleOutputProvider): MutableList<Path> {
+  val files = getLibraryRoots(library, outputProvider).toMutableList()
   val iterator = files.iterator()
   while (iterator.hasNext()) {
     val file = iterator.next()
@@ -847,8 +878,12 @@ internal val commonModuleExcludes: List<PathMatcher> = FileSystems.getDefault().
   )
 }
 
-suspend fun moduleOutputAsSource(context: CompilationContext, module: JpsModule, excludes: List<PathMatcher> = commonModuleExcludes): Source {
-  val moduleOutput = context.getModuleOutputDir(module)
+fun moduleOutputAsSource(module: JpsModule, excludes: List<PathMatcher> = commonModuleExcludes, outputProvider: ModuleOutputProvider): Source {
+  val outputs = outputProvider.getModuleOutputRoots(module)
+  if (outputs.size != 1) {
+    throw IllegalStateException("Supports only one module output for module '${module.name}', but got ${outputs.size}: $outputs")
+  }
+  val moduleOutput = outputs.single()
   check(Files.exists(moduleOutput)) {
     "${module.name} module output directory doesn't exist: $moduleOutput"
   }
@@ -861,7 +896,7 @@ suspend fun moduleOutputAsSource(context: CompilationContext, module: JpsModule,
   }
 }
 
-fun createModuleSourcesNamesFilter(excludes: List<PathMatcher>): (String) -> Boolean {
+internal fun createModuleSourcesNamesFilter(excludes: List<PathMatcher>): (String) -> Boolean {
   return { name ->
     val p = Path.of(name)
     excludes.none { it.matches(p) }
@@ -876,12 +911,12 @@ private data class CopiedFor(@JvmField val library: JpsLibrary, @JvmField val ta
 private suspend fun buildJars(
   assets: Collection<AssetDescriptor>,
   cache: JarCacheManager,
-  context: BuildContext,
   isCodesignEnabled: Boolean,
   useCacheAsTargetFile: Boolean,
   dryRun: Boolean,
   layout: BaseLayout?,
   helper: JarPackagerDependencyHelper,
+  context: BuildContext,
 ): BuildAssetResult {
   checkAssetUniqueness(assets)
 
@@ -1046,6 +1081,8 @@ private suspend fun buildAsset(
           override fun updateDigest(digest: HashStream64) {
             if (layout is PluginLayout) {
               digest.putString(layout.mainModule)
+              digest.putInt(layout.bundlingRestrictions.hashCode())
+              digest.putUnorderedIterable(layout.pathsToScramble, HashFunnel.forString(), Hashing.xxh3_64())
             }
             else {
               digest.putInt(0)
@@ -1054,7 +1091,7 @@ private suspend fun buildAsset(
 
           override suspend fun produce(targetFile: Path) {
             val addDirEntries = includedModules.any { helper.isTestPluginModule(moduleName = it.key.moduleName, module = null) }
-            buildJar(targetFile, sources, nativeFileHandler, addDirEntries)
+            buildJar(targetFile = targetFile, sources = sources, nativeFileHandler = nativeFileHandler, addDirEntries = addDirEntries)
           }
 
           override fun consumeInfo(source: Source, size: Int, hash: Long) {
@@ -1108,7 +1145,6 @@ private class NativeFileHandlerImpl(private val context: BuildContext) : NativeF
     return !isNative(name) || NativeFilesMatcher.isCompatibleWithTargetPlatform(name, context.options.targetOs, context.options.targetArch)
   }
 
-  @Suppress("SpellCheckingInspection")
   override suspend fun sign(name: String, dataSupplier: () -> ByteBuffer): Path? {
     if (!context.isMacCodeSignEnabled || context.proprietaryBuildTools.signTool.signNativeFileMode != SignNativeFileMode.ENABLED) {
       return null
@@ -1147,7 +1183,7 @@ private class NativeFileHandlerImpl(private val context: BuildContext) : NativeF
   }
 }
 
-suspend fun buildJar(targetFile: Path, moduleNames: List<String>, context: BuildContext, dryRun: Boolean = false) {
+suspend fun buildJar(targetFile: Path, moduleNames: List<String>, context: CompilationContext, dryRun: Boolean = false) {
   if (dryRun) {
     return
   }
@@ -1156,8 +1192,8 @@ suspend fun buildJar(targetFile: Path, moduleNames: List<String>, context: Build
     buildJar(
       targetFile = targetFile,
       sources = moduleNames.flatMap { moduleName ->
-        val module = context.findRequiredModule(moduleName)
-        context.getModuleOutputRoots(module).mapNotNull { output ->
+        val module = context.outputProvider.findRequiredModule(moduleName)
+        context.outputProvider.getModuleOutputRoots(module).mapNotNull { output ->
           createModuleSource(module = module, outputDir = output, excludes = commonModuleExcludes)
         }
       },

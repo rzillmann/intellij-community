@@ -3,12 +3,27 @@ package com.intellij.psi.impl.source.tree.java;
 
 import com.intellij.lang.ASTNode;
 import com.intellij.openapi.diagnostic.Logger;
-import com.intellij.psi.*;
+import com.intellij.psi.PsiClass;
+import com.intellij.psi.PsiElement;
+import com.intellij.psi.PsiEnumConstant;
+import com.intellij.psi.PsiField;
+import com.intellij.psi.PsiMember;
+import com.intellij.psi.PsiMethod;
 import com.intellij.psi.impl.JavaPsiImplementationHelper;
 import com.intellij.psi.impl.PsiImplUtil;
 import com.intellij.psi.impl.source.Constants;
 import com.intellij.psi.impl.source.SourceTreeToPsiMap;
-import com.intellij.psi.impl.source.tree.*;
+import com.intellij.psi.impl.source.tree.ChangeUtil;
+import com.intellij.psi.impl.source.tree.ChildRole;
+import com.intellij.psi.impl.source.tree.CompositeElement;
+import com.intellij.psi.impl.source.tree.ElementType;
+import com.intellij.psi.impl.source.tree.Factory;
+import com.intellij.psi.impl.source.tree.JavaElementType;
+import com.intellij.psi.impl.source.tree.JavaSourceUtil;
+import com.intellij.psi.impl.source.tree.LeafElement;
+import com.intellij.psi.impl.source.tree.SharedImplUtil;
+import com.intellij.psi.impl.source.tree.TreeElement;
+import com.intellij.psi.impl.source.tree.TreeUtil;
 import com.intellij.psi.tree.ChildRoleBase;
 import com.intellij.psi.tree.IElementType;
 import com.intellij.psi.tree.TokenSet;
@@ -49,7 +64,7 @@ public class ClassElement extends CompositeElement implements Constants {
   public TreeElement addInternal(TreeElement first, ASTNode last, ASTNode anchor, Boolean before) {
     PsiClass psiClass = (PsiClass)SourceTreeToPsiMap.treeElementToPsi(this);
     if (anchor == null) {
-      if (first.getElementType() != JavaDocElementType.DOC_COMMENT) {
+      if (!DOC_COMMENT_TOKENS.contains(first.getElementType())) {
         if (before == null) {
           if (first == last) {
             PsiElement firstPsi = SourceTreeToPsiMap.treeElementToPsi(first);
@@ -80,8 +95,10 @@ public class ClassElement extends CompositeElement implements Constants {
     }
 
     if (isEnum()) {
-      if (!ENUM_CONSTANT_LIST_ELEMENTS_BIT_SET.contains(first.getElementType())) {
-        ASTNode semicolonPlace = findEnumConstantListDelimiterPlace();
+      ASTNode maybeSemicolonPlace = findEnumConstantListDelimiterPlace();
+      if (!ENUM_CONSTANT_LIST_ELEMENTS_BIT_SET.contains(first.getElementType())
+          // if we are not inside the class itself, skip finding an element
+        && !(maybeSemicolonPlace != null && maybeSemicolonPlace.getElementType() == LBRACE)) {
         boolean commentsOrWhiteSpaces = true;
         for (ASTNode child = first; child != null; child = child.getTreeNext()) {
           if (!PsiImplUtil.isWhitespaceOrComment(child)) {
@@ -89,15 +106,15 @@ public class ClassElement extends CompositeElement implements Constants {
             break;
           }
         }
-        if (!commentsOrWhiteSpaces && (semicolonPlace == null || semicolonPlace.getElementType() != SEMICOLON)) {
+        if (!commentsOrWhiteSpaces && (maybeSemicolonPlace == null || maybeSemicolonPlace.getElementType() != SEMICOLON)) {
             final LeafElement semicolon = Factory.createSingleLeafElement(SEMICOLON, ";", 0, 1,
                                                                           SharedImplUtil.findCharTableByTree(this), getManager());
-            addInternal(semicolon, semicolon, semicolonPlace, Boolean.FALSE);
-            semicolonPlace = semicolon;
+            addInternal(semicolon, semicolon, maybeSemicolonPlace, Boolean.FALSE);
+            maybeSemicolonPlace = semicolon;
         }
         for (ASTNode run = anchor; run != null; run = run.getTreeNext()) {
-          if (run == semicolonPlace) {
-            anchor = before.booleanValue() ? semicolonPlace.getTreeNext() : semicolonPlace;
+          if (run == maybeSemicolonPlace) {
+            anchor = before.booleanValue() ? maybeSemicolonPlace.getTreeNext() : maybeSemicolonPlace;
             if (anchor != null && PsiImplUtil.isWhitespaceOrComment(anchor)) {
               anchor = PsiTreeUtil.skipWhitespacesAndCommentsForward(anchor.getPsi()).getNode();
             }
@@ -307,6 +324,8 @@ public class ClassElement extends CompositeElement implements Constants {
     return candidate != null && candidate.getElementType() == SEMICOLON ? candidate : null;
   }
 
+  /// Returns the first semicolon node after an enum constant.
+  /// Defaults to the last non whitespace character if not present.
   public @Nullable ASTNode findEnumConstantListDelimiterPlace() {
     final ASTNode first = findChildByRole(ChildRole.LBRACE);
     if (first == null) return null;
@@ -356,7 +375,7 @@ public class ClassElement extends CompositeElement implements Constants {
     else if (i == TYPE_PARAMETER_LIST) {
       return ChildRole.TYPE_PARAMETER_LIST;
     }
-    else if (i == JavaDocElementType.DOC_COMMENT) {
+    else if (DOC_COMMENT_TOKENS.contains(i)) {
       return getChildRole(child, ChildRole.DOC_COMMENT);
     }
     else if (ElementType.JAVA_PLAIN_COMMENT_BIT_SET.contains(i)) {

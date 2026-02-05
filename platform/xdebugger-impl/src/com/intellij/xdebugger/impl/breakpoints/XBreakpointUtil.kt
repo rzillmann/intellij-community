@@ -20,16 +20,26 @@ import com.intellij.openapi.util.Pair
 import com.intellij.openapi.util.TextRange
 import com.intellij.openapi.util.component1
 import com.intellij.openapi.util.component2
+import com.intellij.openapi.util.registry.Registry
 import com.intellij.openapi.util.text.StringUtil
+import com.intellij.platform.debugger.impl.shared.proxy.XBreakpointProxy
+import com.intellij.platform.debugger.impl.shared.proxy.XDebugManagerProxy
+import com.intellij.platform.debugger.impl.shared.proxy.XLineBreakpointProxy
+import com.intellij.platform.debugger.impl.shared.proxy.XLineBreakpointTypeProxy
 import com.intellij.util.SmartList
 import com.intellij.xdebugger.XDebuggerManager
 import com.intellij.xdebugger.XDebuggerUtil
 import com.intellij.xdebugger.XSourcePosition
-import com.intellij.xdebugger.breakpoints.*
+import com.intellij.xdebugger.breakpoints.XBreakpoint
+import com.intellij.xdebugger.breakpoints.XBreakpointProperties
+import com.intellij.xdebugger.breakpoints.XBreakpointType
+import com.intellij.xdebugger.breakpoints.XLineBreakpoint
+import com.intellij.xdebugger.breakpoints.XLineBreakpointType
 import com.intellij.xdebugger.impl.XDebuggerUtilImpl
 import com.intellij.xdebugger.impl.XSourcePositionImpl
 import com.intellij.xdebugger.impl.breakpoints.ui.BreakpointItem
-import com.intellij.xdebugger.impl.frame.XDebugManagerProxy
+import com.intellij.xdebugger.impl.proxy.MonolithBreakpointProxy
+import com.intellij.xdebugger.impl.proxy.MonolithLineBreakpointProxy
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.future.await
@@ -45,6 +55,12 @@ import java.util.concurrent.CompletableFuture
 import kotlin.math.max
 
 object XBreakpointUtil {
+  @ApiStatus.Internal
+  @JvmStatic
+  fun isBreakpointInstrumentationSwitchedOn(): Boolean {
+    return Registry.`is`("debugger.breakpoint.instrumentation")
+  }
+
   /**
    * The forcibly shortened version of [XBreakpointType.getShortText].
    */
@@ -89,7 +105,7 @@ object XBreakpointUtil {
   fun findSelectedBreakpoint(project: Project, editor: Editor): Pair<GutterIconRenderer?, XBreakpoint<*>?> {
     val pair = findSelectedBreakpointProxy(project, editor)
     val (renderer, breakpoint) = pair
-    if (breakpoint is XBreakpointProxy.Monolith) {
+    if (breakpoint is MonolithBreakpointProxy) {
       return Pair.create(renderer, breakpoint.breakpoint)
     }
     return Pair.create(null, null)
@@ -145,20 +161,8 @@ object XBreakpointUtil {
 
   @JvmStatic
   @ApiStatus.Internal
-  fun subscribeOnBreakpointsChanges(project: Project, disposable: Disposable, onBreakpointChange: (XBreakpoint<*>) -> Unit) {
-    project.getMessageBus().connect(disposable).subscribe(XBreakpointListener.TOPIC, object : XBreakpointListener<XBreakpoint<*>> {
-      override fun breakpointAdded(breakpoint: XBreakpoint<*>) {
-        onBreakpointChange(breakpoint)
-      }
-
-      override fun breakpointChanged(breakpoint: XBreakpoint<*>) {
-        onBreakpointChange(breakpoint)
-      }
-
-      override fun breakpointRemoved(breakpoint: XBreakpoint<*>) {
-        onBreakpointChange(breakpoint)
-      }
-    })
+  fun subscribeOnBreakpointsChanges(project: Project, disposable: Disposable, onBreakpointChange: () -> Unit) {
+    XDebugManagerProxy.getInstance().getBreakpointManagerProxy(project).subscribeOnBreakpointsChanges(disposable, onBreakpointChange)
   }
 
   @ApiStatus.Internal
@@ -202,7 +206,7 @@ object XBreakpointUtil {
   ): Promise<XLineBreakpoint<*>?> {
     return toggleLineBreakpointProxy(project, position, selectVariantByPositionColumn, editor, temporary, moveCaret, canRemove).asPromise()
       .then { proxy ->
-        (proxy as? XLineBreakpointProxy.Monolith)?.breakpoint as? XLineBreakpoint<*>
+        (proxy as? MonolithLineBreakpointProxy)?.breakpoint as? XLineBreakpoint<*>
       }
   }
 
@@ -285,38 +289,22 @@ object XBreakpointUtil {
     return properties
   }
 
-  @JvmStatic
-  fun getAvailableLineBreakpointTypes(
-    project: Project,
-    linePosition: XSourcePosition,
-    editor: Editor?,
-  ): List<XLineBreakpointType<*>> =
-    getAvailableLineBreakpointTypes(project, linePosition, false, editor)
-
-  @JvmStatic
+  @ApiStatus.Internal
   fun getAvailableLineBreakpointTypes(
     project: Project,
     position: XSourcePosition,
-    selectTypeByPositionColumn: Boolean,
-    editor: Editor?,
+    editor: Editor? = null,
+    selectTypeByPositionColumn: Boolean = false,
   ): List<XLineBreakpointType<*>> {
-    return getAvailableLineBreakpointTypesInfo(project, position, selectTypeByPositionColumn, editor).first
-  }
-
-  private fun getAvailableLineBreakpointTypesInfo(
-    project: Project,
-    position: XSourcePosition,
-    selectTypeByPositionColumn: Boolean,
-    editor: Editor?,
-  ): Pair<List<XLineBreakpointType<*>>, Int> {
     val breakpointManager = XDebuggerManager.getInstance(project).breakpointManager
-    return getAvailableLineBreakpointInfo(position, selectTypeByPositionColumn, editor,
-                                          XDebuggerUtil.getInstance().lineBreakpointTypes.toList(),
-                                          { type, line -> breakpointManager.findBreakpointAtLine(type, position.file, line) },
-                                          { type -> type.priority },
-                                          { callback -> callback() },
-                                          { type, line -> type.canPutAt(position.file, line, project) }
+    val breakpointInfo = getAvailableLineBreakpointInfo(position, selectTypeByPositionColumn, editor,
+                                                        XDebuggerUtil.getInstance().lineBreakpointTypes.toList(),
+                                                        { type, line -> breakpointManager.findBreakpointAtLine(type, position.file, line) },
+                                                        { type -> type.priority },
+                                                        { callback -> callback() },
+                                                        { type, line -> type.canPutAt(position.file, line, project) }
     )
+    return breakpointInfo.first
   }
 
   private suspend fun getAvailableLineBreakpointInfoProxy(

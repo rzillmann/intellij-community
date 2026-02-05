@@ -1,9 +1,16 @@
 // Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.jetbrains.python.packaging.toolwindow.packages.tree
 
+import com.intellij.ide.CopyProvider
 import com.intellij.openapi.actionSystem.ActionGroup
 import com.intellij.openapi.actionSystem.ActionManager
+import com.intellij.openapi.actionSystem.ActionUpdateThread
+import com.intellij.openapi.actionSystem.DataContext
+import com.intellij.openapi.actionSystem.DataSink
+import com.intellij.openapi.actionSystem.PlatformDataKeys
+import com.intellij.openapi.actionSystem.UiDataProvider
 import com.intellij.openapi.components.service
+import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.putUserData
 import com.intellij.openapi.util.Key
@@ -15,13 +22,19 @@ import com.intellij.ui.hover.TreeHoverListener
 import com.intellij.ui.treeStructure.treetable.TreeTableModel
 import com.jetbrains.python.packaging.toolwindow.PyPackagingToolWindowPanel
 import com.jetbrains.python.packaging.toolwindow.PyPackagingToolWindowService
-import com.jetbrains.python.packaging.toolwindow.model.*
+import com.jetbrains.python.packaging.toolwindow.model.DisplayablePackage
+import com.jetbrains.python.packaging.toolwindow.model.ErrorNode
+import com.jetbrains.python.packaging.toolwindow.model.ExpandResultNode
+import com.jetbrains.python.packaging.toolwindow.model.InstallablePackage
+import com.jetbrains.python.packaging.toolwindow.model.InstalledPackage
+import com.jetbrains.python.packaging.toolwindow.model.RequirementPackage
 import com.jetbrains.python.packaging.toolwindow.packages.tree.renderers.PackageNameCellRenderer
 import com.jetbrains.python.packaging.toolwindow.packages.tree.renderers.PackageVersionCellRenderer
 import com.jetbrains.python.sdk.isReadOnly
 import org.jetbrains.annotations.ApiStatus
 import java.awt.Component
 import java.awt.Point
+import java.awt.datatransfer.StringSelection
 import java.awt.event.FocusAdapter
 import java.awt.event.FocusEvent
 import java.awt.event.FocusListener
@@ -39,7 +52,7 @@ class PyPackagesTreeTable(
   val project: Project,
   private val controller: PyPackagingToolWindowPanel,
   private var treeListener: PyPackagesTreeListener? = null,
-) : JBTreeTable(PyPackagesTreeTableModel()), PackageTreeTableOperations {
+) : JBTreeTable(PyPackagesTreeTableModel()), PackageTreeTableOperations, UiDataProvider, CopyProvider {
 
   companion object {
     private const val COLUMN_PROPORTION = 0.3f
@@ -62,7 +75,6 @@ class PyPackagesTreeTable(
       treeListener?.onTreeStructureChanged()
     }
 
-
   internal val isReadOnly
     get() = packagingService.currentSdk?.isReadOnly == true
 
@@ -74,9 +86,15 @@ class PyPackagesTreeTable(
   private fun initializeUI() {
     initializeTreeTableProperties()
     initializeTreeProperties()
+    initializeTableProperties()
     initializeCellRenderers()
     setupTreeInteractions()
     setupContextMenu()
+  }
+
+  // To properly update renderers font size and color after theme change.
+  override fun updateUI() {
+    initializeCellRenderers()
   }
 
   private fun initializeTreeTableProperties() {
@@ -97,6 +115,13 @@ class PyPackagesTreeTable(
       isRootVisible = false
       showsRootHandles = true
       selectionModel.selectionMode = SINGLE_TREE_SELECTION
+      transferHandler = null
+    }
+  }
+
+  private fun initializeTableProperties() {
+    table.apply {
+      transferHandler = null
     }
   }
 
@@ -262,6 +287,25 @@ class PyPackagesTreeTable(
       val node = tree.getPathForRow(row)?.lastPathComponent ?: return@mapNotNull null
       treeTableModel.getValueAt(node, 0) as? DisplayablePackage
     } ?: emptySequence()
+
+  override fun uiDataSnapshot(sink: DataSink) {
+    sink[PlatformDataKeys.COPY_PROVIDER] = this
+  }
+
+  override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
+
+  override fun performCopy(dataContext: DataContext) {
+    getTextForCopy()?.let { CopyPasteManager.getInstance().setContents(StringSelection(it)) }
+  }
+
+  override fun isCopyEnabled(dataContext: DataContext): Boolean = getTextForCopy() != null
+
+  override fun isCopyVisible(dataContext: DataContext): Boolean = true
+
+  private fun getTextForCopy(): String? = when (val pkg = selectedItem()) {
+    is InstalledPackage, is InstallablePackage, is RequirementPackage -> pkg.name
+    is ErrorNode, is ExpandResultNode, null -> null
+  }
 }
 
 private interface PackageTreeTableOperations {
