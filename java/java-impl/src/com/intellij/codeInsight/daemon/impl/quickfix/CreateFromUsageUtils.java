@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2026 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.codeInsight.daemon.impl.quickfix;
 
 import com.intellij.codeInsight.ExpectedTypeInfo;
@@ -27,7 +27,6 @@ import com.intellij.ide.fileTemplates.FileTemplateManager;
 import com.intellij.ide.fileTemplates.FileTemplateUtil;
 import com.intellij.ide.fileTemplates.JavaTemplateUtil;
 import com.intellij.ide.scratch.ScratchUtil;
-import com.intellij.lang.java.JavaLanguage;
 import com.intellij.modcommand.ModPsiUpdater;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.ReadAction;
@@ -50,7 +49,6 @@ import com.intellij.openapi.util.Comparing;
 import com.intellij.openapi.util.Pair;
 import com.intellij.openapi.util.TextRange;
 import com.intellij.openapi.util.text.StringUtil;
-import com.intellij.pom.java.JavaFeature;
 import com.intellij.psi.CommonClassNames;
 import com.intellij.psi.JVMElementFactories;
 import com.intellij.psi.JVMElementFactory;
@@ -192,12 +190,6 @@ public final class CreateFromUsageUtils {
       returnType = PsiTypes.voidType();
     }
 
-    JVMElementFactory factory = JVMElementFactories.getFactory(aClass.getLanguage(), aClass.getProject());
-
-    LOG.assertTrue(!aClass.isInterface() ||
-                   PsiUtil.isAvailable(JavaFeature.EXTENSION_METHODS, method) ||
-                   method.getLanguage() != JavaLanguage.INSTANCE, "Interface bodies should be already set up");
-
     FileType fileType = FileTypeManager.getInstance().getFileTypeByExtension(template.getExtension());
     Map<String, Object> properties = FileTemplateManager.getInstance(method.getProject()).getDefaultContextMap();
     properties.put(FileTemplate.ATTRIBUTE_RETURN_TYPE, returnType.getPresentableText());
@@ -222,7 +214,7 @@ public final class CreateFromUsageUtils {
 
     PsiMethod m;
     try {
-      m = factory.createMethodFromText(methodText, aClass);
+      m = JVMElementFactories.getFactory(aClass.getLanguage(), aClass.getProject()).createMethodFromText(methodText, aClass);
     }
     catch (IncorrectOperationException e) {
       if (updater == null) {
@@ -1105,12 +1097,10 @@ public final class CreateFromUsageUtils {
     public LookupElement @NotNull [] calculateLookupItems(ExpressionContext context) {
       Project project = context.getProject();
       int offset = context.getStartOffset();
-      Editor editor = context.getEditor();
-      assert editor != null;
-      Document document = editor.getDocument();
-      PsiDocumentManager.getInstance(project).commitDocument(document);
-      PsiFile psiFile = PsiDocumentManager.getInstance(project).getPsiFile(document);
+      PsiFile psiFile = context.getPsiFile();
       assert psiFile != null;
+      Document document = psiFile.getFileDocument();
+      PsiDocumentManager.getInstance(project).commitDocument(document);
       PsiElement elementAt = psiFile.findElementAt(offset);
       Set<String> parameterNames = getPeerNames(elementAt);
       if (parameterNames == null) return LookupElement.EMPTY_ARRAY;

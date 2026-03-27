@@ -62,13 +62,14 @@ import org.jetbrains.intellij.build.io.copyDir
 import org.jetbrains.intellij.build.io.logFreeDiskSpace
 import org.jetbrains.intellij.build.io.writeNewFile
 import org.jetbrains.intellij.build.io.zipWithCompression
+import org.jetbrains.intellij.build.isLanguageServer
 import org.jetbrains.intellij.build.productRunner.IntellijProductRunner
 import org.jetbrains.intellij.build.telemetry.TraceManager.spanBuilder
 import org.jetbrains.intellij.build.telemetry.block
 import org.jetbrains.intellij.build.telemetry.use
 import org.jetbrains.intellij.build.zipSourcesOfModules
-import java.nio.file.FileVisitResult
 import java.nio.file.FileSystems
+import java.nio.file.FileVisitResult
 import java.nio.file.Files
 import java.nio.file.NoSuchFileException
 import java.nio.file.Path
@@ -145,7 +146,6 @@ internal class BuildTasksImpl(private val context: BuildContextImpl) : BuildTask
     BundledMavenDownloader.downloadMaven3Libs(context.paths.communityHomeDirRoot)
     BundledMavenDownloader.downloadMavenDistribution(context.paths.communityHomeDirRoot)
     BundledMavenDownloader.downloadMavenTelemetryDependencies(context.paths.communityHomeDirRoot)
-    buildDistribution(context = context, isUpdateFromSources = true)
     val arch = if (SystemInfoRt.isMac && CpuArch.isIntel64() && CpuArch.isEmulated()) {
       JvmArchitecture.aarch64
     }
@@ -153,6 +153,7 @@ internal class BuildTasksImpl(private val context: BuildContextImpl) : BuildTask
       JvmArchitecture.currentJvmArch
     }
     context.options.targetArch = arch
+    buildDistribution(context = context, isUpdateFromSources = true)
     val targetLibcImpl = LibcImpl.current(OsFamily.currentOs)
     layoutShared(context)
     if (includeBinAndRuntime) {
@@ -183,7 +184,10 @@ val SUPPORTED_DISTRIBUTIONS: List<SupportedDistribution> = listOf(
 )
 
 fun createIdeaPropertyFile(context: BuildContext): CharSequence {
-  val builder = StringBuilder(Files.readString(context.paths.communityHomeDir.resolve("bin/idea.properties")))
+  val builder = StringBuilder(Files.readString(context.paths.communityHomeDir.resolve(when {
+    context.isLanguageServer -> "../language-server/building/idea.properties"
+    else -> "bin/idea.properties"
+  })))
   for (it in context.productProperties.additionalIDEPropertiesFilePaths) {
     builder.append('\n').append(Files.readString(it))
   }
@@ -195,22 +199,23 @@ fun createIdeaPropertyFile(context: BuildContext): CharSequence {
   val map = LinkedHashMap<String, String>(1)
   map["settings_dir"] = settingsDir
   builder.append(BuildUtils.replaceAll(temp, map, "@@"))
-  if (context.applicationInfo.isEAP) {
+
+  if (!context.isLanguageServer) {
     builder.append(
-      "\n#-----------------------------------------------------------------------\n" +
-      "# Change to 'disabled' if you don't want to receive instant visual notifications\n" +
-      "# about fatal errors that happen to an IDE or plugins installed.\n" +
-      "#-----------------------------------------------------------------------\n" +
-      "idea.fatal.error.notification=enabled\n"
-    )
-  }
-  else {
-    builder.append(
-      "\n#-----------------------------------------------------------------------\n" +
-      "# Change to 'enabled' if you want to receive instant visual notifications\n" +
-      "# about fatal errors that happen to an IDE or plugins installed.\n" +
-      "#-----------------------------------------------------------------------\n" +
-      "idea.fatal.error.notification=disabled\n"
+      if (context.applicationInfo.isEAP) {
+        "\n#-----------------------------------------------------------------------\n" +
+        "# Change to 'disabled' if you don't want to receive instant visual notifications\n" +
+        "# about fatal errors that happen to an IDE or plugins installed.\n" +
+        "#-----------------------------------------------------------------------\n" +
+        "idea.fatal.error.notification=enabled\n"
+      }
+      else {
+        "\n#-----------------------------------------------------------------------\n" +
+        "# Change to 'enabled' if you want to receive instant visual notifications\n" +
+        "# about fatal errors that happen to an IDE or plugins installed.\n" +
+        "#-----------------------------------------------------------------------\n" +
+        "idea.fatal.error.notification=disabled\n"
+      }
     )
   }
   return builder
@@ -488,11 +493,17 @@ suspend fun buildDistributions(context: BuildContext): Unit = block("build distr
       val pluginsToPublish = getPluginLayoutsByJpsModuleNames(
         modules = context.productProperties.productLayout.pluginModulesToPublish,
         productLayout = context.productProperties.productLayout,
-        toPublish = true
+        toPublish = true,
       )
       buildNonBundledPlugins(
-        pluginsToPublish, context.options.compressZipFiles, buildPlatformLibJob = null, distributionState, buildSearchableOptions(context), isUpdateFromSources = false,
-        distributionState.platformLayout.descriptorCacheContainer, context
+        pluginsToPublish = pluginsToPublish,
+        compressPluginArchive = context.options.compressZipFiles,
+        buildPlatformLibJob = null,
+        state = distributionState,
+        searchableOptionSet = buildSearchableOptions(context),
+        isUpdateFromSources = false,
+        descriptorCacheContainer = distributionState.platformLayout.descriptorCacheContainer,
+        context = context,
       )
       return@coroutineScope
     }
@@ -590,6 +601,11 @@ private suspend fun checkProductProperties(context: BuildContext) {
   checkProductLayout(context)
 
   val properties = context.productProperties
+  val imagesDirectoryPath = properties.imagesDirectoryPath
+  if (imagesDirectoryPath != null) {
+    checkPaths(listOf(imagesDirectoryPath), "productProperties.imagesDirectoryPath")
+    verifyThatProductImageFilesExist(imagesDirectoryPath, context)
+  }
   checkPaths(properties.brandingResourcePaths, "productProperties.brandingResourcePaths")
   checkPaths(properties.additionalIDEPropertiesFilePaths, "productProperties.additionalIDEPropertiesFilePaths")
   checkPaths(properties.additionalDirectoriesWithLicenses, "productProperties.additionalDirectoriesWithLicenses")
@@ -634,15 +650,17 @@ private suspend fun checkProductProperties(context: BuildContext) {
     checkNotNull(macCustomizer.bundleIdentifier) {
       "Mandatory property '${"productProperties.macCustomizer.bundleIdentifier"}' is not specified"
     }
-    checkPaths(listOf(macCustomizer.icnsPath), "productProperties.macCustomizer.icnsPath")
+    checkPaths(listOfNotNull(macCustomizer.icnsPath), "productProperties.macCustomizer.icnsPath")
     checkPaths(listOfNotNull(macCustomizer.icnsPathForEAP), "productProperties.macCustomizer.icnsPathForEAP")
+    @Suppress("DEPRECATION")
     checkPaths(listOfNotNull(macCustomizer.icnsPathForAlternativeIcon), "productProperties.macCustomizer.icnsPathForAlternativeIcon")
+    @Suppress("DEPRECATION")
     checkPaths(
       listOfNotNull(macCustomizer.icnsPathForAlternativeIconForEAP),
       "productProperties.macCustomizer.icnsPathForAlternativeIconForEAP"
     )
     context.executeStep(spanBuilder("check .dmg images"), BuildOptions.MAC_DMG_STEP) {
-      checkPaths(listOf(macCustomizer.dmgImagePath), "productProperties.macCustomizer.dmgImagePath")
+      checkPaths(listOfNotNull(macCustomizer.dmgImagePath), "productProperties.macCustomizer.dmgImagePath")
       checkPaths(listOfNotNull(macCustomizer.dmgImagePathForEAP), "productProperties.macCustomizer.dmgImagePathForEAP")
     }
   }
@@ -667,7 +685,7 @@ private fun checkProductLayout(context: BuildContext) {
 
   val pluginLayouts = layout.pluginLayouts
   checkPluginDuplicates(pluginLayouts)
-  checkPluginModules(layout.bundledPluginModules, "productProperties.productLayout.bundledPluginModules", context)
+  checkPluginModules(context.getBundledPluginModules(), "effective bundled plugin modules", context)
   checkPluginModules(layout.pluginModulesToPublish, "productProperties.productLayout.pluginModulesToPublish", context)
   checkPluginModules(layout.compatiblePluginsToIgnore, "productProperties.productLayout.compatiblePluginsToIgnore", context)
   if (!layout.buildAllCompatiblePlugins && !layout.compatiblePluginsToIgnore.isEmpty()) {
@@ -785,7 +803,7 @@ private fun checkPluginModules(pluginModules: Collection<String>?, fieldName: St
     context.outputProvider.findModule(name)?.let { findFileInModuleSources(it, "META-INF/plugin.xml") } == null
   }
   check(unknownBundledPluginModules.isEmpty()) {
-    "The following modules from $fieldName don't contain META-INF/plugin.xml file and aren't specified as optional plugin modules" +
+    "The following modules from $fieldName don't contain META-INF/plugin.xml file and aren't specified as optional plugin modules " +
     "in productProperties.productLayout.pluginLayouts: ${unknownBundledPluginModules.joinToString()}."
   }
 }
@@ -911,13 +929,12 @@ private suspend fun buildCrossPlatformOnlyPlugins(context: BuildContext): Pair<P
     .use {
       val state = context.distributionState()
       buildPlugins(
-        moduleOutputPatcher = ModuleOutputPatcher(),
         plugins = crossPlatformPlugins,
         os = null,
         arch = null,
         targetDir = targetDir,
         state = state,
-        buildPlatformJob = null,
+        platformEntriesProvider = null,
         searchableOptionSet = null,
         descriptorCacheContainer = state.platformLayout.descriptorCacheContainer,
         context = context,
@@ -1157,6 +1174,10 @@ private suspend fun crossPlatformZip(
         // Linux and Windows: we don't add specific dist dirs for ARM, so, copy dist files explicitly
         // macOS: we don't copy dist files to avoid extra copy operation
         val content = distFile.content
+
+        // Skip OS-specific plugin-classpath.txt; not published in cross-platform SDK
+        if (distFile.relativePath == PLUGIN_CLASSPATH && distFile.os != null) continue
+
         if (zipFileUniqueGuard.putIfAbsent(distFile.relativePath, content) == null) {
           when (content) {
             is LocalDistFileContent -> out.entry(distFile.relativePath, content.file)

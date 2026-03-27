@@ -1,4 +1,4 @@
-// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2026 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.codeInsight.template.impl;
 
 import com.intellij.codeInsight.intention.preview.IntentionPreviewUtils;
@@ -44,6 +44,7 @@ import com.intellij.openapi.editor.ex.RangeHighlighterEx;
 import com.intellij.openapi.editor.ex.util.EditorActionAvailabilityHint;
 import com.intellij.openapi.editor.ex.util.EditorActionAvailabilityHintKt;
 import com.intellij.openapi.editor.impl.ImaginaryEditor;
+import com.intellij.openapi.editor.impl.elf.ElfTheManager;
 import com.intellij.openapi.editor.markup.EffectType;
 import com.intellij.openapi.editor.markup.HighlighterLayer;
 import com.intellij.openapi.editor.markup.HighlighterTargetArea;
@@ -131,7 +132,9 @@ public final class TemplateState extends TemplateStateBase implements Disposable
     myEditorDocumentListener = new DocumentListener() {
       @Override
       public void beforeDocumentChange(@NotNull DocumentEvent e) {
-        if (CommandProcessor.getInstance().isCommandInProgress() && !isUndoOrRedoInProgress()) {
+        if (CommandProcessor.getInstance().isCommandInProgress() &&
+            !isUndoOrRedoInProgress() &&
+            !ElfTheManager.getInstance().isElfCommandInProgress()) {
           myDocumentChanged = true;
         }
       }
@@ -917,6 +920,11 @@ public final class TemplateState extends TemplateStateBase implements Disposable
       }
 
       @Override
+      public @Nullable PsiFile getPsiFile() {
+        return TemplateState.this.getPsiFile();
+      }
+
+      @Override
       public int getStartOffset() {
         return start;
       }
@@ -949,15 +957,10 @@ public final class TemplateState extends TemplateStateBase implements Disposable
         int templateStartOffset = getTemplateStartOffset();
         int offset = templateStartOffset > 0 ? getTemplateStartOffset() - 1 : getTemplateStartOffset();
 
-        Editor editor = getEditor();
-        if (editor == null) {
-          return null;
-        }
-
-        PsiDocumentManager.getInstance(project).commitDocument(editor.getDocument());
-
-        PsiFile file = PsiDocumentManager.getInstance(project).getPsiFile(editor.getDocument());
-        return file == null ? null : file.findElementAt(offset);
+        PsiFile file = getPsiFile();
+        if (file == null) return null;
+        PsiDocumentManager.getInstance(project).commitDocument(file.getFileDocument());
+        return file.findElementAt(offset);
       }
 
       @Override

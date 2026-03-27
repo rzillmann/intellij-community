@@ -103,6 +103,7 @@ import com.intellij.util.EventDispatcher;
 import com.intellij.util.ObjectUtils;
 import com.intellij.util.concurrency.EdtScheduler;
 import com.intellij.util.concurrency.Semaphore;
+import com.intellij.util.containers.CollectionFactory;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.containers.DisposableWrapperList;
 import com.intellij.util.lang.JavaVersion;
@@ -198,6 +199,7 @@ import java.util.stream.Stream;
 
 import static com.intellij.debugger.engine.DebuggerUtils.forEachSafe;
 import static com.intellij.debugger.engine.MethodInvokeUtilsKt.tryInvokeWithHelper;
+import static com.intellij.platform.util.coroutines.CoroutineScopeKt.childScope;
 
 public abstract class DebugProcessImpl extends UserDataHolderBase implements DebugProcess {
   private static final Logger LOG = Logger.getInstance(DebugProcessImpl.class);
@@ -213,7 +215,8 @@ public abstract class DebugProcessImpl extends UserDataHolderBase implements Deb
 
   private final List<ProcessListener> myProcessListeners = ContainerUtil.createLockFreeCopyOnWriteList();
   private final StringBuilder myTextBeforeStart = new StringBuilder();
-  protected @Nullable Method myIsUnderBreakpointCheckFn;
+
+  protected Map<VirtualMachineProxyImpl, EnterAndExitEvaluationCheck> myBreakpointCheckFnMap = CollectionFactory.createWeakMap();
 
   protected enum State {INITIAL, ATTACHED, DETACHING, DETACHED}
 
@@ -264,8 +267,7 @@ public abstract class DebugProcessImpl extends UserDataHolderBase implements Deb
   protected DebugProcessImpl(Project project) {
     this.project = project;
     CoroutineScope projectScope = ((XDebuggerManagerImpl)XDebuggerManager.getInstance(project)).getCoroutineScope();
-    myCoroutineScope = com.intellij.platform.util.coroutines.CoroutineScopeKt
-      .childScope(projectScope, "DebugProcessImpl", EmptyCoroutineContext.INSTANCE, true);
+    myCoroutineScope = childScope(projectScope, "DebugProcessImpl", EmptyCoroutineContext.INSTANCE, true);
     myDebuggerManagerThread = createManagerThread();
     myShowStatusManager = new ShowStatusManager(project, myCoroutineScope);
     myRunToCursorManager = new RunToCursorManager(this, myCoroutineScope);
@@ -1006,6 +1008,11 @@ public abstract class DebugProcessImpl extends UserDataHolderBase implements Deb
   @Override
   public @NotNull Project getProject() {
     return project;
+  }
+
+  @ApiStatus.Internal
+  public @NotNull CoroutineScope getChildScope(@NotNull String name) {
+    return childScope(myCoroutineScope, name, EmptyCoroutineContext.INSTANCE, true);
   }
 
   public boolean canRedefineClasses() {
@@ -2413,6 +2420,9 @@ public abstract class DebugProcessImpl extends UserDataHolderBase implements Deb
       if (!isAttached()) {
         return;
       }
+      if (!mySuspendManager.getPausedContexts().isEmpty()) {
+        return;
+      }
       logThreads();
       if (Registry.is("debugger.evaluate.on.pause")) {
         stopOnAnyMethodEntryAndGetSuspendContext();
@@ -2454,7 +2464,7 @@ public abstract class DebugProcessImpl extends UserDataHolderBase implements Deb
         }
       };
       var request = getRequestsManager().createMethodEntryRequest(requestor);
-      request.setSuspendPolicy(EventRequest.SUSPEND_ALL);
+      request.setSuspendPolicy(EventRequest.SUSPEND_EVENT_THREAD);
       DebuggerUtilsAsync.setEnabled(request, true);
 
       long timeout = Registry.intValue("debugger.evaluate.on.pause.timeout.ms", 500);
@@ -2468,23 +2478,36 @@ public abstract class DebugProcessImpl extends UserDataHolderBase implements Deb
                 getRequestsManager().deleteRequest(requestor);
                 // Check if the request was processed concurrently (before it was removed on a timeout) and saved the suspendContext.
                 if (evaluatableContextFuture.isDone()) {
-                  var evaluatableContext = evaluatableContextFuture.get();
-                  assert evaluatableContext != null;
-                  setSuspendContextAndCheckConsistency(evaluatableContext);
-                  DebuggerStatistics.logEvaluatablePauseSuccess(project, isDebuggerAgentAvailable());
+                  setEvaluatableContext(evaluatableContextFuture.get());
                 } else {
                   fallbackPauseWithNonEvaluatableContext();
                   DebuggerStatistics.logEvaluatablePauseFailure(project, isDebuggerAgentAvailable());
                 }
               } else {
-                var evaluatableContext = evaluatableContextFuture.get();
-                assert evaluatableContext != null;
-                setSuspendContextAndCheckConsistency(evaluatableContext);
-                DebuggerStatistics.logEvaluatablePauseSuccess(project, isDebuggerAgentAvailable());
+                setEvaluatableContext(evaluatableContextFuture.get());
               }
             }
           });
         });
+    }
+
+    private void setEvaluatableContext(SuspendContextImpl evaluatableContext) {
+      assert evaluatableContext != null;
+      setSuspendContextAndCheckConsistency(evaluatableContext);
+      DebuggerStatistics.logEvaluatablePauseSuccess(project, isDebuggerAgentAvailable());
+    }
+
+    private void fallbackPauseWithNonEvaluatableContext() {
+      var vmProxy = VirtualMachineProxyImpl.getCurrent();
+      vmProxy.suspend();
+      mySuspendManager.myExplicitlyResumedThreads.clear();
+      mySuspendManager.resumeAllSuspendAllContexts(null);
+      SuspendContextImpl suspendContext = mySuspendManager.pushSuspendContext(EventRequest.SUSPEND_ALL, 0);
+      setSuspendContextAndCheckConsistency(suspendContext);
+      forEachSafe(myDebugProcessListeners, it -> it.paused(suspendContext));
+      XDebuggerManagerImpl.getNotificationGroup()
+        .createNotification(JavaDebuggerBundle.message("evaluation.warning.cannot.evaluate.on.pause"), MessageType.WARNING)
+        .notify(getProject());
     }
 
     private void setSuspendContextAndCheckConsistency(@NotNull SuspendContextImpl suspendContext) {
@@ -2510,18 +2533,6 @@ public abstract class DebugProcessImpl extends UserDataHolderBase implements Deb
       });
     }
 
-    private void fallbackPauseWithNonEvaluatableContext() {
-      var vmProxy = VirtualMachineProxyImpl.getCurrent();
-      vmProxy.suspend();
-      mySuspendManager.myExplicitlyResumedThreads.clear();
-      mySuspendManager.resumeAllSuspendAllContexts(null);
-      SuspendContextImpl suspendContext = mySuspendManager.pushSuspendContext(EventRequest.SUSPEND_ALL, 0);
-      setSuspendContextAndCheckConsistency(suspendContext);
-      forEachSafe(myDebugProcessListeners, it -> it.paused(suspendContext));
-      XDebuggerManagerImpl.getNotificationGroup()
-        .createNotification(JavaDebuggerBundle.message("evaluation.warning.cannot.evaluate.on.pause"), MessageType.WARNING)
-        .notify(getProject());
-    }
   }
 
   private class ResumeThreadCommand extends SuspendContextCommandImpl {
@@ -3097,8 +3108,8 @@ public abstract class DebugProcessImpl extends UserDataHolderBase implements Deb
   }
 
   @ApiStatus.Internal
-  public void setIsUnderBreakpointCheckFn(@NotNull Method isUnderBreakpointCheckFn) {
-    this.myIsUnderBreakpointCheckFn = isUnderBreakpointCheckFn;
+  public void setIsUnderBreakpointCheckFn(@NotNull Method enterBreakpointCheckFn, @NotNull Method checkIsDoneFn) {
+    myBreakpointCheckFnMap.put(VirtualMachineProxyImpl.getCurrent(), new EnterAndExitEvaluationCheck(enterBreakpointCheckFn, checkIsDoneFn));
   }
 
   @ApiStatus.Internal

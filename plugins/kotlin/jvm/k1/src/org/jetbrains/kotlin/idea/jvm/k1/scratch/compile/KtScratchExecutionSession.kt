@@ -26,6 +26,7 @@ import org.jetbrains.kotlin.analysis.api.analyze
 import org.jetbrains.kotlin.analysis.api.components.KaCompilationResult
 import org.jetbrains.kotlin.analysis.api.components.KaCompilerTarget
 import org.jetbrains.kotlin.analysis.api.diagnostics.KaDiagnostic
+import org.jetbrains.kotlin.cli.create
 import org.jetbrains.kotlin.cli.extensionsStorage
 import org.jetbrains.kotlin.compiler.plugin.CompilerPluginRegistrar
 import org.jetbrains.kotlin.compiler.plugin.ExperimentalCompilerApi
@@ -64,9 +65,16 @@ class KtScratchExecutionSession(
         )
 
         val expressions = file.getExpressions()
-        if (!executor.checkForErrors(psiFile, expressions)) return
+        val result = try {
+            if (!executor.checkForErrors(psiFile, expressions)) return
+            runReadAction { KtScratchSourceFileProcessor().process(expressions) }
+        } catch (ex: Throwable) {
+            if (ex !is ControlFlowException) throw ex
+            callback()
+            return
+        }
 
-        when (val result = runReadAction { KtScratchSourceFileProcessor().process(expressions) }) {
+        when (result) {
             is Result.Error -> return executor.errorOccurs(result.message, isFatal = true)
             is Result.OK -> {
                 LOG.printDebugMessage("After processing by KtScratchSourceFileProcessor:\n ${result.code}")
@@ -117,7 +125,11 @@ class KtScratchExecutionSession(
     ) {
         val tempDir = DumbService.getInstance(project).runReadActionInSmartMode(Computable {
             compileFileToTempDir(modifiedScratchSourceFile, expressions)
-        }) ?: return
+        })
+        if (tempDir == null) {
+            callback()
+            return
+        }
 
         try {
             val (environmentRequest, commandLine) = createCommandLine(psiFile, file.currentModule, result.mainClassName, tempDir.path)
@@ -162,16 +174,13 @@ class KtScratchExecutionSession(
         LOG.printDebugMessage("Temp output dir: ${tmpDir.path}")
 
         val result = analyze(psiFile) {
-            val configuration = CompilerConfiguration().apply {
+            val configuration = CompilerConfiguration.create().apply {
                 val containingModule = psiFile.module
                 if (containingModule != null) {
                     put(CommonConfigurationKeys.MODULE_NAME, containingModule.name)
                 }
 
                 put(CommonConfigurationKeys.LANGUAGE_VERSION_SETTINGS, psiFile.languageVersionSettings)
-
-                @OptIn(ExperimentalCompilerApi::class)
-                extensionsStorage = CompilerPluginRegistrar.ExtensionStorage()
             }
 
             try {

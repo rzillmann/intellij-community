@@ -6,6 +6,7 @@ import com.intellij.TestCaseLoader;
 import com.intellij.java.codeInsight.completion.ml.JavaCompletionFeaturesTest;
 import com.intellij.java.codeInsight.template.postfix.templates.PostfixTemplateTestCase;
 import com.intellij.testFramework.SkipSlowTestLocally;
+import com.intellij.testFramework.TestFrameworkUtil;
 import com.intellij.testFramework.TestIndexingModeSupporter;
 import junit.framework.Test;
 import junit.framework.TestSuite;
@@ -20,7 +21,7 @@ import java.util.List;
  * }
  * </pre>
  * and make test's {@code getIndexingMode} return it, and run test from IDE as usual.
- * Also, one can replace {@code System.setProperty("intellij.build.test.groups", "JAVA_TESTS");} in {@link #suite()}
+ * Also, one can replace {@code System.setProperty("intellij.build.test.groups", "ULTIMATE_JAVA_TESTS;COMMUNITY_JAVA_TESTS");} in {@link #suite()}
  * with {@code System.setProperty("intellij.build.test.patterns", "<needed package>");} and run just this package.
  */
 @SkipSlowTestLocally
@@ -34,7 +35,7 @@ public class JavaCompletionTestSuite extends TestSuite {
     suite.setName("Java completion tests suite");
     TestCaseLoader myTestCaseLoader = TestCaseLoader.Builder.fromEmpty()
       .withTestGroupsResourcePath(TestCaseLoader.COMMON_TEST_GROUPS_RESOURCE_NAME)
-      .withTestGroups(List.of("JAVA_TESTS"))
+      .withTestGroups(List.of("ULTIMATE_JAVA_TESTS", "COMMUNITY_JAVA_TESTS"))
       .build();
     myTestCaseLoader.fillTestCases("", TestAll.getClassRoots());
     List<Class<?>> classes = myTestCaseLoader.getClasses();
@@ -53,6 +54,6 @@ public class JavaCompletionTestSuite extends TestSuite {
                               "its name contains 'Completion' substring but it doesn't implement TestIndexingModeSupporter"));
       }
     }
-    return suite;
+    return TestFrameworkUtil.flattenSuite(suite);
   }
 }

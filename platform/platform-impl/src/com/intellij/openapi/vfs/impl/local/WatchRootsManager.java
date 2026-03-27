@@ -4,6 +4,7 @@ package com.intellij.openapi.vfs.impl.local;
 import com.intellij.openapi.Disposable;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.diagnostic.Logger;
+import com.intellij.openapi.diagnostic.ThrottledLogger;
 import com.intellij.openapi.util.Pair;
 import com.intellij.openapi.util.Ref;
 import com.intellij.openapi.util.SystemInfoRt;
@@ -11,7 +12,7 @@ import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.vfs.JarFileSystem;
 import com.intellij.openapi.vfs.LocalFileSystem.WatchRequest;
 import com.intellij.openapi.vfs.VirtualFileManager;
-import com.intellij.openapi.vfs.newvfs.BulkFileListener;
+import com.intellij.openapi.vfs.newvfs.BulkFileListenerBackgroundable;
 import com.intellij.openapi.vfs.newvfs.events.VFileEvent;
 import com.intellij.util.SmartList;
 import com.intellij.util.containers.ContainerUtil;
@@ -38,6 +39,8 @@ import java.util.NavigableSet;
 import java.util.Objects;
 import java.util.Set;
 
+import static java.util.concurrent.TimeUnit.SECONDS;
+
 /**
  * Class manages the roots to monitor via {@link FileWatcher} -- i.e., it keeps {@link FileWatcher} configured
  * with the actual set of roots to watch for.
@@ -46,6 +49,7 @@ import java.util.Set;
 @ApiStatus.Internal
 public final class WatchRootsManager {
   private static final Logger LOG = Logger.getInstance(WatchRootsManager.class);
+  private static final ThrottledLogger THROTTLED_LOG = new ThrottledLogger(LOG, SECONDS.toMillis(1));
 
   private final FileWatcher myFileWatcher;
 
@@ -64,7 +68,7 @@ public final class WatchRootsManager {
 
   WatchRootsManager(@NotNull FileWatcher fileWatcher, @NotNull Disposable parent) {
     myFileWatcher = fileWatcher;
-    ApplicationManager.getApplication().getMessageBus().connect(parent).subscribe(VirtualFileManager.VFS_CHANGES, new BulkFileListener() {
+    ApplicationManager.getApplication().getMessageBus().connect(parent).subscribe(VirtualFileManager.VFS_CHANGES_BG, new BulkFileListenerBackgroundable() {
       @Override
       public void after(@NotNull List<? extends @NotNull VFileEvent> events) {
         synchronized (myLock) {
@@ -155,7 +159,7 @@ public final class WatchRootsManager {
       //BAZEL-2800: LOG.error() does quite expensive deduplication, so invoking it under the myLock
       //            could hurt performance a lot.
       if (dataInconsistencyDetails != null) {
-        LOG.error(dataInconsistencyDetails);
+        THROTTLED_LOG.error(dataInconsistencyDetails);
       }
     }
   }

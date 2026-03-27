@@ -74,6 +74,7 @@ import com.intellij.openapi.components.serviceIfCreated
 import com.intellij.openapi.diagnostic.debug
 import com.intellij.openapi.diagnostic.getOrLogException
 import com.intellij.openapi.diagnostic.logger
+import com.intellij.openapi.editor.EditorThreading
 import com.intellij.openapi.editor.actionSystem.EditorAction
 import com.intellij.openapi.extensions.ExtensionNotApplicableException
 import com.intellij.openapi.extensions.ExtensionPointListener
@@ -98,9 +99,9 @@ import com.intellij.openapi.wm.IdeFocusManager
 import com.intellij.openapi.wm.IdeFrame
 import com.intellij.openapi.wm.awaitFocusSettlesDown
 import com.intellij.platform.ide.CoreUiCoroutineScopeHolder
-import com.intellij.platform.plugins.parser.impl.elements.ActionElement.ActionDescriptorAction
-import com.intellij.platform.plugins.parser.impl.elements.ActionElement.ActionElementGroup
-import com.intellij.platform.plugins.parser.impl.elements.ActionElement.ActionElementName
+import com.intellij.platform.pluginSystem.parser.impl.elements.ActionElement.ActionDescriptorAction
+import com.intellij.platform.pluginSystem.parser.impl.elements.ActionElement.ActionElementGroup
+import com.intellij.platform.pluginSystem.parser.impl.elements.ActionElement.ActionElementName
 import com.intellij.platform.util.coroutines.childScope
 import com.intellij.serviceContainer.AlreadyDisposedException
 import com.intellij.serviceContainer.executeRegisterTaskForOldContent
@@ -1153,15 +1154,13 @@ open class ActionManagerImpl protected constructor(private val coroutineScope: C
 
   override fun fireBeforeEditorTyping(c: Char, dataContext: DataContext) {
     lastTimeEditorWasTypedIn = System.currentTimeMillis()
-    //maybe readaction
-    WriteIntentReadAction.run {
+    EditorThreading.runWritable {
       publisher().beforeEditorTyping(c, dataContext)
     }
   }
 
   override fun fireAfterEditorTyping(c: Char, dataContext: DataContext) {
-    //maybe readaction
-    WriteIntentReadAction.run {
+    EditorThreading.runWritable {
       publisher().afterEditorTyping(c, dataContext)
     }
   }

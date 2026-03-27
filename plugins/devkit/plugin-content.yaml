@@ -1,9 +1,6 @@
 - name: lib/devkit-jps.jar
   modules:
   - name: intellij.devkit.jps
-- name: lib/devkit-runtimeModuleRepository-jps.jar
-  modules:
-  - name: intellij.devkit.runtimeModuleRepository.jps
 - name: lib/devkit.jar
   modules:
   - name: intellij.devkit
@@ -11,7 +8,6 @@
   - name: intellij.devkit.gradle
   - name: intellij.devkit.i18n
   - name: intellij.devkit.intelliLang
-  - name: intellij.devkit.themes
   - name: intellij.devkit.uiDesigner
   - name: intellij.devkit.workspaceModel
   - name: intellij.devkit.workspaceModel.k1
@@ -38,6 +34,9 @@
 - name: lib/modules/intellij.devkit.scaffolding.jar
   contentModules:
   - name: intellij.devkit.scaffolding
+- name: lib/modules/intellij.devkit.themes.jar
+  contentModules:
+  - name: intellij.devkit.themes
 - name: lib/modules/intellij.devkit.threading.jar
   contentModules:
   - name: intellij.devkit.threading

@@ -21,6 +21,7 @@ import com.intellij.openapi.actionSystem.ex.MainMenuPresentationAware
 import com.intellij.openapi.actionSystem.impl.ActionPresentationDecorator.decorateTextIfNeeded
 import com.intellij.openapi.actionSystem.impl.actionholder.createActionRef
 import com.intellij.openapi.application.EDT
+import com.intellij.openapi.client.ClientSystemInfo
 import com.intellij.openapi.ui.JBPopupMenu
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.IconLoader.getDarkIcon
@@ -47,7 +48,6 @@ import com.intellij.util.cancelOnDispose
 import com.intellij.util.concurrency.EdtScheduler
 import com.intellij.util.concurrency.annotations.RequiresEdt
 import com.intellij.util.ui.JBUI
-import com.intellij.util.ui.StartupUiUtil
 import com.intellij.util.ui.launchOnShow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
@@ -365,11 +365,12 @@ class ActionMenu constructor(
         fillMenu()
         // NOTE: FUS for OSX system menu is implemented in MacNativeActionMenu
       } else {
-        UILatencyLogger.MAIN_MENU_LATENCY.log(System.currentTimeMillis() - startMs)
+        UILatencyLogger.logMainMenuLatency(System.currentTimeMillis() - startMs)
       }
     }
   }
 
+  @Throws(MenuCancelledControlFlowException::class)
   override fun setPopupMenuVisible(value: Boolean) {
     isTryingToShowPopupMenu = value
     if (value && !(MacMenuSettings.isSystemMenu && ActionPlaces.MAIN_MENU == place)) {
@@ -386,6 +387,8 @@ class ActionMenu constructor(
       // 3. Open the menu again: it will have the wrong position
       // The position is calculated based on the old size, resetting size forces `getPopupMenuOrigin` method to use preferred size
       popupMenu.size = Dimension(0, 0)
+
+      repaint()
     }
 
     super.setPopupMenuVisible(value)
@@ -397,7 +400,7 @@ class ActionMenu constructor(
 
   override fun getPopupMenuOrigin(): Point {
     val result = super.getPopupMenuOrigin()
-    if (!StartupUiUtil.isWaylandToolkit() || parent !is JPopupMenu) return result
+    if (!ClientSystemInfo.isWaylandToolkit() || parent !is JPopupMenu) return result
     correctPopupMenuPositionForWayland(result)
     return result
   }
@@ -450,6 +453,7 @@ class ActionMenu constructor(
     return context
   }
 
+  @Throws(MenuCancelledControlFlowException::class)
   fun fillMenu() {
     val context = getDataContext()
     Utils.fillMenu(uiKind = ActualActionUiKind.Menu(this, isMainMenuPlace),

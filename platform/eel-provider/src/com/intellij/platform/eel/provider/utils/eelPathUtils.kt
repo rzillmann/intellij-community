@@ -24,6 +24,7 @@ import com.intellij.platform.eel.fs.EelFileSystemApi.WalkDirectoryOptions.WalkDi
 import com.intellij.platform.eel.fs.EelFileSystemApi.WalkDirectoryOptions.WalkDirectoryTraversalOrder
 import com.intellij.platform.eel.fs.EelPosixFileInfo
 import com.intellij.platform.eel.fs.EelPosixFileInfoImpl
+import com.intellij.platform.eel.fs.EelWindowsFileInfo
 import com.intellij.platform.eel.fs.StreamingWriteResult
 import com.intellij.platform.eel.fs.WalkDirectoryEntry
 import com.intellij.platform.eel.fs.WalkDirectoryEntryPosix
@@ -34,6 +35,7 @@ import com.intellij.platform.eel.fs.WriteOptionsBuilder
 import com.intellij.platform.eel.fs.createTemporaryDirectory
 import com.intellij.platform.eel.fs.createTemporaryFile
 import com.intellij.platform.eel.fs.getPath
+import com.intellij.platform.eel.fs.listDirectoryWithAttrs
 import com.intellij.platform.eel.getOrThrow
 import com.intellij.platform.eel.isPosix
 import com.intellij.platform.eel.isWindows
@@ -1072,71 +1074,89 @@ object EelPathUtils {
   suspend fun directoryOnlySync(
     sourceRoot: EelPath,
     targetRoot: EelPath,
-    targetEelApi: EelApi,
     ignoreCase: Boolean,
   ) {
+    suspend fun listDirectories(
+      path: Path,
+      isLocal: Boolean,
+      eelApi: EelApi,
+    ): List<Path> =
+      if (isLocal) {
+        path.listDirectoryEntries()
+          .filter { it.isDirectory(LinkOption.NOFOLLOW_LINKS) }
+      }
+      else {
+        eelApi.fs.listDirectoryWithAttrs(path.asEelPath())
+          .getOrThrow()
+          .filter {
+            when (it.second.type) {
+              is EelFileInfo.Type.Directory -> true
+              else -> false
+            }
+          }
+          .map { path.resolve(it.first) }
+      }
+        .sortedByDescending { it.pathString }
+
+    val sourceEelApi = sourceRoot.descriptor.toEelApi()
+    val targetEelApi = targetRoot.descriptor.toEelApi()
+    val isSourceLocal = sourceRoot.descriptor === LocalEelDescriptor
+    val isTargetLocal = targetRoot.descriptor === LocalEelDescriptor
     val sourceRoot = sourceRoot.asNioPath()
     val targetRoot = targetRoot.asNioPath()
-    val sourceQ = ArrayDeque<Path>()
-    val targetQ = ArrayDeque<Path>()
-    sourceQ.add(sourceRoot)
-    targetQ.add(targetRoot)
+    var sourceCurrentLayerQ = ArrayDeque<Path>()
+    var targetCurrentLayerQ = ArrayDeque<Path>()
+    sourceCurrentLayerQ.add(sourceRoot)
+    targetCurrentLayerQ.add(targetRoot)
 
-    while (sourceQ.isNotEmpty() || targetQ.isNotEmpty()) {
-      if (sourceQ.isNotEmpty() && targetQ.isEmpty()) {
-        val path = sourceQ.removeFirst()
+    var sourceNextLayerQ = ArrayDeque<Path>()
+    var targetNextLayerQ = ArrayDeque<Path>()
+
+    while (sourceCurrentLayerQ.isNotEmpty() || targetCurrentLayerQ.isNotEmpty()) {
+      if (sourceCurrentLayerQ.isNotEmpty() && targetCurrentLayerQ.isEmpty()) {
+        val path = sourceCurrentLayerQ.removeFirst()
         val relativeDirPath = path.relativeTo(sourceRoot)
         val targetDirPath = targetRoot.resolve(relativeDirPath)
 
-        // edge case when a source directory is deleted and replaced by a file with the same name
-        if (targetDirPath.exists()) {
-          Files.delete(targetDirPath)
-        }
+        // edge case when a source file is deleted and replaced by a directory with the same name
+        Files.deleteIfExists(targetDirPath)
+
         Files.createDirectory(targetDirPath)
-        sourceQ.addAll(
-          path.listDirectoryEntries()
-            .filter { it.isDirectory(LinkOption.NOFOLLOW_LINKS) }
-            .sortedByDescending { it.pathString }
-        )
+        sourceNextLayerQ.addAll(listDirectories(path, isSourceLocal, sourceEelApi))
       }
-      else if (sourceQ.isEmpty() && targetQ.isNotEmpty()) {
-        val path = targetQ.removeFirst()
+      else if (sourceCurrentLayerQ.isEmpty() && targetCurrentLayerQ.isNotEmpty()) {
+        val path = targetCurrentLayerQ.removeFirst()
         targetEelApi.fs.delete(path.asEelPath(), true)
       }
       else {
-        val sourceRelativeDirPath = sourceQ.first().relativeTo(sourceRoot)
-        val targetRelativeDirPath = targetQ.first().relativeTo(targetRoot)
+        val sourceRelativeDirPath = sourceCurrentLayerQ.first().relativeTo(sourceRoot)
+        val targetRelativeDirPath = targetCurrentLayerQ.first().relativeTo(targetRoot)
         val comparison = compareRelativePathComponents(sourceRelativeDirPath, targetRelativeDirPath, ignoreCase)
 
         // new source directory
         if (comparison > 0) {
           val dirTargetPath = targetRoot.resolve(sourceRelativeDirPath)
 
-          // edge case when a source directory is deleted and replaced by a file with the same name
-          if (dirTargetPath.exists()) {
-            Files.delete(dirTargetPath)
-          }
+          // edge case when a source file is deleted and replaced by a directory with the same name
+          Files.deleteIfExists(dirTargetPath)
+
           Files.createDirectory(dirTargetPath)
-          sourceQ.removeFirst()
+          sourceNextLayerQ.addAll(listDirectories(sourceCurrentLayerQ.removeFirst(), isSourceLocal, sourceEelApi))
         }
         // the source directory was deleted
         else if (comparison < 0) {
-          targetEelApi.fs.delete(targetQ.removeFirst().asEelPath(), true).getOrThrow()
+          targetEelApi.fs.delete(targetCurrentLayerQ.removeFirst().asEelPath(), true).getOrThrow()
         }
         else {
-          val sourcePath = sourceQ.removeFirst()
-          val targetPath = targetQ.removeFirst()
-          sourceQ.addAll(
-            sourcePath.listDirectoryEntries()
-              .filter { it.isDirectory(LinkOption.NOFOLLOW_LINKS) }
-              .sortedByDescending { it.pathString }
-          )
-          targetQ.addAll(
-            targetPath.listDirectoryEntries()
-              .filter { it.isDirectory(LinkOption.NOFOLLOW_LINKS) }
-              .sortedByDescending { it.pathString }
-          )
+          sourceNextLayerQ.addAll(listDirectories(sourceCurrentLayerQ.removeFirst(), isSourceLocal, sourceEelApi))
+          targetNextLayerQ.addAll(listDirectories(targetCurrentLayerQ.removeFirst(), isTargetLocal, targetEelApi))
         }
+      }
+      if (sourceCurrentLayerQ.isEmpty() && targetCurrentLayerQ.isEmpty()) {
+        sourceCurrentLayerQ = sourceNextLayerQ
+        targetCurrentLayerQ = targetNextLayerQ
+        sourceNextLayerQ = ArrayDeque()
+        targetNextLayerQ = ArrayDeque()
       }
     }
   }
@@ -1235,7 +1255,7 @@ object EelPathUtils {
             Files.createDirectory(targetRoot)
           }
           withContext(Dispatchers.IO) {
-            directoryOnlySync(sourcePathEel, targetRootEel, targetDescriptor.toEelApi(), false)
+            directoryOnlySync(sourcePathEel, targetRootEel, false)
           }
         }
         sourceAttrs.isRegularFile -> {
@@ -1673,6 +1693,21 @@ object EelPathUtils {
       }
       if (!canExecute) {
         return AccessMode.EXECUTE
+      }
+    }
+    return null
+  }
+
+  /**
+   * returns one of [modes] which is not satisfied, or `null` if all modes are satisfied
+   */
+  @ApiStatus.Internal
+  fun checkAccess(fileInfo: EelWindowsFileInfo, vararg modes: AccessMode): AccessMode? {
+    // TODO check other permissions
+    if (AccessMode.WRITE in modes) {
+      val canWrite = !fileInfo.permissions.isReadOnly
+      if (!canWrite) {
+        return AccessMode.WRITE
       }
     }
     return null

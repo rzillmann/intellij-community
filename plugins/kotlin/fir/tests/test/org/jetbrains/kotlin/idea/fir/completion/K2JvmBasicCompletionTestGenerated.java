@@ -707,6 +707,65 @@ public abstract class K2JvmBasicCompletionTestGenerated extends AbstractK2JvmBas
         }
 
         @RunWith(JUnit3RunnerWithInners.class)
+        @TestMetadata("../../completion/testData/basic/common/companionObject")
+        public static class CompanionObject extends AbstractK2JvmBasicCompletionTest {
+            @java.lang.Override
+            @org.jetbrains.annotations.NotNull
+            public final KotlinPluginMode getPluginMode() {
+                return KotlinPluginMode.K2;
+            }
+
+            private void runTest(String testDataFilePath) throws Exception {
+                KotlinTestUtils.runTest(this::doTest, this, testDataFilePath);
+            }
+
+            @TestMetadata("ForArguments.kt")
+            public void testForArguments() throws Exception {
+                runTest("../../completion/testData/basic/common/companionObject/ForArguments.kt");
+            }
+
+            @TestMetadata("FunctionsForExpectedType.kt")
+            public void testFunctionsForExpectedType() throws Exception {
+                runTest("../../completion/testData/basic/common/companionObject/FunctionsForExpectedType.kt");
+            }
+
+            @TestMetadata("NoUnrelatedValues.kt")
+            public void testNoUnrelatedValues() throws Exception {
+                runTest("../../completion/testData/basic/common/companionObject/NoUnrelatedValues.kt");
+            }
+
+            @TestMetadata("ValuesForExpectedType.kt")
+            public void testValuesForExpectedType() throws Exception {
+                runTest("../../completion/testData/basic/common/companionObject/ValuesForExpectedType.kt");
+            }
+
+            @TestMetadata("WithinCompanionObject.kt")
+            public void testWithinCompanionObject() throws Exception {
+                runTest("../../completion/testData/basic/common/companionObject/WithinCompanionObject.kt");
+            }
+
+            @TestMetadata("WithinInnerClass.kt")
+            public void testWithinInnerClass() throws Exception {
+                runTest("../../completion/testData/basic/common/companionObject/WithinInnerClass.kt");
+            }
+
+            @TestMetadata("WithinNestedClass.kt")
+            public void testWithinNestedClass() throws Exception {
+                runTest("../../completion/testData/basic/common/companionObject/WithinNestedClass.kt");
+            }
+
+            @TestMetadata("WithinNestedObject.kt")
+            public void testWithinNestedObject() throws Exception {
+                runTest("../../completion/testData/basic/common/companionObject/WithinNestedObject.kt");
+            }
+
+            @TestMetadata("WithinSameClass.kt")
+            public void testWithinSameClass() throws Exception {
+                runTest("../../completion/testData/basic/common/companionObject/WithinSameClass.kt");
+            }
+        }
+
+        @RunWith(JUnit3RunnerWithInners.class)
         @TestMetadata("../../completion/testData/basic/common/constructor")
         public static class Constructor extends AbstractK2JvmBasicCompletionTest {
             @java.lang.Override
@@ -777,11 +836,6 @@ public abstract class K2JvmBasicCompletionTestGenerated extends AbstractK2JvmBas
             @TestMetadata("SingleConstructor.kt")
             public void testSingleConstructor() throws Exception {
                 runTest("../../completion/testData/basic/common/constructor/SingleConstructor.kt");
-            }
-
-            @TestMetadata("SubclassConstructor.kt")
-            public void testSubclassConstructor() throws Exception {
-                runTest("../../completion/testData/basic/common/constructor/SubclassConstructor.kt");
             }
         }
 
@@ -2236,6 +2290,11 @@ public abstract class K2JvmBasicCompletionTestGenerated extends AbstractK2JvmBas
             @TestMetadata("SecondConstructorParameter.kt")
             public void testSecondConstructorParameter() throws Exception {
                 runTest("../../completion/testData/basic/common/override/SecondConstructorParameter.kt");
+            }
+
+            @TestMetadata("SecondConstructorParameterWithDuplicateClass.kt")
+            public void testSecondConstructorParameterWithDuplicateClass() throws Exception {
+                runTest("../../completion/testData/basic/common/override/SecondConstructorParameterWithDuplicateClass.kt");
             }
 
             @TestMetadata("Simple.kt")
@@ -4051,6 +4110,11 @@ public abstract class K2JvmBasicCompletionTestGenerated extends AbstractK2JvmBas
                 runTest("../../completion/testData/basic/common/PreferExceptionsInThrow.kt");
             }
 
+            @TestMetadata("PreferInstantiationOverAnonymousObject.kt")
+            public void testPreferInstantiationOverAnonymousObject() throws Exception {
+                runTest("../../completion/testData/basic/common/PreferInstantiationOverAnonymousObject.kt");
+            }
+
             @TestMetadata("PreferLessParameters.kt")
             public void testPreferLessParameters() throws Exception {
                 runTest("../../completion/testData/basic/common/PreferLessParameters.kt");
@@ -4958,6 +5022,16 @@ public abstract class K2JvmBasicCompletionTestGenerated extends AbstractK2JvmBas
             @TestMetadata("TopLevelFromStandardLibrary.kt")
             public void testTopLevelFromStandardLibrary() throws Exception {
                 runTest("../../completion/testData/basic/java/TopLevelFromStandardLibrary.kt");
+            }
+
+            @TestMetadata("VariadicContextCallableAsExpression.kt")
+            public void testVariadicContextCallableAsExpression() throws Exception {
+                runTest("../../completion/testData/basic/java/VariadicContextCallableAsExpression.kt");
+            }
+
+            @TestMetadata("VariadicContextCallableSingleItem.kt")
+            public void testVariadicContextCallableSingleItem() throws Exception {
+                runTest("../../completion/testData/basic/java/VariadicContextCallableSingleItem.kt");
             }
         }
 

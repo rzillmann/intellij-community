@@ -150,10 +150,6 @@ internal open class MonolithBreakpointProxy @Deprecated("Use breakpoint.asProxy(
 
   override fun isDisposed(): Boolean = breakpoint.isDisposed
 
-  override fun updateIcon() {
-    breakpoint.updateIcon()
-  }
-
   override fun dispose() {
     breakpoint.dispose()
   }
@@ -206,8 +202,7 @@ fun <B : XBreakpoint<P>, P : XBreakpointProperties<*>> getEditorsProvider(
 ): XDebuggerEditorsProvider? = breakpointType.getEditorsProvider(breakpoint as B, project)
 
 @Suppress("DEPRECATION")
-@ApiStatus.Internal
-fun <T : XBreakpointBase<*, *, *>> T.asProxy(): XBreakpointProxy {
+internal fun <T : XBreakpointBase<*, *, *>> T.asProxy(): XBreakpointProxy {
   return if (this is XLineBreakpointImpl<*>) {
     this.asProxy()
   }
@@ -217,5 +212,4 @@ fun <T : XBreakpointBase<*, *, *>> T.asProxy(): XBreakpointProxy {
 }
 
 @Suppress("DEPRECATION")
-@ApiStatus.Internal
-fun <T : XLineBreakpointImpl<*>> T.asProxy(): XLineBreakpointProxy = MonolithLineBreakpointProxy(this)
+internal fun <T : XLineBreakpointImpl<*>> T.asProxy(): XLineBreakpointProxy = MonolithLineBreakpointProxy(this)

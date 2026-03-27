@@ -14,7 +14,6 @@ import org.jetbrains.plugins.terminal.session.impl.TerminalStartupOptionsImpl
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.junit.runners.JUnit4
-import java.awt.event.KeyEvent
 
 @RunWith(JUnit4::class)
 internal class TerminalCompletionPowerShellEscapingTest : BasePlatformTestCase() {
@@ -73,8 +72,8 @@ internal class TerminalCompletionPowerShellEscapingTest : BasePlatformTestCase()
         "with spaces",
         "dummy"
       )
-      fixture.type("test_cmd C:/'")
-      fixture.pressKey(KeyEvent.VK_LEFT)
+    fixture.type("test_cmd C:/'")
+      fixture.pressLeft()
       fixture.callCompletionPopup()
       fixture.insertCompletionItem("with spaces")
       fixture.assertCommandTextState("test_cmd 'C:/with spaces<cursor>'")
@@ -89,11 +88,26 @@ internal class TerminalCompletionPowerShellEscapingTest : BasePlatformTestCase()
         "with spaces",
         "dummy"
       )
-      fixture.type("test_cmd 'C:/'")
-      fixture.pressKey(KeyEvent.VK_LEFT)
+    fixture.type("test_cmd 'C:/'")
+      fixture.pressLeft()
       fixture.callCompletionPopup()
       fixture.insertCompletionItem("with spaces")
       fixture.assertCommandTextState("test_cmd 'C:/with spaces<cursor>'")
+    }
+  }
+
+  @Test
+  fun `single quotes inside suggestion are escaped`() {
+    doTest { fixture ->
+      fixture.mockSuggestions(
+        prefixReplacementIndex = 0,
+        "it's a test",
+        "dummy"
+      )
+      fixture.type("test_cmd ")
+      fixture.callCompletionPopup()
+      fixture.insertCompletionItem("it's a test")
+      fixture.assertCommandTextState("test_cmd 'it''s a test<cursor>'")
     }
   }
 
@@ -102,7 +116,8 @@ internal class TerminalCompletionPowerShellEscapingTest : BasePlatformTestCase()
     val startupOptions = TerminalStartupOptionsImpl(
       shellCommand = listOf("powershell.exe"),
       workingDirectory = System.getProperty("user.home"),
-      envVariables = emptyMap()
+      envVariables = emptyMap(),
+      pid = null,
     )
     val session = EchoingTerminalSession(startupOptions, fixtureScope.childScope("EchoingTerminalSession"))
     doWithCompletionFixture(project, session, fixtureScope) { fixture ->

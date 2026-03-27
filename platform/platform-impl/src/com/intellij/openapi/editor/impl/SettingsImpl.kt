@@ -113,7 +113,7 @@ class SettingsImpl internal constructor(private val editor: EditorImpl?, kind: E
             propertyName != state::myHorizontalScrollJump.name &&
             propertyName != state::myIsBlockCursor.name &&
             propertyName != state::myIsFullLineHeightCursor.name &&
-            propertyName != state::myIsAnimatedCaret.name &&
+            propertyName != state::myIsSmoothCaretMovement.name &&
             propertyName != state::myIsWhitespacesShown.name &&
             propertyName != state::myIsLeadingWhitespacesShown.name &&
             propertyName != state::myIsInnerWhitespacesShown.name &&
@@ -138,10 +138,14 @@ class SettingsImpl internal constructor(private val editor: EditorImpl?, kind: E
           fireEditorRefresh()
         }
 
-        if (propertyName == state::myIsBlockCursor.name || propertyName == state::myIsAnimatedCaret.name ||
+        if (propertyName == state::myIsBlockCursor.name || propertyName == state::myIsSmoothCaretMovement.name ||
             propertyName == state::myIsFullLineHeightCursor.name) {
           editor?.updateCaretCursor()
           editor?.contentComponent?.repaint()
+        }
+
+        if (propertyName == state::myIsSmoothCaretBlinking.name) {
+          editor?.restartCaretBlinking()
         }
 
         if (propertyName == state::myStickyLinesShownForLanguage.name) {
@@ -461,8 +465,12 @@ class SettingsImpl internal constructor(private val editor: EditorImpl?, kind: E
     state.myIsFullLineHeightCursor = `val`
   }
 
-  override fun isAnimatedCaret(): Boolean {
-    return state.myIsAnimatedCaret
+  override fun isSmoothCaretMovement(): Boolean {
+    return state.myIsSmoothCaretMovement
+  }
+
+  override fun setSmoothCaretMovement(useSmoothCaretMovement: Boolean) {
+    state.myIsSmoothCaretMovement = useSmoothCaretMovement
   }
 
   override fun getCaretEasing(): EditorSettings.CaretEasing {
@@ -522,6 +530,14 @@ class SettingsImpl internal constructor(private val editor: EditorImpl?, kind: E
 
   override fun setCaretBlinkPeriod(blinkPeriod: Int) {
     state.myCaretBlinkingPeriod = blinkPeriod
+  }
+
+  override fun isSmoothCaretBlinking(): Boolean {
+    return state.myIsSmoothCaretBlinking
+  }
+
+  override fun setSmoothCaretBlinking(`val`: Boolean) {
+    state.myIsSmoothCaretBlinking = `val`
   }
 
   override fun isDndEnabled(): Boolean {

@@ -6,6 +6,7 @@ import com.intellij.frontend.FrontendType
 import com.intellij.idea.AppMode
 import com.intellij.openapi.project.Project
 import com.intellij.platform.debugger.impl.rpc.XExecutionStackId
+import com.intellij.platform.debugger.impl.rpc.XStackFrameId
 import com.intellij.platform.debugger.impl.rpc.XValueId
 import com.intellij.platform.debugger.impl.shared.XDebuggerWatchesManager
 import com.intellij.platform.debugger.impl.shared.proxy.XBreakpointManagerProxy
@@ -15,6 +16,7 @@ import com.intellij.platform.debugger.impl.ui.XDebuggerEntityConverter
 import com.intellij.xdebugger.SplitDebuggerMode
 import com.intellij.xdebugger.XDebuggerManager
 import com.intellij.xdebugger.frame.XExecutionStack
+import com.intellij.xdebugger.frame.XStackFrame
 import com.intellij.xdebugger.frame.XValue
 import com.intellij.xdebugger.impl.XDebugSessionImpl
 import com.intellij.xdebugger.impl.XDebuggerExecutionPointManagerImpl
@@ -30,7 +32,6 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
-import org.jetbrains.annotations.ApiStatus
 
 internal class MonolithXDebugManagerProxy : XDebugManagerProxy {
   override fun getCurrentSessionProxy(project: Project): XDebugSessionProxy? {
@@ -44,7 +45,7 @@ internal class MonolithXDebugManagerProxy : XDebugManagerProxy {
 
   override suspend fun <T> withId(value: XValue, session: XDebugSessionProxy, block: suspend (XValueId) -> T): T {
     val sessionImpl = findSessionImpl(session)
-    return withTemporaryXValueId(value, sessionImpl, block)
+    return withTemporaryXValueIdImpl(value, sessionImpl, block)
   }
 
   // This method is not supported in monolith mode
@@ -62,6 +63,13 @@ internal class MonolithXDebugManagerProxy : XDebugManagerProxy {
     return withCoroutineScopeForId(block) { scope ->
       val (_, id) = stack.getOrStoreGlobally(scope, sessionImpl)
       id
+    }
+  }
+
+  override suspend fun <T> withId(frame: XStackFrame, session: XDebugSessionProxy, block: suspend (XStackFrameId) -> T): T {
+    val sessionImpl = findSessionImpl(session)
+    return withCoroutineScopeForId(block) { scope ->
+      frame.getOrStoreGlobally(scope, sessionImpl)
     }
   }
 
@@ -91,16 +99,17 @@ internal class MonolithXDebugManagerProxy : XDebugManagerProxy {
     return true
   }
 
-  private fun findSessionImpl(session: XDebugSessionProxy): XDebugSessionImpl {
-    val monolithSession = XDebuggerEntityConverter.getSessionNonSplitOnly(session) ?: error("Expected to have monolith session: $session")
-    val sessionImpl = monolithSession as XDebugSessionImpl
-    return sessionImpl
+  companion object {
+    internal fun findSessionImpl(session: XDebugSessionProxy): XDebugSessionImpl {
+      val monolithSession = XDebuggerEntityConverter.getSessionNonSplitOnly(session) ?: error("Expected to have monolith session: $session")
+      val sessionImpl = monolithSession as XDebugSessionImpl
+      return sessionImpl
+    }
   }
 
 }
 
-@ApiStatus.Internal
-suspend fun <T> withTemporaryXValueId(
+internal suspend fun <T> withTemporaryXValueIdImpl(
   value: XValue,
   sessionImpl: XDebugSessionImpl,
   block: suspend (XValueId) -> T,

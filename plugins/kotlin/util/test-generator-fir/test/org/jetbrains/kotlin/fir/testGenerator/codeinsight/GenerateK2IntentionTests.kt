@@ -123,11 +123,10 @@ internal fun MutableTWorkspace.generateK2IntentionTests() {
             model("${idea}intentions/usePropertyAccessSyntax", pattern = pattern, isIgnored = true)
             model("${idea}intentions/convertFunctionTypeParameterToReceiver", pattern = pattern)
             model("${idea}intentions/convertPrimaryConstructorToSecondary", pattern = pattern)
-            model("${idea}intentions/convertArgumentToSet", pattern = pattern, isIgnored = true)
             model("${idea}intentions/addAnnotationUseSiteTarget", pattern = pattern)
             model("${idea}intentions/convertEnumToSealedClass", pattern = pattern)
             model("${idea}intentions/convertToIndexedFunctionCall", pattern = pattern, isIgnored = true)
-            model("${idea}intentions/samConversionToAnonymousObject", pattern = pattern, isIgnored = true)
+            model("${idea}intentions/samConversionToAnonymousObject", pattern = pattern)
             model("${idea}intentions/convertFunctionTypeReceiverToParameter", pattern = pattern)
             model("${idea}intentions/addLabeledReturnInLambda", pattern = pattern)
             model("${idea}intentions/removeExplicitSuperQualifier", pattern = pattern, isIgnored = true)
@@ -185,6 +184,8 @@ internal fun MutableTWorkspace.generateK2IntentionTests() {
             model("${idea}intentions/removeSingleExpressionStringTemplate", pattern = pattern, isIgnored = true)
             model("${idea}intentions/convertToConcatenatedStringMultiDollarPrefix", pattern = pattern)
             model("${idea}intentions/contextParameters", pattern = pattern)
+            model("${idea}intentions/replaceRepeatWithForLoop", pattern = pattern)
+            model("${idea}intentions/replaceForLoopWithRepeat", pattern = pattern)
         }
 
         testClass<AbstractK2IntentionInInjectionTest> {

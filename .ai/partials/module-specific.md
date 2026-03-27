@@ -6,11 +6,11 @@ Special handling applies to the directories below. If a file you touch lives und
 - **Product DSL** (`community/platform/build-scripts/product-dsl/`): read `./.claude/rules/product-dsl.md` before changing anything in this tree.
 <!-- /IF_TOOL:CODEX -->
 
-- **Task MCP server** (`community/build/mcp-servers/task/`):
-  - Tests: `community/build/mcp-servers/task/task-mcp.test.mjs`.
-  - Bazel: do not run Bazel build and tests here.
 - **IJ Proxy MCP server** (`community/build/mcp-servers/ij-proxy/`):
   - Tests: run `bun run build` and `bun test`.
   - Bazel: do not run Bazel build and tests here.
 - **AI Assistant activation** (`plugins/llm/activation/`):
   - Activation: follow `plugins/llm/activation/.ai/guidelines.md` before edits or reviews.
+- **Toolbox** (`toolbox/`):
+  - Tests: never use `./tests.cmd`; see `toolbox/.ai/index.md` for Gradle/Bazel test commands.
+  - Build: use `./bazel.cmd build //toolbox/...` instead of `./bazel-build-all.cmd`.

@@ -17,6 +17,7 @@ import com.intellij.platform.debugger.impl.rpc.XValueSerializedPresentation
 import com.intellij.platform.debugger.impl.rpc.xExpression
 import com.intellij.platform.debugger.impl.shared.FrontendDescriptorStateManager
 import com.intellij.platform.debugger.impl.shared.XValueStateFlows
+import com.intellij.platform.debugger.impl.ui.XDebuggerEntityConverter
 import com.intellij.platform.util.coroutines.childScope
 import com.intellij.util.ThreeState
 import com.intellij.xdebugger.Obsolescent
@@ -39,14 +40,21 @@ import com.intellij.xdebugger.impl.rpc.sourcePosition
 import com.intellij.xdebugger.impl.ui.XValueTextProvider
 import com.intellij.xdebugger.impl.ui.tree.XValueExtendedPresentation
 import com.intellij.xdebugger.impl.ui.tree.nodes.XValueNodeEx
-import com.intellij.platform.debugger.impl.ui.XDebuggerEntityConverter
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.future.asCompletableFuture
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.jetbrains.annotations.ApiStatus
@@ -234,6 +242,9 @@ class FrontendXValue private constructor(
   }
 
   private fun XValueNode.setPresentation(presentation: XValueSerializedPresentation) {
+    if (this is XValueNodeEx) {
+      setInlayIcon(presentation.inlayIcon())
+    }
     when (presentation) {
       is XValueSerializedPresentation.SimplePresentation -> {
         setPresentation(presentation.icon?.icon(), presentation.presentationType, presentation.value, presentation.hasChildren)
@@ -432,6 +443,12 @@ private fun XValueSerializedPresentation.rawText(): String = when (this) {
   is XValueSerializedPresentation.AdvancedPresentation -> parts.joinToString("")
   is XValueSerializedPresentation.ExtendedPresentation -> presentation.rawText()
   is XValueSerializedPresentation.SimplePresentation -> value
+}
+
+private fun XValueSerializedPresentation.inlayIcon() = when (this) {
+  is XValueSerializedPresentation.AdvancedPresentation -> inlayIcon?.icon()
+  is XValueSerializedPresentation.ExtendedPresentation -> presentation.inlayIcon?.icon()
+  is XValueSerializedPresentation.SimplePresentation -> inlayIcon?.icon()
 }
 
 private class FrontendXNamedValue(

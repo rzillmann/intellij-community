@@ -150,6 +150,7 @@ public class ProjectSdksModel implements SdkModel {
       }
       catch (InvalidPathException ignored) {
         // Ignored.
+        return eelMachine == LocalEelMachine.INSTANCE;
       }
     }
     return false;
@@ -157,10 +158,7 @@ public class ProjectSdksModel implements SdkModel {
 
   public void reset(@Nullable Project project) {
     EelMachine eelMachine;
-    if (!Registry.is("java.home.finder.use.eel")) {
-      eelMachine = null;
-    }
-    else if (project != null && !project.isDefault()) {
+    if (project != null && !project.isDefault()) {
       eelMachine = EelProviderUtil.getEelMachine(project);
     }
     else {
@@ -172,7 +170,7 @@ public class ProjectSdksModel implements SdkModel {
     jdkTable.preconfigure();
     final Sdk[] projectSdks = jdkTable.getAllJdks();
     for (Sdk sdk : projectSdks) {
-      if (eelMachine != null && !sdkMatchesEel(eelMachine, sdk)) continue;
+      if (!sdkMatchesEel(eelMachine, sdk)) continue;
 
       try {
         Sdk editable = sdk.clone();
@@ -483,7 +481,7 @@ public class ProjectSdksModel implements SdkModel {
           else {
             Path pathToEnvironment = (project == null || project.getProjectFilePath() == null) ?
                                      Path.of(System.getProperty("user.home")) : Path.of(project.getProjectFilePath());
-            SdkConfigurationUtil.selectSdkHome(type, parent, pathToEnvironment, home -> addSdk(type, home, sdk -> callback.accept(sdk)));
+            SdkConfigurationUtil.selectSdkHome(type, parent, pathToEnvironment, project,home -> addSdk(type, home, sdk -> callback.accept(sdk)));
           }
         }
       };

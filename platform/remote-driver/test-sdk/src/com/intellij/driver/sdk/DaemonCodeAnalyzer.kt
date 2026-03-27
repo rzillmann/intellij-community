@@ -21,7 +21,7 @@ interface DaemonCodeAnalyzer {
 
 @Remote("com.intellij.codeInsight.daemon.impl.HighlightInfo")
 interface HighlightInfo {
-  fun getDescription(): String
+  fun getDescription(): String?
   fun getSeverity(): HighlightSeverity
   fun getText(): String
   fun getHighlighter(): RangeHighlighterEx?
@@ -50,6 +50,7 @@ interface HighlightInfoType {
 @Remote("com.intellij.openapi.editor.colors.TextAttributesKey")
 interface TextAttributesKey {
   fun compareTo(key: TextAttributesKey): Int
+  fun getExternalName(): String
 }
 
 @Remote("com.intellij.codeInsight.daemon.LineMarkerInfo")

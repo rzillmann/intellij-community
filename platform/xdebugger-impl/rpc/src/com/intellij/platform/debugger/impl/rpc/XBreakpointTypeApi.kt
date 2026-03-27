@@ -10,6 +10,7 @@ import com.intellij.platform.rpc.Id
 import com.intellij.platform.rpc.RemoteApiProviderService
 import com.intellij.platform.rpc.UID
 import com.intellij.xdebugger.breakpoints.SuspendPolicy
+import com.intellij.xdebugger.breakpoints.XLineBreakpointPlacement
 import com.intellij.xdebugger.breakpoints.XBreakpointType
 import fleet.rpc.RemoteApi
 import fleet.rpc.Rpc
@@ -37,6 +38,7 @@ interface XBreakpointTypeApi : RemoteApi<Unit> {
   suspend fun restoreRemovedBreakpoint(projectId: ProjectId)
 
   suspend fun copyLineBreakpoint(breakpointId: XBreakpointId, fileId: VirtualFileId, line: Int)
+  suspend fun onBreakpointRemoval(breakpointId: XBreakpointId, sessionId: XDebugSessionId)
 
   /**
    * Computes inline breakpoint variants.
@@ -142,6 +144,7 @@ data class XLineBreakpointMultipleVariantResponse(
 data class XLineBreakpointInstallationRequest(
   val types: List<XBreakpointTypeId>,
   val position: XSourcePositionDto,
+  val placement: XLineBreakpointPlacement,
   val isTemporary: Boolean,
   val isLogging: Boolean,
   val logExpression: String?,

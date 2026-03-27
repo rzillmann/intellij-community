@@ -57,6 +57,7 @@ import com.intellij.openapi.util.NlsActions;
 import com.intellij.openapi.util.Pair;
 import com.intellij.openapi.util.registry.Registry;
 import com.intellij.openapi.vfs.VirtualFile;
+import com.intellij.platform.debugger.impl.shared.CoroutineUtilsKt;
 import com.intellij.ui.EditorNotifications;
 import com.intellij.ui.content.Content;
 import com.intellij.ui.content.ContentManagerEvent;
@@ -74,6 +75,7 @@ import com.intellij.xdebugger.XSourcePosition;
 import com.intellij.xdebugger.breakpoints.XBreakpoint;
 import com.intellij.xdebugger.breakpoints.XBreakpointHandler;
 import com.intellij.xdebugger.evaluation.XDebuggerEditorsProvider;
+import com.intellij.xdebugger.frame.XDescriptor;
 import com.intellij.xdebugger.frame.XDropFrameHandler;
 import com.intellij.xdebugger.frame.XExecutionStack;
 import com.intellij.xdebugger.frame.XStackFrame;
@@ -90,8 +92,10 @@ import com.intellij.xdebugger.stepping.XSmartStepIntoHandler;
 import com.intellij.xdebugger.ui.XDebugTabLayouter;
 import com.sun.jdi.event.Event;
 import com.sun.jdi.event.LocatableEvent;
+import kotlinx.coroutines.flow.Flow;
 import one.util.streamex.StreamEx;
 import org.jetbrains.annotations.ApiStatus;
+import org.jetbrains.annotations.Nls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.java.debugger.JavaDebuggerEditorsProvider;
@@ -115,6 +119,8 @@ public class JavaDebugProcess extends XDebugProcess {
     process -> new JavaBreakpointHandler.JavaWildcardBreakpointHandler(process),
     process -> new JavaBreakpointHandler.JavaCollectionBreakpointHandler(process)
   };
+
+  private final @Nullable CompletableFuture<@NotNull XDescriptor> myProcessDescriptor;
 
   public static JavaDebugProcess create(final @NotNull XDebugSession session, final @NotNull DebuggerSession javaSession) {
     JavaDebugProcess res = new JavaDebugProcessWithThreadsActions(session, javaSession);
@@ -257,6 +263,7 @@ public class JavaDebugProcess extends XDebugProcess {
     mySmartStepIntoActionHandler = new JvmSmartStepIntoActionHandler(javaSession);
     myDropFrameActionActionHandler = new JvmDropFrameActionHandler(javaSession);
     myJavaDebugSessionEventsProvider = new JavaDebugSessionEventsProvider(this);
+    myProcessDescriptor = JavaProcessDescriptorFactory.createProcessDescriptor(this);
   }
 
   private boolean shouldApplyContext(DebuggerContextImpl context) {
@@ -636,6 +643,11 @@ public class JavaDebugProcess extends XDebugProcess {
   }
 
   @Override
+  public @Nullable Flow<@Nls String> getCurrentStateMessageFlow() {
+    return CoroutineUtilsKt.mapFlow(myJavaSession.getSessionStateFlow(), __ -> getCurrentStateMessage());
+  }
+
+  @Override
   public @Nullable XValueMarkerProvider<?, ?> createValueMarkerProvider() {
     return new JavaValueMarker();
   }
@@ -654,6 +666,11 @@ public class JavaDebugProcess extends XDebugProcess {
   @Override
   public @Nullable XDropFrameHandler getDropFrameHandler() {
     return myDropFrameActionActionHandler;
+  }
+
+  @Override
+  public @Nullable CompletableFuture<XDescriptor> getProcessDescriptor() {
+    return myProcessDescriptor;
   }
 
   private static final class JavaDebugProcessWithThreadsActions extends JavaDebugProcess implements ThreadsActionsProvider {

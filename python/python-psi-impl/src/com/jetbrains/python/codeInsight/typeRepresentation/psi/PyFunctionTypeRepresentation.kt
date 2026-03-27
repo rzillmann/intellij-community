@@ -16,29 +16,27 @@
 package com.jetbrains.python.codeInsight.typeRepresentation.psi
 
 import com.intellij.lang.ASTNode
-import com.intellij.psi.PsiElement
 import com.intellij.psi.util.QualifiedName
 import com.jetbrains.python.PyTokenTypes
 import com.jetbrains.python.ast.findChildByClass
 import com.jetbrains.python.codeInsight.typing.PyTypingTypeProvider
-import com.jetbrains.python.psi.PyClass
 import com.jetbrains.python.psi.PyDoubleStarExpression
 import com.jetbrains.python.psi.PyExpression
-import com.jetbrains.python.psi.PyFile
 import com.jetbrains.python.psi.PyFunction
-import com.jetbrains.python.psi.PyPsiFacade
 import com.jetbrains.python.psi.PyReferenceExpression
 import com.jetbrains.python.psi.PySlashParameter
 import com.jetbrains.python.psi.PyStarExpression
 import com.jetbrains.python.psi.PyTypeParameterList
 import com.jetbrains.python.psi.impl.PyBuiltinCache
 import com.jetbrains.python.psi.impl.PyElementImpl
+import com.jetbrains.python.psi.resolve.PyResolveUtil.resolveFullyQualifiedName
 import com.jetbrains.python.psi.types.PyCallableParameter
 import com.jetbrains.python.psi.types.PyCallableParameterImpl
 import com.jetbrains.python.psi.types.PyCallableTypeImpl
 import com.jetbrains.python.psi.types.PyCollectionTypeImpl
 import com.jetbrains.python.psi.types.PyFunctionTypeImpl
 import com.jetbrains.python.psi.types.PyType
+import com.jetbrains.python.psi.types.PyTypeUtil.derefOrUnknown
 import com.jetbrains.python.psi.types.PyTypeVarType
 import com.jetbrains.python.psi.types.PyTypeVarTypeImpl
 import com.jetbrains.python.psi.types.TypeEvalContext
@@ -89,10 +87,10 @@ class PyFunctionTypeRepresentation(astNode: ASTNode) : PyElementImpl(astNode), P
     // If we have a function name, this is a 'def' type - try to resolve to PyFunctionType
     val qualifiedFunctionName = functionName
     if (qualifiedFunctionName != null) {
-      val resolvedFunction = tryResolveFunction(qualifiedFunctionName, context)
+      val resolvedFunction = resolveFullyQualifiedName(qualifiedFunctionName, this, context)
 
       // If we resolved the function, create PyFunctionType with the signature from the representation
-      if (resolvedFunction != null) {
+      if (resolvedFunction is PyFunction) {
         // Create a custom PyFunctionType that uses our return type, not the function's definition
         return object : PyFunctionTypeImpl(resolvedFunction, callableParams) {
           override fun getReturnType(context: TypeEvalContext): PyType? = retType
@@ -135,9 +133,8 @@ class PyFunctionTypeRepresentation(astNode: ASTNode) : PyElementImpl(astNode), P
       when (param) {
         is PySlashParameter -> PyCallableParameterImpl.psi(param)
         is PyNamedParameterTypeRepresentation -> {
-          val paramName = param.parameterName
           val paramType = param.typeExpression?.let { resolveTypeExpression(it, context, typeVarMap) }
-          PyCallableParameterImpl.nonPsi(paramName, paramType, param.defaultValue)
+          PyCallableParameterImpl.nonPsi(param.name, paramType, param.defaultValue)
         }
         is PyStarExpression -> {
           // *args parameter
@@ -145,7 +142,7 @@ class PyFunctionTypeRepresentation(astNode: ASTNode) : PyElementImpl(astNode), P
           val namedParam = param.findChildByClass(PyNamedParameterTypeRepresentation::class.java)
           if (namedParam != null) {
             // *args: type
-            val paramName = namedParam.parameterName
+            val paramName = namedParam.name
             val paramType = namedParam.typeExpression?.let { resolveTypeExpression(it, context, typeVarMap) }
             PyCallableParameterImpl.positionalNonPsi(paramName, paramType)
           }
@@ -161,7 +158,7 @@ class PyFunctionTypeRepresentation(astNode: ASTNode) : PyElementImpl(astNode), P
           // Check if it contains a named parameter
           val namedParam = param.findChildByClass(PyNamedParameterTypeRepresentation::class.java)
           if (namedParam != null) {
-            val paramName = namedParam.parameterName
+            val paramName = namedParam.name
             val paramType = namedParam.typeExpression?.let {
               if (it is PyDoubleStarExpression)
               // Named kwargs unpacked: `**name: **type`
@@ -192,35 +189,6 @@ class PyFunctionTypeRepresentation(astNode: ASTNode) : PyElementImpl(astNode), P
     }
   }
 
-  private fun tryResolveFunction(qualifiedFunctionName: QualifiedName, context: TypeEvalContext): PyFunction? {
-    val facade = PyPsiFacade.getInstance(project)
-    val resolveContext = facade.createResolveContextFromFoothold(this)
-
-    // Try to resolve the module first (e.g., "test" from "test.A.f")
-    val moduleName = qualifiedFunctionName.firstComponent?.let { QualifiedName.fromComponents(it) } ?: return null
-    val module = facade.resolveQualifiedName(moduleName, resolveContext).firstOrNull() as? PyFile ?: return null
-
-    // Walk through the remaining components to resolve nested members
-    var current: PsiElement? = module
-    for (i in 1 until qualifiedFunctionName.componentCount) {
-      val componentName = qualifiedFunctionName.components[i] ?: return null
-
-      current = when (val elem = current) {
-        is PyFile -> elem.multiResolveName(componentName).firstOrNull()?.element
-        is PyClass -> {
-          elem.findNestedClass(componentName, false)
-          ?: elem.findMethodByName(componentName, false, context)
-          ?: elem.findClassAttribute(componentName, false, context)
-        }
-        else -> null
-      }
-
-      if (current == null) return null
-    }
-
-    return current as? PyFunction
-  }
-
   private fun resolveTypeExpression(expr: PyExpression, context: TypeEvalContext, typeVarMap: Map<String, PyTypeVarType>): PyType? {
     // Check if this is a reference to a type parameter
     if (expr is PyReferenceExpression && expr.qualifier == null) {
@@ -236,7 +204,7 @@ class PyFunctionTypeRepresentation(astNode: ASTNode) : PyElementImpl(astNode), P
     // Otherwise, resolve normally
     return when (expr) {
       is PyDoubleStarExpression -> PyTypingTypeProvider.getType(expr.expression!!, context)?.get()
-      else -> PyTypingTypeProvider.getType(expr, context)?.get()
+      else -> PyTypingTypeProvider.getType(expr, context).derefOrUnknown()
     }
   }
 }

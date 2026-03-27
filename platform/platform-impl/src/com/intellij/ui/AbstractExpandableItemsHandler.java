@@ -120,13 +120,8 @@ public abstract class AbstractExpandableItemsHandler<KeyType, ComponentType exte
       myComponent.add(myRendererPane);
       myComponent.validate();
     }
-    var popup = new MovablePopup(myComponent, myTipComponent);
-    // On Wayland, heavyweight popup might get automatically displaced
-    // by the server if they appear to cross the screen boundary, which
-    // is not what we want in this case.
-    popup.setHeavyWeight(!StartupUiUtil.isWaylandToolkit());
-    myPopup = popup;
-
+    myPopup = new MovablePopup(myComponent, myTipComponent);
+    myPopup.setHeavyWeight(!StartupUiUtil.isWaylandToolkit());
 
     MouseEventHandler dispatcher = new MouseEventHandler() {
       @Override

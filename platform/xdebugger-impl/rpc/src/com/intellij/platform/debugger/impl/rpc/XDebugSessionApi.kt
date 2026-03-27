@@ -88,6 +88,8 @@ data class XDebugSessionDto(
   val editorsProviderDto: XDebuggerEditorsProviderDto,
   val initialSessionState: XDebugSessionState,
   val initialSuspendData: SuspendData?,
+  val initialStateMessage: @Nls String,
+  val currentStateMessageFlow: RpcFlow<String>?,
   val sessionName: String,
   val sessionEvents: RpcFlow<XDebuggerSessionEvent>,
   val sessionDataDto: XDebugSessionDataDto,
@@ -103,6 +105,7 @@ data class XDebugSessionDto(
   val leftToolbarActions: List<AnActionId>,
   val topToolbarActions: List<AnActionId>,
   val settingsActions: List<AnActionId>,
+  @Serializable(with = DeferredSerializer::class) val processDescriptor: Deferred<XDescriptor>?,
 )
 
 @ApiStatus.Internal
@@ -132,6 +135,7 @@ data class XExecutionStackDto(
   val executionStackId: XExecutionStackId,
   val displayName: @Nls String,
   val icon: IconId?,
+  val iconFlow: RpcFlow<IconId?>,
   @Serializable(with = DeferredSerializer::class) val descriptor: Deferred<XDescriptor>?,
   @Serializable(with = DeferredSerializer::class) val topFrame: Deferred<XStackFrameDto?>,
 )
@@ -177,6 +181,7 @@ data class XDebugSessionState(
   val isStepOverActionAllowed: Boolean,
   val isStepOutActionAllowed: Boolean,
   val isRunToCursorActionAllowed: Boolean,
+  val isForceStepIntoActionAllowed: Boolean,
 )
 
 @ApiStatus.Internal

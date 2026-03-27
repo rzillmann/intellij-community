@@ -53,6 +53,11 @@ public abstract class K1HighlightingMetaInfoTestGenerated extends AbstractK1High
             runTest("testData/highlighterMetaInfo/diagnostics/mppIsNotEnabled.kt");
         }
 
+        @TestMetadata("redundantOpenFunctionInInterfaceDiagnostic.kt")
+        public void testRedundantOpenFunctionInInterfaceDiagnostic() throws Exception {
+            runTest("testData/highlighterMetaInfo/diagnostics/redundantOpenFunctionInInterfaceDiagnostic.kt");
+        }
+
         @TestMetadata("uselessCast.kt")
         public void testUselessCast() throws Exception {
             runTest("testData/highlighterMetaInfo/diagnostics/uselessCast.kt");
@@ -563,6 +568,16 @@ public abstract class K1HighlightingMetaInfoTestGenerated extends AbstractK1High
         @TestMetadata("AutoCreatedItParameter.kt")
         public void testAutoCreatedItParameter() throws Exception {
             runTest("testData/highlighterMetaInfo/AutoCreatedItParameter.kt");
+        }
+
+        @TestMetadata("ContextArguments.kt")
+        public void testContextArguments() throws Exception {
+            runTest("testData/highlighterMetaInfo/ContextArguments.kt");
+        }
+
+        @TestMetadata("ContextArgumentsWithoutValue.kt")
+        public void testContextArgumentsWithoutValue() throws Exception {
+            runTest("testData/highlighterMetaInfo/ContextArgumentsWithoutValue.kt");
         }
 
         @TestMetadata("DefinitelyNotNullType.kt")

@@ -47,7 +47,6 @@ import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.util.NlsContexts.HintText;
 import com.intellij.openapi.util.Pair;
-import com.intellij.openapi.util.Ref;
 import com.intellij.openapi.util.TextRange;
 import com.intellij.openapi.util.registry.Registry;
 import com.intellij.openapi.util.text.StringUtil;
@@ -66,6 +65,7 @@ import com.intellij.util.ObjectUtils;
 import com.intellij.util.concurrency.AppExecutorUtil;
 import com.intellij.util.concurrency.Semaphore;
 import com.intellij.util.concurrency.ThreadingAssertions;
+import com.intellij.util.concurrency.annotations.RequiresReadLock;
 import com.intellij.util.indexing.DumbModeAccessType;
 import com.intellij.util.messages.SimpleMessageBusConnection;
 import com.intellij.util.ui.update.MergingUpdateQueue;
@@ -90,8 +90,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
-
-import static com.intellij.codeInsight.completion.CompletionPhase.CUSTOM_CODE_COMPLETION_ACTION_ID;
 
 /**
  * See cancellation logic in {@link CompletionPhase.BgCalculation#restartOnWriteAction)}
@@ -367,6 +365,7 @@ public final class CompletionProgressIndicator extends ProgressIndicatorBase imp
     return selectionEndOffset;
   }
 
+  @RequiresReadLock
   void scheduleAdvertising(@NotNull CompletionParameters parameters) {
     if (lookup.isAvailableToUser()) {
       return;
@@ -377,6 +376,8 @@ public final class CompletionProgressIndicator extends ProgressIndicatorBase imp
         if (!lookup.isCalculating() && !lookup.isVisible()) {
           return;
         }
+
+        ProgressManager.checkCanceled();
 
         @SuppressWarnings("removal")
         String s = contributor.advertise(parameters);
@@ -537,35 +538,37 @@ public final class CompletionProgressIndicator extends ProgressIndicatorBase imp
       myHasPsiElements = true;
     }
 
-    boolean forceMiddleMatch = lookupElement.getUserData(BaseCompletionLookupArranger.FORCE_MIDDLE_MATCH) != null;
-    if (forceMiddleMatch) {
-      myArranger.associateSorter(lookupElement, (CompletionSorterImpl)item.getSorter());
-      addItemToLookup(item);
-      return;
-    }
+    myArranger.associateSorter(lookupElement, (CompletionSorterImpl)item.getSorter());
 
     boolean allowMiddleMatches = count > BaseCompletionLookupArranger.MAX_PREFERRED_COUNT * 2;
     if (allowMiddleMatches) {
       addDelayedMiddleMatches();
     }
 
-    myArranger.associateSorter(lookupElement, (CompletionSorterImpl)item.getSorter());
-    if (item.isStartMatch() || allowMiddleMatches) {
+    if (item.isStartMatch() || allowMiddleMatches || isForceMiddleMatch(lookupElement)) {
       addItemToLookup(item);
-    } else {
+    }
+    else {
       synchronized (delayedMiddleMatches) {
         delayedMiddleMatches.add(item);
       }
     }
   }
 
+  private static boolean isForceMiddleMatch(LookupElement lookupElement) {
+    return lookupElement.getUserData(BaseCompletionLookupArranger.FORCE_MIDDLE_MATCH) != null;
+  }
+
   private void addItemToLookup(@NotNull CompletionResult item) {
-    Ref<Boolean> wasAdded = new Ref<>(Boolean.FALSE);
-    DumbModeAccessType.RELIABLE_DATA_ONLY.ignoreDumbMode(() -> {
-      wasAdded.set(!lookup.isLookupDisposed() && lookup.addItem(item.getLookupElement(), item.getPrefixMatcher()));
+    if (lookup.isLookupDisposed()) {
+      return;
+    }
+
+    boolean wasAdded = DumbModeAccessType.RELIABLE_DATA_ONLY.ignoreDumbMode(() -> {
+      return lookup.addItem(item.getLookupElement(), item.getPrefixMatcher());
     });
 
-    if (!wasAdded.get()) {
+    if (!wasAdded) {
       return;
     }
 
@@ -642,6 +645,7 @@ public final class CompletionProgressIndicator extends ProgressIndicatorBase imp
 
     ThreadingAssertions.assertEventDispatchThread();
     Disposer.dispose(queue);
+    //noinspection removal
     LookupManager.getInstance(getProject()).removePropertyChangeListener(myLookupManagerListener);
 
     CompletionServiceImpl.assertPhase(CompletionPhase.BgCalculation.class,
@@ -907,11 +911,7 @@ public final class CompletionProgressIndicator extends ProgressIndicatorBase imp
     if (handler.isTestingMode() && !TestModeFlags.is(CompletionAutoPopupHandler.ourTestingAutopopup)) {
       closeAndFinish(false);
       PsiDocumentManager.getInstance(getProject()).commitAllDocuments();
-      String customId = myEditor.getUserData(CUSTOM_CODE_COMPLETION_ACTION_ID);
-      if (customId == null) {
-        customId = IdeActions.ACTION_CODE_COMPLETION;
-      }
-      CodeCompletionHandlerBase handler = CodeCompletionHandlerBase.createHandler(myCompletionType, false, false, true, customId);
+      CodeCompletionHandlerBase handler = CodeCompletionHandlerBase.createHandler(myCompletionType, false, false, true);
       handler.invokeCompletion(getProject(), myEditor, myInvocationCount);
       return;
     }
@@ -1016,7 +1016,7 @@ public final class CompletionProgressIndicator extends ProgressIndicatorBase imp
     try {
       calculateItems(initContext, consumer, parameters);
     }
-    catch (ProcessCanceledException ignore) {
+    catch (@SuppressWarnings("IncorrectCancellationExceptionHandling") ProcessCanceledException ignore) {
       cancel(); // some contributor may just throw PCE; if indicator is not canceled everything will hang
     }
     catch (Throwable t) {

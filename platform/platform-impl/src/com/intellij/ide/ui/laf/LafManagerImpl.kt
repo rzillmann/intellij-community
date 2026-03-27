@@ -517,16 +517,9 @@ class LafManagerImpl(private val coroutineScope: CoroutineScope) : LafManager(),
 
   private fun Element.getThemeNameWithReplacingDeprecated(): String? {
     val currentTheme = this.getAttributeValue(ATTRIBUTE_THEME_NAME)
-    if (ExperimentalUI.isNewUI() && currentTheme == "JetBrainsLightTheme") {
-      val newThemeId = "Islands Light"
-      this.setAttribute(ATTRIBUTE_THEME_NAME, newThemeId)
-      return newThemeId
-    }
-    else if (ExperimentalUI.isNewUI()
-             && ExperimentalUI.switchedFromClassicToIslandsLafMigration
-             && PlatformUtils.isRider()
-             && currentTheme == "RiderLight") {
-      ExperimentalUI.switchedFromClassicToIslandsLafMigration = false
+    val isDeprecatedLightTheme = (currentTheme == "JetBrainsLightTheme")
+                                 || (PlatformUtils.isRider() && currentTheme == "RiderLight")
+    if (ExperimentalUI.isNewUI() && isDeprecatedLightTheme) {
       val newThemeId = "Islands Light"
       this.setAttribute(ATTRIBUTE_THEME_NAME, newThemeId)
       return newThemeId
@@ -969,6 +962,11 @@ class LafManagerImpl(private val coroutineScope: CoroutineScope) : LafManager(),
     }
 
     return result
+  }
+
+  @Internal
+  override fun getPreferredDarkThemeId(): String? {
+    return preferredDarkThemeId
   }
 
   override fun setPreferredDarkLaf(value: UIThemeLookAndFeelInfo) {

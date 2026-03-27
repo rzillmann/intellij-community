@@ -5,6 +5,7 @@ import com.intellij.execution.JavaParametersBuilder
 import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.openapi.application.edtWriteAction
 import com.intellij.openapi.application.readAction
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.module.Module
 import com.intellij.openapi.project.Project
@@ -17,13 +18,14 @@ import com.intellij.util.PathUtil
 import com.intellij.util.io.awaitExit
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.jetbrains.kotlin.idea.base.plugin.artifacts.KotlinArtifacts
 import org.jetbrains.kotlin.idea.base.psi.getLineNumber
 import org.jetbrains.kotlin.idea.compiler.configuration.KotlinPluginLayout
-import org.jetbrains.kotlin.idea.core.script.k2.definitions.KOTLIN_SCRATCH_EXPLAIN_FILE
-import org.jetbrains.kotlin.idea.core.script.k2.definitions.KotlinScratchScript
+import org.jetbrains.kotlin.idea.core.script.scratch.definition.KOTLIN_SCRATCH_EXPLAIN_FILE
+import org.jetbrains.kotlin.idea.core.script.scratch.definition.KotlinScratchScript
 import org.jetbrains.kotlin.idea.jvm.shared.KotlinJvmBundle
 import org.jetbrains.kotlin.idea.jvm.shared.scratch.ScratchExecutor
 import org.jetbrains.kotlin.idea.jvm.shared.scratch.output.ExplainInfo
@@ -34,6 +36,8 @@ import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.io.path.absolutePathString
 import kotlin.io.path.readLines
+
+private val log = Logger.getInstance(K2ScratchExecutor::class.java)
 
 class K2ScratchExecutor(override val scratchFile: K2KotlinScratchFile, val project: Project, val scope: CoroutineScope) :
     ScratchExecutor(scratchFile) {
@@ -83,20 +87,22 @@ class K2ScratchExecutor(override val scratchFile: K2KotlinScratchFile, val proje
                 handler.handle(scratchFile, ScratchOutput(stdout, ScratchOutputType.OUTPUT))
             }
 
-            val explanations = scriptFile.explainFilePath.readLines().associate {
-                it.substringBefore('=', "") to it.substringAfter('=')
-            }.filterKeys { it.isNotBlank() }.map { (key, value) ->
-                val leftBracketIndex = key.indexOf("(")
-                val rightBracketIndex = key.indexOf(")")
-                val commaIndex = key.indexOf(",")
+            val explanations = if (!Files.exists(scriptFile.explainFilePath)) emptyList() else {
+                scriptFile.explainFilePath.readLines().associate {
+                    it.substringBefore('=', "") to unescapeExplainValue(it.substringAfter('='))
+                }.filterKeys { it.isNotBlank() }.map { (key, value) ->
+                    val leftBracketIndex = key.indexOf("(")
+                    val rightBracketIndex = key.indexOf(")")
+                    val commaIndex = key.indexOf(",")
 
-                val offsets =
-                    key.substring(leftBracketIndex + 1, commaIndex).toInt() to key.substring(commaIndex + 2, rightBracketIndex)
-                        .toInt()
+                    val offsets =
+                        key.substring(leftBracketIndex + 1, commaIndex).trim().toInt() to
+                                key.substring(commaIndex + 1, rightBracketIndex).trim().toInt()
 
-                ExplainInfo(
-                    key.substring(0, leftBracketIndex), offsets, value, scratchFile.getPsiFile()?.getLineNumber(offsets.second)
-                )
+                    ExplainInfo(
+                        key.substring(0, leftBracketIndex), offsets, value, scratchFile.getPsiFile()?.getLineNumber(offsets.first)
+                    )
+                }
             }
 
             handler.handle(scratchFile, explanations, scope)
@@ -143,7 +149,10 @@ class K2ScratchExecutor(override val scratchFile: K2KotlinScratchFile, val proje
             "plugin:kotlin.scripting:enable-script-explanation=true",
         )
 
-        return javaParameters.toCommandLine()
+        val commandLine = javaParameters.toCommandLine()
+        log.info("commandLine=${commandLine.commandLineString}")
+
+        return commandLine
     }
 
     private val requiredKotlinArtifacts by lazy {
@@ -177,6 +186,12 @@ class K2ScratchExecutor(override val scratchFile: K2KotlinScratchFile, val proje
     override fun stop() {
         handler.onFinish(scratchFile)
     }
+
+    private fun unescapeExplainValue(value: String): String =
+        value.replace("\\\\", "\u0000")
+            .replace("\\n", "\n")
+            .replace("\\r", "\r")
+            .replace("\u0000", "\\")
 
     private data class CompilationResult(
         val code: Int,

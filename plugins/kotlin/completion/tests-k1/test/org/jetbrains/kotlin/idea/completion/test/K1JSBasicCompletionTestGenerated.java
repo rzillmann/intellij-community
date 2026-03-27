@@ -707,6 +707,65 @@ public abstract class K1JSBasicCompletionTestGenerated extends AbstractK1JSBasic
         }
 
         @RunWith(JUnit3RunnerWithInners.class)
+        @TestMetadata("../testData/basic/common/companionObject")
+        public static class CompanionObject extends AbstractK1JSBasicCompletionTest {
+            @java.lang.Override
+            @org.jetbrains.annotations.NotNull
+            public final KotlinPluginMode getPluginMode() {
+                return KotlinPluginMode.K1;
+            }
+
+            private void runTest(String testDataFilePath) throws Exception {
+                KotlinTestUtils.runTest(this::doTest, this, testDataFilePath);
+            }
+
+            @TestMetadata("ForArguments.kt")
+            public void testForArguments() throws Exception {
+                runTest("../testData/basic/common/companionObject/ForArguments.kt");
+            }
+
+            @TestMetadata("FunctionsForExpectedType.kt")
+            public void testFunctionsForExpectedType() throws Exception {
+                runTest("../testData/basic/common/companionObject/FunctionsForExpectedType.kt");
+            }
+
+            @TestMetadata("NoUnrelatedValues.kt")
+            public void testNoUnrelatedValues() throws Exception {
+                runTest("../testData/basic/common/companionObject/NoUnrelatedValues.kt");
+            }
+
+            @TestMetadata("ValuesForExpectedType.kt")
+            public void testValuesForExpectedType() throws Exception {
+                runTest("../testData/basic/common/companionObject/ValuesForExpectedType.kt");
+            }
+
+            @TestMetadata("WithinCompanionObject.kt")
+            public void testWithinCompanionObject() throws Exception {
+                runTest("../testData/basic/common/companionObject/WithinCompanionObject.kt");
+            }
+
+            @TestMetadata("WithinInnerClass.kt")
+            public void testWithinInnerClass() throws Exception {
+                runTest("../testData/basic/common/companionObject/WithinInnerClass.kt");
+            }
+
+            @TestMetadata("WithinNestedClass.kt")
+            public void testWithinNestedClass() throws Exception {
+                runTest("../testData/basic/common/companionObject/WithinNestedClass.kt");
+            }
+
+            @TestMetadata("WithinNestedObject.kt")
+            public void testWithinNestedObject() throws Exception {
+                runTest("../testData/basic/common/companionObject/WithinNestedObject.kt");
+            }
+
+            @TestMetadata("WithinSameClass.kt")
+            public void testWithinSameClass() throws Exception {
+                runTest("../testData/basic/common/companionObject/WithinSameClass.kt");
+            }
+        }
+
+        @RunWith(JUnit3RunnerWithInners.class)
         @TestMetadata("../testData/basic/common/constructor")
         public static class Constructor extends AbstractK1JSBasicCompletionTest {
             @java.lang.Override
@@ -777,11 +836,6 @@ public abstract class K1JSBasicCompletionTestGenerated extends AbstractK1JSBasic
             @TestMetadata("SingleConstructor.kt")
             public void testSingleConstructor() throws Exception {
                 runTest("../testData/basic/common/constructor/SingleConstructor.kt");
-            }
-
-            @TestMetadata("SubclassConstructor.kt")
-            public void testSubclassConstructor() throws Exception {
-                runTest("../testData/basic/common/constructor/SubclassConstructor.kt");
             }
         }
 
@@ -2236,6 +2290,11 @@ public abstract class K1JSBasicCompletionTestGenerated extends AbstractK1JSBasic
             @TestMetadata("SecondConstructorParameter.kt")
             public void testSecondConstructorParameter() throws Exception {
                 runTest("../testData/basic/common/override/SecondConstructorParameter.kt");
+            }
+
+            @TestMetadata("SecondConstructorParameterWithDuplicateClass.kt")
+            public void testSecondConstructorParameterWithDuplicateClass() throws Exception {
+                runTest("../testData/basic/common/override/SecondConstructorParameterWithDuplicateClass.kt");
             }
 
             @TestMetadata("Simple.kt")
@@ -4049,6 +4108,11 @@ public abstract class K1JSBasicCompletionTestGenerated extends AbstractK1JSBasic
             @TestMetadata("PreferExceptionsInThrow.kt")
             public void testPreferExceptionsInThrow() throws Exception {
                 runTest("../testData/basic/common/PreferExceptionsInThrow.kt");
+            }
+
+            @TestMetadata("PreferInstantiationOverAnonymousObject.kt")
+            public void testPreferInstantiationOverAnonymousObject() throws Exception {
+                runTest("../testData/basic/common/PreferInstantiationOverAnonymousObject.kt");
             }
 
             @TestMetadata("PreferLessParameters.kt")

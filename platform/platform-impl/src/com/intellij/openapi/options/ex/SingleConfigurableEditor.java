@@ -16,6 +16,7 @@ import com.intellij.openapi.util.NlsContexts;
 import com.intellij.openapi.wm.ex.IdeFocusTraversalPolicy;
 import com.intellij.ui.IdeUICustomization;
 import com.intellij.util.Alarm;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -154,7 +155,7 @@ public class SingleConfigurableEditor extends DialogWrapper {
       }
     }
     catch (ConfigurationException e) {
-      if (e.getMessage() != null) {
+      if (!processException(e, true) && e.getMessage() != null) {
         if (myProject != null) {
           Messages.showMessageDialog(myProject, e.getMessage(), e.getTitle(), Messages.getErrorIcon());
         }
@@ -166,6 +167,11 @@ public class SingleConfigurableEditor extends DialogWrapper {
     }
 
     super.doOKAction();
+  }
+
+  @ApiStatus.Internal
+  protected boolean processException(ConfigurationException configurationException, boolean isOkAction) {
+    return false;
   }
 
   protected static String createDimensionKey(Configurable configurable) {
@@ -214,11 +220,13 @@ public class SingleConfigurableEditor extends DialogWrapper {
         }
       }
       catch (ConfigurationException e) {
-        if (myProject != null) {
-          Messages.showMessageDialog(myProject, e.getMessage(), e.getTitle(), Messages.getErrorIcon());
-        }
-        else {
-          Messages.showMessageDialog(getRootPane(), e.getMessage(), e.getTitle(), Messages.getErrorIcon());
+        if (!processException(e, false)) {
+          if (myProject != null) {
+            Messages.showMessageDialog(myProject, e.getMessage(), e.getTitle(), Messages.getErrorIcon());
+          }
+          else {
+            Messages.showMessageDialog(getRootPane(), e.getMessage(), e.getTitle(), Messages.getErrorIcon());
+          }
         }
       }
     }

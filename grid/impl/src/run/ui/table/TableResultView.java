@@ -77,6 +77,7 @@ import com.intellij.openapi.actionSystem.UiDataProvider;
 import com.intellij.openapi.actionSystem.ex.ActionUtil;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.WriteIntentReadAction;
+import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.editor.colors.EditorColorsListener;
 import com.intellij.openapi.editor.colors.EditorColorsScheme;
 import com.intellij.openapi.editor.colors.EditorFontType;
@@ -91,12 +92,12 @@ import com.intellij.openapi.util.Ref;
 import com.intellij.openapi.util.registry.Registry;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.wm.IdeFocusManager;
-import com.intellij.ui.BadgeIcon;
 import com.intellij.ui.CellRendererPanel;
 import com.intellij.ui.ClientProperty;
 import com.intellij.ui.ComponentUtil;
 import com.intellij.ui.ComponentWithExpandableItems;
 import com.intellij.ui.ExpandableItemsHandler;
+import com.intellij.ui.IconManager;
 import com.intellij.ui.IdeBorderFactory;
 import com.intellij.ui.SideBorder;
 import com.intellij.ui.TableCell;
@@ -186,7 +187,7 @@ import java.util.TreeMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.function.IntUnaryOperator;
-
+import static com.intellij.database.datagrid.GridUtilKt.isArrayCell;
 import static com.intellij.database.datagrid.GridUtilKt.setupDynamicRowHeight;
 import static com.intellij.database.run.ui.DataAccessType.DATA_WITH_MUTATIONS;
 import static com.intellij.database.run.ui.EditMaximizedViewKt.EDIT_MAXIMIZED_GRID_KEY;
@@ -247,6 +248,8 @@ public final class TableResultView extends JBTableWithResizableCells
   private final TableFloatingToolbar myFloatingToolbar;
 
   private StatisticsTableHeader myStatisticsHeader;
+
+  private static final Logger LOG = Logger.getInstance(TableResultView.class);
 
   public TableResultView(@NotNull DataGrid resultPanel,
                          @NotNull ActionGroup columnHeaderPopupActions,
@@ -1444,8 +1447,24 @@ public final class TableResultView extends JBTableWithResizableCells
   private boolean shouldDisplayValueEditor(int row, int column) {
     var tableModel = getModel();
     var cellValue = tableModel.getValueAt(row, column);
-    return (cellValue instanceof LobInfo.ClobInfo clob && clob.isFullyReloaded()) ||
-           (cellValue instanceof LobInfo.BlobInfo blob && blob.isFullyReloaded());
+    if ((cellValue instanceof LobInfo.ClobInfo clob && clob.isFullyReloaded()) ||
+        (cellValue instanceof LobInfo.BlobInfo blob && blob.isFullyReloaded()) ||
+        isArrayViewCell(row, column)) {
+      return true;
+    }
+    return false;
+  }
+
+  private boolean isArrayViewCell(int row, int column) {
+    var settings = GridUtil.getSettings(myResultPanel);
+    if (Registry.is("database.new.arrays.editor") && (settings != null && !settings.isEditArrayAsText())) {
+      int modelColumnIdx = convertColumnIndexToModel(column);
+      int modelRowIdx = convertRowIndexToModel(row);
+      var columnIndex = ModelIndex.forColumn(myResultPanel, modelColumnIdx);
+      var rowIndex = ModelIndex.forRow(myResultPanel, modelRowIdx);
+      return isArrayCell(rowIndex, columnIndex, myResultPanel);
+    }
+    return false;
   }
 
   private void showValueEditor(EventObject e) {
@@ -2315,7 +2334,8 @@ public final class TableResultView extends JBTableWithResizableCells
     private final JPanel myCompositeLabel;
     private final List<JLabel> myIconLabels;
     private JLabel filterLabel;
-    private final Icon filterIconEnabled = new BadgeIcon(AllIcons.General.Filter, JBUI.CurrentTheme.IconBadge.SUCCESS);
+    private final Icon filterIconEnabled =
+      IconManager.getInstance().withIconBadge(AllIcons.General.Filter, JBUI.CurrentTheme.IconBadge.SUCCESS);
 
     private final List<JPanel> myHeaderLinePanels;
     private TableResultViewColumn myCurrentColumn;
@@ -2342,7 +2362,7 @@ public final class TableResultView extends JBTableWithResizableCells
     }
 
     protected Rectangle getNameRect() {
-      return getLabelTextRect(myNameLabels.get(0));
+      return getLabelTextRect(myNameLabels.getFirst());
     }
 
     protected int getModelIdx() {
@@ -2552,7 +2572,7 @@ public final class TableResultView extends JBTableWithResizableCells
           if (isColumnEnabled(sibling, myTable.myResultPanel)) return false;
         }
         else {
-          HierarchicalGridColumn leftMostChildOfSibling = sibling.getChildren().get(0);
+          HierarchicalGridColumn leftMostChildOfSibling = sibling.getChildren().getFirst();
           if (isColumnEnabled(leftMostChildOfSibling, myTable.myResultPanel)) return false;
           // We do not check every descendant down to the leaf level.
           // It is not possible to disable all child columns without disabling the leftmost column, and vice versa,
@@ -2564,6 +2584,12 @@ public final class TableResultView extends JBTableWithResizableCells
     }
 
     private void setPlaceholderIntoHeaderLine(int headerLineIdx) {
+      if (headerLineIdx < 0 || headerLineIdx >= myNameLabels.size()) {
+        LOG.error("Header line index out of bounds: idx=" + headerLineIdx +
+                  ", myNameLabels.size()=" + myNameLabels.size() +
+                  ", myHeaderLinePanels.size()=" + myHeaderLinePanels.size());
+        return;
+      }
       myNameLabels.get(headerLineIdx).setText(HEADER_PLACEHOLDER);
     }
 

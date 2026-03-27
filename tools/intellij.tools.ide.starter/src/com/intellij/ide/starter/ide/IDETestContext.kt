@@ -1,3 +1,5 @@
+@file:Suppress("RAW_RUN_BLOCKING")
+
 package com.intellij.ide.starter.ide
 
 import com.intellij.ide.starter.buildTool.BuildTool
@@ -29,10 +31,12 @@ import com.intellij.openapi.util.io.findOrCreateFile
 import com.intellij.tools.ide.performanceTesting.commands.CommandChain
 import com.intellij.tools.ide.performanceTesting.commands.MarshallableCommand
 import com.intellij.tools.ide.performanceTesting.commands.SdkObject
+import com.intellij.tools.ide.performanceTesting.commands.setupProjectSdk
 import com.intellij.tools.ide.util.common.logError
 import com.intellij.tools.ide.util.common.logOutput
 import com.intellij.ui.NewUiValue
 import com.intellij.util.io.createParentDirectories
+import com.intellij.util.io.delete
 import com.intellij.util.io.write
 import kotlinx.coroutines.runBlocking
 import org.kodein.di.direct
@@ -55,11 +59,14 @@ import kotlin.io.path.createFile
 import kotlin.io.path.deleteIfExists
 import kotlin.io.path.div
 import kotlin.io.path.exists
+import kotlin.io.path.extension
+import kotlin.io.path.isRegularFile
 import kotlin.io.path.listDirectoryEntries
 import kotlin.io.path.name
 import kotlin.io.path.notExists
 import kotlin.io.path.readBytes
 import kotlin.io.path.readText
+import kotlin.io.path.walk
 import kotlin.io.path.writeBytes
 import kotlin.io.path.writeText
 import kotlin.time.Duration
@@ -79,18 +86,20 @@ open class IDETestContext(
   companion object {
     const val OPENTELEMETRY_FILE: String = "opentelemetry.json"
 
-    private val SEARCH_EVERYWHERE_REGISTRY_KEYS: List<String> get() = listOf(
+    val SEARCH_EVERYWHERE_REGISTRY_KEYS: List<String> get() = listOf(
       "search.everywhere.new.enabled",
       "search.everywhere.new.rider.enabled",
       "search.everywhere.new.idea.enabled",
       "search.everywhere.new.pycharm.enabled",
+      "search.everywhere.new.clion.enabled",
       "search.everywhere.new.cwm.client.enabled",
       "search.everywhere.new.allow.ab"
     )
   }
 
-  fun copy(ide: InstalledIde? = null, resolvedProjectHome: Path? = null): IDETestContext {
-    return IDETestContext(paths, ide ?: this.ide, testCase, testName, resolvedProjectHome ?: this._resolvedProjectHome, profilerType,
+  open fun copy(ide: InstalledIde? = null, resolvedProjectHome: Path? = null, sdk: SdkObject? = null): IDETestContext {
+    require(sdk == null || testCase.projectInfo != NoProject) { "project must be specified to setup project SDK" }
+    return IDETestContext(paths, ide ?: this.ide, testCase.copy(sdk = sdk), testName, resolvedProjectHome ?: this._resolvedProjectHome, profilerType,
                           publishers, isReportPublishingEnabled, preserveSystemDir)
   }
 
@@ -275,6 +284,11 @@ open class IDETestContext(
     configureLoggers(LogLevel.TRACE, "com.intellij.openapi.externalSystem")
   }
 
+  fun disableGotItTooltips(): IDETestContext =
+    applyVMOptionsPatch {
+      disableGotItTooltips()
+    }
+
   fun wipeSystemDir(): IDETestContext = apply {
     if (!preserveSystemDir) {
       //TODO: it would be better to allocate a new context instead of wiping the folder
@@ -337,12 +351,10 @@ open class IDETestContext(
     addSystemProperty("llm.show.ai.promotion.window.on.start", false)
   }
 
-  @Suppress("TestOnlyProblems")
   fun disableSplitSearchEverywhere(): IDETestContext = applyVMOptionsPatch {
     SEARCH_EVERYWHERE_REGISTRY_KEYS.forEach { addSystemProperty(it, false) }
   }
 
-  @Suppress("TestOnlyProblems")
   fun enableSplitSearchEverywhere(): IDETestContext = applyVMOptionsPatch {
     SEARCH_EVERYWHERE_REGISTRY_KEYS.forEach { addSystemProperty(it, true) }
   }
@@ -398,11 +410,11 @@ open class IDETestContext(
 
     logOutput("Removing all .iml files in $projectDir ...")
 
-    projectDir.toFile().walkTopDown()
+    projectDir.walk()
       .forEach {
-        if (it.isFile && it.extension == "iml") {
+        if (it.isRegularFile() && it.extension == "iml") {
           it.delete()
-          logOutput("File ${it.path} is deleted")
+          logOutput("File $it is deleted")
         }
       }
 
@@ -426,7 +438,18 @@ open class IDETestContext(
     configure: IDERunContext.() -> Unit = {},
   ) =
     runBlocking {
-      runIdeSuspending(commandLine, commands, runTimeout, useStartupScript, launchName, expectedKill, expectedExitCode, collectNativeThreads, stdOut, configure)
+      runIdeSuspending(
+        commandLine = commandLine,
+        commands = commands,
+        runTimeout = runTimeout,
+        useStartupScript = useStartupScript,
+        launchName = launchName,
+        expectedKill = expectedKill,
+        expectedExitCode = expectedExitCode,
+        collectNativeThreads = collectNativeThreads,
+        stdOut = stdOut,
+        configure = configure,
+      )
     }
 
   /**
@@ -446,11 +469,12 @@ open class IDETestContext(
     configure: suspend IDERunContext.() -> Unit = {},
   ): IDEStartResult {
     val span = TestTelemetryService.spanBuilder("runIDE").setAttribute("launchName", launchName).startSpan()
+    val finalCommands = if (testCase.sdk != null) CommandChain().setupProjectSdk(testCase.sdk).addCommands(commands.toList()) else commands
     span.makeCurrent().use {
       val runContext = IDERunContext(
         testContext = this,
         commandLine = commandLine,
-        commands = commands,
+        commands = finalCommands,
         runTimeout = runTimeout,
         useStartupScript = useStartupScript,
         launchName = launchName,
@@ -582,8 +606,9 @@ open class IDETestContext(
       logOutput("License is not provided")
       return this
     }
-    this.onRemDevContext {
-      return frontendIDEContext.setLicense(license)
+    onRemDevContext {
+      frontendIDEContext.setLicense(license)
+      return this
     }
 
     val licenseKeyFileName: String = when (this.ide.productCode) {
@@ -600,8 +625,8 @@ open class IDETestContext(
       IdeProductProvider.RD.productCode -> "rider.key"
       else -> return this
     }
-    val keyFile = paths.configDir.resolve(licenseKeyFileName).toFile()
-    keyFile.createNewFile()
+    val keyFile = paths.configDir.resolve(licenseKeyFileName)
+    keyFile.createFile()
     keyFile.writeBytes(Base64.getDecoder().decode(license))
     logOutput("License is set")
     return this
@@ -717,6 +742,8 @@ open class IDETestContext(
     return this
   }
 
+  fun withProjectSdk(sdkObject: SdkObject) = copy(sdk = sdkObject)
+
   fun setupSdk(sdkObjects: SdkObject?, cleanDirs: Boolean = true): IDETestContext = computeWithSpan("setupSdk") {
     if (sdkObjects == null) return this
     try {
@@ -822,6 +849,17 @@ open class IDETestContext(
     return this
   }
 
+  fun setThirdPartyPluginsAllowed(allowed: Boolean = true): IDETestContext {
+    writeConfigFile("options/updates.xml", """
+      <application>
+        <component name="UpdatesConfigurable">
+          <option name="THIRD_PARTY_PLUGINS_ALLOWED" value="$allowed" />
+        </component>
+      </application>
+    """)
+    return this
+  }
+
   fun enableDocRendering(): IDETestContext {
     writeConfigFile("options/editor.xml", """
       <application>
@@ -870,4 +908,20 @@ open class IDETestContext(
     """)
     return this
   }
+
+  /**
+   * Disables the Ultimate module plugin and enables license requirement checks.
+   *
+   * Use this in when you need to test Community Edition behavior or
+   * verify that features properly require Ultimate edition access.
+   *
+   * **Note:** This has no effect for IDEs that don't support subscription mode.
+   *
+   * @see [com.intellij.driver.sdk.PluginManagerKt.enableUltimateModule]
+   */
+  fun disableUltimateModule(): IDETestContext = apply {
+    applyVMOptionsPatch { addSystemProperty("eap.require.license", true) }
+    pluginConfigurator.disablePlugins("com.intellij.modules.ultimate")
+  }
+
 }

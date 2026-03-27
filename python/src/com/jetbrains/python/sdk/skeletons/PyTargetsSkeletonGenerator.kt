@@ -6,17 +6,18 @@ import com.intellij.execution.process.ProcessOutput
 import com.intellij.execution.target.TargetEnvironment
 import com.intellij.execution.target.TargetEnvironmentRequest
 import com.intellij.execution.target.TargetProgressIndicator
-import com.intellij.execution.target.VolumeCopyingRequest
 import com.intellij.execution.target.local.LocalTargetEnvironmentRequest
 import com.intellij.execution.target.value.getRelativeTargetPath
 import com.intellij.execution.target.value.getTargetDownloadPath
 import com.intellij.execution.target.value.getTargetUploadPath
 import com.intellij.openapi.progress.EmptyProgressIndicator
 import com.intellij.openapi.progress.ProgressIndicator
+import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.ProjectManager
 import com.intellij.openapi.projectRoots.Sdk
 import com.intellij.openapi.util.io.FileUtil
+import com.intellij.python.community.execService.impl.processLaunchers.uploadMeasureTime
 import com.jetbrains.python.PythonHelper
 import com.jetbrains.python.run.PythonInterpreterTargetEnvironmentFactory
 import com.jetbrains.python.run.buildTargetedCommandLine
@@ -32,8 +33,8 @@ import kotlin.io.path.div
 import kotlin.io.path.exists
 import kotlin.io.path.setPosixFilePermissions
 
-class PyTargetsSkeletonGenerator(skeletonPath: String, pySdk: Sdk, currentFolder: String?, project: Project?)
-  : PySkeletonGenerator(skeletonPath, pySdk, currentFolder) {
+class PyTargetsSkeletonGenerator(skeletonPath: String, pySdk: Sdk, currentFolder: String?, project: Project?) :
+  PySkeletonGenerator(skeletonPath, pySdk, currentFolder) {
   private val pyRequest: HelpersAwareTargetEnvironmentRequest = checkNotNull(
     // TODO Get rid of the dependency on the default project
     PythonInterpreterTargetEnvironmentFactory.findPythonTargetInterpreter(mySdk, project ?: ProjectManager.getInstance().defaultProject)
@@ -74,7 +75,6 @@ class PyTargetsSkeletonGenerator(skeletonPath: String, pySdk: Sdk, currentFolder
         targetRootPath = TargetEnvironment.TargetPath.Temporary()
       )
       targetEnvRequest.downloadVolumes += skeletonsDownloadRoot
-      (targetEnvRequest as? VolumeCopyingRequest)?.shouldCopyVolumes = true
       generatorScriptExecution.addParameter(skeletonsDownloadRoot.getTargetDownloadPath())
       if (myExtraSysPath.isNotEmpty()) {
         generatorScriptExecution.addParameter("-s")
@@ -121,14 +121,20 @@ class PyTargetsSkeletonGenerator(skeletonPath: String, pySdk: Sdk, currentFolder
       try {
 
         // XXX Make it automatic
-        targetEnvironment.uploadVolumes.values.forEach { it.upload(".", TargetProgressIndicator.EMPTY) }
+        targetEnvironment.uploadVolumes.values.forEach { it.uploadMeasureTime(".", TargetProgressIndicator.EMPTY, "skeleton") }
 
         val targetedCommandLine = generatorScriptExecution.buildTargetedCommandLine(targetEnvironment, sdk, emptyList())
         val process = targetEnvironment.createProcess(targetedCommandLine, EmptyProgressIndicator())
         val commandPresentation = targetedCommandLine.getCommandPresentation(targetEnvironment)
         val capturingProcessHandler = CapturingProcessHandler(process, targetedCommandLine.charset, commandPresentation)
         listener?.let { capturingProcessHandler.addProcessListener(LineWiseProcessOutputListener.Adapter(it)) }
-        val result = capturingProcessHandler.runProcess()
+        val indicator = ProgressManager.getInstance().progressIndicator
+        val result = if (indicator != null) {
+          capturingProcessHandler.runProcessWithProgressIndicator(indicator)
+        }
+        else {
+          capturingProcessHandler.runProcess()
+        }
 
         // XXX Make it automatic
         targetEnvironment.downloadVolumes.values.forEach { it.download(".", EmptyProgressIndicator()) }

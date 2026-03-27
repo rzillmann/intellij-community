@@ -1,9 +1,8 @@
-// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2026 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.ide.starters.remote.wizard
 
 import com.intellij.ide.IdeBundle
 import com.intellij.ide.starters.JavaStartersBundle
-import com.intellij.ide.starters.remote.DownloadResult
 import com.intellij.ide.starters.remote.WebStarterContext
 import com.intellij.ide.starters.remote.WebStarterContextProvider
 import com.intellij.ide.starters.remote.WebStarterDependency
@@ -26,17 +25,15 @@ import com.intellij.ide.util.projectWizard.WizardContext
 import com.intellij.ide.wizard.AbstractWizard
 import com.intellij.ide.wizard.withVisualPadding
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.application.EDT
 import com.intellij.openapi.application.ModalityState
-import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.observable.properties.GraphProperty
 import com.intellij.openapi.observable.properties.PropertyGraph
 import com.intellij.openapi.progress.ProgressIndicator
-import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.ui.DialogPanel
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.util.Condition
 import com.intellij.openapi.util.Disposer
-import com.intellij.openapi.util.text.StringUtil
 import com.intellij.ui.CheckboxTree
 import com.intellij.ui.CheckboxTreeBase
 import com.intellij.ui.CheckboxTreeListener
@@ -51,20 +48,18 @@ import com.intellij.ui.dsl.builder.BottomGap
 import com.intellij.ui.dsl.builder.Panel
 import com.intellij.ui.dsl.builder.bindItem
 import com.intellij.ui.dsl.builder.panel
-import com.intellij.util.ModalityUiUtil
-import com.intellij.util.concurrency.EdtExecutorService
 import com.intellij.util.concurrency.annotations.RequiresBackgroundThread
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil.DEFAULT_HGAP
 import com.intellij.util.ui.UIUtil.DEFAULT_VGAP
 import com.intellij.util.ui.components.BorderLayoutPanel
 import com.intellij.util.ui.tree.TreeUtil
-import com.intellij.util.ui.update.MergingUpdateQueue
-import com.intellij.util.ui.update.Update
+import com.intellij.util.ui.update.DebouncedUpdates
+import com.intellij.util.ui.update.UpdateQueue
+import kotlinx.coroutines.Dispatchers
 import java.awt.BorderLayout
 import java.awt.Dimension
 import java.awt.GridBagLayout
-import java.util.concurrent.TimeUnit
 import javax.swing.DefaultComboBoxModel
 import javax.swing.JComponent
 import javax.swing.JPanel
@@ -76,6 +71,7 @@ import javax.swing.event.TreeSelectionListener
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeModel
 import javax.swing.tree.TreeSelectionModel
+import kotlin.time.Duration.Companion.milliseconds
 
 open class WebStarterLibrariesStep(contextProvider: WebStarterContextProvider) : ModuleWizardStep() {
   protected val moduleBuilder: WebStarterModuleBuilder = contextProvider.moduleBuilder
@@ -98,8 +94,10 @@ open class WebStarterLibrariesStep(contextProvider: WebStarterContextProvider) :
   private val selectedDependencies: MutableSet<WebStarterDependency> = mutableSetOf()
 
   private var currentSearchString: String = ""
-  private val searchMergingUpdateQueue: MergingUpdateQueue by lazy {
-    MergingUpdateQueue("SearchLibs_" + moduleBuilder.builderId, 250, true, topLevelPanel, parentDisposable)
+  private val searchMergingUpdateQueue: UpdateQueue<Unit> by lazy {
+    DebouncedUpdates.forComponent<Unit>(topLevelPanel, "SearchLibs_" + moduleBuilder.builderId, 250.milliseconds)
+      .withContext(Dispatchers.EDT)
+      .runLatest { performSearch() }
   }
 
   override fun getComponent(): JComponent = topLevelPanel
@@ -182,37 +180,7 @@ open class WebStarterLibrariesStep(contextProvider: WebStarterContextProvider) :
   }
 
   private fun requestWebService() {
-    ProgressManager.getInstance().runProcessWithProgressSynchronously(
-      {
-        val progressIndicator = ProgressManager.getInstance().progressIndicator
-
-        if (!validateWithServer(progressIndicator)) {
-          return@runProcessWithProgressSynchronously
-        }
-
-        progressIndicator.checkCanceled()
-
-        progressIndicator.text = JavaStartersBundle.message("message.state.downloading.template", moduleBuilder.presentableName)
-
-        val downloadResult: DownloadResult? = try {
-          moduleBuilder.downloadResultInternal(progressIndicator)
-        }
-        catch (e: Exception) {
-          logger<WebStarterLibrariesStep>().info(e)
-
-          EdtExecutorService.getScheduledExecutorInstance().schedule(
-            {
-              var message = JavaStartersBundle.message("error.text.with.error.content", e.message)
-              message = StringUtil.shortenTextWithEllipsis(message, 1024, 0) // exactly 1024 because why not
-              Messages.showErrorDialog(message, moduleBuilder.presentableName)
-            },
-            3, TimeUnit.SECONDS)
-
-          null
-        }
-
-        starterContext.result = downloadResult
-      }, JavaStartersBundle.message("message.state.preparing.template"), true, wizardContext.project)
+    moduleBuilder.validateAndDownloadProject(wizardContext.project, ::validateWithServer)
   }
 
   private fun loadFrameworkVersions() {
@@ -318,6 +286,7 @@ open class WebStarterLibrariesStep(contextProvider: WebStarterContextProvider) :
           is WebStarterDependency -> {
             val enabled = (value as CheckedTreeNode).isEnabled
             val attributes = if (enabled) SimpleTextAttributes.REGULAR_ATTRIBUTES else SimpleTextAttributes.GRAYED_ATTRIBUTES
+            textRenderer.icon = item.icon
             textRenderer.append(item.title, attributes)
           }
         }
@@ -373,16 +342,16 @@ open class WebStarterLibrariesStep(contextProvider: WebStarterContextProvider) :
     val textField = LibrariesSearchTextField()
     textField.addDocumentListener(object : DocumentAdapter() {
       override fun textChanged(e: DocumentEvent) {
-        searchMergingUpdateQueue.queue(Update.create("", Runnable {
-          ModalityUiUtil.invokeLaterIfNeeded(getModalityState(), Runnable {
-            currentSearchString = textField.text
-            loadLibrariesList()
-            librariesList.repaint()
-          })
-        }))
+        currentSearchString = textField.text
+        searchMergingUpdateQueue.queue(Unit)
       }
     })
     return textField
+  }
+
+  private fun performSearch() {
+    loadLibrariesList()
+    librariesList.repaint()
   }
 
   protected open fun getModalityState(): ModalityState {

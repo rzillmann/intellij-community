@@ -4,8 +4,8 @@ package com.intellij.ide.plugins
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.extensions.PluginId
 import com.intellij.openapi.util.BuildNumber
-import com.intellij.platform.plugins.parser.impl.elements.ModuleLoadingRuleValue
-import com.intellij.platform.plugins.testFramework.PluginSetTestBuilder
+import com.intellij.platform.pluginSystem.parser.impl.elements.ModuleLoadingRuleValue
+import com.intellij.platform.pluginSystem.testFramework.PluginSetTestBuilder
 import com.intellij.platform.testFramework.plugins.buildDir
 import com.intellij.platform.testFramework.plugins.content
 import com.intellij.platform.testFramework.plugins.dependencies
@@ -59,7 +59,7 @@ class PluginDependencyAnalysisTest {
 
   private fun discoverPlugins(): List<PluginMainDescriptor> {
     val (_, discoveryResult) = PluginSetTestBuilder.fromPath(pluginsDirPath).discoverPlugins()
-    return discoveryResult.discoveredPlugins.flatMap { it.plugins }
+    return discoveryResult.pluginLists.flatMap { it.plugins }
   }
 
   @Nested

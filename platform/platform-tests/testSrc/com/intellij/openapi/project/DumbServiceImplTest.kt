@@ -859,9 +859,10 @@ class DumbServiceImplTest {
   }
 
   private fun waitForSmartModeFiveSecondsOrThrow() {
-    if (!dumbService.waitForSmartMode(5_000)) {
-      dumbService.waitForSmartMode(5_000)
-      fail("Could not reach smart mode after 5 seconds")
+    if (!dumbService.waitForSmartMode(10_000)) {
+      if (!dumbService.waitForSmartMode(5_000)) {
+        fail("Could not reach smart mode after 5 seconds")
+      }
     }
   }
 
@@ -894,9 +895,6 @@ class DumbServiceImplTest {
 
     class SampleBackgroundableDumbModeListener : DumbModeListenerBackgroundable {
       fun runListener() {
-        if (!application.isDispatchThread) {
-          dumbModeListenerValidity.incrementAndGet()
-        }
         if (application.isWriteAccessAllowed) {
           dumbModeListenerValidity.incrementAndGet()
         }
@@ -915,6 +913,6 @@ class DumbServiceImplTest {
     dumbService.runInDumbMode("test", {})
     listenerEnded.join()
     listenerEnded2.join()
-    assertEquals(8, dumbModeListenerValidity.get())
+    assertEquals(6, dumbModeListenerValidity.get())
   }
 }

@@ -5,12 +5,13 @@ package org.jetbrains.intellij.build.productLayout.discovery
 
 import com.intellij.platform.pluginGraph.ContentModuleName
 import com.intellij.platform.pluginGraph.TargetName
-import com.intellij.platform.plugins.parser.impl.elements.ModuleLoadingRuleValue
+import com.intellij.platform.pluginSystem.parser.impl.elements.ModuleLoadingRuleValue
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import org.jetbrains.intellij.build.ModuleOutputProvider
 import org.jetbrains.intellij.build.productLayout.ProductModulesContentSpec
+import org.jetbrains.intellij.build.productLayout.debug
 import org.jetbrains.intellij.build.productLayout.generateProductXml
 import org.jetbrains.intellij.build.productLayout.model.error.FileDiff
 import org.jetbrains.intellij.build.productLayout.model.error.ValidationError
@@ -169,9 +170,6 @@ internal suspend fun generateAllProductXmlFiles(
 
   val allProducts = discoveredProducts + testProducts
 
-  // Detect if this is an Ultimate build by checking if community directory is a subdirectory
-  val isUltimateBuild = Files.exists(projectRoot.resolve("community"))
-
   val productResults = coroutineScope {
     allProducts.map { discovered ->
       async {
@@ -181,10 +179,12 @@ internal suspend fun generateAllProductXmlFiles(
 
         val pluginXmlPath = projectRoot.resolve(pluginXmlRelativePath)
 
-        // Extract ProductProperties class name (works with both ProductProperties and null)
+        // Extract ProductProperties class name for the source comment.
+        // Use the declaring class of `getProductContentDescriptor` method.
         val productPropertiesClass = when (val props = discovered.properties) {
           null -> "test-product"
-          else -> props.javaClass.name
+          else -> (props.javaClass.methods.firstOrNull { it.name == "getProductContentDescriptor" }?.declaringClass
+                   ?: props.javaClass).name
         }
 
         generateProductXml(
@@ -194,7 +194,6 @@ internal suspend fun generateAllProductXmlFiles(
           outputProvider = outputProvider,
           productPropertiesClass = productPropertiesClass,
           projectRoot = projectRoot,
-          isUltimateBuild = isUltimateBuild,
           strategy = strategy,
         )
       }
@@ -233,5 +232,10 @@ suspend fun generateAllModuleSetsWithProducts(
   commitChanges: Boolean = true,
   updateSuppressions: Boolean = false,
 ): GenerationResult {
+  val validationFilterValue = config.validationFilter?.sorted()?.joinToString(separator = ",") ?: "<all>"
+  debug("missingDeps") {
+    "generateAllModuleSetsWithProducts outputProvider=${config.outputProvider::class.java.name} " +
+    "commitChanges=$commitChanges updateSuppressions=$updateSuppressions validationFilter=$validationFilterValue"
+  }
   return GenerationPipeline.default().execute(config = config, commitChanges = commitChanges, updateSuppressions = updateSuppressions, validationFilter = config.validationFilter)
 }

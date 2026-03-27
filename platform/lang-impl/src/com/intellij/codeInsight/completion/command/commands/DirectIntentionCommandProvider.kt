@@ -48,7 +48,6 @@ import com.intellij.lang.injection.InjectedLanguageManager
 import com.intellij.modcommand.ActionContext
 import com.intellij.modcommand.Presentation
 import com.intellij.modcommand.PsiBasedModCommandAction
-import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.readAction
 import com.intellij.openapi.diagnostic.ControlFlowException
 import com.intellij.openapi.diagnostic.thisLogger
@@ -382,16 +381,13 @@ internal class DirectIntentionCommandProvider : CommandProvider {
           val endOffset = fileDocument.getLineEndOffset(endLineNumber)
           val isInjected = topLevelFile != psiFile
           val indicator = DaemonProgressIndicator()
-          val errorHighlightings: List<HighlightInfo?>? = jobToIndicator(coroutineContext.job, indicator) {
-            ApplicationManager.getApplication().runReadAction<List<HighlightInfo?>?> {
-              HighlightVisitorBasedInspection.runAnnotatorsInGeneralHighlighting(topLevelFile,
+          val errorHighlightings: List<HighlightInfo?> = jobToIndicator(coroutineContext.job, indicator) {
+            HighlightVisitorBasedInspection.runAnnotatorsInGeneralHighlighting(topLevelFile,
                                                                                  startOffset,
                                                                                  endOffset,
                                                                                  ProperTextRange(startOffset, endOffset),
                                                                                  true, true, true)
-            }
           }
-          if (errorHighlightings == null) return@readAction
           var insideRange = getLineRange(topLevelFile, topLevelOffset)
           if (isInjected) {
             insideRange = insideRange.intersection(
@@ -405,7 +401,7 @@ internal class DirectIntentionCommandProvider : CommandProvider {
                 (isInjected && !insideRange.contains(TextRange(info.startOffset, info.endOffset)))) continue
             if (info.hasLazyQuickFixes()) {
               info.updateLazyFixesPsiTimeStamp(PsiModificationTracker.getInstance(psiFile.project).modificationCount)
-              lazyQuickFixUpdater.waitQuickFixesSynchronously(psiFile, editor, info)
+              lazyQuickFixUpdater.waitQuickFixesSynchronously(info, psiFile.getProject(), editor.getDocument())
             }
             val fixes: MutableList<IntentionActionDescriptor> = ArrayList()
             ShowIntentionsPass.addAvailableFixesForGroups(info, topLevelEditor, topLevelFile, fixes, -1, offset, false)

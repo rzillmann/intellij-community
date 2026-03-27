@@ -23,8 +23,10 @@ import com.intellij.codeInsight.lookup.AutoCompletionPolicy;
 import com.intellij.ide.highlighter.JavaFileType;
 import com.intellij.java.codeserver.core.JavaPsiSwitchUtil;
 import com.intellij.java.syntax.parser.JavaKeywords;
+import com.intellij.modcompletion.CommonCompletionItem;
 import com.intellij.modcompletion.ModCompletionItem;
 import com.intellij.modcompletion.ModCompletionItemPresentation;
+import com.intellij.modcompletion.ModCompletionResult;
 import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.util.Conditions;
 import com.intellij.openapi.util.NlsSafe;
@@ -148,7 +150,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
-import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 import static com.intellij.codeInsight.ModNavigatorTailType.humbleSpaceBeforeWordType;
@@ -213,19 +214,19 @@ final class KeywordCompletionItemProvider extends JavaModCompletionItemProvider 
   private static final PsiElementPattern<PsiElement, ?> START_FOR = psiElement().afterLeaf(psiElement().withText("(").afterLeaf("for"));
 
   @Override
-  public void provideItems(CompletionContext context, Consumer<ModCompletionItem> sink) {
+  public void provideItems(CompletionContext context, ModCompletionResult sink) {
     new KeywordAdder(context, sink).provideItems();
   }
 
   private static class KeywordAdder {
     private final CompletionContext myContext;
-    private final Consumer<ModCompletionItem> mySink;
+    private final ModCompletionResult mySink;
     private final PsiElement myPosition;
     private final @Nullable PsiElement myPrevLeaf;
     private final PsiFile myFile;
     private final PrefixMatcher myKeywordMatcher;
 
-    KeywordAdder(CompletionContext context, Consumer<ModCompletionItem> sink) {
+    KeywordAdder(CompletionContext context, ModCompletionResult sink) {
       myContext = context;
       mySink = sink;
       myPosition = context.element();
@@ -664,7 +665,9 @@ final class KeywordCompletionItemProvider extends JavaModCompletionItemProvider 
 
     private void addInstanceof() {
       if (JavaKeywordCompletion.isInstanceofPlace(myPosition)) {
-        addKeyword(createKeyword(JavaKeywords.INSTANCEOF).withAdditionalUpdater((startOffset, updater, insertionContext) -> {
+        addKeyword(createKeyword(JavaKeywords.INSTANCEOF)
+                     .withInsertCharacterSuppressed(ic -> ic.insertionCharacter() == '!')
+                     .withAdditionalUpdater((startOffset, updater, insertionContext) -> {
           Document document = updater.getDocument();
           int offset = updater.getCaretOffset();
           ModNavigatorTailType tailType = humbleSpaceBeforeWordType();
@@ -688,7 +691,6 @@ final class KeywordCompletionItemProvider extends JavaModCompletionItemProvider 
               }
             }
             else if ('!' == insertionContext.insertionCharacter()) {
-              // TODO: suppress ! typing
               String space = CodeStyle.getLanguageSettings(file).SPACE_WITHIN_PARENTHESES ? " " : "";
               document.insertString(expr.getTextRange().getStartOffset(), "!(" + space);
               document.insertString(updater.getCaretOffset(), space + ")");
@@ -1317,7 +1319,7 @@ final class KeywordCompletionItemProvider extends JavaModCompletionItemProvider 
       if (aClass == null || aClass.isEnum() || !aClass.hasModifierProperty(PsiModifier.SEALED)) return;
 
       for (PsiClass inheritor : SealedUtils.findSameFileInheritorsClasses(aClass)) {
-        //we don't check hierarchy here, because it is time-consuming
+        //we don't check hierarchy here because it is time-consuming
         if (containedLabels.contains(inheritor.getQualifiedName())) {
           continue;
         }

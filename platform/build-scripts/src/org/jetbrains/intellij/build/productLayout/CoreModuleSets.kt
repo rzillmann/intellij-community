@@ -1,15 +1,7 @@
-// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2026 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 @file:Suppress("GrazieInspection")
 
 package org.jetbrains.intellij.build.productLayout
-
-import org.jetbrains.intellij.build.productLayout.CoreModuleSets.coreIde
-import org.jetbrains.intellij.build.productLayout.CoreModuleSets.coreLang
-import org.jetbrains.intellij.build.productLayout.CoreModuleSets.corePlatform
-import org.jetbrains.intellij.build.productLayout.CoreModuleSets.fleet
-import org.jetbrains.intellij.build.productLayout.CoreModuleSets.librariesIde
-import org.jetbrains.intellij.build.productLayout.CoreModuleSets.rpcBackend
-import org.jetbrains.intellij.build.productLayout.CoreModuleSets.rpcMinimal
 
 /**
  * Core platform module sets forming the foundation of IntelliJ products.
@@ -96,11 +88,17 @@ object CoreModuleSets {
     embeddedModule("intellij.libraries.imgscalr")
     embeddedModule("intellij.libraries.ini4j")
     embeddedModule("intellij.libraries.ion")
+    embeddedModule("intellij.libraries.jackson.annotations")
     embeddedModule("intellij.libraries.jackson")
     embeddedModule("intellij.libraries.jackson.jr.objects")
     embeddedModule("intellij.libraries.jackson.databind")
     embeddedModule("intellij.libraries.jackson.dataformat.yaml")
     embeddedModule("intellij.libraries.jackson.module.kotlin")
+    embeddedModule("intellij.libraries.jackson3")
+    embeddedModule("intellij.libraries.jackson3.jr.objects")
+    embeddedModule("intellij.libraries.jackson3.databind")
+    embeddedModule("intellij.libraries.jackson3.dataformat.yaml")
+    embeddedModule("intellij.libraries.jackson3.module.kotlin")
     embeddedModule("intellij.libraries.java.websocket")
     embeddedModule("intellij.libraries.javax.annotation")
     // used by intellij.platform.util.jdom, so, embedded
@@ -116,10 +114,12 @@ object CoreModuleSets {
     embeddedModule("intellij.libraries.lz4")
     embeddedModule("intellij.libraries.markdown")
     embeddedModule("intellij.libraries.mvstore")
+
     embeddedModule("intellij.libraries.netty.buffer")
     embeddedModule("intellij.libraries.netty.codec.compression")
     embeddedModule("intellij.libraries.netty.codec.http")
     embeddedModule("intellij.libraries.netty.handler.proxy")
+
     embeddedModule("intellij.libraries.oro.matcher")
     embeddedModule("intellij.libraries.protobuf")
     embeddedModule("intellij.libraries.proxy.vole")
@@ -130,6 +130,9 @@ object CoreModuleSets {
     embeddedModule("intellij.libraries.velocity")
     embeddedModule("intellij.libraries.xtext.xbase")
     embeddedModule("intellij.libraries.xz")
+    // Temporary embedded while opentelemetry-exporter-otlp-common library remains embedded due to a dependency (IJPL-233394)
+    embeddedModule("intellij.libraries.opentelemetry.sdk.autoconfigure.spi")
+    embeddedModule("intellij.libraries.opentelemetry.exporter.sender.jdk")
   }
 
   /**
@@ -147,6 +150,7 @@ object CoreModuleSets {
     embeddedModule("intellij.libraries.jediterm.ui")
     embeddedModule("intellij.libraries.jgoodies.common")
     embeddedModule("intellij.libraries.jgoodies.forms")
+    embeddedModule("intellij.libraries.jsch.agent.proxy")
     embeddedModule("intellij.libraries.miglayout.swing")
     embeddedModule("intellij.libraries.pty4j")
     embeddedModule("intellij.libraries.sshj")
@@ -238,14 +242,21 @@ object CoreModuleSets {
   fun corePlatform(): ModuleSet = moduleSet("core.platform", selfContained = true, outputModule = "intellij.platform.ide.core", includeDependencies = true) {
     moduleSet(librariesPlatform())
 
+    embeddedModule("intellij.platform.diagnostic.telemetry")
+
     embeddedModule("intellij.platform.util.ex")
     embeddedModule("intellij.platform.util.ui")
+    embeddedModule("intellij.platform.util.coroutines")
 
     embeddedModule("intellij.platform.locking.impl")
 
     embeddedModule("intellij.platform.core")
     embeddedModule("intellij.platform.core.ui")
     embeddedModule("intellij.platform.core.impl")
+    embeddedModule("intellij.platform.indexing")
+    embeddedModule("intellij.platform.projectFrame")
+    embeddedModule("intellij.platform.welcomeScreen")
+    embeddedModule("intellij.platform.welcomeScreen.impl")
 
     embeddedModule("intellij.platform.projectModel")
     embeddedModule("intellij.platform.projectModel.impl")
@@ -259,6 +270,7 @@ object CoreModuleSets {
     moduleSet(rpcMinimal())
 
     embeddedModule("intellij.platform.ide.core")
+    embeddedModule("intellij.platform.ide.core.plugins")
   }
 
   /**
@@ -320,12 +332,20 @@ object CoreModuleSets {
     // Include core IDE (corePlatform + intellij.platform.ide)
     moduleSet(coreIde())
 
+    embeddedModule("intellij.platform.testRunner")
+    embeddedModule("intellij.platform.execution")
+    embeddedModule("intellij.platform.execution.impl")
+
     embeddedModule("intellij.platform.lang.core")
     embeddedModule("intellij.platform.lang")
     embeddedModule("intellij.platform.lang.impl")
 
-    // IDE implementation (depends on lang.core, so must come after)
+    embeddedModule("intellij.platform.statistics")
+    embeddedModule("intellij.platform.statistics.config")
     embeddedModule("intellij.platform.ide.impl")
+
+    // depends on intellij.platform.ide.impl
+    module("intellij.platform.backend.workspace.impl")
 
     // Additional dependencies specific to lang.impl and ide.impl
     embeddedModule("intellij.platform.ide.concurrency")
@@ -334,6 +354,7 @@ object CoreModuleSets {
     embeddedModule("intellij.platform.eel.impl")
     embeddedModule("intellij.platform.diff")
     embeddedModule("intellij.platform.diff.impl")
+    embeddedModule("intellij.platform.util.diff")
     embeddedModule("fleet.andel")
 
     // Temporary: lang.impl incorrectly depends on xstream (should be removed)

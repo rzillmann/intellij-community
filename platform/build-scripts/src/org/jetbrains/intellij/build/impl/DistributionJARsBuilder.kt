@@ -14,6 +14,7 @@ import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -127,7 +128,6 @@ internal suspend fun buildDistribution(
       isUpdateFromSources = isUpdateFromSources,
       buildPlatformJob = buildPlatformJob,
       searchableOptionSetDescriptor = searchableOptionSet,
-      moduleOutputPatcher = moduleOutputPatcher,
       descriptorCacheContainer = platformLayout.descriptorCacheContainer,
       context = context,
     )
@@ -153,7 +153,7 @@ internal suspend fun buildDistribution(
     if (context.useModularLoader || context.generateRuntimeModuleRepository) {
       launch(CoroutineName("generate runtime module repository")) {
         spanBuilder("generate runtime module repository").use {
-          generateRuntimeModuleRepositoryForDistribution(contentReport.bundled(), context)
+          generateRuntimeModuleRepositoryForDistribution(contentReport, context, platformLayout)
         }
       }
     }
@@ -212,7 +212,6 @@ suspend fun testBuildBundledPluginsForAllPlatforms(
   state: DistributionBuilderState,
   pluginLayouts: Set<PluginLayout>,
   buildPlatformJob: Deferred<List<DistributionFileEntry>>,
-  moduleOutputPatcher: ModuleOutputPatcher,
   descriptorCacheContainer: DescriptorCacheContainer,
   context: BuildContext,
 ): List<DistFile> {
@@ -224,7 +223,6 @@ suspend fun testBuildBundledPluginsForAllPlatforms(
     isUpdateFromSources = false,
     searchableOptionSetDescriptor = null,
     descriptorCacheContainer = descriptorCacheContainer,
-    moduleOutputPatcher = moduleOutputPatcher,
   )
   return context.getDistFiles(os = null, arch = null, libcImpl = null).filter { it.relativePath == PLUGIN_CLASSPATH }
 }
@@ -251,7 +249,6 @@ suspend fun buildBundledPluginsAsStandaloneTask(
     isUpdateFromSources = false,
     buildPlatformJob = CompletableDeferred(platformContent),
     searchableOptionSet = searchableOptionSetDescriptor,
-    moduleOutputPatcher = ModuleOutputPatcher(),
     descriptorCacheContainer = state.platformLayout.descriptorCacheContainer,
     context = context,
   )
@@ -593,7 +590,7 @@ internal suspend fun layoutDistribution(
     }
 
     tasks
-  }.flatMap { it.getCompleted() }
+  }.awaitAll().flatten()
 
   return entries to targetDir
 }

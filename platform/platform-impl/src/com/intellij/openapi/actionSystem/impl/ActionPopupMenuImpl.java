@@ -7,7 +7,6 @@ import com.intellij.ide.HelpTooltip;
 import com.intellij.ide.IdeEventQueue;
 import com.intellij.internal.inspector.UiInspectorActionUtil;
 import com.intellij.internal.inspector.UiInspectorUtil;
-import com.intellij.internal.statistic.eventLog.events.EventFields;
 import com.intellij.lang.Language;
 import com.intellij.openapi.actionSystem.ActionGroup;
 import com.intellij.openapi.actionSystem.ActionPlaces;
@@ -117,7 +116,7 @@ final class ActionPopupMenuImpl implements ActionPopupMenu, ApplicationActivatio
     }
 
     @Override
-    public void show(@NotNull Component component, int x, int y) {
+    public void show(@NotNull Component component, int x, int y) throws MenuCancelledControlFlowException {
       if (!component.isShowing()) {
         throw new IllegalArgumentException("component must be shown on the screen (" + component + ")");
       }
@@ -159,10 +158,7 @@ final class ActionPopupMenuImpl implements ActionPopupMenu, ApplicationActivatio
       PsiFile psiFile = CommonDataKeys.PSI_FILE.getData(Utils.getCachedOnlyDataContext(myContext));
       Language language = psiFile == null ? null : psiFile.getLanguage();
       boolean coldStart = SEEN_ACTION_GROUPS.add(Objects.hash(myGroup, language));
-      UILatencyLogger.ACTION_POPUP_LATENCY.log(EventFields.DurationMs.with(time),
-                                               EventFields.ActionPlace.with(myPlace),
-                                               UILatencyLogger.COLD_START.with(coldStart),
-                                               EventFields.Language.with(language));
+      UILatencyLogger.logActionPopupLatency(time, myPlace, coldStart, language);
     }
 
     @Override
@@ -171,7 +167,7 @@ final class ActionPopupMenuImpl implements ActionPopupMenu, ApplicationActivatio
       if (!b) ReflectionUtil.resetField(this, "invoker");
     }
 
-    private void updateChildren(@Nullable RelativePoint point) {
+    private void updateChildren(@Nullable RelativePoint point) throws MenuCancelledControlFlowException {
       removeAll();
       Utils.INSTANCE.fillPopupMenu(new ActualActionUiKind.Menu(this, false), myGroup, myPresentationFactory, myContext, myPlace, point);
     }
@@ -205,7 +201,7 @@ final class ActionPopupMenuImpl implements ActionPopupMenu, ApplicationActivatio
       }
 
       @Override
-      public void popupMenuWillBecomeVisible(PopupMenuEvent e) {
+      public void popupMenuWillBecomeVisible(PopupMenuEvent e) throws MenuCancelledControlFlowException {
         HelpTooltip.disableTooltip(targetComponent);
         if (getComponentCount() == 0) {
           updateChildren(null);

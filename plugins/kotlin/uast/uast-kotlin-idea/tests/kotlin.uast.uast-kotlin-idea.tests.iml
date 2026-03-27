@@ -8,6 +8,7 @@
     <orderEntry type="inheritedJdk" />
     <orderEntry type="sourceFolder" forTests="false" />
     <orderEntry type="module" module-name="intellij.platform.core" scope="TEST" />
+    <orderEntry type="module" module-name="intellij.platform.lang" scope="TEST" />
     <orderEntry type="library" scope="TEST" name="kotlin-test" level="project" />
     <orderEntry type="library" name="kotlin-stdlib" level="project" />
     <orderEntry type="library" name="kotlinc.kotlin-compiler-common" level="project" />
@@ -20,18 +21,18 @@
     <orderEntry type="module" module-name="intellij.platform.testFramework" scope="TEST" />
     <orderEntry type="module" module-name="kotlin.base.test" scope="TEST" />
     <orderEntry type="module" module-name="intellij.java.testFramework" scope="TEST" />
+    <orderEntry type="module" module-name="intellij.java.psi" scope="TEST" />
     <orderEntry type="module" module-name="intellij.platform.projectModel" />
     <orderEntry type="module" module-name="intellij.platform.uast" />
     <orderEntry type="module" module-name="intellij.platform.uast.testFramework" scope="TEST" />
     <orderEntry type="module" module-name="kotlin.uast.uast-kotlin" />
     <orderEntry type="module" module-name="kotlin.uast.uast-kotlin.tests" />
     <orderEntry type="module" module-name="intellij.kotlin.testFramework" scope="TEST" />
-    <orderEntry type="module" module-name="kotlin.uast.uast-kotlin-base" />
-    <orderEntry type="module" module-name="intellij.kotlin.uast" />
-    <orderEntry type="module" module-name="kotlin.uast.uast-kotlin-base.tests" />
+    <orderEntry type="module" module-name="intellij.kotlin.uast.base" />
+    <orderEntry type="module" module-name="intellij.kotlin.uast.base.tests" />
     <orderEntry type="module" module-name="intellij.kotlin.base.plugin" scope="TEST" />
-    <orderEntry type="module" module-name="kotlin.uast.uast-kotlin-idea-base.tests" scope="TEST" />
+    <orderEntry type="module" module-name="intellij.kotlin.uast.idea.base.tests" scope="TEST" />
     <orderEntry type="module" module-name="intellij.platform.uast.ide" />
-    <orderEntry type="module" module-name="kotlin.uast.uast-kotlin-idea-base" />
+    <orderEntry type="module" module-name="intellij.kotlin.uast.idea.base" />
   </component>
 </module>

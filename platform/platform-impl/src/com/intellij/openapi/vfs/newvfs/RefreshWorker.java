@@ -40,6 +40,7 @@ import com.intellij.openapi.vfs.newvfs.persistent.PersistentFSImpl;
 import com.intellij.util.MathUtil;
 import com.intellij.util.SmartList;
 import com.intellij.util.TimeoutUtil;
+import com.intellij.util.concurrency.AppScheduledExecutorService;
 import com.intellij.util.concurrency.Semaphore;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.containers.Stack;
@@ -92,8 +93,13 @@ final class RefreshWorker {
     1, Runtime.getRuntime().availableProcessors()
   );
 
-  private static final Executor executor = ExecutorsKt.asExecutor(
-    Dispatchers.getIO().limitedParallelism(PARALLELISM, "RefreshWorkerDispatcher")
+  private static final Executor rawExecutor = ExecutorsKt.asExecutor(
+      Dispatchers.getIO().limitedParallelism(PARALLELISM, "RefreshWorkerDispatcher")
+  );
+
+  /** Wraps {@link #rawExecutor} to propagate IntelliJ thread context to worker threads. */
+  private static final Executor executor = command -> rawExecutor.execute(
+    AppScheduledExecutorService.capturePropagationAndCancellationContext(command)
   );
 
   private static final Object REQUESTOR = VFileEvent.REFRESH_REQUESTOR;
@@ -264,7 +270,7 @@ final class RefreshWorker {
 
   private boolean fullDirRefresh(List<VFileEvent> events, NewVirtualFileSystem fs, VirtualDirectoryImpl dir) {
     var t = System.nanoTime();
-    Pair<VirtualFile[], List<String>> snapshot = ReadAction.compute(() -> {
+    Pair<VirtualFile[], List<String>> snapshot = ReadAction.computeBlocking(() -> {
       VirtualFile[] children = dir.getChildren();
       return new Pair<>(children, getNames(children));
     });
@@ -352,7 +358,7 @@ final class RefreshWorker {
 
   private boolean isDirectoryChanged(VirtualDirectoryImpl dir, VirtualFile[] children, List<String> names) {
     var t = System.nanoTime();
-    var changed = ReadAction.compute(() -> {
+    var changed = ReadAction.computeBlocking(() -> {
       VirtualFile[] currentChildren = dir.getChildren();
       return !Arrays.equals(children, currentChildren) || !names.equals(getNames(currentChildren));
     });
@@ -362,7 +368,7 @@ final class RefreshWorker {
 
   private boolean partialDirRefresh(List<VFileEvent> events, NewVirtualFileSystem fs, VirtualDirectoryImpl dir) {
     var t = System.nanoTime();
-    Pair<List<VirtualFile>, List<String>> snapshot = ReadAction.compute(
+    Pair<List<VirtualFile>, List<String>> snapshot = ReadAction.computeBlocking(
       () -> new Pair<>(dir.getCachedChildren(), dir.getSuspiciousNames())
     );
     vfsTime.addAndGet(System.nanoTime() - t);
@@ -431,7 +437,7 @@ final class RefreshWorker {
 
   private boolean isDirectoryChanged(VirtualDirectoryImpl dir, List<VirtualFile> cached, List<String> wanted) {
     var t = System.nanoTime();
-    var changed = ReadAction.compute(() -> !cached.equals(dir.getCachedChildren()) || !wanted.equals(dir.getSuspiciousNames()));
+    var changed = ReadAction.computeBlocking(() -> !cached.equals(dir.getCachedChildren()) || !wanted.equals(dir.getSuspiciousNames()));
     vfsTime.addAndGet(System.nanoTime() - t);
     return changed;
   }
@@ -627,7 +633,7 @@ final class RefreshWorker {
   private static boolean shouldScanDirectory(VirtualFile parent, Path child, String childName) {
     if (FileTypeManager.getInstance().isFileIgnored(childName)) return false;
     for (Project openProject : ProjectManager.getInstance().getOpenProjects()) {
-      if (ReadAction.compute(() -> {
+      if (ReadAction.computeBlocking(() -> {
         List<WorkspaceFileSet> indexableFileSet = WorkspaceFileIndex.getInstance(openProject)
           .findFileSets(parent, true, true, /*includeContentNonIndexableSets*/ false, true, true, /*includeExternalNonIndexableSets*/ false, true);
         return ContainerUtil.exists(indexableFileSet, set -> set instanceof WorkspaceFileSetWithCustomData && ((WorkspaceFileSetWithCustomData<?>)set).getRecursive());

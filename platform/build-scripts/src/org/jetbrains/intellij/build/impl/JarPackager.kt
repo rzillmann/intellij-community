@@ -1,4 +1,4 @@
-// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2026 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 @file:Suppress("ReplaceGetOrSet", "ReplacePutWithAssignment")
 
 package org.jetbrains.intellij.build.impl
@@ -16,11 +16,11 @@ import it.unimi.dsi.fastutil.objects.ObjectLinkedOpenHashSet
 import it.unimi.dsi.fastutil.objects.Reference2ObjectLinkedOpenHashMap
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.jetbrains.intellij.build.BuildContext
+import org.jetbrains.intellij.build.BuildOptions
 import org.jetbrains.intellij.build.BuildPaths
 import org.jetbrains.intellij.build.CompilationContext
 import org.jetbrains.intellij.build.DirSource
@@ -58,6 +58,7 @@ import org.jetbrains.intellij.build.io.writeToFileChannelFully
 import org.jetbrains.intellij.build.jarCache.JarCacheManager
 import org.jetbrains.intellij.build.jarCache.NonCachingJarCacheManager
 import org.jetbrains.intellij.build.jarCache.SourceBuilder
+import org.jetbrains.intellij.build.mapConcurrent
 import org.jetbrains.intellij.build.telemetry.TraceManager.spanBuilder
 import org.jetbrains.intellij.build.telemetry.use
 import org.jetbrains.jps.model.library.JpsLibrary
@@ -331,6 +332,9 @@ class JarPackager private constructor(
     val moduleSources = asset.includedModules.computeIfAbsent(item) { mutableListOf() }
 
     for ((relativePath, data) in patchedContent) {
+      if (layout is PluginLayout && moduleName != layout.mainModule && relativePath == "META-INF/plugin.xml") {
+        continue
+      }
       moduleSources.add(InMemoryContentSource(relativePath, data))
     }
 
@@ -844,7 +848,8 @@ private fun getLibraryFiles(library: JpsLibrary, copiedFiles: MutableMap<CopiedF
   return files
 }
 
-private fun nameToJarFileName(name: String): String = "${sanitizeFileName(name.lowercase(), replacement = "-")}.jar"
+private fun nameToJarFileName(name: String): String =
+  "${sanitizeFileName(name.lowercase(), replacement = "-") { c -> c == ' '}}.jar"
 
 @Suppress("SpellCheckingInspection", "RedundantSuppression")
 private val excludedFromMergeLibs = setOf(
@@ -924,27 +929,24 @@ private suspend fun buildJars(
     return emptyBuildJarsResult()
   }
 
-  val list = withContext(Dispatchers.IO) {
-    assets.map { asset ->
-      async(CoroutineName("build jar for ${asset.relativePath}")) {
-        buildAsset(
-          asset = asset,
-          isCodesignEnabled = isCodesignEnabled,
-          context = context,
-          cache = cache,
-          useCacheAsTargetFile = useCacheAsTargetFile,
-          layout = layout,
-          helper = helper,
-        )
-      }
+  val list = assets.mapConcurrent(workerDispatcher = Dispatchers.IO) { asset ->
+    withContext(CoroutineName("build jar for ${asset.relativePath}")) {
+      buildAsset(
+        asset = asset,
+        isCodesignEnabled = isCodesignEnabled,
+        context = context,
+        cache = cache,
+        useCacheAsTargetFile = useCacheAsTargetFile,
+        layout = layout,
+        helper = helper,
+      )
     }
   }
 
   val sourceToNativeFiles = TreeMap<ZipSource, List<String>>(compareBy { it.file.fileName.toString() })
   val sourceToMetadata = HashMap<Source, SizeAndHash>()
 
-  for (deferred in list) {
-    val item = deferred.getCompleted()
+  for (item in list) {
     sourceToNativeFiles.putAll(item.sourceToNativeFiles)
     sourceToMetadata.putAll(item.sourceToMetadata)
   }
@@ -1079,9 +1081,11 @@ private suspend fun buildAsset(
             get() = useCacheAsTargetFile && asset.useCacheAsTargetFile && !asset.relativePath.contains('/')
 
           override fun updateDigest(digest: HashStream64) {
+            val isScramblingEnabled = !context.options.buildStepsToSkip.contains(BuildOptions.SCRAMBLING_STEP)
+            digest.putInt(if (isScramblingEnabled) 1 else 0)
             if (layout is PluginLayout) {
               digest.putString(layout.mainModule)
-              digest.putInt(layout.bundlingRestrictions.hashCode())
+              layout.bundlingRestrictions.updateDigest(digest)
               digest.putUnorderedIterable(layout.pathsToScramble, HashFunnel.forString(), Hashing.xxh3_64())
             }
             else {

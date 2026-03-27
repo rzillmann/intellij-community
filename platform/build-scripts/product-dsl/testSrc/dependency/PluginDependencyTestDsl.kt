@@ -38,7 +38,7 @@ import org.jetbrains.intellij.build.productLayout.pipeline.TestPluginDependencyP
 import org.jetbrains.intellij.build.productLayout.pipeline.TestPluginsOutput
 import org.jetbrains.intellij.build.productLayout.util.AsyncCache
 import org.jetbrains.intellij.build.productLayout.util.DeferredFileUpdater
-import org.jetbrains.intellij.build.productLayout.util.XmlWritePolicy
+import org.jetbrains.intellij.build.productLayout.util.GeneratedArtifactWritePolicy
 import org.jetbrains.jps.model.JpsElementFactory
 import org.jetbrains.jps.model.JpsProject
 import org.jetbrains.jps.model.java.JavaResourceRootType
@@ -406,14 +406,14 @@ class TestPluginBuilder(private val name: String) {
   /** If true, plugin dependencies are auto-derived from JPS deps. */
   var isTestPlugin: Boolean = false
   private val contentModules = LinkedHashSet<String>()
-  private val contentLoadings = LinkedHashMap<String, com.intellij.platform.plugins.parser.impl.elements.ModuleLoadingRuleValue?>()
+  private val contentLoadings = LinkedHashMap<String, com.intellij.platform.pluginSystem.parser.impl.elements.ModuleLoadingRuleValue?>()
   private val moduleDependencies = LinkedHashSet<String>()
 
   fun content(vararg modules: String) {
     contentModules.addAll(modules)
   }
 
-  fun content(moduleName: String, loading: com.intellij.platform.plugins.parser.impl.elements.ModuleLoadingRuleValue?) {
+  fun content(moduleName: String, loading: com.intellij.platform.pluginSystem.parser.impl.elements.ModuleLoadingRuleValue?) {
     contentModules.add(moduleName)
     contentLoadings.put(moduleName, loading)
   }
@@ -474,9 +474,9 @@ class TestProductBuilder(private val name: String) {
 
 @JpsTestDsl
 class TestModuleSetBuilder(private val name: String) {
-  private val modules = LinkedHashMap<String, com.intellij.platform.plugins.parser.impl.elements.ModuleLoadingRuleValue?>()
+  private val modules = LinkedHashMap<String, com.intellij.platform.pluginSystem.parser.impl.elements.ModuleLoadingRuleValue?>()
 
-  fun module(moduleName: String, loading: com.intellij.platform.plugins.parser.impl.elements.ModuleLoadingRuleValue? = null) {
+  fun module(moduleName: String, loading: com.intellij.platform.pluginSystem.parser.impl.elements.ModuleLoadingRuleValue? = null) {
     modules.put(moduleName, loading)
   }
 
@@ -488,7 +488,7 @@ internal data class TestPluginSpec(
   @JvmField val pluginId: String?,
   @JvmField val isTestPlugin: Boolean,
   @JvmField val contentModules: Set<String>,
-  @JvmField val contentLoadings: Map<String, com.intellij.platform.plugins.parser.impl.elements.ModuleLoadingRuleValue?> = emptyMap(),
+  @JvmField val contentLoadings: Map<String, com.intellij.platform.pluginSystem.parser.impl.elements.ModuleLoadingRuleValue?> = emptyMap(),
   @JvmField val moduleDependencies: Set<String> = emptySet(),
 )
 
@@ -506,7 +506,7 @@ internal data class TestProductSpec(
 
 internal data class TestModuleSetSpec(
   @JvmField val name: String,
-  @JvmField val modules: Map<String, com.intellij.platform.plugins.parser.impl.elements.ModuleLoadingRuleValue?>,
+  @JvmField val modules: Map<String, com.intellij.platform.pluginSystem.parser.impl.elements.ModuleLoadingRuleValue?>,
 )
 
 internal class PluginTestSetupContext(
@@ -620,7 +620,7 @@ internal fun buildPluginGraphFromTestSetup(
           }
           for (module in pluginContent.contentModules) {
             val loading = module.loadingMode
-                          ?: com.intellij.platform.plugins.parser.impl.elements.ModuleLoadingRuleValue.OPTIONAL
+                          ?: com.intellij.platform.pluginSystem.parser.impl.elements.ModuleLoadingRuleValue.OPTIONAL
             content(module.name.value, loading)
           }
           for (moduleDep in pluginContent.moduleDependencies) {
@@ -635,7 +635,7 @@ internal fun buildPluginGraphFromTestSetup(
           }
           for (module in pluginContent.contentModules) {
             val loading = module.loadingMode
-                          ?: com.intellij.platform.plugins.parser.impl.elements.ModuleLoadingRuleValue.OPTIONAL
+                          ?: com.intellij.platform.pluginSystem.parser.impl.elements.ModuleLoadingRuleValue.OPTIONAL
             content(module.name.value, loading)
           }
           for (moduleDep in pluginContent.moduleDependencies) {
@@ -764,6 +764,7 @@ internal fun testGenerationModel(
   pluginContentCache: PluginContentCache? = null,
   suppressionConfig: SuppressionConfig = SuppressionConfig(),
   updateSuppressions: Boolean = false,
+  suppressionConfigPath: Path? = null,
   pluginAllowedMissingDependencies: Map<ContentModuleName, Set<ContentModuleName>> = emptyMap(),
   testLibraryAllowedInModule: Map<ContentModuleName, Set<String>> = emptyMap(),
   productAllowedMissing: Map<String, Set<ContentModuleName>> = emptyMap(),
@@ -787,14 +788,14 @@ internal fun testGenerationModel(
       projectLibraryToModuleMap = effectiveOutputProvider.getProjectLibraryToModuleMap(),
       pluginAllowedMissingDependencies = pluginAllowedMissingDependencies,
       testLibraryAllowedInModule = testLibraryAllowedInModule,
+      suppressionConfigPath = suppressionConfigPath,
     ),
     projectRoot = Path.of("."),
     outputProvider = effectiveOutputProvider,
-    isUltimateBuild = false,
-    descriptorCache = ModuleDescriptorCache(effectiveOutputProvider, GlobalScope),
+    descriptorCache = ModuleDescriptorCache(effectiveOutputProvider),
     pluginContentCache = effectivePluginContentCache,
     fileUpdater = effectiveFileUpdater,
-    xmlWritePolicy = XmlWritePolicy(generationMode, effectiveFileUpdater),
+    generatedArtifactWritePolicy = GeneratedArtifactWritePolicy(generationMode, effectiveFileUpdater),
     scope = GlobalScope,
     pluginGraph = pluginGraph,
     dslTestPluginsByProduct = emptyMap(),
@@ -956,10 +957,9 @@ private fun stubModuleOutputProvider(): ModuleOutputProvider {
 private fun stubPluginContentCache(): PluginContentCache {
   return PluginContentCache(
     outputProvider = stubModuleOutputProvider(),
-    xIncludeCache = AsyncCache(GlobalScope),
+    xIncludeCache = AsyncCache(),
     skipXIncludePaths = emptySet(),
     xIncludePrefixFilter = { null },
-    scope = GlobalScope,
     errorSink = ErrorSink(),
   )
 }

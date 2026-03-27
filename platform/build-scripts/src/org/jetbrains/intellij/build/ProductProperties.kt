@@ -1,6 +1,7 @@
 // Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.intellij.build
 
+import com.intellij.platform.buildData.productInfo.CustomCommandLaunchData
 import com.intellij.platform.buildData.productInfo.CustomProperty
 import com.intellij.platform.runtime.product.ProductMode
 import com.jetbrains.plugin.structure.base.plugin.PluginCreationFail
@@ -73,6 +74,30 @@ abstract class ProductProperties {
    * Use [BuildContext.ideMainClassName] if you need to access this value in the build scripts.
    */
   var mainClassName: String = "com.intellij.idea.Main"
+
+  /**
+   * Path to a directory containing images which will be used in the product's distribution. This property can be used instead of providing paths to individual files in
+   * [WindowsCustomizerBuilder], [MacCustomizerBuilder] and [LinuxCustomizerBuilder].
+   *
+   * The directory should contain the following files:
+   * * `linux/product_128.png`: a 128x128 PNG file which will be used for the product launcher in Linux distribution (replaces [LinuxCustomizerBuilder.iconPngPath]);
+   * * `linux/product_128_EAP.png`: a 128x128 PNG file which will be used for the product launcher in Linux distribution for EAP builds (replaces [LinuxCustomizerBuilder.iconPngPath]).
+   * * `mac/dmg_background.tiff`: a TIFF file which will be used as a background image in a DMG file for macOS distribution (replaces [MacCustomizerBuilder.dmgImagePath]);
+   * * `mac/dmg_background_EAP.tiff`: a TIFF file which will be used as a background image in a DMG file for macOS distribution (replaces [MacCustomizerBuilder.dmgImagePathForEAP]);
+   * * `mac/product.icns`: an icns file which will be used for the product bundle in macOS distribution (replaces [MacCustomizerBuilder.icnsPath]);
+   * * `mac/product_EAP.icns`: an icns file which will be used for the product bundle in macOS distribution for EAP builds (replaces [MacCustomizerBuilder.icnsPathForEAP]);
+   * * `win/headerlogo.bmp`: a 150x57 BMP image which will be shown at the header of the Windows installer window (replaces [WindowsCustomizerBuilder.installerImagesPath]);
+   * * `win/install.ico`: a 16x16 icon file for the Windows installer (replaces [WindowsCustomizerBuilder.installerImagesPath]);
+   * * `win/logo.bmp`: a 164x314 BMP image which will be shown on the left side of the Windows installer window (replaces [WindowsCustomizerBuilder.installerImagesPath]);
+   * * `win/product.ico`: a 16x16 ico file which will be used for the product launcher in Windows distribution (replaces [WindowsCustomizerBuilder.icoPath]);
+   * * `win/product_EAP.ico`: a 16x16 ico file which will be used for the product launcher in Windows distribution for EAP builds (replaces [WindowsCustomizerBuilder.icoPathForEAP]);
+   * * `win/uninstall.ico`: a 16x16 icon file for the Windows uninstaller (replaces [WindowsCustomizerBuilder.installerImagesPath]);
+   *
+   * Files with `_EAP` suffix are optional, if they are absent, the variant without `_EAP` will be used.
+   *
+   * Files without `_EAP` suffix must be present to produce an installation for the corresponding OS.
+   */
+  var imagesDirectoryPath: Path? = null
 
   /**
    * Paths to directories containing images specified by 'logo/@url' and 'icon/@ico' attributes in ApplicationInfo.xml file.
@@ -168,6 +193,11 @@ abstract class ProductProperties {
    * If some modules are listed here, it's required [scrambleMainJar] to be set to `true`.
    */
   var contentModulesToScramble: List<String> = emptyList()
+
+  /**
+   * The list of classes to check for scrambling.
+   */
+  var requiredScrambledClasses: List<String> = emptyList()
 
   /**
    * Path to an alternative scramble script which will should be used for a product.
@@ -268,6 +298,16 @@ abstract class ProductProperties {
    * Paths to directories, the content of which should be added to the 'license' directory of IDE distribution.
    */
   var additionalDirectoriesWithLicenses: List<Path> = emptyList()
+
+  /**
+   * Launcher commands customizer
+   */
+  var launcherCommandsCustomizer: ((List<CustomCommandLaunchData>, BuildContext) -> List<CustomCommandLaunchData>)? = null
+
+  /**
+   * Custom frontend module filter
+   */
+  var frontendModuleFilter: (suspend (BuildContext) -> FrontendModuleFilter)? = null
 
   /**
    * Base file name (without an extension) for product archives and installers (*.exe, *.tar.gz, *.dmg).

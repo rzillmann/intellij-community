@@ -64,8 +64,8 @@ import javax.swing.SwingUtilities
 
 @ApiStatus.Internal
 object NewUiOnboardingUtil {
-  const val ONBOARDING_PROPOSED_VERSION = "experimental.ui.onboarding.proposed.version"
-  const val NEW_UI_ON_FIRST_STARTUP = "experimental.ui.on.first.startup"
+  const val ONBOARDING_PROPOSED_VERSION: String = "experimental.ui.onboarding.proposed.version"
+  const val NEW_UI_ON_FIRST_STARTUP: String = "experimental.ui.on.first.startup"
 
   internal const val MEET_ISLANDS_TOUR_COVER_IMAGE_PATH: String = "newUiOnboarding/meetIslandsTourCover.png"
   internal const val SHOW_TOOL_WINDOW_NAMES_IMAGE_PATH: String = "newUiOnboarding/showToolWindowNamesTour.png"
@@ -81,7 +81,6 @@ object NewUiOnboardingUtil {
             && NewUiOnboardingBean.isPresent
 
   enum class OnboardingType {
-    MEET_NEW_UI_TOOL_WINDOW,
     NEW_UI_ONBOARDING
   }
 
@@ -131,13 +130,18 @@ object NewUiOnboardingUtil {
         })
         popup
       },
-      showPopup = { popup -> popup.showUnderneathOf(button) }
+      showPopup = { popup ->
+        popup.setRequestFocus(false)
+        popup.showUnderneathOf(button)
+      }
     )
   }
 
-  suspend fun showNonClosablePopup(disposable: Disposable,
-                                   createPopup: suspend () -> JBPopup?,
-                                   showPopup: (JBPopup) -> Unit): JBPopup? {
+  suspend fun showNonClosablePopup(
+    disposable: Disposable,
+    createPopup: suspend () -> JBPopup?,
+    showPopup: (JBPopup) -> Unit
+  ): JBPopup? {
     val popup = createPopup() ?: return null
     Disposer.register(disposable) { popup.closeOk(null) }
     // Can't provide parent coroutine scope here, but need it to reopen the popup.
@@ -260,13 +264,22 @@ object NewUiOnboardingUtil {
     return result
   }
 
-  suspend fun findActionItem(list: JBList<*>, actionId: String): ActionItem? {
+  /**
+   * Returns `true` if selected
+   */
+  suspend fun selectAction(list: JBList<*>, actionId: String): Boolean {
+    val pluginsActionIndex = findActionItem(list, actionId)?.first ?: return false
+    list.setSelectedIndex(pluginsActionIndex)
+    return true
+  }
+
+  suspend fun findActionItem(list: JBList<*>, actionId: String): Pair<Int, ActionItem>? {
     val actionManager = serviceAsync<ActionManager>()
 
     for (i in 0 until list.model.size) {
-      val element = list.model.getElementAt(i) as? ActionItem
-      if (element != null && actionManager.getId(element.action) == actionId) {
-        return element
+      val element = list.model.getElementAt(i) as? ActionItem ?: continue
+      if (actionManager.getId(element.action) == actionId) {
+        return i to element
       }
     }
 
@@ -274,11 +287,7 @@ object NewUiOnboardingUtil {
   }
 
   suspend fun findActionItemBounds(list: JBList<*>, actionId: String): Rectangle? {
-    val actionManager = serviceAsync<ActionManager>()
-    val pluginsActionIndex = (0 until list.model.size).find { index ->
-      val element = list.model.getElementAt(index) as? ActionItem ?: return@find false
-      actionManager.getId(element.action) == actionId
-    } ?: return null
+    val pluginsActionIndex = findActionItem(list, actionId)?.first ?: return null
 
     return list.getCellBounds(pluginsActionIndex, pluginsActionIndex)
   }
@@ -304,7 +313,7 @@ object NewUiOnboardingUtil {
     return try {
       classLoader.getResource(path)?.readText()
     }
-    catch (t: Throwable) {
+    catch (_: Throwable) {
       null
     }
   }

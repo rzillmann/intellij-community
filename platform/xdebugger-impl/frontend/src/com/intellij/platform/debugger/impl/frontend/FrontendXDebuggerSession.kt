@@ -41,11 +41,13 @@ import com.intellij.platform.debugger.impl.rpc.XSuspendContextDto
 import com.intellij.platform.debugger.impl.rpc.XValueMarkerId
 import com.intellij.platform.debugger.impl.rpc.actionIds
 import com.intellij.platform.debugger.impl.rpc.consoleView
+import com.intellij.platform.debugger.impl.shared.FrontendDescriptorStateManager
 import com.intellij.platform.debugger.impl.shared.childScopeCancelledOnSessionEvents
 import com.intellij.platform.debugger.impl.shared.proxy.XBreakpointProxy
 import com.intellij.platform.debugger.impl.shared.proxy.XDebugSessionProxy
 import com.intellij.platform.debugger.impl.shared.proxy.XSmartStepIntoHandlerEntry
 import com.intellij.platform.debugger.impl.shared.proxy.XStackFramesListColorsCache
+import com.intellij.platform.debugger.impl.ui.XDebuggerEntityConverter
 import com.intellij.platform.execution.impl.frontend.createFrontendProcessHandler
 import com.intellij.platform.execution.impl.frontend.executionEnvironment
 import com.intellij.platform.util.coroutines.childScope
@@ -67,10 +69,9 @@ import com.intellij.xdebugger.impl.frame.XValueMarkers
 import com.intellij.xdebugger.impl.inline.DebuggerInlayListener
 import com.intellij.xdebugger.impl.rpc.sourcePosition
 import com.intellij.xdebugger.impl.rpc.toRpc
-import com.intellij.xdebugger.impl.ui.SplitDebuggerUIUtil
+import com.intellij.xdebugger.impl.ui.SplitDebuggerDataKeys
 import com.intellij.xdebugger.impl.ui.XDebugSessionData
 import com.intellij.xdebugger.impl.ui.XDebugSessionTab
-import com.intellij.platform.debugger.impl.ui.XDebuggerEntityConverter
 import com.intellij.xdebugger.ui.XDebugTabLayouter
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -95,6 +96,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.jetbrains.annotations.ApiStatus
+import org.jetbrains.annotations.Nls
 import org.jetbrains.annotations.VisibleForTesting
 import java.util.concurrent.atomic.AtomicReference
 import javax.swing.event.HyperlinkListener
@@ -174,6 +176,9 @@ class FrontendXDebuggerSession(
   override val isRunToCursorActionAllowed: Boolean
     get() = sessionStateFlow.value.isRunToCursorActionAllowed
 
+  override val isForceStepIntoActionAllowed: Boolean
+    get() = sessionStateFlow.value.isForceStepIntoActionAllowed
+
   override val isSuspended: Boolean
     get() = sessionStateFlow.value.isSuspended
 
@@ -218,8 +223,12 @@ class FrontendXDebuggerSession(
           ?: consoleView?.createConsoleActions()?.toList()
           ?: emptyList()
   override val coroutineScope: CoroutineScope = cs
+
+  private val _currentStateMessageState: StateFlow<String>? = createMessageStateFlowIfNeeded()
+
   override val currentStateMessage: String
-    get() = if (isStopped) XDebuggerBundle.message("debugger.state.message.disconnected") else XDebuggerBundle.message("debugger.state.message.connected") // TODO
+    get() = _currentStateMessageState?.value ?: defaultStateMessage()
+
   override val currentStateHyperlinkListener: HyperlinkListener?
     get() = null // TODO
 
@@ -244,6 +253,11 @@ class FrontendXDebuggerSession(
     DebuggerInlayListener.getInstance(project).startListening()
     sessionDto.initialSuspendData?.applyToCurrents()
     cs.launch {
+      val processDescriptorDeferred = sessionDto.processDescriptor
+      if (processDescriptorDeferred != null) {
+        val processDescriptor = processDescriptorDeferred.await()
+        FrontendDescriptorStateManager.getInstance(project).registerProcessDescriptor(id, processDescriptor, cs)
+      }
       sessionDto.sessionEvents.toFlow().collect { event ->
         with(event) {
           updateCurrents()
@@ -266,6 +280,24 @@ class FrontendXDebuggerSession(
       tabInfoInitialized = true
       initTabInfo(tabDto)
     }
+  }
+
+  private fun createMessageStateFlowIfNeeded(): StateFlow<@Nls String>? {
+    val rpcFlow = sessionDto.currentStateMessageFlow ?: return null
+    val mutableStateFlow = MutableStateFlow(sessionDto.initialStateMessage)
+    tabScope.launch {
+      rpcFlow.toFlow().collect { message ->
+        mutableStateFlow.value = message
+      }
+    }
+    return mutableStateFlow
+  }
+
+  private fun defaultStateMessage(): String = if (isStopped) {
+    XDebuggerBundle.message("debugger.state.message.disconnected")
+  }
+  else {
+    XDebuggerBundle.message("debugger.state.message.connected")
   }
 
   private fun XDebuggerSessionEvent.updateCurrents() {
@@ -301,7 +333,9 @@ class FrontendXDebuggerSession(
         currentStackFrame.value = StackFrameUpdate.notifyChanged(newFrame)
       }
       is XDebuggerSessionEvent.BreakpointsMuted -> {}
-      XDebuggerSessionEvent.SettingsChanged -> {}
+      is XDebuggerSessionEvent.SettingsChanged -> {
+        updateState()
+      }
     }
   }
 
@@ -383,17 +417,18 @@ class FrontendXDebuggerSession(
     }
 
     val proxy = this@FrontendXDebuggerSession
+    val contentToReuse = tabInfo.contentToReuse
     val tab = withContext(Dispatchers.EDT) {
       // we need to await for the console view to be initialized before tab is created
       // so [consoleView] will return an up-to-date result
       consoleViewDeferred.await()
-      // TODO restore content to reuse on frontend if needed (it is not used now in create)
-      XDebugSessionTab.create(proxy, tabInfo.iconId?.icon(), tabInfo.executionEnvironmentProxyDto?.executionEnvironment(project, tabScope), null,
+
+      XDebugSessionTab.create(proxy, tabInfo.iconId?.icon(), tabInfo.executionEnvironmentProxyDto?.executionEnvironment(project, tabScope), contentToReuse,
                               tabInfo.forceNewDebuggerUi, tabInfo.withFramesCustomization, tabInfo.defaultFramesViewKey).apply {
         setAdditionalKeysProvider { sink ->
-          sink[SplitDebuggerUIUtil.SPLIT_RUN_CONTENT_DESCRIPTOR_KEY] = backendRunContentDescriptorId
+          sink[SplitDebuggerDataKeys.SPLIT_RUN_CONTENT_DESCRIPTOR_KEY] = backendRunContentDescriptorId
           if (executionEnvironmentId != null) {
-            sink[SplitDebuggerUIUtil.SPLIT_EXECUTION_ENVIRONMENT_KEY] = executionEnvironmentId
+            sink[SplitDebuggerDataKeys.SPLIT_EXECUTION_ENVIRONMENT_KEY] = executionEnvironmentId
           }
         }
         sessionTabDeferred.complete(this)
@@ -417,7 +452,7 @@ class FrontendXDebuggerSession(
 
     tabScope.launch(Dispatchers.EDT) {
       tabInfo.showTab.await()
-      tab.showTab()
+      tab.showTab(contentToReuse)
     }
 
     // don't subscribe on additional tabs if we have [ExecutionEnvironment] (it means this is Monolith)
